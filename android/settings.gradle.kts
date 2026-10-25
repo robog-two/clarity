@@ -6,6 +6,8 @@ pluginManagement {
             content {
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("com\\.google.*")
+                // Tink is published on Maven Central only.
+                excludeGroup("com.google.crypto.tink")
                 includeGroupByRegex("androidx.*")
             }
         }
@@ -21,6 +23,8 @@ dependencyResolutionManagement {
             content {
                 includeGroupByRegex("com\\.android.*")
                 includeGroupByRegex("com\\.google.*")
+                // Tink is published on Maven Central only.
+                excludeGroup("com.google.crypto.tink")
                 includeGroupByRegex("androidx.*")
             }
         }

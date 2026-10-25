@@ -55,3 +55,17 @@ data class ConnectorSummary(
     val grants: Map<Noun, GrantState>,
     val lastSeenAt: kotlin.time.Instant?,
 )
+
+/** `PUT /api/v1/connectors/{id}/grants`: the desired state per noun. */
+@Serializable
+data class GrantsUpdate(val grants: Map<Noun, GrantState>)
+
+/** `POST /api/v1/connectors/{id}/test`: the connector tried its credentials and a first sync. */
+@Serializable
+data class ConnectorTestResult(
+    val ok: Boolean,
+    /** Failure reason for the person ("password rejected (401)"). */
+    val error: String? = null,
+    /** Short summary on success ("4,218 messages"). */
+    val summary: String? = null,
+)
