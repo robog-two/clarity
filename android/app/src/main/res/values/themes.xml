@@ -1,3 +1,5 @@
 <resources>
-    <style name="Theme.Clarity" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.Clarity" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/clarity_surface</item>
+    </style>
 </resources>
