@@ -115,8 +115,8 @@ class DefaultAgentDispatcherTest : FunSpec({
 
         val request = gateway.requests.single()
         request.model shouldBe "claude-opus-5-5"
-        request.system shouldBe AgentPrompts.SYSTEM
-        request.system shouldNotContain "Current time"
+        request.systemText shouldBe AgentPrompts.SYSTEM
+        request.systemText shouldNotContain "Current time"
         request.tools.map { it.name } shouldBe
             listOf("create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers", "search_contacts")
         val prompt = (request.messages.single().content.single() as Block.Text).text

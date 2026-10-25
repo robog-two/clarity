@@ -15,8 +15,33 @@ clarity:
     autoGrant: false
     secretsDir: /run/secrets
   agent:
-    model: claude-opus-5-5
-    effort: medium
+    # Per-role model settings. CLARITY_AGENT_<ROLE>_MODEL / _EFFORT / _MAX_TOKENS / _CACHE_TTL / _COMPACTION
+    # override these; the legacy CLARITY_AGENT_MODEL / CLARITY_AGENT_EFFORT set the lead's.
+    roles:
+      lead:
+        model: claude-opus-5-5
+        effort: medium
+        maxTokens: 64000
+        cacheTtl: 1h
+        compaction: true
+      helper:
+        model: claude-sonnet-5-5
+        effort: medium
+        maxTokens: 32000
+        cacheTtl: 5m
+        compaction: false
+      guard:
+        model: claude-haiku-5-5
+        effort: low
+        maxTokens: 4000
+        cacheTtl: 5m
+        compaction: false
+      triage:
+        model: claude-haiku-5-5
+        effort: low
+        maxTokens: 4000
+        cacheTtl: 5m
+        compaction: false
     reviewInterval: 2h
     maxTurns: 30
     maxConcurrentRuns: 2
