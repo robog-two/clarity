@@ -43,10 +43,14 @@ import net.robog.clarity.shared.query.TriggerSpec
  */
 @Inject
 @SingleIn(AppScope::class)
-class DomainTools(private val reader: NounReader, private val triggers: TriggerStore) {
+class DomainTools(
+    private val reader: NounReader,
+    private val triggers: TriggerStore,
+    private val documents: DocumentTools,
+) {
 
     val all: List<Tool> by lazy {
-        listOf(listMessages, listCalendarEvents, searchContacts, listTriggers, createTrigger, deleteTrigger)
+        (listOf(listMessages, listCalendarEvents, searchContacts, listTriggers, createTrigger, deleteTrigger) + documents.all)
             .sortedBy { it.name }
     }
 

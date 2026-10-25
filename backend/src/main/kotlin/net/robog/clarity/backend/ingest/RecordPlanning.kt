@@ -10,6 +10,7 @@ import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.noun.Payload
@@ -69,6 +70,10 @@ private fun validate(payload: Payload) {
         is CalendarEventPayload -> {
             if (payload.title.isEmpty()) invalid("event title is empty")
             if (payload.end < payload.start) invalid("event ends before it starts")
+        }
+        is DocumentPayload -> {
+            if (payload.store.isEmpty()) invalid("document store is empty")
+            if (payload.path == "/") invalid("document path is empty")
         }
     }
 }

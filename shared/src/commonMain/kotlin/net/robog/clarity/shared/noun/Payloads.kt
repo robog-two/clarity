@@ -61,3 +61,26 @@ data class CalendarEventPayload(
 ) : Payload {
     override val noun: Noun get() = Noun.CALENDAR_EVENT
 }
+
+/**
+ * A file in a document store (WebDAV, later drives). Only metadata and a short extract are
+ * stored; the full text is fetched on demand through a `ReadDocument` action.
+ */
+@Serializable
+@SerialName("document")
+data class DocumentPayload(
+    /** Which store the file lives in (e.g. `webdav:https://cloud.example/remote.php/dav/files/me`). */
+    val store: String,
+    /** Path within the store. */
+    val path: String,
+    val title: String,
+    val mimeType: String? = null,
+    val size: Long? = null,
+    val modifiedAt: Instant? = null,
+    /** Extracted text, at most [MAX_EXCERPT_BYTES] bytes of UTF-8. */
+    val excerpt: String = "",
+) : Payload {
+    override val noun: Noun get() = Noun.DOCUMENT
+
+    companion object { const val MAX_EXCERPT_BYTES = 8 * 1024 }
+}

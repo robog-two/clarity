@@ -88,7 +88,7 @@ class DefaultAgentDispatcherTest : FunSpec({
     fun dispatcher(key: String?, store: AgentRunStore, gateway: ModelGateway): DefaultAgentDispatcher {
         val cfg = config(key)
         return DefaultAgentDispatcher(
-            cfg, scope, Clock.System, store, DomainTools(EmptyReader(), NoTriggers()), McpToolSources(cfg),
+            cfg, scope, Clock.System, store, DomainTools(EmptyReader(), NoTriggers(), DocumentTools(EmptyReader()) { DocumentFetch.Unavailable("none") }), McpToolSources(cfg),
             ModelGatewayFactory { gateway },
         )
     }
@@ -118,7 +118,10 @@ class DefaultAgentDispatcherTest : FunSpec({
         request.systemText shouldBe AgentPrompts.SYSTEM
         request.systemText shouldNotContain "Current time"
         request.tools.map { it.name } shouldBe
-            listOf("create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers", "search_contacts")
+            listOf(
+                "create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers",
+                "read_document", "search_contacts", "search_documents",
+            )
         val prompt = (request.messages.single().content.single() as Block.Text).text
         prompt shouldContain "Current time:"
         prompt shouldContain "2026-10-24T00:00:00Z"

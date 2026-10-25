@@ -4,13 +4,16 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import kotlin.time.Instant
+import kotlin.uuid.toKotlinUuid
 import net.robog.clarity.backend.dedup.normalizeLooseHandle
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Payload
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.greater
@@ -19,6 +22,7 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.json.contains
@@ -65,6 +69,33 @@ class ExposedNounReader(private val database: Database) : NounReader {
                 .map { it.toContact() }
         }
 
+    override suspend fun searchDocuments(query: String, limit: Int): List<Stored<DocumentPayload>> {
+        val tsQuery = documentTsQuery(query) ?: return emptyList()
+        return database.tx {
+            // `search` is a generated tsvector column that Exposed does not model; match it with plain SQL.
+            val ids = exec(
+                "SELECT id FROM document WHERE deleted_at IS NULL AND search @@ to_tsquery('simple', ?) " +
+                    "ORDER BY ts_rank(search, to_tsquery('simple', ?)) DESC, updated_at DESC LIMIT ?",
+                listOf(
+                    org.jetbrains.exposed.v1.core.TextColumnType() to tsQuery,
+                    org.jetbrains.exposed.v1.core.TextColumnType() to tsQuery,
+                    org.jetbrains.exposed.v1.core.IntegerColumnType() to limit.coerceIn(1, MAX_LIMIT),
+                ),
+            ) { rs ->
+                buildList { while (rs.next()) add(java.util.UUID.fromString(rs.getString(1))) }
+            }.orEmpty()
+            val byId = Documents.selectAll().where { Documents.id inList ids.map { it.toKotlinUuid() } }.associate { it[Documents.id] to it.toDocument() }
+            ids.mapNotNull { byId[it.toKotlinUuid()] }
+        }
+    }
+
+    override suspend fun document(id: EntityId): Stored<DocumentPayload>? {
+        val uuid = runCatching { kotlin.uuid.Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx {
+            Documents.selectAll().where { (Documents.id eq uuid) and Documents.deletedAt.isNull() }.singleOrNull()?.toDocument()
+        }
+    }
+
     override suspend fun changedSince(since: Instant, limit: Int): List<Stored<Payload>> =
         database.tx {
             val cap = limit.coerceIn(1, MAX_LIMIT)
@@ -77,7 +108,10 @@ class ExposedNounReader(private val database: Database) : NounReader {
             val events = CalendarEvents.selectAll()
                 .where { (CalendarEvents.updatedAt greater since) and CalendarEvents.deletedAt.isNull() }
                 .orderBy(CalendarEvents.updatedAt, SortOrder.DESC).limit(cap).map { it.toEvent() }
-            (messages + contacts + events).sortedByDescending { it.updatedAt }.take(cap)
+            val documents = Documents.selectAll()
+                .where { (Documents.updatedAt greater since) and Documents.deletedAt.isNull() }
+                .orderBy(Documents.updatedAt, SortOrder.DESC).limit(cap).map { it.toDocument() }
+            (messages + contacts + events + documents).sortedByDescending { it.updatedAt }.take(cap)
         }
 
     private fun ResultRow.toMessage() = Stored(
@@ -125,5 +159,32 @@ class ExposedNounReader(private val database: Database) : NounReader {
         updatedAt = this[CalendarEvents.updatedAt],
     )
 
+    private fun ResultRow.toDocument() = Stored(
+        id = EntityId(this[Documents.id].toString()),
+        payload = DocumentPayload(
+            store = this[Documents.store],
+            path = this[Documents.path],
+            title = this[Documents.title],
+            mimeType = this[Documents.mimeType],
+            size = this[Documents.size],
+            modifiedAt = this[Documents.modifiedAt],
+            excerpt = this[Documents.excerpt],
+        ),
+        firstSeenAt = this[Documents.firstSeenAt],
+        updatedAt = this[Documents.updatedAt],
+    )
+
     private companion object { const val MAX_LIMIT = 500 }
+}
+
+private val TOKEN = Regex("[\\p{L}\\p{N}]+")
+
+/**
+ * A `to_tsquery` string from free text: every word must match, the last as a prefix
+ * (`quarterly rep` -> `quarterly & rep:*`). Null when the text holds no searchable word.
+ */
+fun documentTsQuery(raw: String): String? {
+    val words = TOKEN.findAll(raw.lowercase()).map { it.value }.take(12).toList()
+    if (words.isEmpty()) return null
+    return words.mapIndexed { i, w -> if (i == words.lastIndex) "$w:*" else w }.joinToString(" & ")
 }
