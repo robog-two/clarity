@@ -10,6 +10,7 @@ dependencies {
     implementation(libs.ktor.client.cio)
     api(libs.kotlin.logging)
     api(libs.arrow.core)
+    implementation(libs.tink)
 
     testImplementation(libs.ktor.client.mock)
 }

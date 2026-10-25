@@ -59,6 +59,10 @@ interface SyncScope {
  * for actions addressed to this connector (see `ConnectorManifest.handles`), executes them and
  * reports results. Executed idempotency keys are remembered in the connector's state.
  *
+ * Pass the same [runtime] that the handlers and manifest were built with: it receives every new
+ * config (so action handlers see credentials saved after start) and answers [test], the "test this
+ * connection" requests from the app.
+ *
  * ```kotlin
  * suspend fun main() = runConnector(manifest) { config -> push(records) }
  * ```
@@ -67,6 +71,8 @@ suspend fun runConnector(
     manifest: ConnectorManifest,
     settings: ConnectorSettings = ConnectorSettings.fromEnv(),
     actions: ActionHandlers = ActionHandlers.None,
+    runtime: ConnectorRuntime? = null,
+    test: (suspend (config: ConnectorConfig) -> ConnectorTestResult)? = null,
     sync: suspend SyncScope.(config: ConnectorConfig) -> Unit,
 ) {
     log.info { "starting connector ${manifest.kind} ${manifest.version} against ${settings.baseUrl}" }
@@ -76,14 +82,14 @@ suspend fun runConnector(
             val client = ClarityClient(http)
             val state = FileStateStore(settings.stateDir)
             val loop = launch {
-                runLoop(client, state, manifest, settings.syncInterval, sync)
+                runLoop(client, state, manifest, settings.syncInterval, runtime, sync)
             }
-            val actionLoop = if (actions.isEmpty) null else {
+            val actionLoop = if (actions.isEmpty && test == null) null else {
                 if (actions.kinds != manifest.handles) {
                     log.warn { "manifest handles ${manifest.handles} but handlers cover ${actions.kinds}; the backend routes by the manifest" }
                 }
                 // a child of this scope: it ends with the sync loop when the scope is cancelled
-                launch { runActionLoop(client, state, actions) }
+                launch { runActionLoop(client, state, actions, runtime = runtime, test = test) }
             }
             // The JVM runs shutdown hooks on SIGTERM and then halts; block the hook until the loop has wound down.
             val hook = Thread({
@@ -111,6 +117,7 @@ internal suspend fun runLoop(
     state: StateStore,
     manifest: ConnectorManifest,
     interval: Duration,
+    runtime: ConnectorRuntime? = null,
     sync: suspend SyncScope.(ConnectorConfig) -> Unit,
 ) {
     registerManifest(client, manifest)
@@ -122,7 +129,11 @@ internal suspend fun runLoop(
             ifLeft = { log.warn { "config poll failed: ${it.message}" } },
             ifRight = { poll ->
                 when (poll) {
-                    is ConfigPoll.Changed -> { config = poll.config; etag = poll.etag; log.info { "config version ${poll.config.version}" } }
+                    is ConfigPoll.Changed -> {
+                        config = poll.config; etag = poll.etag
+                        runtime?.accept(poll.config, poll.etag)
+                        log.info { "config version ${poll.config.version}" }
+                    }
                     ConfigPoll.NotModified -> Unit
                 }
             },

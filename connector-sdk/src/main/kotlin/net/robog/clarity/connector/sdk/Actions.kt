@@ -16,6 +16,7 @@ import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.action.ConnectorAction
+import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.ProposedAction
 
@@ -136,11 +137,13 @@ internal suspend fun pollAndExecute(
     handlers: ActionHandlers,
     ledger: ActionLedger,
     wait: Duration,
+    beforeExecute: suspend () -> Unit = {},
 ): ClientError? {
     val poll = when (val r = client.pollActions(wait)) {
         is Either.Left -> return r.value
         is Either.Right -> r.value
     }
+    if (poll.actions.isNotEmpty()) beforeExecute()
     for (action in poll.actions) {
         val outcome = execute(action, handlers, ledger)
         // A failed report is fine: the lease lapses, the action is re-delivered, and the ledger answers it.
@@ -155,12 +158,23 @@ internal suspend fun runActionLoop(
     state: StateStore,
     handlers: ActionHandlers,
     wait: Duration = 25.seconds,
+    runtime: ConnectorRuntime? = null,
+    test: (suspend (ConnectorConfig) -> ConnectorTestResult)? = null,
 ) {
     val ledger = ActionLedger(state)
     var backoff = 1.seconds
     while (true) {
-        val error = pollAndExecute(client, handlers, ledger, wait)
+        // Handlers read credentials from the runtime's config; keep it current before executing.
+        val error = if (handlers.isEmpty) {
+            if (test != null) delay(wait) // nothing to long-poll for: just pace the test checks
+            null
+        } else {
+            pollAndExecute(client, handlers, ledger, wait, beforeExecute = { runtime?.refresh(client) })
+        }
         if (error == null) {
+            if (test != null && runtime != null) {
+                client.pollTest().onRight { request -> if (request != null) runtime.answerTest(client, request, test) }
+            }
             backoff = 1.seconds
         } else {
             log.warn { "action poll failed: ${error.message}; retrying in $backoff" }

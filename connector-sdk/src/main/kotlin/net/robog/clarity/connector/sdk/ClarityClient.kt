@@ -42,6 +42,8 @@ import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.api.Problem
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.connector.ConnectorTestReport
+import net.robog.clarity.shared.connector.ConnectorTestRequest
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestResponse
 
@@ -131,6 +133,18 @@ class ClarityClient(
     /** `POST /ingest/v1/actions/{id}/result`. Idempotent on the backend: reporting twice is harmless. */
     suspend fun postResult(id: ActionId, result: ActionResult): Either<ClientError, Unit> =
         execute("post action result", { http.post("${ApiPaths.ACTIONS}/${id.value}/result") { contentType(ContentType.Application.Json); setBody(result) } }) {
+            Unit.right()
+        }
+
+    /** `GET /ingest/v1/test`: the connection test the app asked for, or null (HTTP 204) when none is pending. */
+    suspend fun pollTest(): Either<ClientError, ConnectorTestRequest?> =
+        execute("poll test", { http.get(ApiPaths.TEST) }) { response ->
+            if (response.status == HttpStatusCode.NoContent) null.right() else decode<ConnectorTestRequest>(response)
+        }
+
+    /** `POST /ingest/v1/test`. A 409 (the request was replaced meanwhile) comes back as a [ClientError.Rejected]. */
+    suspend fun postTestReport(report: ConnectorTestReport): Either<ClientError, Unit> =
+        execute("post test report", { http.post(ApiPaths.TEST) { contentType(ContentType.Application.Json); setBody(report) } }) {
             Unit.right()
         }
 
