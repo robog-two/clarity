@@ -24,6 +24,16 @@ kotest = "6.2.6"
 junit4 = "4.13.2"
 testcontainers = "2.0.5"
 
+# Connectors
+angus-mail = "2.0.5"
+dav4jvm = "5.0.0"           # JitPack (com.github.bitfireAT only)
+ical4j = "4.4.0"
+ez-vcard = "0.12.2"
+tink = "1.24.0"
+pdfbox = "3.0.8"
+jsoup = "1.23.2"
+greenmail = "2.1.15"
+
 # Android
 agp = "9.4.1"
 android-compileSdk = "37"
@@ -93,6 +103,16 @@ mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = 
 # Logging
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 kotlin-logging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlin-logging" }
+
+# Connectors
+angus-mail = { module = "org.eclipse.angus:angus-mail", version.ref = "angus-mail" }
+dav4jvm = { module = "com.github.bitfireAT:dav4jvm", version.ref = "dav4jvm" }
+ical4j = { module = "org.mnode.ical4j:ical4j", version.ref = "ical4j" }
+ez-vcard = { module = "com.googlecode.ez-vcard:ez-vcard", version.ref = "ez-vcard" }
+tink = { module = "com.google.crypto.tink:tink", version.ref = "tink" }
+pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+greenmail = { module = "com.icegreen:greenmail", version.ref = "greenmail" }
 
 # Testing
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }

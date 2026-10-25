@@ -13,6 +13,10 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         mavenCentral()
+        // dav4jvm is only published on JitPack; nothing else may come from there.
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.bitfireAT") }
+        }
     }
 }
 
@@ -23,6 +27,8 @@ include(
     ":backend",
     ":connector-sdk",
     ":connectors:example",
+    ":connectors:mail",
+    ":connectors:dav",
     ":computers:sandbox",
 )
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
