@@ -47,6 +47,8 @@ load_into_podman() { # load_into_podman <name>: create or refresh the Podman sec
 }
 
 ensure_file postgres_password
+ensure_file sandbox_key   # bearer keys for the agent computers (sandbox, browser)
+ensure_file browser_key
 for id in example "$@"; do ensure_file "connector_${id}_key"; done
 
 # Provided by you. An empty file keeps the backend running with the agent disabled.

@@ -24,7 +24,7 @@ updates:
       docker-minor-patch:
         update-types: [minor, patch]
 
-  # Images referenced from the compose file (postgres, playwright-mcp).
+  # Images referenced from the compose file (postgres, caddy).
   - package-ecosystem: docker-compose
     directory: "/deploy"
     target-branch: dev
@@ -32,3 +32,9 @@ updates:
     groups:
       compose-minor-patch:
         update-types: [minor, patch]
+
+  # Pinned npm tree of the browser container (Firefox DevTools MCP + supergateway).
+  - package-ecosystem: npm
+    directory: "/computers/browser"
+    target-branch: dev
+    schedule: { interval: weekly }

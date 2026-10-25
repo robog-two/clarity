@@ -1,0 +1,9 @@
+{
+  "name": "clarity-browser",
+  "private": true,
+  "description": "Pinned runtime for the Clarity browser container: Firefox DevTools MCP behind a stdio-to-streamable-HTTP bridge.",
+  "dependencies": {
+    "@mozilla/firefox-devtools-mcp": "0.10.6",
+    "supergateway": "4.2.1"
+  }
+}

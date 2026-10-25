@@ -177,13 +177,20 @@ private class Lookup(
 }
 
 /**
- * Parses `name=url,name2=url2` (the `CLARITY_MCP_SERVERS` format). Entries without a name or URL
- * are ignored; the URL may itself contain `=` (query strings), only the first one splits.
+ * Parses `name=url[;keyFile=/path],name2=url2` (the `CLARITY_MCP_SERVERS` format). Entries without
+ * a name or URL are ignored; the URL may itself contain `=` (query strings), only the first one
+ * splits. Options follow the URL after `;` as `key=value` (currently only `keyFile`).
  */
 fun parseMcpServers(raw: String): List<McpServerConfig> =
     raw.split(',')
         .mapNotNull { entry ->
-            val name = entry.substringBefore('=', "").trim()
-            val url = entry.substringAfter('=', "").trim()
-            if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url)
+            val parts = entry.split(';')
+            val head = parts.first()
+            val name = head.substringBefore('=', "").trim()
+            val url = head.substringAfter('=', "").trim()
+            val keyFile = parts.drop(1)
+                .map { it.trim() }
+                .firstOrNull { it.startsWith("keyFile=") }
+                ?.substringAfter('=')?.trim()?.takeIf { it.isNotEmpty() }
+            if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url, keyFile)
         }

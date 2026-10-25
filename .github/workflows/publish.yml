@@ -24,8 +24,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { service: backend, module: backend, app: clarity-backend, dir: backend }
-          - { service: connector-example, module: "connectors:example", app: clarity-connector-example, dir: connectors/example }
+          - { service: backend, file: deploy/container/jvm-app.Containerfile, module: backend, app: clarity-backend, dir: backend }
+          - { service: connector-example, file: deploy/container/jvm-app.Containerfile, module: "connectors:example", app: clarity-connector-example, dir: connectors/example }
+          # The agent's computers (module/app/dir are unused by their Containerfiles).
+          - { service: sandbox, file: deploy/container/sandbox.Containerfile, module: "", app: "", dir: "" }
+          - { service: browser, file: deploy/container/browser.Containerfile, module: "", app: "", dir: "" }
     steps:
       - uses: actions/checkout@v7
 
@@ -60,7 +63,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: deploy/container/jvm-app.Containerfile
+          file: ${{ matrix.file }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}

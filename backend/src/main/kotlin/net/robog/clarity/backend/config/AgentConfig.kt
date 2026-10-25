@@ -19,7 +19,11 @@ data class AgentConfig(
     val effort: String get() = roles.lead.effort
 }
 
-data class McpServerConfig(val name: String, val url: String)
+/**
+ * One external MCP server. [keyFile] (optional) holds a bearer key sent as `Authorization: Bearer`
+ * (e.g. a Podman secret mounted at /run/secrets/sandbox_key).
+ */
+data class McpServerConfig(val name: String, val url: String, val keyFile: String? = null)
 
 /** Who is calling the model; roles never switch models inside a thread (the cache is per model). */
 enum class AgentRole { LEAD, HELPER, GUARD, TRIAGE }

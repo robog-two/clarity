@@ -476,7 +476,7 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - Containers: non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, memory/CPU/pids
   limits.
 - Optional services via compose profiles: `example`, `mail`, `dav`, `computers` (sandbox +
-  browser), `push` (ntfy).
+  browser). (Push needs no container: it rides the SSE feed.)
 
 ## Observability and evals
 
