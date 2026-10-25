@@ -11,6 +11,7 @@ object AuthProviders {
     const val CONNECTOR = "connector"
 }
 
-data class DevicePrincipal(val deviceId: DeviceId)
+/** [expiresAt] is the verified JWT's `exp`; long-lived connections (SSE) close when it passes. */
+data class DevicePrincipal(val deviceId: DeviceId, val expiresAt: kotlin.time.Instant? = null)
 
 data class ConnectorPrincipal(val connectorId: ConnectorId)

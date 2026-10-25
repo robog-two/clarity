@@ -1,5 +1,7 @@
 package net.robog.clarity.harness
 
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerializationException
@@ -82,4 +84,13 @@ suspend fun Tool.invokeSafely(input: JsonObject): ToolResult = try {
     throw e
 } catch (e: Exception) {
     ToolResult.Error("Tool $name failed: ${e.message ?: e::class.simpleName}")
+}
+
+/**
+ * Which tool call is running, for tools that must derive a stable idempotency key: the same
+ * `(runId, toolUseId)` is re-derived when a crashed run resumes and executes the call again.
+ * Read it with `coroutineContext[ToolCallContext]`; absent outside the harness (tests, MCP server).
+ */
+class ToolCallContext(val runId: String, val toolUseId: String) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ToolCallContext>
 }

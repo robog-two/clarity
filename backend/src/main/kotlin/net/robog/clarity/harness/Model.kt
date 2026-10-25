@@ -142,6 +142,13 @@ data class CompactionConfig(
     val pauseAfterCompaction: Boolean = false,
 )
 
+/** The compaction settings for a [RunRequest.compactNow] run: compact at the provider's minimum and pause. */
+fun compactNowConfig(base: CompactionConfig?): CompactionConfig =
+    (base ?: CompactionConfig()).copy(triggerInputTokens = COMPACTION_MIN_TRIGGER_TOKENS, pauseAfterCompaction = true)
+
+/** The smallest trigger the compaction beta accepts. */
+const val COMPACTION_MIN_TRIGGER_TOKENS = 50_000L
+
 /** A single model call: the full (append-only) history plus the stable request prefix. */
 data class ModelRequest(
     val model: String,

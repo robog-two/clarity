@@ -26,7 +26,7 @@ class DeviceAuthenticator(private val devices: DeviceRepository, private val clo
         val key = devices.publicKey(kid) ?: return AuthFailure("unknown device").left()
         return DeviceJwtVerification.verify(token, key, clock.now())
             .mapLeft { AuthFailure(it.reason).also { f -> log.debug { "device token rejected: ${f.reason}" } } }
-            .map { DevicePrincipal(DeviceId(it.deviceId)) }
+            .map { DevicePrincipal(DeviceId(it.deviceId), it.expiresAt) }
     }
 }
 
