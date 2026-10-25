@@ -359,16 +359,22 @@ The agent can log in and pay for things without ever seeing a password or card n
   check, expiry, CVC, name, address, phone, OTP) validated on the phone (validators are pure
   Kotlin in `:shared`). The phone encrypts before upload. The agent only learns the new
   credential's id and metadata.
-- **Using a credential.** The agent calls `fill_credential(credentialId, field, target)`, e.g.
-  a browser element uid. This is an action like any other: the guard checks it (payment
-  cards are *never alone*), and it always becomes a held approval with context (which site,
-  what for, which credential, the agent's reason). **Yes** requires biometric/device auth; the
-  phone opens the secret in the Keystore and returns it over the authenticated channel for
-  that one approved use. The backend passes it straight to the browser's fill tool, never to
-  the model or the journal, and drops it from memory.
-- **Scrubbing.** Every value released for a run is registered with that run's scrubber, which
-  replaces it (and common variants: spaces/dashes in card numbers, URL-encoded) with
-  `[credential:<name>.<field>]` in tool results, snapshots, errors and logs before anything
+- **Using a credential.** The agent never sees a secret. It writes placeholders such as
+  `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g. "type
+  `[secret:bank_login_password]` into uid e12". The backend's browser tool wrapper finds the
+  placeholders, checks there is a live **grant**, substitutes the values, and calls the browser
+  MCP; the model's tool call, the journal and logs only ever hold the placeholder.
+  A grant is created by an approval: the first placeholder for a credential on a site makes a
+  held approval with context (which site, what for, which credential, the agent's reason; the
+  guard still applies, payment cards are *never alone* so they always ask). **Yes** requires
+  biometric/device auth; the phone opens the secret in the Keystore and returns it over the
+  authenticated channel. The grant covers **that credential on that site (registrable domain)
+  for 5 minutes**, so the agent can click through a multi-step login or checkout; values are
+  held only in backend memory for the grant's lifetime, then dropped. A placeholder for another
+  site, another credential, or after expiry asks again.
+- **Scrubbing.** Every value released under a grant is registered with that run's scrubber, which
+  replaces it (and common variants: spaces/dashes in card numbers, URL-encoded) with its
+  placeholder `[secret:<name>_<field>]` in tool results, snapshots, errors and logs before anything
   reaches the model or the database. Screenshots are refused while a filled secret field is on
   the page.
 
