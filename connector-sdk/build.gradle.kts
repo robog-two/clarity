@@ -8,7 +8,8 @@ dependencies {
     api(libs.kotlinx.coroutines.core)
     implementation(libs.bundles.ktor.client)
     implementation(libs.ktor.client.cio)
-    implementation(libs.kotlin.logging)
+    api(libs.kotlin.logging)
+    api(libs.arrow.core)
 
     testImplementation(libs.ktor.client.mock)
 }
