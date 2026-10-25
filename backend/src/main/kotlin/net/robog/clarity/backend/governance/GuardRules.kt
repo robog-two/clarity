@@ -17,6 +17,20 @@ val HARD_LINE_KINDS: Set<ActionKind> = setOf(ActionKind.PAYMENT)
 /** Human spelling of a kind for rationales, e.g. "send email". */
 fun ActionKind.label(): String = wire().replace('_', ' ')
 
+private val PAYMENT_WORDS = Regex(
+    "\\b(pay|pays|paid|paying|payment|payments|purchase|purchases|purchasing|buy|buying|checkout|check out|place order|" +
+        "transfer funds|transfer money|wire transfer|donate|donation|subscribe|subscription|credit card|billing)\\b",
+    RegexOption.IGNORE_CASE,
+)
+
+/**
+ * The kind the guard reasons about. There is no typed "payment" action; money moves through
+ * generic tools (a browser form, a third-party MCP server), so an external tool whose name, input
+ * or summary talks about paying or buying is a [ActionKind.PAYMENT].
+ */
+fun effectiveKind(action: ProposedAction): ActionKind =
+    if (action is ProposedAction.ExternalTool && PAYMENT_WORDS.containsMatchIn(textOf(action).replace('_', ' ').replace('-', ' '))) ActionKind.PAYMENT else action.kind
+
 /** The tier that applies to [kind]: fixed never-alone kinds first, then the person's setting, else "ask first". */
 fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier = when {
     kind in Constitution.ALWAYS_NEVER_ALONE -> AutonomyTier.NEVER_ALONE
@@ -77,12 +91,13 @@ fun deterministicVerdict(
     zone: TimeZone = TimeZone.UTC,
 ): GuardVerdict {
     val findings = ArrayList<Finding>()
-    val kindName = action.kind.label()
+    val kind = effectiveKind(action)
+    val kindName = kind.label()
 
-    if (action.kind in HARD_LINE_KINDS) {
+    if (kind in HARD_LINE_KINDS) {
         findings += Finding(Decision.DENY, "it would move money, which is a line I never cross")
     }
-    when (tierOf(action.kind, constitution)) {
+    when (tierOf(kind, constitution)) {
         AutonomyTier.NEVER_ALONE -> findings += Finding(Decision.ASK, "you said \"$kindName\" is never done alone")
         AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, "you want to be asked before I do \"$kindName\"")
         AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you let me do \"$kindName\" and tell you after")
@@ -146,7 +161,7 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (action.kind in HARD_LINE_KINDS) return "\"${action.kind.label()}\" is a hard line; change the line first"
+    if (effectiveKind(action) in HARD_LINE_KINDS) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
         return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"
