@@ -29,7 +29,6 @@ angus-mail = "2.0.5"
 dav4jvm = "5.0.0"           # JitPack (com.github.bitfireAT only)
 ical4j = "4.4.0"
 ez-vcard = "0.12.2"
-tink = "1.24.0"
 pdfbox = "3.0.8"
 jsoup = "1.23.2"
 greenmail = "2.1.15"

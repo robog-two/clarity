@@ -27,6 +27,12 @@ class SealingTest : FunSpec({
         sealed.ciphertext shouldNotContain "hunter2"
     }
 
+    test("the app's JSON shape with a type tag is accepted") {
+        val sealed = TestSealer.seal(keys.publicKey, "mail", "password", "pw")
+        val raw = JsonObject(mapOf("type" to JsonPrimitive("sealed"), "algorithm" to JsonPrimitive(sealed.algorithm), "ciphertext" to JsonPrimitive(sealed.ciphertext)))
+        ConnectorConfig(1, JsonObject(mapOf("password" to raw))).secret("password", keys, "mail") shouldBe "pw"
+    }
+
     test("the public key is 32 raw bytes, base64url without padding") {
         Base64.getUrlDecoder().decode(keys.publicKey).size shouldBe 32
         keys.publicKey shouldNotContain "="

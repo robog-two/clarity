@@ -55,9 +55,9 @@ class SealingKeys private constructor(private val privateKey: ByteArray) {
                 HpkePrimitiveFactory.createKem(HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256),
                 HpkePrimitiveFactory.createKdf(HpkeParameters.KdfId.HKDF_SHA256),
                 HpkePrimitiveFactory.createAead(HpkeParameters.AeadId.AES_256_GCM),
-                (Sealing.INFO_PREFIX + connectorId).toByteArray(Charsets.UTF_8),
+                Sealing.info(connectorId, field).toByteArray(Charsets.UTF_8),
             )
-            String(context.open(ciphertext, field.toByteArray(Charsets.UTF_8)), Charsets.UTF_8)
+            String(context.open(ciphertext, ByteArray(0)), Charsets.UTF_8)
         } catch (e: GeneralSecurityException) {
             throw SealingException("could not open the sealed value for '$field' (sealed for another key, connector or field?)", e)
         }
@@ -103,7 +103,7 @@ fun ConnectorConfig.secret(name: String, keys: SealingKeys, connectorId: String)
     val raw = values[name] ?: return null
     if (raw is JsonPrimitive && raw.isString && raw.content.isEmpty()) return null
     val sealed = try {
-        ClarityJson.decodeFromJsonElement(SealedValue.serializer(), raw as? JsonObject ?: throw SealingException("'$name' is not sealed"))
+        ClarityJson.decodeFromJsonElement(SealedValue.serializer(), JsonObject((raw as? JsonObject ?: throw SealingException("'$name' is not sealed")) - "type"))
     } catch (e: kotlinx.serialization.SerializationException) {
         throw SealingException("'$name' is not a sealed value", e)
     }
