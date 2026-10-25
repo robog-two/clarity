@@ -346,8 +346,7 @@ visible on Today ("drafted", "held", "sent").
 
 The agent can log in and pay for things without ever seeing a password or card number.
 
-- **Credentials** (`credential` table): a name, a kind (login, payment card, identity, TOTP
-  seed, note), a site/purpose, non-secret metadata (username hint, card brand + last 4,
+- **Credentials** (`credential` table): a name, a kind (login, payment card, identity, note), a site/purpose, non-secret metadata (username hint, card brand + last 4,
   expiry month), and the secret fields as ciphertext only.
 - **Encryption at rest, key on the phone.** Each enrolled device has a vault key pair in the
   Android Keystore (P-256, `PURPOSE_AGREE_KEY`, StrongBox when available, user authentication
@@ -372,6 +371,9 @@ The agent can log in and pay for things without ever seeing a password or card n
   for 5 minutes**, so the agent can click through a multi-step login or checkout; values are
   held only in backend memory for the grant's lifetime, then dropped. A placeholder for another
   site, another credential, or after expiry asks again.
+- **Two-factor codes are not stored.** No TOTP seeds in the vault. When a site asks for a code,
+  the agent asks the person (a held item with context; they type the code into a one-field
+  form). Reading codes from SMS through the phone connector is a possible later addition.
 - **Scrubbing.** Every value released under a grant is registered with that run's scrubber, which
   replaces it (and common variants: spaces/dashes in card numbers, URL-encoded) with its
   placeholder `[secret:<name>_<field>]` in tool results, snapshots, errors and logs before anything
