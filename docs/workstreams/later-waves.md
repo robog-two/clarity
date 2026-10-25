@@ -13,6 +13,9 @@ via `remember_fact` → proposed into constitution profile, journal, scratch wit
 replacing the periodic review job; idle compaction while the cache is warm; prompts
 (persona, cheapest-first ladder, untrusted-data rule); external domain tools calling `ActionGate`;
 large tool results to the sandbox workspace.
+Harness follow-ups from wave 1: provide the Postgres `RunJournal`; build `RunRequest`s from
+`AgentConfig.roles` (model, effort, maxTokens, `CachePolicy(ttl)`, `CompactionConfig`); remove the
+old `REQUIRE_APPROVAL` / `ApprovalRequired` path once external tools go through `ActionGate`.
 
 ## `connectors` (wave 2)
 Noun `document` (payload, normalize, dedup keys, tables, reader, domain tools);
