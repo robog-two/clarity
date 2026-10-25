@@ -12,6 +12,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.json.Json
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AppConfig
+import net.robog.clarity.backend.governance.ActionGate
+import net.robog.clarity.backend.governance.ActionResults
+import net.robog.clarity.backend.governance.GovernanceEvents
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.ServerPlugins
 import net.robog.clarity.backend.lifecycle.BackgroundService
@@ -34,6 +37,11 @@ interface AppGraph {
     val httpModules: Set<HttpModule>
     val startupTasks: Set<StartupTask>
     val backgroundServices: Set<BackgroundService>
+
+    // Governance entry points for consumers outside the graph's own classes (the lead, tests).
+    val actionGate: ActionGate
+    val governanceEvents: GovernanceEvents
+    val actionResults: ActionResults
 
     /** Root scope for background work; cancelled on shutdown. Also injectable as [CoroutineScope]. */
     val applicationScope: CoroutineScope
