@@ -10,6 +10,7 @@ application {
 dependencies {
     implementation(projects.connectorSdk)
     implementation(libs.angus.mail)
+    implementation(libs.jsoup)
 
     testImplementation(libs.greenmail)
 }
