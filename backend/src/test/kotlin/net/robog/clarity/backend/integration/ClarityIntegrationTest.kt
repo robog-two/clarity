@@ -57,6 +57,7 @@ import net.robog.clarity.shared.query.TriggerSpec
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.DeviceId
+import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.api.EnrollmentRequest
 import net.robog.clarity.shared.api.EnrollmentResponse
@@ -70,7 +71,10 @@ import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.ingest.IngestResponse
 import net.robog.clarity.shared.ingest.RecordOutcome
+import net.robog.clarity.shared.connector.ConnectorTestReport
+import net.robog.clarity.shared.connector.ConnectorTestRequest
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Noun
@@ -323,6 +327,91 @@ class ClarityIntegrationTest : FunSpec({
                 setBody(IngestBatch(listOf(upsert("sms-1", "2", message("From the phone")))))
             }.body<IngestResponse>().results.single().outcome
             granted.shouldBeInstanceOf<RecordOutcome.Created>()
+        }
+    }
+
+    test("documents are ingested, deduplicated by store and path, and searchable; connector tests round-trip") {
+        val graph = createGraphFactory<AppGraph.Factory>().create(config())
+        testApplication {
+            application { clarity(graph) }
+            val client = jsonClient()
+            val device = TestDevice()
+            // the first test enrolled a device already (TOFU), so this one needs the enrollment token
+            val token = config().dataDir.resolve("enrollment-token").readText().trim()
+            val deviceId = client.post("/api/v1/enroll") {
+                contentType(ContentType.Application.Json)
+                setBody(EnrollmentRequest(device.spkiBase64Url, "Tablet", token))
+            }.also { it.status shouldBe HttpStatusCode.OK }.body<EnrollmentResponse>().deviceId.value
+            val appAuth = "Bearer " + device.withId(deviceId).token(Clock.System.now())
+
+            val manifest = ConnectorManifest(kind = "files", displayName = "Files", version = "1", produces = setOf(Noun.DOCUMENT))
+            client.put("/ingest/v1/manifest") {
+                header(HttpHeaders.Authorization, "Bearer $keyA")
+                contentType(ContentType.Application.Json)
+                setBody(manifest)
+            }.status shouldBe HttpStatusCode.NoContent
+
+            suspend fun push(vararg records: IngestRecord): List<RecordOutcome> =
+                client.post("/ingest/v1/batches") {
+                    header(HttpHeaders.Authorization, "Bearer $keyA")
+                    contentType(ContentType.Application.Json)
+                    setBody(IngestBatch(records.toList()))
+                }.also { it.status shouldBe HttpStatusCode.OK }.body<IngestResponse>().results.map { it.outcome }
+
+            fun doc(path: String, excerpt: String) = DocumentPayload(
+                store = "webdav:https://cloud.example/dav", path = path, title = path.substringAfterLast('/'),
+                mimeType = "text/markdown", size = 42, modifiedAt = sent, excerpt = excerpt,
+            )
+
+            val created = push(upsert("/Notes/plan.md", "etag1", doc("/Notes/plan.md", "Quarterly roadmap and hiring plan")))
+                .single().shouldBeInstanceOf<RecordOutcome.Created>()
+            // same file reported with a messy path and a newer version merges into the same entity
+            push(upsert("/Notes//plan.md", "etag2", doc("Notes//plan.md/", "Quarterly roadmap, hiring plan and budget")))
+                .single().shouldBeInstanceOf<RecordOutcome.Merged>().entityId shouldBe created.entityId
+            push(upsert("/Notes/other.txt", "e1", doc("/Notes/other.txt", "Grocery list"))).single()
+                .shouldBeInstanceOf<RecordOutcome.Created>()
+
+            val db = Database.connect(graph.dataSource)
+            val reader = ExposedNounReader(db)
+            val hits = reader.searchDocuments("quarterly budg")
+            hits.map { it.payload.path } shouldBe listOf("/Notes/plan.md")
+            reader.searchDocuments("roadmap").single().id shouldBe EntityId(created.entityId.value)
+            reader.searchDocuments("zebra") shouldBe emptyList()
+            reader.searchDocuments("!!!") shouldBe emptyList()
+            reader.document(EntityId(created.entityId.value))!!.payload.excerpt shouldContain "budget"
+            reader.document(EntityId("not-a-uuid")) shouldBe null
+
+            push(IngestRecord.Tombstone(SourceId("/Notes/other.txt"), "e2", Clock.System.now(), Noun.DOCUMENT))
+                .single() shouldBe RecordOutcome.Removed
+            reader.searchDocuments("grocery") shouldBe emptyList()
+
+            // --- connection test round trip
+            suspend fun pending(): HttpResponse = client.get("/ingest/v1/test") { header(HttpHeaders.Authorization, "Bearer $keyA") }
+            pending().status shouldBe HttpStatusCode.NoContent
+            client.post("/api/v1/connectors/nope/test") { header(HttpHeaders.Authorization, appAuth) }.status shouldBe HttpStatusCode.NotFound
+            val asked = client.post("/api/v1/connectors/a/test") { header(HttpHeaders.Authorization, appAuth) }
+            asked.status shouldBe HttpStatusCode.Accepted
+            val request = asked.body<ConnectorTestRequest>()
+            pending().body<ConnectorTestRequest>().requestId shouldBe request.requestId
+            // a stale report is refused, the right one is accepted and clears the request
+            client.post("/ingest/v1/test") {
+                header(HttpHeaders.Authorization, "Bearer $keyA")
+                contentType(ContentType.Application.Json)
+                setBody(ConnectorTestReport("stale", true, "old", emptyMap(), Clock.System.now()))
+            }.status shouldBe HttpStatusCode.Conflict
+            client.post("/ingest/v1/test") {
+                header(HttpHeaders.Authorization, "Bearer $keyA")
+                contentType(ContentType.Application.Json)
+                setBody(ConnectorTestReport(request.requestId, true, "Connected, 2 calendars", mapOf("calendars" to 2), Clock.System.now()))
+            }.status shouldBe HttpStatusCode.NoContent
+            pending().status shouldBe HttpStatusCode.NoContent
+            val listed = client.get("/api/v1/connectors") { header(HttpHeaders.Authorization, appAuth) }.body<List<ConnectorSummary>>()
+            listed.first { it.id.value == "a" }.lastTest!!.run {
+                ok shouldBe true
+                message shouldBe "Connected, 2 calendars"
+                counts shouldBe mapOf("calendars" to 2)
+            }
+            listed.first { it.id.value == "b" }.lastTest shouldBe null
         }
     }
 })

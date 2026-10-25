@@ -27,6 +27,8 @@ object ApiPaths {
 
     // Connector API (under INGEST)
     const val ACTIONS = "$INGEST/actions"
+    /** `GET`: the connector's pending connection test (204 when none). `POST`: its report. */
+    const val TEST = "$INGEST/test"
     const val READY = "/readyz"
 }
 
