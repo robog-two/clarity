@@ -7,14 +7,19 @@ import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import io.github.oshai.kotlinlogging.KotlinLogging
 import net.robog.clarity.connector.sdk.StateStore
 import net.robog.clarity.connector.sdk.SyncScope
+import net.robog.clarity.connector.sdk.actionHandlers
 import net.robog.clarity.connector.sdk.getAs
 import net.robog.clarity.connector.sdk.putAs
 import net.robog.clarity.connector.sdk.runConnector
 import net.robog.clarity.shared.SourceId
+import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.governance.ActionKind
+import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
@@ -26,7 +31,9 @@ import net.robog.clarity.shared.noun.Noun
  * A connector is three things:
  *  1. a [manifest]: who you are, which nouns you produce, a JSON Schema for your settings form;
  *  2. a pure function from (config, source data) to [IngestRecord]s; here [sampleRecords];
- *  3. a sync block that reads config, talks to the source, pushes, and stores a cursor.
+ *  3. a sync block that reads config, talks to the source, pushes, and stores a cursor;
+ *  4. optionally, handlers for the actions the agent may ask this connector to execute
+ *     (declared in `manifest.handles`, registered with `actionHandlers { on<T> { ... } }`).
  *
  * Everything else (registration, config polling, retries, batching, shutdown) is the SDK's job.
  */
@@ -37,6 +44,7 @@ val manifest = ConnectorManifest(
     displayName = "Example connector",
     version = "0.1.0",
     produces = setOf(Noun.MESSAGE),
+    handles = setOf(ActionKind.CREATE_REMINDER),
     configSchema = buildJsonObject {
         put("type", "object")
         putJsonObject("properties") {
@@ -93,4 +101,19 @@ suspend fun SyncScope.syncOnce(config: ConnectorConfig) {
 /** Last cursor written by [syncOnce], if any. */
 suspend fun StateStore.lastCursor(): String? = getAs<String>(CURSOR_KEY)
 
-suspend fun main() = runConnector(manifest) { config -> syncOnce(config) }
+private val actionLog = KotlinLogging.logger("example.actions")
+
+/**
+ * Executes a `create_reminder` action by logging it. A real connector would call its upstream here
+ * and use `action.idempotencyKey` to make that call idempotent; the SDK additionally never runs
+ * the same key twice once it has returned `Done`.
+ */
+fun handleReminder(action: ProposedAction.CreateReminder): ActionOutcome {
+    actionLog.info { "reminder for ${action.at}: ${action.text}" }
+    return ActionOutcome.Done(SourceId("example-reminder-${action.idempotencyKey}"))
+}
+
+/** The actions this connector handles; must match [ConnectorManifest.handles]. */
+val actions = actionHandlers { on<ProposedAction.CreateReminder> { handleReminder(it) } }
+
+suspend fun main() = runConnector(manifest, actions = actions) { config -> syncOnce(config) }

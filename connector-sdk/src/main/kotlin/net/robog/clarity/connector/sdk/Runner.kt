@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -54,6 +55,10 @@ interface SyncScope {
  * A failing sync run is logged and retried on the next tick. SIGTERM/SIGINT cancel the loop
  * gracefully: an in-flight HTTP request completes, then this function returns.
  *
+ * If [actions] has handlers, an action loop runs beside the sync loop: it long-polls the backend
+ * for actions addressed to this connector (see `ConnectorManifest.handles`), executes them and
+ * reports results. Executed idempotency keys are remembered in the connector's state.
+ *
  * ```kotlin
  * suspend fun main() = runConnector(manifest) { config -> push(records) }
  * ```
@@ -61,24 +66,36 @@ interface SyncScope {
 suspend fun runConnector(
     manifest: ConnectorManifest,
     settings: ConnectorSettings = ConnectorSettings.fromEnv(),
+    actions: ActionHandlers = ActionHandlers.None,
     sync: suspend SyncScope.(config: ConnectorConfig) -> Unit,
 ) {
     log.info { "starting connector ${manifest.kind} ${manifest.version} against ${settings.baseUrl}" }
     val http = clarityHttpClient(settings)
     try {
         coroutineScope {
+            val client = ClarityClient(http)
+            val state = FileStateStore(settings.stateDir)
             val loop = launch {
-                runLoop(ClarityClient(http), FileStateStore(settings.stateDir), manifest, settings.syncInterval, sync)
+                runLoop(client, state, manifest, settings.syncInterval, sync)
+            }
+            val actionLoop = if (actions.isEmpty) null else {
+                if (actions.kinds != manifest.handles) {
+                    log.warn { "manifest handles ${manifest.handles} but handlers cover ${actions.kinds}; the backend routes by the manifest" }
+                }
+                // a child of this scope: it ends with the sync loop when the scope is cancelled
+                launch { runActionLoop(client, state, actions) }
             }
             // The JVM runs shutdown hooks on SIGTERM and then halts; block the hook until the loop has wound down.
             val hook = Thread({
                 log.info { "shutdown requested" }
                 loop.cancel()
-                runBlocking { loop.join() }
+                actionLoop?.cancel()
+                runBlocking { loop.join(); actionLoop?.join() }
             }, "connector-shutdown")
             Runtime.getRuntime().addShutdownHook(hook)
             try {
                 loop.join()
+                actionLoop?.cancelAndJoin()
             } finally {
                 try { Runtime.getRuntime().removeShutdownHook(hook) } catch (_: IllegalStateException) { /* already shutting down */ }
             }

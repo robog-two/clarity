@@ -9,10 +9,15 @@ import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlin.time.Instant
 import net.robog.clarity.connector.sdk.ClientError
 import net.robog.clarity.connector.sdk.InMemoryStateStore
 import net.robog.clarity.connector.sdk.SyncScope
+import net.robog.clarity.shared.SourceId
+import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.connector.ConnectorConfig
+import net.robog.clarity.shared.governance.ActionKind
+import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.ingest.RecordResult
 
@@ -48,6 +53,16 @@ class ExampleConnectorTest : FunSpec({
             scope.pushed[0] shouldHaveSize 1
             scope.state.lastCursor() shouldBe SAMPLE_SOURCE_VERSION
         }
+    }
+
+    test("handles create_reminder by returning Done with a ref derived from the idempotency key") {
+        val action = ProposedAction.CreateReminder("key-1", "remind", "call mum", Instant.parse("2026-03-04T12:00:00Z"))
+        handleReminder(action) shouldBe ActionOutcome.Done(SourceId("example-reminder-key-1"))
+    }
+
+    test("the manifest's handles match the registered handlers") {
+        manifest.handles shouldBe setOf(ActionKind.CREATE_REMINDER)
+        actions.kinds shouldBe manifest.handles
     }
 
     test("manifest declares the message noun and the emitSample setting") {
