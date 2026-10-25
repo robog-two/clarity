@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+permissions:
+  contents: read
+
+# Superseded PR runs are cancelled; pushes to dev/main always run to completion.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  jvm:
+    name: JVM build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew build --no-daemon --console=plain
+
+  android:
+    name: Android build, lint and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Ensure Android platform 37.0 (compileSdk 37, minor 0)
+        run: |
+          set -eu
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "$sdk/platforms/android-37.0" ]; then
+            yes | "$sdkmanager" --licenses >/dev/null || true
+            "$sdkmanager" "platforms;android-37.0"
+          fi
+      - name: Build, lint, test
+        working-directory: android
+        run: ./gradlew assembleDebug testDebugUnitTest lintDebug --no-daemon --console=plain
+      - uses: actions/upload-artifact@v7
+        with:
+          name: clarity-debug-apk
+          path: android/**/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  containers:
+    name: Image build (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { service: backend, module: backend, app: clarity-backend, dir: backend }
+          - { service: connector-example, module: "connectors:example", app: clarity-connector-example, dir: connectors/example }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build (no push, linux/amd64)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/container/jvm-app.Containerfile
+          platforms: linux/amd64
+          push: false
+          build-args: |
+            MODULE=${{ matrix.module }}
+            APP_NAME=${{ matrix.app }}
+            MODULE_DIR=${{ matrix.dir }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}

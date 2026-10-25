@@ -1,0 +1,13 @@
+# Keep the build context small and free of secrets. Mirrored in .dockerignore.
+.git
+.github
+.gradle
+.kotlin
+.idea
+**/build
+android
+deploy/secrets
+deploy/.env
+**/*.apk
+**/*.aab
+**/local.properties

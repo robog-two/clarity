@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directories: ["/", "/android"]
+    target-branch: dev
+    schedule: { interval: weekly }
+    groups:
+      gradle-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    target-branch: dev
+    schedule: { interval: weekly }
+    groups:
+      actions-minor-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: "/deploy/container"
+    target-branch: dev
+    schedule: { interval: weekly }
+    groups:
+      docker-minor-patch:
+        update-types: [minor, patch]
+
+  # Images referenced from the compose file (postgres, playwright-mcp).
+  - package-ecosystem: docker-compose
+    directory: "/deploy"
+    target-branch: dev
+    schedule: { interval: weekly }
+    groups:
+      compose-minor-patch:
+        update-types: [minor, patch]
