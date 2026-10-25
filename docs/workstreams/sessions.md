@@ -35,9 +35,9 @@ each produces, the call-ended setup list); and the code you build on: `agent/Lea
    Every transition publishes `FeedEvent.SessionChanged` and enqueues an `InboxItem.SessionEvent`
    whose text is the **playbook** for the new stage/question (static text per stage, see 4).
    Only one active session at a time; starting a new one ends the previous one.
-3. **Session tools for the lead** (loaded only while a session is active is NOT allowed, the
-   tool list must stay byte-stable: always loaded, and they return a clear error when no
-   matching session is active):
+3. **Session tools for the lead.** Always loaded (the tool list must stay byte-stable for the
+   cache, so never add/remove them per session); each returns a clear error when no matching
+   session is active:
    `capture(items)` (CLEAR: emits/updates a `Chips("captured · N")` card),
    `set_priorities(important, also?)` (CHOOSE: "today's two"), `set_plan(ifThens)` (COMMIT: `Plan`
    card), `hand_off(alone: [...], review: [...], parked: [...])` (HAND_OFF: creates `AgentTask`s,
