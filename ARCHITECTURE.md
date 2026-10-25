@@ -300,7 +300,9 @@ Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remembe
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls. External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
-plus every browser tool that submits forms.
+plus acting browser tools (click, type, fill, …), which pass a fast guard check with page
+context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
+network, no credentials).
 
 ## Governance
 

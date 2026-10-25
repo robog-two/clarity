@@ -53,6 +53,17 @@ the browser tool wrapper, 5-minute per-site grants created by held approvals, pe
 tool-result path; app Keystore vault key with per-use `BiometricPrompt`, the credential form card,
 and the approval screen's authenticated "yes".
 
+**Browser gate** (same wrapper as the placeholder substitution; today the lead runs every MCP
+tool with `ToolPolicy.AllowAll`): classify the browser MCP tools. Read-only (navigate, snapshot,
+screenshot, scroll, list/select page, wait) run freely. Acting tools (click, type, fill, select
+option, press key, upload, drag) carry the page URL and the target element's role/name from
+the last snapshot into a fast guard check (`triage` role, constitution + what the agent says it
+is doing): ordinary navigation clicks and form typing pass; anything that sends, submits,
+buys, books, deletes, accepts terms or changes account settings becomes a held action with
+context; payment pages are never alone. `evaluate_script` and other raw-script tools are hidden.
+Sandbox tools stay ungated (no network, no credentials). Then remove the unused
+`REQUIRE_APPROVAL`/`ApprovalRequired` path from the harness.
+
 ## `push-evals` (wave 3)
 Push over the SSE feed from a foreground service (see "Android app"); scenario evals over the scripted gateway
 (inbox pre-emption, guard tables, call happy path, held → amend, credential scrubbing); an end-to-end compose test;
