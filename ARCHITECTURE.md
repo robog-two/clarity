@@ -125,6 +125,7 @@ net.robog.clarity.harness   provider-agnostic-ish agent loop over the Anthropic 
 | `GET /healthz`, `GET /readyz` | none | liveness / readiness (DB reachable) |
 | `POST /api/v1/enroll` | enrollment token or TOFU | register a device public key |
 | `GET /api/v1/instance` | device | instance info + setup status |
+| `GET /api/v1/setup` | device | `SetupStatus` (model key, connectors ready, constitution, settings) |
 | `PUT /api/v1/setup/model-key` | device | store + validate the Anthropic API key |
 | `GET/PUT /api/v1/settings` | device | morning call schedule, notification preferences |
 | `GET /api/v1/connectors` | device | connector summaries (manifest, grants, last seen, sync status) |

@@ -8,12 +8,16 @@ package net.robog.clarity.shared.connector
  * Both sides use Google Tink's HPKE (pure Java, works on the JVM and Android).
  * - [ConnectorManifest.sealingKey]: the connector's raw 32-byte X25519 public key, base64url, no padding.
  *   The connector generates the key pair once and keeps the private key in its `/data` volume.
- * - info: `"$INFO_PREFIX<connectorId>"` (UTF-8), so a value sealed for one connector is useless to another.
- * - aad: the config field name (UTF-8), so values can't be swapped between fields.
+ * - info: [info] = `"$INFO_PREFIX<connectorId>:<field>"` (UTF-8), so a value sealed for one
+ *   connector or one config field cannot be opened for another. (No separate AEAD aad: Tink's
+ *   public HPKE API only takes `info`.)
  * - [SealedValue.ciphertext]: base64url (no padding) of `enc || ciphertext` (enc = 32 bytes).
  */
 object Sealing {
     const val ALGORITHM = "HPKE-Base-X25519-HKDF-SHA256-AES-256-GCM"
     const val INFO_PREFIX = "clarity-connector-config-v1:"
     const val ENC_LENGTH = 32
+
+    /** The HPKE `info` string for a value of config [field] sealed for [connectorId]. */
+    fun info(connectorId: String, field: String): String = "$INFO_PREFIX$connectorId:$field"
 }

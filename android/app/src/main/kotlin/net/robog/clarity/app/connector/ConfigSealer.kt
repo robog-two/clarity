@@ -18,17 +18,16 @@ interface ConfigSealer {
      * @param sealingKey the connector's `ConnectorManifest.sealingKey` (raw X25519 key, base64url).
      * @throws SealingException if the key is malformed.
      */
-    fun seal(connectorId: ConnectorId, sealingKey: String, plaintext: String): SealedValue
+    fun seal(connectorId: ConnectorId, field: String, sealingKey: String, plaintext: String): SealedValue
 }
 
 /**
  * HPKE base mode, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM through Google Tink.
  *
- * Tink's public `HybridEncrypt` API exposes the HPKE `info` but not the AEAD `aad`, so the field
- * name cannot be bound as `Sealing` describes; the value is bound to the connector through `info`.
+ * The value is bound to the connector and the config field through the HPKE `info` ([Sealing.info]).
  */
 class TinkConfigSealer : ConfigSealer {
-    override fun seal(connectorId: ConnectorId, sealingKey: String, plaintext: String): SealedValue {
+    override fun seal(connectorId: ConnectorId, field: String, sealingKey: String, plaintext: String): SealedValue {
         val raw = try {
             Base64.getUrlDecoder().decode(sealingKey)
         } catch (e: IllegalArgumentException) {
@@ -37,7 +36,7 @@ class TinkConfigSealer : ConfigSealer {
         if (raw.size != Sealing.ENC_LENGTH) throw SealingException("sealing key must be 32 bytes, got ${raw.size}")
         return try {
             val publicKey = HpkePublicKey.create(PARAMETERS, Bytes.copyFrom(raw), null)
-            val out = HpkeEncrypt.create(publicKey).encrypt(plaintext.toByteArray(Charsets.UTF_8), info(connectorId))
+            val out = HpkeEncrypt.create(publicKey).encrypt(plaintext.toByteArray(Charsets.UTF_8), info(connectorId, field))
             SealedValue(Sealing.ALGORITHM, Base64.getUrlEncoder().withoutPadding().encodeToString(out))
         } catch (e: java.security.GeneralSecurityException) {
             throw SealingException("could not seal value", e)
@@ -45,8 +44,8 @@ class TinkConfigSealer : ConfigSealer {
     }
 
     companion object {
-        /** HPKE `info`: `"clarity-connector-config-v1:<connectorId>"` (UTF-8). */
-        fun info(connectorId: ConnectorId): ByteArray = "${Sealing.INFO_PREFIX}$connectorId".toByteArray(Charsets.UTF_8)
+        /** HPKE `info` per [Sealing.info] (UTF-8). */
+        fun info(connectorId: ConnectorId, field: String): ByteArray = Sealing.info(connectorId.value, field).toByteArray(Charsets.UTF_8)
 
         val PARAMETERS: HpkeParameters = HpkeParameters.builder()
             .setKemId(HpkeParameters.KemId.DHKEM_X25519_HKDF_SHA256)

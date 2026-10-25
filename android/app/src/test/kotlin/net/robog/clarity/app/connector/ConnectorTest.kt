@@ -149,14 +149,14 @@ class SealingTest {
     }
 
     @Test fun sealedValueOpensWithTheConnectorsPrivateKey() {
-        val sealed = TinkConfigSealer().seal(connector, sealingKey, "correct-horse-staple")
+        val sealed = TinkConfigSealer().seal(connector, "password", sealingKey, "correct-horse-staple")
         assertEquals(Sealing.ALGORITHM, sealed.algorithm)
         assertTrue(!sealed.ciphertext.contains('=') && !sealed.ciphertext.contains('+') && !sealed.ciphertext.contains('/'))
-        assertEquals("correct-horse-staple", open(sealed, TinkConfigSealer.info(connector)))
+        assertEquals("correct-horse-staple", open(sealed, TinkConfigSealer.info(connector, "password")))
     }
 
     @Test fun layoutIsEncapsulatedKeyThenCiphertext() {
-        val sealed = TinkConfigSealer().seal(connector, sealingKey, "pw")
+        val sealed = TinkConfigSealer().seal(connector, "password", sealingKey, "pw")
         val raw = Base64.getUrlDecoder().decode(sealed.ciphertext)
         // enc (32) + AES-GCM ciphertext (2 bytes) + tag (16)
         assertEquals(Sealing.ENC_LENGTH + 2 + 16, raw.size)
@@ -164,21 +164,26 @@ class SealingTest {
 
     @Test fun sealingTwiceGivesDifferentCiphertexts() {
         val sealer = TinkConfigSealer()
-        assertTrue(sealer.seal(connector, sealingKey, "pw").ciphertext != sealer.seal(connector, sealingKey, "pw").ciphertext)
+        assertTrue(sealer.seal(connector, "password", sealingKey, "pw").ciphertext != sealer.seal(connector, "password", sealingKey, "pw").ciphertext)
     }
 
     @Test fun aValueSealedForOneConnectorDoesNotOpenForAnother() {
-        val sealed = TinkConfigSealer().seal(connector, sealingKey, "pw")
-        assertFailsWith<java.security.GeneralSecurityException> { open(sealed, TinkConfigSealer.info(ConnectorId("dav-personal"))) }
+        val sealed = TinkConfigSealer().seal(connector, "password", sealingKey, "pw")
+        assertFailsWith<java.security.GeneralSecurityException> { open(sealed, TinkConfigSealer.info(ConnectorId("dav-personal"), "password")) }
     }
 
     @Test fun infoFollowsTheSharedScheme() {
-        assertEquals("clarity-connector-config-v1:imap-personal", String(TinkConfigSealer.info(connector)))
+        assertEquals("clarity-connector-config-v1:imap-personal:password", String(TinkConfigSealer.info(connector, "password")))
+    }
+
+    @Test fun aValueSealedForOneFieldDoesNotOpenForAnother() {
+        val sealed = TinkConfigSealer().seal(connector, "password", sealingKey, "pw")
+        assertFailsWith<java.security.GeneralSecurityException> { open(sealed, TinkConfigSealer.info(connector, "username")) }
     }
 
     @Test fun malformedKeysAreRejected() {
         val sealer = TinkConfigSealer()
-        assertFailsWith<SealingException> { sealer.seal(connector, "not base64 !!", "pw") }
-        assertFailsWith<SealingException> { sealer.seal(connector, Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(16)), "pw") }
+        assertFailsWith<SealingException> { sealer.seal(connector, "password", "not base64 !!", "pw") }
+        assertFailsWith<SealingException> { sealer.seal(connector, "password", Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(16)), "pw") }
     }
 }

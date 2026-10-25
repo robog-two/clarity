@@ -177,4 +177,4 @@ private fun JsonObject?.orEmpty(): JsonObject = this ?: JsonObject(emptyMap())
 
 /** Builds the secret-sealing callback for [ConfigForm.toConfigValues]. */
 fun sealerFor(sealer: ConfigSealer, connectorId: ConnectorId, sealingKey: String): (FormField, String) -> SealedValue =
-    { _, plaintext -> sealer.seal(connectorId, sealingKey, plaintext) }
+    { field, plaintext -> sealer.seal(connectorId, field.key, sealingKey, plaintext) }
