@@ -3,7 +3,7 @@
 #   ./deploy/init-secrets.sh
 #   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + caddy (TLS)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
-#   podman compose -f deploy/compose.yaml --profile browser up -d    # + Playwright MCP browser
+#   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
 #
 # Settings come from deploy/.env (copy .env.example; pass --env-file deploy/.env).
 name: clarity
@@ -72,7 +72,8 @@ services:
       CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-claude-opus-5-5}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
-      # e.g. browser=http://browser:8931/mcp  (when running the `browser` profile)
+      # With the `computers` profile:
+      #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}
     # The backend registers every /run/secrets/connector_<id>_key as a provisioned connector,
     # so each connector's key secret is mounted here AND into that connector.
@@ -80,6 +81,8 @@ services:
       - postgres_password
       - anthropic_api_key
       - connector_example_key
+      - sandbox_key      # bearer keys for the `computers` profile (CLARITY_MCP_SERVERS keyFile=...)
+      - browser_key
     volumes:
       - backend-data:/data
     depends_on:
@@ -153,25 +156,70 @@ services:
     mem_limit: 256m
     cpus: 0.5
 
+  sandbox:
+    <<: *hardened
+    profiles: [computers]
+    # sandboxd: the agent's Linux workspace as an MCP server (computers/sandbox). Only on the
+    # internal `tools` network: no route to the internet, to Postgres or to the connectors.
+    image: ghcr.io/robog-two/clarity-sandbox:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/sandbox.Containerfile
+    user: "10001:10001"
+    environment:
+      SANDBOX_PORT: "8940"
+      SANDBOX_WORKSPACE: /workspace
+      SANDBOX_KEY_FILE: /run/secrets/sandbox_key
+    secrets:
+      - sandbox_key
+    volumes:
+      - sandbox-workspace:/workspace   # the only thing that persists; the container is disposable
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8940 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ok <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    networks: [tools]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
+
   browser:
     <<: *hardened
-    profiles: [browser]
-    # Playwright MCP, headless Chromium, streamable HTTP on :8931 (see microsoft/playwright-mcp README).
-    image: mcr.microsoft.com/playwright/mcp:${CLARITY_BROWSER_TAG:-latest}
-    entrypoint: ["node"]
-    command:
-      - /app/cli.js
-      - --headless
-      - --browser=chromium
-      - --isolated            # profile in memory only
-      - --no-sandbox          # no user namespaces inside the (already unprivileged) container
-      - --host=0.0.0.0
-      - --port=8931
-      - --allowed-hosts=browser:8931   # the Host header the backend sends
+    profiles: [computers]
+    # Headless Firefox ESR + uBlock Origin + Privacy Badger, driven by Mozilla's Firefox DevTools
+    # MCP server, served as streamable HTTP on :8931/mcp (computers/browser). It can reach the
+    # internet through its own egress network and the backend through `tools`, nothing else.
+    image: ghcr.io/robog-two/clarity-browser:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/browser.Containerfile
+    user: "10001:10001"
+    # Firefox's own content sandbox chroots; this one capability (inside the container's user
+    # namespace) keeps it enabled instead of disabling the sandbox.
+    cap_add: [SYS_CHROOT]
+    environment:
+      BROWSER_PORT: "8931"
+      BROWSER_KEY_FILE: /run/secrets/browser_key
+      # Uncomment (and add a volume) to keep cookies and logins between restarts:
+      # BROWSER_PROFILE_DIR: /profile
+    secrets:
+      - browser_key
+    # Profile, HOME and downloads live on tmpfs, so every start is a clean browser.
+    tmpfs:
+      - /tmp:rw,nosuid,size=768m
     shm_size: 512m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
     networks: [tools, browser-egress]
-    mem_limit: 2g
+    mem_limit: 1536m
     cpus: 2.0
+    pids_limit: 1024
 
 networks:
   # Internal networks have no route off the host, which is the point:
@@ -193,6 +241,10 @@ secrets:
     external: true
   connector_example_key:
     external: true
+  sandbox_key:
+    external: true
+  browser_key:
+    external: true
 
 volumes:
   pgdata:
@@ -200,3 +252,4 @@ volumes:
   caddy-data:
   caddy-config:
   connector-example-data:
+  sandbox-workspace:
