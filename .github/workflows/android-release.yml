@@ -1,0 +1,84 @@
+name: Android release
+
+# Every push to main publishes a signed APK as a GitHub Release (v0.1.<run number>),
+# alongside the container images from publish.yml.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create releases and tags
+
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      VERSION_NAME: 0.1.${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Ensure Android platform 37.0
+        run: |
+          set -eu
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          if [ ! -d "$sdk/platforms/android-37.0" ]; then
+            yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+            "$sdk/cmdline-tools/latest/bin/sdkmanager" "platforms;android-37.0"
+          fi
+
+      # The keystore exists only as a repository secret; it is written to the runner's temp
+      # directory for this job and never uploaded anywhere else.
+      - name: Restore signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -eu
+          [ -n "$KEYSTORE_BASE64" ] || { echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          echo "CLARITY_SIGNING_STORE_FILE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+
+      - name: Build signed release APK
+        working-directory: android
+        env:
+          CLARITY_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          CLARITY_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          CLARITY_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: >
+          ./gradlew assembleRelease --no-daemon --console=plain
+          -Pclarity.versionCode="$VERSION_CODE" -Pclarity.versionName="$VERSION_NAME"
+
+      - name: Verify signature and prepare assets
+        run: |
+          set -eu
+          apksigner="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner"
+          src=android/app/build/outputs/apk/release/app-release.apk
+          out="clarity-$VERSION_NAME.apk"
+          "$apksigner" verify --print-certs "$src"
+          cp "$src" "$out"
+          sha256sum "$out" > "$out.sha256"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION_NAME" \
+            "clarity-$VERSION_NAME.apk" "clarity-$VERSION_NAME.apk.sha256" \
+            --target "$GITHUB_SHA" \
+            --title "Clarity $VERSION_NAME" \
+            --generate-notes
+
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.p12"

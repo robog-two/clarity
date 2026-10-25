@@ -18,13 +18,28 @@ android {
         applicationId = "net.robog.clarity"
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        versionCode = 1
-        versionName = "0.1.0"
+        // CI passes -Pclarity.versionCode=<run number> -Pclarity.versionName=0.1.<run number>.
+        versionCode = providers.gradleProperty("clarity.versionCode").map(String::toInt).getOrElse(1)
+        versionName = providers.gradleProperty("clarity.versionName").getOrElse("0.1.0-dev")
+    }
+
+    // Release signing comes only from the environment (GitHub Actions secrets). The keystore
+    // is never committed or kept on developer machines; without these vars, release builds
+    // are simply unsigned.
+    val releaseSigning = providers.environmentVariable("CLARITY_SIGNING_STORE_FILE").orNull?.let { storePath ->
+        signingConfigs.create("release") {
+            storeFile = file(storePath)
+            storeType = "PKCS12"
+            storePassword = providers.environmentVariable("CLARITY_SIGNING_STORE_PASSWORD").get()
+            keyAlias = providers.environmentVariable("CLARITY_SIGNING_KEY_ALIAS").get()
+            keyPassword = providers.environmentVariable("CLARITY_SIGNING_KEY_PASSWORD").get()
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false // TODO: enable R8 with keep rules once the app has real features
+            signingConfig = releaseSigning
         }
     }
 
