@@ -1,6 +1,6 @@
 # Deploying Clarity
 
-One person, one stack: Postgres, the backend, optional connectors and an optional browser tool,
+One person, one stack: Postgres, the backend, optional connectors and the agent's optional computers (sandbox and browser),
 wired with least-privilege networks and Podman secrets. Rootless Podman is the reference runtime.
 
 ## Quick start
@@ -22,7 +22,50 @@ use `up -d --build` (the `build:` sections use `deploy/container/jvm-app.Contain
 |---|---|---|
 | (none) | `postgres`, `backend`, `caddy` (TLS) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
-| `browser` | `browser` (Playwright MCP, headless Chromium) | `--profile browser`, and set `CLARITY_MCP_SERVERS=browser=http://browser:8931/mcp` |
+| `computers` | `sandbox` (Linux workspace) and `browser` (Firefox), the agent's tools | `--profile computers`, and set `CLARITY_MCP_SERVERS` (see below) |
+
+## The agent's computers (`--profile computers`)
+
+Two MCP servers on the internal `tools` network that the backend connects to:
+
+| Service | What it is | Reaches | Persists |
+|---|---|---|---|
+| `sandbox` | `sandboxd` (Kotlin): `shell`, `read_file`, `write_file`, `edit_file`, `search_files`, `list_files` in a Linux workspace (bash, coreutils, ripgrep, jq, git, python3, pandoc, poppler-utils, sqlite3) | nothing: `tools` only, no internet | the `sandbox-workspace` volume (`/workspace`) |
+| `browser` | Headless Firefox ESR with uBlock Origin and Privacy Badger, driven by Mozilla's Firefox DevTools MCP server (snapshots with element uids, clicks, typing, screenshots) | the internet, through its own `browser-egress` network, and the backend through `tools`; no database, connectors or sandbox | nothing: the profile is rebuilt on tmpfs at every start |
+
+Setup:
+
+```sh
+./deploy/init-secrets.sh        # also creates the sandbox_key and browser_key bearer keys
+# deploy/.env:
+CLARITY_MCP_SERVERS=sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
+podman compose --env-file deploy/.env -f deploy/compose.yaml --profile computers up -d
+```
+
+Each entry is `name=url[;keyFile=/path]`: the backend reads the key file and sends it as `Authorization: Bearer ...`
+on every call; both servers refuse unauthenticated requests. The key secrets are mounted into the backend and
+into the one server that owns them.
+
+Things worth knowing:
+
+- **The sandbox has no network at all.** Anything it needs from the internet has to come through the browser or
+  web-fetch tools and be written to `/workspace` by the agent. Commands run in their own process group (killed on
+  timeout, default 60 s, max 600 s), at most 4 at a time, with a scrubbed environment (no secrets). The full output
+  of long commands is kept in `/workspace/.logs/`. Limits: 1 GB RAM, 1 CPU, 512 pids.
+- **What the browser can reach**: any public website, since that is its job. It cannot reach your other containers,
+  but it *can* reach anything on the host's LAN that is routable from the egress network's gateway; put a firewall
+  rule in front if that matters. It runs with a fresh, empty profile each start (no cookies or logins survive a
+  restart) unless you set `BROWSER_PROFILE_DIR` to a mounted volume. uBlock Origin and Privacy Badger are baked
+  in at pinned versions, with telemetry, updates, password saving and first-run pages switched off.
+- **Firefox's own sandbox stays on.** It needs the `SYS_CHROOT` capability, which the browser service adds back
+  (to nothing else); every other capability is dropped and `no-new-privileges` is set.
+- **Transport**: the Firefox DevTools MCP server only speaks stdio, so `supergateway` (pinned) exposes it as
+  streamable HTTP and enforces the bearer key. Sessions are stateful: one Firefox per MCP session, released after
+  10 idle minutes.
+- **Watching the browser** live (noVNC) is not included; use `screenshot_page` through the agent for now.
+- Images are built from `deploy/container/sandbox.Containerfile` and `deploy/container/browser.Containerfile`
+  (`up -d --build`). The browser build runs Firefox once for about 80 s to pre-warm the profile.
+  Smoke tests: `computers/sandbox/smoke.sh` and `computers/browser/smoke.sh` (they need podman and curl).
 
 ## TLS (Caddy)
 
@@ -80,7 +123,7 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 
 - Networks: `db`, `ingest`, `tools`, `proxy` are `internal` (no route off the host). Each service that needs the
   internet gets its own egress network. Postgres is only on `db`; connectors only on `ingest` plus
-  their own egress, so they cannot reach the database, the browser or each other.
+  their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` only.
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and
   their data volume), `cap_drop: ALL` and `no-new-privileges`.
 - Secrets are Podman secrets (`podman secret ls`), mounted read-only at `/run/secrets/<name>`;
