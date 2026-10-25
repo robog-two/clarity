@@ -86,6 +86,7 @@ class ShellRunner(
             put("HOME", workspace.root.toString())
             put("LANG", "C.UTF-8")
             put("TERM", "dumb")
+            put("PYTHONDONTWRITEBYTECODE", "1")
             put("PWD", cwd.toString())
         }
         val started = System.nanoTime()
