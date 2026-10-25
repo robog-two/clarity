@@ -150,6 +150,7 @@ sealed interface ProposedAction {
         val comment: String? = null,
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.RESPOND_TO_INVITE }
 
+    /** Executed by the calendar connector as a short event with an alarm; there is no separate reminder store. */
     @Serializable @SerialName("create_reminder")
     data class CreateReminder(
         override val idempotencyKey: String,

@@ -173,7 +173,7 @@ file at boot). A connector's ingest is accepted **only for nouns the user grante
 
 **The phone as a connector**: an enrolled device may also push to `/ingest/v1` with its device
 JWT; it is treated as connector `device-<deviceId>` with its own grants, and receives actions
-addressed to it (create a reminder, set do-not-disturb).
+addressed to it (set do-not-disturb).
 
 **The model key** comes from `ANTHROPIC_API_KEY_FILE` (Podman secret) or, if absent, from the
 app's onboarding (`PUT /api/v1/setup/model-key`), validated with a Models API call and stored
@@ -192,7 +192,6 @@ in `${dataDir}/anthropic-api-key` (0600). It is never returned by the API.
    - message: `channel | account | sender | sorted(recipients) | sha256(normalized body)`
    - contact: sorted normalized handles
    - calendar event: `icalUid` if present, else `calendar | title | start | end`
-   - task: `uid` if present, else `list | normalized title | due`
    - document: `store | normalized path`
 5. **Upsert** the canonical row by `dedup_key` → `Created` or `Merged`; record the
    `source_record` and update `source_link` so tombstones and actions can find the entity.
@@ -294,7 +293,7 @@ an amendment the person approves.
 
 ### Domain tools (backend, also served at `/mcp`)
 
-Reads: `list_messages`, `list_calendar_events`, `search_contacts`, `list_tasks`,
+Reads: `list_messages`, `list_calendar_events`, `search_contacts`,
 `search_documents`, `read_document`, `search_memory`, `read_journal`, `today`.
 Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`,
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
@@ -343,6 +342,36 @@ Approved/allowed actions are rows in `action_outbox` addressed to a connector (b
 credentials and report `ActionResult`. Results come back to the lead as inbox items. Status is
 visible on Today ("drafted", "held", "sent").
 
+## Credential vault
+
+The agent can log in and pay for things without ever seeing a password or card number.
+
+- **Credentials** (`credential` table): a name, a kind (login, payment card, identity, TOTP
+  seed, note), a site/purpose, non-secret metadata (username hint, card brand + last 4,
+  expiry month), and the secret fields as ciphertext only.
+- **Encryption at rest, key on the phone.** Each enrolled device has a vault key pair in the
+  Android Keystore (P-256, `PURPOSE_AGREE_KEY`, StrongBox when available, user authentication
+  required **for every use**). Secrets are sealed to it (ECDH-ES + HKDF-SHA256 + AES-256-GCM,
+  envelope format in `:shared`); the backend stores ciphertext it cannot open. Several devices
+  = the data key is wrapped once per device. Lost every device = re-enter the credentials.
+- **Adding a credential.** The agent calls `request_credential(kind, fields, purpose)`; the
+  person gets a form card with typed fields (username, email, password, card number with Luhn
+  check, expiry, CVC, name, address, phone, OTP) validated on the phone (validators are pure
+  Kotlin in `:shared`). The phone encrypts before upload. The agent only learns the new
+  credential's id and metadata.
+- **Using a credential.** The agent calls `fill_credential(credentialId, field, target)`, e.g.
+  a browser element uid. This is an action like any other: the guard checks it (payment
+  cards are *never alone*), and it always becomes a held approval with context (which site,
+  what for, which credential, the agent's reason). **Yes** requires biometric/device auth; the
+  phone opens the secret in the Keystore and returns it over the authenticated channel for
+  that one approved use. The backend passes it straight to the browser's fill tool, never to
+  the model or the journal, and drops it from memory.
+- **Scrubbing.** Every value released for a run is registered with that run's scrubber, which
+  replaces it (and common variants: spaces/dashes in card numbers, URL-encoded) with
+  `[credential:<name>.<field>]` in tool results, snapshots, errors and logs before anything
+  reaches the model or the database. Screenshots are refused while a filled secret field is on
+  the page.
+
 ## Sessions and voice
 
 - **Speech-to-text runs on the phone** (Android on-device `SpeechRecognizer`, partial results
@@ -374,7 +403,8 @@ Two containers on the internal `tools` network, each an MCP server the backend c
   `read_file`, `write_file`, `edit_file`, `search_files`. No network egress, no credentials,
   read-only rootfs apart from `/workspace` and `/tmp`, CPU/memory/pids limits. It can be
   recreated any time; only `/workspace` persists (and the backend can always rebuild it).
-- **browser** (`computers/browser`): Firefox ESR, headless, with uBlock Origin and Privacy
+- **browser** (`computers/browser`): Firefox ESR (its password manager and form autofill off;
+  credentials come only from the vault), headless, with uBlock Origin and Privacy
   Badger preinstalled in a fixed profile (ad/tracker blocking makes pages lighter and the
   accessibility snapshot shorter), driven by Mozilla's Firefox DevTools MCP server over WebDriver
   BiDi; exposed as streamable HTTP. Its own egress network; no access to other internal
@@ -405,8 +435,11 @@ fun main() = runConnector(manifest) {
 | Connector | Nouns | Actions |
 |---|---|---|
 | `mail` (IMAP + SMTP, Angus Mail) | message | save_draft, send_email |
-| `dav` (dav4jvm + ical4j + ez-vcard) | calendar_event, contact, task, document | create_event, move_event, respond_to_invite, read_document |
-| phone (in the app) | message (SMS), task (reminders) | create_reminder, set_do_not_disturb |
+| `dav` (dav4jvm + ical4j + ez-vcard) | calendar_event, contact, document | create_event, move_event, respond_to_invite, create_reminder, read_document |
+| phone (in the app) | message (SMS) | set_do_not_disturb |
+
+Reminders are not a separate store: `create_reminder` becomes a short event with an alarm
+(`VALARM`) on the person's calendar, so it rings through whatever calendar app they use.
 
 ## Android app (`net.robog.clarity.app`)
 
@@ -420,10 +453,16 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - `call/`: alarm scheduling, heads-up + `CallStyle` full-screen notification, the call screen.
 - `ui/`: onboarding, call, today, ask, held, amend, settings, constitution; one card renderer for
   every `Card` type, shared by call, ask and feed.
-- `connector/`: the phone connector (SMS via `Telephony`, reminders as local alarms + `task`
-  noun), running in WorkManager.
-- Push: UnifiedPush (optional `ntfy` container) for urgent held items; without it, the app
-  syncs on open and on a periodic WorkManager job.
+- `connector/`: the phone connector (SMS via `Telephony`; executes `set_do_not_disturb` with
+  notification-policy access), running in WorkManager. The app keeps no reminders of its own.
+- Push without Google or extra containers: the app keeps the `GET /api/v1/events` SSE stream
+  open from a foreground service (type `remoteMessaging`, asks for the battery-optimization
+  exemption), reconnects with backoff on network changes and resumes from its last `seq`.
+  Urgent items arrive as `FeedEvent`s the service turns into notifications. If the person
+  turns this off, the app syncs on open and on a periodic WorkManager job. (UnifiedPush can be
+  added later as a second transport without backend changes beyond one POST.)
+- `vault/`: the phone-held vault key (Android Keystore, per-use biometric), credential forms,
+  and approving credential use.
 
 ## Deployment
 

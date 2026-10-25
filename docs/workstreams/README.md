@@ -11,11 +11,12 @@ Each workstream is one spec file here, implemented by one agent on its own branc
 | 1 | `governance` | Constitution, guard, held actions, action outbox, notify policy, connector-sdk actions | 0 |
 | 1 | `computers` | Sandbox (`sandboxd`) + Firefox browser containers, compose wiring | 0 |
 | 2 | `lead` | Lead thread, inbox, helpers, memory, feed + SSE, durable scheduler, domain tools | harness, governance |
-| 2 | `connectors` | New nouns (task, document); `mail` and `dav` connectors with actions | governance |
+| 2 | `connectors` | New noun (document); `mail` and `dav` connectors with actions | governance |
 | 2 | `app-core` | Android: theme, networking + SSE, card renderer, voice, onboarding | 0 |
 | 3 | `sessions` | Morning call, values interview, amend, Today, settings, setup API | lead |
 | 3 | `app-screens` | Android: call + scheduling/notifications, Today, Ask, Held, Amend, Settings, phone connector | app-core, sessions contracts |
-| 3 | `push-evals` | UnifiedPush/ntfy, scenario evals, end-to-end test, docs | lead, sessions |
+| 3 | `vault` | Credential vault: phone-held key, forms, fill + scrubbing, biometric approval | governance, computers, lead |
+| 3 | `push-evals` | Push over the SSE feed (foreground service), scenario evals, end-to-end test, docs | lead, sessions |
 
 ## Rules for every workstream
 

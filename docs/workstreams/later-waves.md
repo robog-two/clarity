@@ -15,11 +15,11 @@ replacing the periodic review job; idle compaction while the cache is warm; prom
 large tool results to the sandbox workspace.
 
 ## `connectors` (wave 2)
-Nouns `task` and `document` (payloads, normalize, dedup keys, tables, reader, domain tools);
+Noun `document` (payload, normalize, dedup keys, tables, reader, domain tools);
 `connectors/mail` (Angus Mail IMAP IDLE/poll + SMTP; save_draft = IMAP APPEND to Drafts;
 send_email with Message-ID from the idempotency key; threading headers) and `connectors/dav`
-(dav4jvm via JitPack with a content filter, ical4j, ez-vcard; calendars incl. VTODO, contacts,
-WebDAV documents with text extraction; create/move event, respond to invite via RFC 6638 when
+(dav4jvm via JitPack with a content filter, ical4j, ez-vcard; calendars, contacts,
+WebDAV documents with text extraction; create/move event, create_reminder as an event with a VALARM, respond to invite via RFC 6638 when
 the server supports it, else ask); sealed secret config (X25519 sealed box, libsodium-compatible);
 `POST /api/v1/connectors/{id}/test` round trip; compose services + profiles.
 
@@ -41,9 +41,16 @@ amend), their playbooks as system messages, stage tools for the lead (`advance_s
 Call flow as `Call.dc.html` (exact alarms for heads-up + call, `CallStyle` full-screen
 notification, incoming / snoozed / call / ended screens); app as `App.dc.html` (Today, draft
 review, Ask, Held, Amend, Settings, Constitution) with the bottom navigation; phone connector
-(SMS read, reminders as local alarms, do-not-disturb action via notification policy access).
+(SMS read, do-not-disturb action via notification policy access; no reminders in the app).
+
+## `vault` (wave 3, backend + app)
+Credential vault per "Credential vault" in `ARCHITECTURE.md`: envelope format and field
+validators in `:shared`; backend store, `request_credential` / `fill_credential` tools,
+release-for-one-use flow through held approvals, per-run scrubber wired into the harness's
+tool-result path; app Keystore vault key with per-use `BiometricPrompt`, the credential form card,
+and the approval screen's authenticated "yes".
 
 ## `push-evals` (wave 3)
-UnifiedPush with an optional `ntfy` container; scenario evals over the scripted gateway
-(inbox pre-emption, guard tables, call happy path, held → amend); an end-to-end compose test;
+Push over the SSE feed from a foreground service (see "Android app"); scenario evals over the scripted gateway
+(inbox pre-emption, guard tables, call happy path, held → amend, credential scrubbing); an end-to-end compose test;
 README/deploy docs.
