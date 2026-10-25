@@ -12,7 +12,7 @@ CREATE TABLE agent_thread (
 
 -- Helpers are rows in agent_run (the lead thread is not).
 ALTER TABLE agent_run
-    ADD COLUMN parent_run_id uuid REFERENCES agent_run (id) ON DELETE SET NULL,
+    ADD COLUMN parent_run_id uuid, -- the delegating run: the lead thread (agent_thread.id) or another helper
     ADD COLUMN role          text NOT NULL DEFAULT 'helper',
     ADD COLUMN result        text,
     ADD COLUMN tools         jsonb;
