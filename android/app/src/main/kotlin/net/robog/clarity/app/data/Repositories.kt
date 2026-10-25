@@ -46,11 +46,13 @@ class DefaultEnrollmentRepository(
 class DefaultSessionRepository(
     private val sessions: SessionStore,
     private val key: DeviceKey,
+    private val cache: net.robog.clarity.app.data.feed.FeedStore,
 ) : SessionRepository {
     override val session: Flow<Session?> = sessions.session
 
     override suspend fun forget() {
         sessions.clear()
+        cache.clear()
         key.delete()
     }
 }
