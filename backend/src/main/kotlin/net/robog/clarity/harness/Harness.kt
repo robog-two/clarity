@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
 /** Everything one agent run needs; immutable so a run is reproducible from its request. */
@@ -42,6 +43,11 @@ data class RunRequest(
     val thinkingDisplay: String? = null,
     /** Truncates and stores oversized tool results. */
     val resultSink: ToolResultSink? = null,
+    /**
+     * Housekeeping run: ask the provider to compact the history right now and stop at the
+     * compaction block ([FinishReason.COMPACTED]) instead of answering. Used while the cache is warm.
+     */
+    val compactNow: Boolean = false,
 ) {
     constructor(
         model: String,
@@ -228,7 +234,7 @@ class Harness(
                     deferredTools = plan.deferred.map { it.definition },
                     serverTools = request.serverTools,
                     cache = request.cache,
-                    compaction = request.compaction,
+                    compaction = if (request.compactNow) compactNowConfig(request.compaction) else request.compaction,
                     fallbacks = request.fallbacks,
                     thinkingDisplay = request.thinkingDisplay,
                 )
@@ -255,6 +261,10 @@ class Harness(
                         append(listOf(Message(Role.ASSISTANT, response.content)))
                         if (response.text.isNotEmpty()) send(HarnessEvent.AssistantText(response.text))
 
+                        if (request.compactNow && response.stopReason == StopReason.COMPACTION) {
+                            send(HarnessEvent.Finished(RunResult(FinishReason.COMPACTED, usage, history, response.text)))
+                            return
+                        }
                         when (val decision = decide(response, turn, request.maxTurns)) {
                             is Decision.Stop -> {
                                 val late = drain()
@@ -336,7 +346,7 @@ class Harness(
                 if (problem != null) {
                     ToolResult.Error("Invalid input for ${call.name}: $problem")
                 } else {
-                    dispatch.tool.invokeSafely(call.input)
+                    withContext(ToolCallContext(runId, call.id)) { dispatch.tool.invokeSafely(call.input) }
                 }
             }
             is Dispatch.NeedsApproval -> {

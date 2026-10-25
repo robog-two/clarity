@@ -1,7 +1,7 @@
 package net.robog.clarity.harness
 
 /** Why a run ended. */
-enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER }
+enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER, COMPACTED }
 
 /** What the loop does after a model turn. */
 sealed interface Decision {

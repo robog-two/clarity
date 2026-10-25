@@ -210,7 +210,7 @@ person managing a to-do list with a few assistants.
 ### The lead thread
 
 - A single conversation that never ends. Its history is the append-only Messages API
-  transcript, persisted in `agent_thread_turn` after every model turn and every tool-result
+  transcript, persisted in `agent_journal` after every model turn and every tool-result
   message (the **journal**). On restart the lead resumes from the journal.
 - **Inbox.** Everything that can wake the agent becomes an `InboxItem`: user input, session
   events, trigger matches, scheduled jobs, helper results, connector action results, held
