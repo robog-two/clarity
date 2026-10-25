@@ -11,25 +11,23 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import dev.zacsweers.metrox.viewmodel.metroViewModel
-import net.robog.clarity.app.ui.connectors.ConnectorsScreen
-import net.robog.clarity.app.ui.home.HomeScreen
-import net.robog.clarity.app.ui.onboarding.OnboardingScreen
-import net.robog.clarity.app.ui.settings.SettingsScreen
+import net.robog.clarity.app.ui.main.MainScaffold
+import net.robog.clarity.app.ui.onboarding.OnboardingFlow
 
 @Composable
 fun ClarityNavHost(rootViewModel: RootViewModel = metroViewModel()) {
     val root by rootViewModel.state.collectAsStateWithLifecycle()
     if (root == RootState.Loading) return // DataStore read is fast; avoid flashing the wrong screen
-    ClarityNavDisplay(signedIn = root == RootState.SignedIn)
+    ClarityNavDisplay(ready = root == RootState.Ready)
 }
 
 @Composable
-private fun ClarityNavDisplay(signedIn: Boolean) {
-    val backStack = rememberNavBackStack(if (signedIn) Home else Onboarding)
+private fun ClarityNavDisplay(ready: Boolean) {
+    val backStack = rememberNavBackStack(if (ready) Main else Onboarding)
 
-    // Enrollment / forgetting changes the session; keep the back stack consistent with it.
-    LaunchedEffect(signedIn) {
-        val target = reconcileBackStack(backStack.toList(), signedIn)
+    // Finishing onboarding / forgetting the instance changes the root state; keep the stack consistent.
+    LaunchedEffect(ready) {
+        val target = reconcileBackStack(backStack.toList(), ready)
         if (target != backStack.toList()) {
             backStack.clear()
             backStack.addAll(target)
@@ -44,15 +42,8 @@ private fun ClarityNavDisplay(signedIn: Boolean) {
             rememberViewModelStoreNavEntryDecorator(),
         ),
         entryProvider = entryProvider<NavKey> {
-            entry<Onboarding> { OnboardingScreen() }
-            entry<Home> {
-                HomeScreen(
-                    onOpenConnectors = { backStack.add(Connectors) },
-                    onOpenSettings = { backStack.add(Settings) },
-                )
-            }
-            entry<Connectors> { ConnectorsScreen(onBack = { backStack.removeLastOrNull() }) }
-            entry<Settings> { SettingsScreen(onBack = { backStack.removeLastOrNull() }) }
+            entry<Onboarding> { OnboardingFlow() }
+            entry<Main> { MainScaffold() }
         },
     )
 }

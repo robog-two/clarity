@@ -14,7 +14,9 @@ object ApiPaths {
     const val HEALTH = "/healthz"
 
     // App API (under APP)
+    const val SETUP_STATUS = "$APP/setup"
     const val SETUP_MODEL_KEY = "$APP/setup/model-key"
+    const val CONNECTORS = "$APP/connectors"
     const val SETTINGS = "$APP/settings"
     const val FEED = "$APP/feed"
     const val EVENTS = "$APP/events"

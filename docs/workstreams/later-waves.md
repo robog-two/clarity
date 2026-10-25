@@ -48,8 +48,8 @@ review, Ask, Held, Amend, Settings, Constitution) with the bottom navigation; ph
 
 ## `vault` (wave 3, backend + app)
 Credential vault per "Credential vault" in `ARCHITECTURE.md`: envelope format and field
-validators in `:shared`; backend store, `request_credential` / `fill_credential` tools,
-release-for-one-use flow through held approvals, per-run scrubber wired into the harness's
+validators in `:shared`; backend store, `request_credential` tool, `[secret:<name>_<field>]` placeholder substitution in
+the browser tool wrapper, 5-minute per-site grants created by held approvals, per-run scrubber wired into the harness's
 tool-result path; app Keystore vault key with per-use `BiometricPrompt`, the credential form card,
 and the approval screen's authenticated "yes".
 

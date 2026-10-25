@@ -45,6 +45,10 @@ androidx-activity = "1.13.0"
 androidx-lifecycle = "2.11.0"
 androidx-navigation3 = "1.2.0"
 androidx-datastore = "1.3.0"
+room = "2.8.5"
+ksp = "2.3.12"
+tink = "1.24.0"
+okhttp = "5.5.0"
 
 [libraries]
 # Kotlin / kotlinx
@@ -129,6 +133,11 @@ androidx-lifecycle-viewmodel-navigation3 = { module = "androidx.lifecycle:lifecy
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "androidx-navigation3" }
 androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "androidx-navigation3" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidx-datastore" }
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
+tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
@@ -161,6 +170,7 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
 # Convention plugins (build-logic)
 clarity-kotlin-jvm = { id = "clarity.kotlin-jvm" }
