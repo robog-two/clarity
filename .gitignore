@@ -1,0 +1,27 @@
+# Gradle / Kotlin
+.gradle/
+build/
+.kotlin/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.fleet/
+.vscode/
+
+# Android
+local.properties
+*.apk
+*.aab
+captures/
+.cxx/
+*.jks
+*.keystore
+
+# Local deployment secrets / data
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+deploy/.env
+
+.DS_Store
