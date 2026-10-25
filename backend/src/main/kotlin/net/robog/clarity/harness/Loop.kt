@@ -27,10 +27,11 @@ fun decide(response: ModelResponse, turn: Int, maxTurns: Int): Decision = when (
     StopReason.MAX_TOKENS -> Decision.Stop(FinishReason.MAX_TOKENS)
     StopReason.END_TURN -> Decision.Stop(FinishReason.END_TURN)
     StopReason.OTHER -> Decision.Stop(FinishReason.OTHER)
-    StopReason.TOOL_USE, StopReason.PAUSE_TURN -> when {
+    StopReason.TOOL_USE, StopReason.PAUSE_TURN, StopReason.COMPACTION -> when {
         turn >= maxTurns -> Decision.Stop(FinishReason.MAX_TURNS)
         response.toolUses.isNotEmpty() -> Decision.RunTools(response.toolUses)
-        response.stopReason == StopReason.PAUSE_TURN -> Decision.Resume
+        // Server-side pause, or paused right after a compaction block: call again as-is.
+        response.stopReason != StopReason.TOOL_USE -> Decision.Resume
         // tool_use stop with no tool_use block is a provider anomaly; treat as finished.
         else -> Decision.Stop(FinishReason.OTHER)
     }
