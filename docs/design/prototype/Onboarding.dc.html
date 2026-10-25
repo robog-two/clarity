@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Onboarding</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,400..700&amp;family=Libre+Caslon+Text:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.app{--surface:#FBF8F4;--scl:#F5F1EB;--sc:#EFEAE2;--sch:#E8E2D9;--on:#1F1D1A;--osv:#54514B;--ov:#D6D0C6;--outline:#7D7972;--primary:#466660;--onp:#FFFFFF;--pc:#CDE7DF;--opc:#0E2B26;--secc:#DDE6E2;--tc:#FFDDC4;--otc:#3B1F08;--err:#B3261E;--errc:#F9DEDC;--onerrc:#410E0B}
+a{color:var(--primary)}a:hover{color:var(--opc)}
+.scr{flex:1;display:flex;flex-direction:column;gap:16px;padding:24px 20px 20px;min-height:0}
+.k{font:500 12px/16px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.4px;color:var(--osv)}
+.h{margin:0;font:400 28px/36px 'Roboto Flex',Roboto,sans-serif}
+.rd{margin:0;font:400 16px/1.55 'Libre Caslon Text',serif}
+.sm{margin:0;font:400 14px/1.5 'Libre Caslon Text',serif;color:var(--osv)}
+.btn{font:500 14px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.1px;min-height:48px;border:1px solid var(--outline);border-radius:24px;background:transparent;color:var(--primary);padding:0 24px;cursor:pointer;transition:background-color 200ms ease-out,box-shadow 200ms ease-out}
+.btn:hover{background:rgba(70,102,96,.08)}
+.btn:disabled{opacity:.38;cursor:default;background:transparent}
+.pri{background:var(--primary);color:var(--onp);border-color:transparent}
+.pri:hover{background:var(--primary);box-shadow:0 1px 2px rgba(0,0,0,.3),0 1px 3px 1px rgba(0,0,0,.15)}
+.pri:disabled{background:rgba(31,29,26,.12);color:var(--on)}
+.lnk{display:flex;align-items:center;justify-content:center;text-decoration:none;box-sizing:border-box}
+.row{display:flex;align-items:center;gap:16px;min-height:64px;border:0;border-top:1px solid var(--ov);background:transparent;color:var(--on);padding:8px 4px;width:100%;text-align:left;cursor:pointer;box-sizing:border-box;transition:background-color 200ms ease-out}
+.row:hover{background:rgba(31,29,26,.05)}
+.rn{font:400 16px 'Roboto Flex',Roboto,sans-serif}
+.rs{font:500 14px 'Roboto Flex',Roboto,sans-serif;white-space:nowrap;color:var(--primary)}
+.fld{display:flex;flex-direction:column;gap:4px}
+.inp{font:400 16px 'Roboto Flex',Roboto,sans-serif;min-height:56px;background:transparent;color:var(--on);border:1px solid var(--outline);border-radius:4px;padding:0 16px;cursor:pointer;width:100%;box-sizing:border-box}
+.inp:hover{border-color:var(--on)}
+.inp:focus{outline:2px solid var(--primary);outline-offset:-1px}
+.back{font:500 14px 'Roboto Flex',Roboto,sans-serif;background:transparent;border:0;color:var(--primary);min-height:40px;padding:0 12px;margin-left:-12px;border-radius:20px;text-align:left;cursor:pointer;align-self:flex-start}
+.back:hover{background:rgba(70,102,96,.08)}
+.err{background:var(--errc);color:var(--onerrc);border-radius:12px;padding:12px 16px;display:flex;flex-direction:column;gap:4px}
+.err .rs,.err .sm{color:var(--onerrc)}
+.bx{border:1px solid var(--ov);border-radius:12px;background:var(--scl);padding:16px;display:flex;flex-direction:column;gap:6px}
+.you{background:var(--pc);color:var(--opc);border-radius:20px 20px 4px 20px;padding:14px 16px;font:400 16px/1.55 'Libre Caslon Text',serif}
+.live{border:1px dashed var(--outline);border-radius:20px 20px 4px 20px;padding:14px 16px;font:400 16px/1.55 'Libre Caslon Text',serif}
+.bar{display:flex;gap:4px}
+.seg{flex:1;height:4px;border-radius:2px;background:var(--secc)}
+.seg.on{background:var(--primary)}
+.pill{font:500 14px 'Roboto Flex',Roboto,sans-serif;min-height:48px;flex:1;border:1px solid var(--outline);border-radius:8px;background:transparent;color:var(--osv);cursor:pointer}
+.pill.sel{border-color:transparent;background:var(--secc);color:var(--on)}
+.tg{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:64px;border:0;border-top:1px solid var(--ov);width:100%;background:transparent;color:var(--on);padding:0 4px;cursor:pointer;text-align:left;box-sizing:border-box}
+.tg:hover{background:rgba(31,29,26,.05)}
+.sw{font:500 14px 'Roboto Flex',Roboto,sans-serif;min-width:40px;text-align:right;color:var(--primary)}
+.lis{font:500 12px 'Roboto Flex',Roboto,sans-serif;padding:6px 10px;border-radius:8px;background:var(--tc);color:var(--otc)}
+.lis.idle{background:var(--sc);color:var(--osv)}
+</style>
+</helmet>
+<div class="app" style="width:390px;height:844px;box-sizing:border-box;background:var(--surface);color:var(--on);display:flex;flex-direction:column;font-family:'Roboto Flex',Roboto,sans-serif;overflow:hidden">
+
+<sc-if value="{{on.welcome}}" hint-placeholder-val="{{true}}">
+<div class="scr" style="justify-content:space-between;padding-top:72px">
+<div style="display:flex;flex-direction:column;gap:20px">
+<span style="font:600 18px 'Roboto Flex',Roboto,sans-serif">Personal Agent</span>
+<h1 style="margin:0;font:600 40px/1.1 'Roboto Flex',Roboto,sans-serif">You set the priorities.</h1>
+<p class="rd" style="color:var(--osv)">I take small, scoped tasks and stay out of the way. Setup takes about ten minutes, mostly talking.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<span class="k">1 setup · 2 values · 3 review · 4 morning call</span>
+<button class="btn pri" onClick="{{toServer}}">begin →</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.server}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+<span class="k">step 1 of 4 · server</span>
+<h2 class="h">Your Server</h2>
+<p class="sm">Your data stays here. I read from it over open standards and keep nothing elsewhere.</p>
+<sc-for list="{{serverFields}}" as="f" hint-placeholder-count="3">
+<div class="fld"><label class="k" for="{{f.id}}">{{f.label}}</label><input class="inp" id="{{f.id}}" value="{{f.shown}}" placeholder="{{f.ph}}" readonly="readonly" onClick="{{f.fill}}"></div>
+</sc-for>
+<sc-if value="{{srvChecking}}" hint-placeholder-val="{{false}}"><span class="rs">checking…</span></sc-if>
+<sc-if value="{{srvOk}}" hint-placeholder-val="{{false}}"><span class="rs">● reachable · tls ok · 18 ms</span></sc-if>
+<div style="flex:1"></div>
+<p class="sm">Tap each field to fill it in.</p>
+<sc-if value="{{srvOk}}" hint-placeholder-val="{{false}}"><button class="btn pri" onClick="{{toKey}}">next →</button></sc-if>
+<sc-if value="{{srvNotOk}}" hint-placeholder-val="{{true}}"><button class="btn pri" onClick="{{checkServer}}" disabled="{{srvCantCheck}}">check server</button></sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{on.key}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+<button class="back" onClick="{{toServer}}">← server</button>
+<span class="k">step 1 of 4 · model</span>
+<h2 class="h">Your Model</h2>
+<p class="sm">I run on your own Anthropic API key. Usage is billed to your account, and requests go straight from your server.</p>
+<sc-for list="{{keyFields}}" as="f" hint-placeholder-count="1">
+<div class="fld"><label class="k" for="{{f.id}}">{{f.label}}</label><input class="inp" id="{{f.id}}" value="{{f.shown}}" placeholder="{{f.ph}}" readonly="readonly" onClick="{{f.fill}}"></div>
+</sc-for>
+<p class="sm">I pick the model size for each task: small for sorting mail, larger for drafting as you.</p>
+<sc-if value="{{keyChecking}}" hint-placeholder-val="{{false}}"><span class="rs">checking…</span></sc-if>
+<sc-if value="{{keyOk}}" hint-placeholder-val="{{false}}"><span class="rs">● key works</span></sc-if>
+<div style="flex:1"></div>
+<sc-if value="{{keyOk}}" hint-placeholder-val="{{false}}"><button class="btn pri" onClick="{{toConns}}">next →</button></sc-if>
+<sc-if value="{{keyNotOk}}" hint-placeholder-val="{{true}}"><button class="btn pri" onClick="{{checkKey}}" disabled="{{keyCantCheck}}">check key</button></sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{on.conns}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+<button class="back" onClick="{{toKey}}">← model</button>
+<span class="k">step 1 of 4 · connectors</span>
+<h2 class="h">Where Your Day Lives</h2>
+<p class="sm">Tap each one to set it up. Then sync, and I’ll test them all.</p>
+<div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;min-height:0">
+<sc-for list="{{conns}}" as="c" hint-placeholder-count="6">
+<button class="row" onClick="{{c.open}}">
+<span style="flex:1;display:flex;flex-direction:column;gap:2px"><span class="rn">{{c.name}}</span><span class="k">{{c.sub}}</span></span>
+<span class="rs" style="opacity:{{c.op}}">{{c.status}}</span>
+</button>
+</sc-for>
+</div>
+<span class="k">{{connsLine}}</span>
+<sc-if value="{{allOk}}" hint-placeholder-val="{{false}}"><button class="btn pri" onClick="{{toIntro}}">continue →</button></sc-if>
+<sc-if value="{{notAllOk}}" hint-placeholder-val="{{true}}"><button class="btn pri" onClick="{{syncAll}}" disabled="{{cantSync}}">{{syncLabel}}</button></sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{on.conn}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg"></span><span class="seg"></span><span class="seg"></span></div>
+<button class="back" onClick="{{toConns}}">← connectors</button>
+<span class="k">{{cur.proto}}</span>
+<h2 class="h">{{cur.title}}</h2>
+<sc-if value="{{cur.failed}}" hint-placeholder-val="{{false}}">
+<div class="err"><span class="rs">sync failed · {{cur.error}}</span><span class="sm">Tap the password to enter it again.</span></div>
+</sc-if>
+<p class="sm">{{cur.blurb}}</p>
+<sc-for list="{{cur.fields}}" as="f" hint-placeholder-count="3">
+<div class="fld"><label class="k" for="{{f.id}}">{{f.label}}</label><input class="inp" id="{{f.id}}" value="{{f.shown}}" placeholder="{{f.ph}}" readonly="readonly" onClick="{{f.fill}}"></div>
+</sc-for>
+<sc-if value="{{cur.phone}}" hint-placeholder-val="{{false}}">
+<div class="bx"><span class="rn">Allow access to {{cur.name}}?</span><span class="sm">Read only. You can turn this off in settings.</span>
+<sc-if value="{{cur.allowed}}" hint-placeholder-val="{{false}}"><span class="rs">● allowed</span></sc-if>
+<sc-if value="{{cur.notAllowed}}" hint-placeholder-val="{{true}}"><button class="btn" onClick="{{cur.allow}}">allow</button></sc-if>
+</div>
+</sc-if>
+<div style="flex:1"></div>
+<sc-if value="{{cur.notPhone}}" hint-placeholder-val="{{true}}"><p class="sm">Tap each field to fill it in.</p></sc-if>
+<button class="btn pri" onClick="{{cur.save}}" disabled="{{cur.cantSave}}">{{cur.saveLabel}}</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.vintro}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg on"></span><span class="seg"></span><span class="seg"></span></div>
+<span class="k">step 2 of 4 · values</span>
+<h2 class="h">How You Work</h2>
+<p class="rd">Seven questions, about six minutes.</p>
+<p class="sm">I’ll ask about real moments, good and bad, rather than abstract rules. Stories show what matters more reliably than guesses about it.</p>
+<p class="sm">Each answer becomes a line in your constitution, with your reason kept beside it. The reason is what lets me use judgment when something comes up that no rule covers.</p>
+<p class="sm">A few things become hard lines I never cross. Everything else, you can amend any time by talking.</p>
+<div style="flex:1"></div>
+<button class="btn pri" onClick="{{toValues}}">start →</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.values}}" hint-placeholder-val="{{false}}">
+<div class="scr" style="overflow-y:auto">
+<div class="bar"><span class="seg on"></span><span class="seg on"></span><span class="seg"></span><span class="seg"></span></div>
+<div style="display:flex;justify-content:space-between;align-items:center"><span class="k">step 2 of 4 · {{qNum}} of 7 · {{q.theme}}</span>
+<sc-if value="{{talking}}" hint-placeholder-val="{{false}}"><span class="lis">● listening</span></sc-if>
+<sc-if value="{{notTalking}}" hint-placeholder-val="{{true}}"><span class="lis idle">● mic on</span></sc-if>
+</div>
+<sc-if value="{{qShown}}" hint-placeholder-val="{{true}}"><h2 class="h" style="font-size:22px">{{q.text}}</h2></sc-if>
+<sc-if value="{{ansLive}}" hint-placeholder-val="{{false}}"><div class="live" style="margin-left:32px">{{ans}}</div></sc-if>
+<sc-if value="{{ansSaid}}" hint-placeholder-val="{{false}}"><div class="you" style="margin-left:32px">{{ans}}</div></sc-if>
+<sc-if value="{{showRule}}" hint-placeholder-val="{{false}}">
+<span class="k" style="margin-top:4px">captured as</span>
+<div class="bx" style="background:var(--pc);color:var(--opc);border-color:transparent"><span class="k">{{q.label}}</span><p class="rd">{{ruleText}}</p>
+<sc-if value="{{q.hasTiers}}" hint-placeholder-val="{{false}}">
+<sc-for list="{{q.tiers}}" as="t" hint-placeholder-count="3"><div style="display:flex;flex-direction:column;gap:1px;padding-top:6px;border-top:1px solid var(--ov)"><span class="rs">{{t.lvl}}</span><span class="sm">{{t.t}}</span></div></sc-for>
+</sc-if>
+<p class="sm" style="font-style:italic">because {{q.because}}</p>
+</div>
+</sc-if>
+<div style="flex:1"></div>
+<p class="sm">Just talk. The mic stays on until you move on.</p>
+<div style="display:flex;gap:8px">
+<button class="btn" style="flex:1" onClick="{{reword}}" disabled="{{cantKeep}}">reword</button>
+<button class="btn pri" style="flex:1" onClick="{{keep}}" disabled="{{cantKeep}}">keep →</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.doc}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg on"></span><span class="seg on"></span><span class="seg"></span></div>
+<span class="k">step 3 of 4 · your constitution · v1</span>
+<h2 class="h">How I Want to Work</h2>
+<div style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;min-height:0">
+<sc-for list="{{docSecs}}" as="sec" hint-placeholder-count="5">
+<div style="display:flex;flex-direction:column;gap:8px;padding-top:12px;border-top:1px solid var(--ov)">
+<span class="k">{{sec.title}}</span>
+<sc-for list="{{sec.items}}" as="it" hint-placeholder-count="2">
+<div style="display:flex;flex-direction:column;gap:2px">
+<p class="rd">{{it.text}}</p>
+<sc-if value="{{it.hasWhy}}" hint-placeholder-val="{{true}}"><p class="sm" style="font-style:italic">because {{it.why}}</p></sc-if>
+</div>
+</sc-for>
+</div>
+</sc-for>
+<p class="sm" style="margin-top:6px">Every action I take is checked against this page first. Hard lines are fixed. Everything else is judgment, guided by your reasons. Amend any of it by talking.</p>
+</div>
+<div style="display:flex;gap:8px">
+<button class="btn" style="flex:1" onClick="{{redo}}">redo</button>
+<button class="btn pri" style="flex:1" onClick="{{toSched}}">looks right →</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.sched}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<div class="bar"><span class="seg on"></span><span class="seg on"></span><span class="seg on"></span><span class="seg on"></span></div>
+<span class="k">step 4 of 4 · morning call</span>
+<h2 class="h">When should I call?</h2>
+<p class="sm">Eight minutes. You talk, I take notes, then I set things up.</p>
+<div style="display:flex;gap:8px">
+<sc-for list="{{times}}" as="t" hint-placeholder-count="3"><button class="pill {{t.cls}}" onClick="{{t.pick}}" aria-pressed="{{t.sel}}">{{t.label}}</button></sc-for>
+</div>
+<div style="display:flex;gap:4px">
+<sc-for list="{{days}}" as="d" hint-placeholder-count="7"><button class="pill {{d.cls}}" style="min-width:0;font-size:14px" onClick="{{d.pick}}" aria-pressed="{{d.sel}}" aria-label="{{d.full}}">{{d.label}}</button></sc-for>
+</div>
+<div style="display:flex;flex-direction:column;margin-top:8px">
+<button class="tg" onClick="{{toggleHeads}}" aria-pressed="{{heads}}"><span style="display:flex;flex-direction:column;gap:2px"><span style="font:500 15px 'Roboto Flex',Roboto,sans-serif">heads-up 10 min before</span><span class="k">a notification, then the call</span></span><span class="sw">{{headsLabel}}</span></button>
+<button class="tg" onClick="{{toggleMode}}" style="border-bottom:1px solid var(--ov)"><span style="display:flex;flex-direction:column;gap:2px"><span style="font:500 15px 'Roboto Flex',Roboto,sans-serif">how I reach you</span><span class="k">tap to switch</span></span><span class="sw">{{modeLabel}}</span></button>
+</div>
+<div style="flex:1"></div>
+<button class="btn pri" onClick="{{toDone}}">finish →</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.done}}" hint-placeholder-val="{{false}}">
+<div class="scr" style="justify-content:space-between;padding-top:72px">
+<div style="display:flex;flex-direction:column;gap:20px">
+<span class="k">set up · 6 connectors · constitution v1</span>
+<h1 style="margin:0;font:600 36px/1.15 'Roboto Flex',Roboto,sans-serif">Talk tomorrow at {{time}}.</h1>
+<p class="rd" style="color:var(--osv)">{{doneLine}}</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<a class="btn pri lnk" href="Call.dc.html">skip to tomorrow’s call →</a>
+<a class="btn lnk" href="App.dc.html">open the app</a>
+</div>
+</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  state = {
+    screen: 'welcome', f: {}, typing: '',
+    srv: 'idle', key: 'idle', model: 'sonnet',
+    cur: 'mail', saved: {}, conn: {}, failedOnce: false, syncing: false,
+    qi: 0, qShown: false, ans: '', live: false, said: false, showRule: false, busy: false, talking: false,
+    alt: [false, false, false],
+    time: '9:00', days: [false, true, true, true, true, true, false], heads: true, mode: 'call'
+  };
+  componentWillUnmount() { (this.timers || []).forEach(clearTimeout); this.dead = true; }
+  later(fn, ms) { this.timers = this.timers || []; this.timers.push(setTimeout(() => { if (!this.dead) fn(); }, ms)); }
+
+  defs() {
+    const host = 'home.local';
+    const pw = (id) => ({ id: id + '.pass', label: 'password', ph: 'tap to enter', value: 'correct-horse-staple', secret: true });
+    const user = (id, v) => ({ id: id + '.user', label: 'username', ph: 'tap to enter', value: v });
+    return {
+      server: [
+        { id: 'srv.host', label: 'server address', ph: 'tap to enter', value: host },
+        user('srv', 'sam'), pw('srv')
+      ],
+      key: [{ id: 'key', label: 'anthropic api key', ph: 'sk-ant-…', value: 'sk-ant-api03-7Qx2Lm9vRt4KpZ8wNc1yHd6Fb3Js', secret: 'key' }],
+      conns: [
+        { k: 'mail', name: 'mail', title: 'Mail', proto: 'imap + smtp · on your server', blurb: 'I read your inbox and save drafts. Sending always follows your lines.',
+          fields: [{ id: 'mail.host', label: 'imap host', ph: 'tap to enter', value: 'imap.' + host + ':993' }, { id: 'mail.smtp', label: 'smtp host', ph: 'tap to enter', value: 'smtp.' + host + ':465' }, user('mail', 'sam@' + host), pw('mail')],
+          count: '4,218 messages' },
+        { k: 'cal', name: 'calendar', title: 'Calendar', proto: 'caldav · on your server', blurb: 'I read events and hold focus time. Other people’s events need your review.',
+          fields: [{ id: 'cal.url', label: 'caldav url', ph: 'tap to enter', value: 'https://' + host + '/dav/cal/sam/' }, user('cal', 'sam'), pw('cal')], count: '3 calendars' },
+        { k: 'contacts', name: 'contacts', title: 'Contacts', proto: 'carddav · on your server', blurb: 'So I know who Dana is when you say Dana.',
+          fields: [{ id: 'contacts.url', label: 'carddav url', ph: 'tap to enter', value: 'https://' + host + '/dav/card/sam/' }, user('contacts', 'sam'), pw('contacts')], count: '312 people' },
+        { k: 'files', name: 'files', title: 'Files', proto: 'webdav · on your server', blurb: 'Read only. I pull up documents you mention during a call.',
+          fields: [{ id: 'files.url', label: 'webdav url', ph: 'tap to enter', value: 'https://' + host + '/dav/files/sam/' }, user('files', 'sam'), pw('files')], count: '1,940 files', failsFirst: true, error: 'password rejected (401)' },
+        { k: 'msgs', name: 'messages', title: 'Messages', proto: 'on this phone', blurb: 'Your messages are synchronized with your personal server.', phone: true, fields: [], count: '86 threads' },
+        { k: 'rem', name: 'reminders', title: 'Reminders', proto: 'on this phone', blurb: 'I add reminders here so they ring like any other.', phone: true, fields: [], count: '24 open' }
+      ]
+    };
+  }
+  fill(id, value) {
+    if (this.state.typing) return;
+    let n = 0;
+    this.setState(s => ({ typing: id, f: Object.assign({}, s.f, { [id]: '' }) }));
+    const tick = () => {
+      n++;
+      const fin = n >= value.length;
+      this.setState(s => ({ f: Object.assign({}, s.f, { [id]: value.slice(0, n) }), typing: fin ? '' : id }));
+      if (!fin) this.later(tick, 28 + Math.random() * 40);
+    };
+    this.later(tick, 120);
+  }
+  shownField(d) {
+    const v = this.state.f[d.id] || '';
+    let shown = v;
+    if (d.secret === 'key') shown = v.slice(0, 13) + '•'.repeat(Math.max(0, v.length - 13));
+    else if (d.secret) shown = '•'.repeat(v.length);
+    return Object.assign({}, d, { shown: shown, done: v.length === d.value.length, fill: () => this.fill(d.id, d.value) });
+  }
+  filledAll(list) { return list.every(d => (this.state.f[d.id] || '').length === d.value.length); }
+  setConn(k, v) { this.setState(s => ({ conn: Object.assign({}, s.conn, { [k]: v }) })); }
+  test(c, done) {
+    this.setConn(c.k, 'testing');
+    this.later(() => {
+      const fail = c.failsFirst && !this.state.failedOnce;
+      if (fail) this.setState({ failedOnce: true });
+      this.setConn(c.k, fail ? 'fail' : 'ok');
+      if (done) done();
+    }, 900 + Math.random() * 700);
+  }
+  syncAll() {
+    const list = this.defs().conns;
+    this.setState({ syncing: true, conn: {} });
+    const run = (i) => {
+      if (i >= list.length) { this.setState({ syncing: false }); return; }
+      this.test(list[i], () => this.later(() => run(i + 1), 150));
+    };
+    run(0);
+  }
+
+  qs() {
+    return [
+      { theme: 'when help worked', label: 'value',
+        text: 'Think of a time someone took something off your plate and got it exactly right. What did they do?',
+        a: 'My old assistant blocked travel time around my flights without asking. And when she wrote for me it was short, no fluff. It sounded like me.',
+        rule: 'Handle small things on my own calendar without asking. When you write as me, keep it short and plain.',
+        alt: 'Anticipate what only touches my own time. Write the way I talk.',
+        because: 'help feels like help when I don’t have to think of it.' },
+      { theme: 'when help backfired', label: 'hard line',
+        text: 'Now a time help made things worse. What crossed the line?',
+        a: 'A scheduling tool accepted a meeting in my focus block, then emailed my whole team about it. I looked careless, and it wasn’t even me.',
+        rule: 'Never speak for me to a group without my review.',
+        alt: 'Anything addressed to more than one person waits for me.',
+        because: 'being misrepresented costs more than any time saved.' },
+      { theme: 'what’s hard to undo', label: 'how much I do alone',
+        text: 'What would be hard to undo if I got it wrong?',
+        a: 'Anything that leaves the building. Emails, invites, payments. Holds on my own calendar are fine, I can just delete them.',
+        rule: 'If it stays with you, I do it. If it leaves, you see it first. Money, never alone.',
+        alt: 'If it can be deleted, I do it. If it can’t be unsent, I ask.',
+        because: 'a mistake I can delete is cheap, and one that’s been sent isn’t.',
+        hasTiers: true, tiers: [
+          { lvl: 'do it, then tell me', t: 'holds on my calendar, reminders, drafts, lookups' },
+          { lvl: 'ask me first', t: 'email, replies to invites, anything sent as me' },
+          { lvl: 'never alone', t: 'payments and purchases' }
+        ] },
+      { theme: 'a good day', label: 'value',
+        text: 'Walk me through a good Tuesday. What’s protected?',
+        a: 'Mornings are for real work, nine to twelve. Afternoons are for people. I stop at six when the kids get home.',
+        rule: 'Keep 9 to 12 for deep work, and keep evenings after 6 for family.',
+        alt: 'Mornings are for focus, afternoons for people, evenings are off.',
+        because: 'that’s when the work and the people who matter get the best of me.' },
+      { theme: 'when things collide', label: 'priority',
+        text: 'Say Priya needs you during your focus block. Which wins?',
+        a: 'Priya, if it’s actually urgent. Not if it’s just fast. If you can’t tell, ask me.',
+        rule: 'Real urgency beats focus time. Speed alone doesn’t. When I can’t tell, I ask.',
+        alt: 'Interrupt focus only for something that can’t wait. If unsure, check with me.',
+        because: 'a quick reply isn’t the same thing as an important one.' },
+      { theme: 'who gets through', label: 'people',
+        text: 'Who should always be able to reach you, even mid-focus?',
+        a: 'My kids’ school. Priya. And Dana until the contract is signed. Everyone else can wait for the evening summary.',
+        rule: 'The school, Priya and Dana come through right away. Everyone else waits for the evening summary.',
+        alt: 'Three people interrupt: the school, Priya, Dana. The rest get batched.',
+        because: 'a few people can’t wait, and most can.' },
+      { theme: 'when I get it wrong', label: 'repair + memory',
+        text: 'I’ll get things wrong sometimes. When I do, what do you want from me? And is there anything I shouldn’t remember?',
+        a: 'Tell me right away, and say what you’d do differently. And don’t keep anything about my health.',
+        rule: 'Tell you about a mistake right away, with what I’d change. Never store anything about your health.',
+        alt: 'Own mistakes immediately and propose a fix. Health details are never kept.',
+        because: 'surprises cost more trust than mistakes do.' }
+    ];
+  }
+  say(text, done) {
+    const w = text.split(' ');
+    let n = 0;
+    this.setState({ live: true, said: false, talking: true, ans: '' });
+    const tick = () => {
+      n++;
+      const fin = n >= w.length;
+      this.setState({ ans: w.slice(0, n).join(' '), live: !fin, said: fin, talking: !fin });
+      if (fin) done(); else this.later(tick, 120 + Math.random() * 150);
+    };
+    this.later(tick, 350);
+  }
+  ask(i) {
+    this.setState({ qi: i, qShown: false, ans: '', live: false, said: false, showRule: false, busy: true });
+    this.later(() => this.setState({ qShown: true }), 400);
+    this.later(() => this.say(this.qs()[i].a, () => this.later(() => this.setState({ showRule: true, busy: false }), 700)), 1500);
+  }
+
+  renderVals() {
+    const st = this.state;
+    const scr = st.screen;
+    const D = this.defs();
+    const go = (s) => () => { this.setState({ screen: s }); if (s === 'values') this.ask(0); };
+
+    const srvFilled = this.filledAll(D.server);
+    const keyFilled = this.filledAll(D.key);
+
+    const conns = D.conns.map(c => {
+      const saved = !!st.saved[c.k];
+      const cs = st.conn[c.k] || '';
+      let status = 'set up →', sub = c.proto, op = '.72';
+      if (saved) { status = 'ready'; sub = c.phone ? 'allowed · on this phone' : (st.f[c.fields[0].id] || c.proto); op = '1'; }
+      if (cs === 'testing') status = 'testing…';
+      if (cs === 'ok') status = c.count;
+      if (cs === 'fail') { status = 'failed · fix →'; sub = c.error; }
+      return { k: c.k, name: c.name, sub: sub, status: status, op: op, open: () => {
+        if (cs === 'fail') this.setState(s => ({ f: Object.assign({}, s.f, { [c.k + '.pass']: '' }) }));
+        this.setState({ screen: 'conn', cur: c.k });
+      } };
+    });
+    const nSaved = D.conns.filter(c => st.saved[c.k]).length;
+    const allSaved = nSaved === D.conns.length;
+    const allOk = D.conns.every(c => st.conn[c.k] === 'ok');
+    const anyFail = D.conns.some(c => st.conn[c.k] === 'fail');
+    const nOk = D.conns.filter(c => st.conn[c.k] === 'ok').length;
+
+    const cd = D.conns.find(c => c.k === st.cur);
+    const curFailed = st.conn[cd.k] === 'fail';
+    const curFields = cd.fields.map(d => this.shownField(d));
+    const curReady = cd.phone ? !!st.f[cd.k + '.perm'] : this.filledAll(cd.fields);
+    const cur = {
+      name: cd.name, title: cd.title, proto: cd.proto, blurb: cd.blurb, fields: curFields,
+      phone: !!cd.phone, notPhone: !cd.phone,
+      allowed: !!st.f[cd.k + '.perm'], notAllowed: !st.f[cd.k + '.perm'],
+      allow: () => this.setState(s => ({ f: Object.assign({}, s.f, { [cd.k + '.perm']: 'yes' }) })),
+      failed: curFailed, error: cd.error || '',
+      cantSave: !curReady || !!st.typing,
+      saveLabel: curFailed ? 'save and retest' : 'save',
+      save: () => {
+        this.setState(s => ({ saved: Object.assign({}, s.saved, { [cd.k]: true }), screen: 'conns' }));
+        if (curFailed) this.later(() => this.test(cd), 300);
+      }
+    };
+
+    const qs = this.qs();
+    const q = Object.assign({ hasTiers: false, tiers: [] }, qs[st.qi]);
+    const ruleOf = (i) => (st.alt[i] ? qs[i].alt : qs[i].rule);
+    const item = (i) => ({ text: ruleOf(i), why: qs[i].because, hasWhy: true });
+    const fixed = (t) => ({ text: t, why: '', hasWhy: false });
+    const docSecs = [
+      { title: 'what I value', items: [item(0), item(3)] },
+      { title: 'hard lines · never crossed', items: [item(1), fixed('Never move money or buy anything on my own.'), fixed('Never store anything about your health.')] },
+      { title: 'how much I do alone', items: qs[2].tiers.map(t => ({ text: t.lvl + ': ' + t.t + '.', why: '', hasWhy: false })).concat([{ text: '', why: qs[2].because, hasWhy: true }]) },
+      { title: 'when things collide', items: [item(4)] },
+      { title: 'who gets through', items: [item(5)] },
+      { title: 'when I get it wrong', items: [fixed(st.alt[6] ? 'Own mistakes immediately and propose a fix.' : 'Tell you about a mistake right away, with what I’d change.'), { text: '', why: qs[6].because, hasWhy: true }] }
+    ];
+    const times = ['8:30', '9:00', '9:30'].map(t => ({ label: t, sel: st.time === t, cls: st.time === t ? 'sel' : '', pick: () => this.setState({ time: t }) }));
+    const names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const days = ['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => ({
+      label: d, full: names[i], sel: st.days[i], cls: st.days[i] ? 'sel' : '',
+      pick: () => { const ds = st.days.slice(); ds[i] = !ds[i]; this.setState({ days: ds }); }
+    }));
+    const modelIds = { sonnet: 'claude-sonnet-5-5', opus: 'claude-opus-5-5' };
+
+    return {
+      on: { welcome: scr === 'welcome', server: scr === 'server', key: scr === 'key', conns: scr === 'conns', conn: scr === 'conn', vintro: scr === 'vintro', values: scr === 'values', doc: scr === 'doc', sched: scr === 'sched', done: scr === 'done' },
+      toServer: go('server'), toKey: go('key'), toConns: go('conns'), toIntro: go('vintro'), toValues: go('values'), toSched: go('sched'), toDone: go('done'), redo: go('values'),
+      docSecs: docSecs,
+
+      serverFields: D.server.map(d => this.shownField(d)),
+      srvChecking: st.srv === 'checking', srvOk: st.srv === 'ok', srvNotOk: st.srv !== 'ok',
+      srvCantCheck: !srvFilled || !!st.typing || st.srv === 'checking',
+      checkServer: () => { this.setState({ srv: 'checking' }); this.later(() => this.setState({ srv: 'ok' }), 1200); },
+
+      keyFields: D.key.map(d => this.shownField(d)),
+      models: [['sonnet', 'Sonnet 5.5'], ['opus', 'Opus 5.5']].map(m => ({ label: m[1], sel: st.model === m[0], cls: st.model === m[0] ? 'sel' : '', pick: () => this.setState({ model: m[0], key: st.key === 'ok' ? 'ok' : st.key }) })),
+      modelId: modelIds[st.model],
+      keyChecking: st.key === 'checking', keyOk: st.key === 'ok', keyNotOk: st.key !== 'ok',
+      keyCantCheck: !keyFilled || !!st.typing || st.key === 'checking',
+      checkKey: () => { this.setState({ key: 'checking' }); this.later(() => this.setState({ key: 'ok' }), 1300); },
+
+      conns: conns,
+      connsLine: st.syncing ? 'testing and syncing…' : (anyFail ? (nOk + ' of 6 synced · tap the failed one to fix it') : (allOk ? 'all 6 synced' : (nSaved + ' of 6 set up'))),
+      allOk: allOk, notAllOk: !allOk,
+      cantSync: !allSaved || st.syncing || anyFail,
+      syncLabel: st.syncing ? 'syncing…' : 'sync all',
+      syncAll: () => this.syncAll(),
+      cur: cur,
+
+      qNum: st.qi + 1, q: q, qShown: st.qShown, ans: st.ans, ansLive: st.live, ansSaid: st.said,
+      talking: st.talking, notTalking: !st.talking,
+      showRule: st.showRule, ruleText: ruleOf(st.qi), cantKeep: st.busy,
+      reword: () => { const a = st.alt.slice(); a[st.qi] = !a[st.qi]; this.setState({ alt: a }); },
+      keep: () => { if (st.qi < qs.length - 1) this.ask(st.qi + 1); else this.setState({ screen: 'doc' }); },
+      rules: qs.map((x, i) => ({ n: String(i + 1), text: ruleOf(i) })),
+      times: times, days: days, time: st.time,
+      heads: st.heads, headsLabel: st.heads ? 'on' : 'off', toggleHeads: () => this.setState({ heads: !st.heads }),
+      modeLabel: st.mode === 'call' ? 'call me' : 'notify', toggleMode: () => this.setState({ mode: st.mode === 'call' ? 'notify' : 'call' }),
+      doneLine: st.heads
+        ? 'I’ll send a heads-up at ten to, then ' + (st.mode === 'call' ? 'call. Pick up in the app.' : 'a notification to start.')
+        : (st.mode === 'call' ? 'I’ll call at ' + st.time + '. Pick up in the app.' : 'You’ll get a notification at ' + st.time + '.')
+    };
+  }
+}
+</script>
+</body>
+</html>

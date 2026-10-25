@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Morning Call</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,400..700&amp;family=Libre+Caslon+Text:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.app{--surface:#FBF8F4;--scl:#F5F1EB;--sc:#EFEAE2;--sch:#E8E2D9;--on:#1F1D1A;--osv:#54514B;--ov:#D6D0C6;--outline:#7D7972;--primary:#466660;--onp:#FFFFFF;--pc:#CDE7DF;--opc:#0E2B26;--secc:#DDE6E2;--tc:#FFDDC4;--otc:#3B1F08;--inv:#33302C;--oninv:#F5F0E9}
+a{color:var(--primary)}a:hover{color:var(--opc)}
+.k{font:500 12px/16px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.4px;color:var(--osv)}
+.rd{margin:0;font:400 16px/1.55 'Libre Caslon Text',serif}
+.sm{margin:0;font:400 14px/1.5 'Libre Caslon Text',serif;color:var(--osv)}
+.btn{font:500 14px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.1px;min-height:48px;border:1px solid var(--outline);border-radius:24px;background:transparent;color:var(--primary);padding:0 24px;cursor:pointer;transition:background-color 200ms ease-out,box-shadow 200ms ease-out}
+.btn:hover{background:rgba(70,102,96,.08)}
+.btn:disabled{opacity:.38;cursor:default;background:transparent}
+.pri{background:var(--primary);color:var(--onp);border-color:transparent}
+.pri:hover{background:var(--primary);box-shadow:0 1px 2px rgba(0,0,0,.3),0 1px 3px 1px rgba(0,0,0,.15)}
+.pri:disabled{background:rgba(31,29,26,.12);color:var(--on)}
+.lnk{display:flex;align-items:center;justify-content:center;text-decoration:none;box-sizing:border-box}
+.ag{margin:0;font:500 18px/1.4 'Roboto Flex',Roboto,sans-serif}
+.you{align-self:flex-end;max-width:280px;background:var(--pc);color:var(--opc);border-radius:20px 20px 4px 20px;padding:12px 16px;font:400 16px/1.5 'Libre Caslon Text',serif}
+.live{align-self:flex-end;max-width:280px;border:1px dashed var(--outline);border-radius:20px 20px 4px 20px;padding:12px 16px;font:400 16px/1.5 'Libre Caslon Text',serif}
+.ctx{align-self:flex-end;width:268px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:10px 14px;background:var(--sc);border-radius:12px}
+.ci{display:flex;flex-direction:column;gap:1px;padding:6px 0;border-top:1px solid var(--ov)}
+.ct{font:500 11px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:var(--osv)}
+.cb{font:500 14px/1.4 'Roboto Flex',Roboto,sans-serif;color:var(--on)}
+.note{background:var(--tc);color:var(--otc);border-radius:12px;padding:12px 16px;font:italic 400 14px/1.5 'Libre Caslon Text',serif}
+.chip{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--ov);border-radius:8px;background:var(--surface);padding:10px 12px;font:400 15px/1.4 'Libre Caslon Text',serif}
+.seg{flex:1;display:flex;flex-direction:column;gap:6px}
+.seg span:first-child{height:4px;border-radius:2px;background:var(--secc)}
+.seg.done span:first-child{background:var(--primary);opacity:.5}
+.seg.cur span:first-child{background:var(--primary)}
+.seg span:last-child{font:500 11px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.5px;color:var(--osv)}
+.seg.cur span:last-child{color:var(--on)}
+.st{font:500 14px 'Roboto Flex',Roboto,sans-serif;white-space:nowrap;color:var(--primary)}
+.lis{font:500 12px 'Roboto Flex',Roboto,sans-serif;padding:6px 10px;border-radius:8px;background:var(--tc);color:var(--otc)}
+.lis.idle{background:var(--sc);color:var(--osv)}
+.lis.off{background:transparent;border:1px solid var(--ov);color:var(--osv)}
+</style>
+</helmet>
+<div class="app" style="width:390px;height:844px;box-sizing:border-box;background:var(--surface);color:var(--on);display:flex;flex-direction:column;font-family:'Roboto Flex',Roboto,sans-serif;overflow:hidden">
+
+<sc-if value="{{on.lock}}" hint-placeholder-val="{{true}}">
+<div style="flex:1;display:flex;flex-direction:column;padding:96px 16px 32px;gap:40px;background:var(--pc);color:var(--opc)">
+<div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+<span style="font:500 15px 'Roboto Flex',Roboto,sans-serif">Monday, October 26</span>
+<span style="font:600 88px/1 'Roboto Flex',Roboto,sans-serif">8:50</span>
+</div>
+<button onClick="{{toIncoming}}" style="text-align:left;background:var(--surface);color:var(--on);border:0;border-radius:24px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,.15);display:flex;flex-direction:column;gap:4px;cursor:pointer;min-height:44px">
+<span style="display:flex;justify-content:space-between;width:100%;font:500 12px 'Roboto Flex',Roboto,sans-serif"><span>Personal Agent</span><span>now</span></span>
+<span style="font:600 16px 'Roboto Flex',Roboto,sans-serif">We’re scheduled in 10! :)</span>
+<span style="font:400 14px/1.45 'Libre Caslon Text',serif">I’ll call at 9:00. Five things on my list from yesterday.</span>
+</button>
+<div style="flex:1"></div>
+<span style="font:500 13px 'Roboto Flex',Roboto,sans-serif;text-align:center">tap the notification to jump to 9:00</span>
+</div>
+</sc-if>
+
+<sc-if value="{{on.incoming}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;display:flex;flex-direction:column;padding:120px 24px 48px;gap:12px">
+<span class="k" style="text-align:center">incoming call · 9:00</span>
+<span style="font:600 34px 'Roboto Flex',Roboto,sans-serif;text-align:center">Personal Agent</span>
+<span class="sm" style="text-align:center">morning meeting · about 8 min</span>
+<div style="flex:1"></div>
+<p class="sm" style="text-align:center;margin-bottom:24px">You talk. I answer in text, on screen.</p>
+<div style="display:flex;gap:12px">
+<button class="btn" style="flex:1;min-height:64px;border-radius:32px" onClick="{{decline}}">not now</button>
+<button class="btn pri" style="flex:1;min-height:64px;border-radius:32px" onClick="{{answer}}">answer</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.snoozed}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;display:flex;flex-direction:column;padding:120px 24px 48px;gap:16px">
+<span class="k">snoozed</span>
+<span style="font:600 30px/1.2 'Roboto Flex',Roboto,sans-serif">I’ll call again at 9:15.</span>
+<p class="sm">If you skip today, I’ll keep yesterday’s plan and hold nothing new.</p>
+<div style="flex:1"></div>
+<button class="btn pri" onClick="{{answer}}">call me now</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.call}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:20px 20px 12px">
+<sc-if value="{{listening}}" hint-placeholder-val="{{true}}"><span class="lis">● listening</span></sc-if>
+<sc-if value="{{idleMic}}" hint-placeholder-val="{{false}}"><span class="lis idle">● mic on</span></sc-if>
+<sc-if value="{{muted}}" hint-placeholder-val="{{false}}"><span class="lis off">○ muted</span></sc-if>
+<span class="k">morning meeting · {{clock}}</span>
+</div>
+<div style="display:flex;gap:4px;padding:0 20px 14px;border-bottom:1px solid var(--ov)">
+<sc-for list="{{stages}}" as="sg" hint-placeholder-count="4"><div class="seg {{sg.cls}}"><span></span><span>{{sg.label}}</span></div></sc-for>
+</div>
+<div ref="{{feedRef}}" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:16px 20px 20px;min-height:0">
+<sc-for list="{{msgs}}" as="m" hint-placeholder-count="3">
+<sc-if value="{{m.agent}}" hint-placeholder-val="{{true}}"><p class="ag">{{m.text}}</p></sc-if>
+<sc-if value="{{m.live}}" hint-placeholder-val="{{false}}"><div class="live">{{m.text}}</div></sc-if>
+<sc-if value="{{m.said}}" hint-placeholder-val="{{false}}"><div class="you">{{m.text}}</div></sc-if>
+<sc-if value="{{m.ctx}}" hint-placeholder-val="{{false}}">
+<div class="ctx">
+<span class="k">{{m.label}}</span>
+<sc-for list="{{m.items}}" as="c" hint-placeholder-count="1"><div class="ci"><span class="ct">{{c.tag}}</span><span class="cb">{{c.title}}</span></div></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{m.note}}" hint-placeholder-val="{{false}}"><div class="note">{{m.text}}</div></sc-if>
+<sc-if value="{{m.chips}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;flex-direction:column;gap:6px">
+<span class="k">{{m.label}}</span>
+<sc-for list="{{m.items}}" as="c" hint-placeholder-count="2"><div class="chip"><span>{{c.t}}</span><span class="k">{{c.sub}}</span></div></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{m.plan}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;flex-direction:column;gap:6px">
+<span class="k">your plan</span>
+<div style="background:var(--pc);color:var(--opc);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:6px">
+<sc-for list="{{m.items}}" as="c" hint-placeholder-count="2"><p class="rd" style="font-size:15px">{{c.t}}</p></sc-for>
+</div>
+</div>
+</sc-if>
+</sc-for>
+</div>
+<div style="display:flex;gap:8px;padding:14px 20px 24px;border-top:1px solid var(--ov)">
+<button class="btn" style="flex:1" onClick="{{toggleMute}}" aria-pressed="{{mutedState}}">{{muteLabel}}</button>
+<button class="btn pri" style="flex:1" onClick="{{next}}" disabled="{{busy}}">{{nextLabel}}</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.ended}}" hint-placeholder-val="{{false}}">
+<div style="flex:1;display:flex;flex-direction:column;padding:48px 24px 24px;gap:16px;min-height:0">
+<span class="k">call ended · {{clock}}</span>
+<h2 style="margin:0;font:600 28px/1.15 'Roboto Flex',Roboto,sans-serif">Your Morning</h2>
+<div style="background:var(--pc);color:var(--opc);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:6px">
+<span class="k">your plan</span>
+<p class="rd" style="font-size:15px">If it’s 9:30, then spec at my desk until 12.</p>
+<p class="rd" style="font-size:15px">If Dana emails, then it waits until 12.</p>
+</div>
+<span class="k" style="margin-top:4px">setting up</span>
+<div style="display:flex;flex-direction:column;flex:1;overflow-y:auto;min-height:0">
+<sc-for list="{{setup}}" as="t" hint-placeholder-count="5">
+<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:52px;border-top:1px solid var(--ov)">
+<span style="display:flex;flex-direction:column;gap:2px"><span style="font:400 15px/1.4 'Libre Caslon Text',serif">{{t.t}}</span><span class="k">{{t.sub}}</span></span>
+<span class="st" style="opacity:{{t.op}}">{{t.status}}</span>
+</div>
+</sc-for>
+</div>
+<a class="btn pri lnk" href="App.dc.html">open the app →</a>
+<button class="btn" onClick="{{restart}}">replay the call</button>
+</div>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  state = { screen: 'lock', stage: 0, msgs: [], busy: false, talking: false, muted: false, secs: 0, done: 0 };
+  componentDidMount() { this.later(() => { if (this.state.screen === 'lock') this.setState({ screen: 'incoming' }); }, 6000); }
+  componentWillUnmount() { (this.timers || []).forEach(clearTimeout); this.dead = true; }
+  componentDidUpdate() { try { if (this.feedEl) this.feedEl.scrollTop = this.feedEl.scrollHeight; } catch (e) {} }
+  later(fn, ms) { this.timers = this.timers || []; this.timers.push(setTimeout(() => { if (!this.dead) fn(); }, ms)); }
+  push(m) { this.setState(s => ({ msgs: s.msgs.concat([m]) })); }
+  say(text, done) {
+    this.nid = (this.nid || 0) + 1;
+    const id = 'y' + this.nid;
+    const w = text.split(' ');
+    let n = 0;
+    this.push({ you: true, id: id, text: '', live: true });
+    this.setState({ talking: true });
+    const tick = () => {
+      if (this.state.muted) { this.later(tick, 400); return; }
+      n++;
+      const fin = n >= w.length;
+      const t = w.slice(0, n).join(' ');
+      this.setState(s => ({ talking: !fin, msgs: s.msgs.map(m => m.id === id ? Object.assign({}, m, { text: t, live: !fin, said: fin }) : m) }));
+      if (fin) done(); else this.later(tick, 110 + Math.random() * 150);
+    };
+    this.later(tick, 450);
+  }
+  play(beats) {
+    this.setState({ busy: true });
+    const run = (i) => {
+      if (i >= beats.length) { this.setState({ busy: false }); return; }
+      const b = beats[i];
+      if (b.say) this.say(b.say, () => this.later(() => run(i + 1), 500));
+      else this.later(() => { this.push(b); run(i + 1); }, b.wait || 900);
+    };
+    run(0);
+  }
+  scripts() {
+    return [
+      [
+        { agent: true, text: 'Morning. What’s on your mind? Say everything, big or small.', wait: 700 },
+        { say: 'The onboarding spec, Dana’s contract, I still haven’t called the dentist, and Alex wants feedback on his deck.' },
+        { ctx: true, label: '“the spec” · 1 found', wait: 500, items: [{ tag: 'message · Priya · 8:41', title: 'any eta on the spec?' }] },
+        { ctx: true, label: '“Dana’s contract” · 2 found', wait: 500, items: [{ tag: 'mail · yesterday', title: 'Re: revised terms' }, { tag: 'calendar · today', title: '2:00 · call with Dana' }] },
+        { say: 'Oh, and the expense report.' },
+        { chips: true, label: 'captured · 5', items: [{ t: 'onboarding spec', sub: '' }, { t: 'Dana’s contract', sub: '' }, { t: 'call the dentist', sub: '' }, { t: 'feedback for Alex', sub: '' }, { t: 'expense report', sub: '' }] },
+        { agent: true, text: 'Anything else? Keep going, or tap that’s all.' }
+      ],
+      [
+        { agent: true, text: 'Ignoring deadlines, which one would you regret not moving forward this week?', wait: 600 },
+        { say: 'The spec. Dana matters, but it’s quick.' },
+        { agent: true, text: 'And one more, at most?' },
+        { say: 'Dana, then.' },
+        { chips: true, label: 'today’s two', items: [{ t: 'onboarding spec', sub: 'important' }, { t: 'Dana’s contract', sub: 'due today' }] }
+      ],
+      [
+        { agent: true, text: 'When and where will you work on the spec?', wait: 600 },
+        { say: 'Nine thirty, at my desk, before I open Slack.' },
+        { ctx: true, label: '“nine thirty” · calendar', wait: 500, items: [{ tag: 'calendar · today', title: '9:30–12:00 free' }] },
+        { agent: true, text: 'What’s most likely to pull you off it?' },
+        { say: 'Dana emailing back mid-morning.' },
+        { plan: true, items: [{ t: 'If it’s 9:30, then spec at my desk until 12.' }, { t: 'If Dana emails, then it waits until 12.' }] }
+      ],
+      [
+        { agent: true, text: 'What can I do to help clear the way?', wait: 600 },
+        { say: 'Draft a reply to Dana, find the dentist’s number, and keep my morning quiet.' },
+        { note: true, text: 'Nothing goes out as you without your review.' },
+        { chips: true, label: 'I’ll do', items: [{ t: 'draft reply to Dana', sub: 'you review' }, { t: 'hold 9:30–12 for the spec', sub: 'alone' }, { t: 'mute Slack until 12', sub: 'alone' }, { t: 'find the dentist’s number', sub: 'alone' }, { t: 'nudge at 11:55', sub: 'alone' }] },
+        { chips: true, label: 'parked until tomorrow', wait: 600, items: [{ t: 'feedback for Alex', sub: '' }, { t: 'expense report', sub: '' }] },
+        { agent: true, text: 'That’s everything. End the call when you’re ready.' }
+      ]
+    ];
+  }
+  setupList() {
+    return [
+      { t: 'reply to Dana', sub: 'mail · waits for your review', status: 'drafted' },
+      { t: 'spec, 9:30–12', sub: 'calendar', status: 'held' },
+      { t: 'Slack', sub: 'do not disturb until 12', status: 'muted' },
+      { t: 'dentist · 555-0142', sub: 'reminder to call at 12:15', status: 'set' },
+      { t: 'wrap the spec', sub: 'nudge at 11:55', status: 'scheduled' }
+    ];
+  }
+  tickClock() {
+    this.later(() => { if (this.state.screen === 'call') { this.setState(s => ({ secs: s.secs + 1 })); this.tickClock(); } }, 1000);
+  }
+  startCall() {
+    (this.timers || []).forEach(clearTimeout); this.timers = [];
+    this.setState({ screen: 'call', stage: 0, msgs: [], secs: 0, muted: false, done: 0 });
+    this.tickClock();
+    this.play(this.scripts()[0]);
+  }
+  next() {
+    if (this.state.busy) return;
+    const st = this.state.stage;
+    if (st < 3) { this.setState({ stage: st + 1 }); this.play(this.scripts()[st + 1]); return; }
+    this.setState({ screen: 'ended', done: 0 });
+    this.setupList().forEach((x, i) => this.later(() => this.setState({ done: i + 1 }), 700 + i * 650));
+  }
+  renderVals() {
+    const s = this.state;
+    const scr = s.screen;
+    const labels = ['clear', 'choose', 'commit', 'hand off'];
+    const mm = Math.floor(s.secs / 60), ss = s.secs % 60;
+    this._fr = this._fr || ((el) => { this.feedEl = el; });
+    const blank = { agent: false, you: false, live: false, said: false, ctx: false, note: false, chips: false, plan: false, items: [], label: '', text: '' };
+    return {
+      on: { lock: scr === 'lock', incoming: scr === 'incoming', snoozed: scr === 'snoozed', call: scr === 'call', ended: scr === 'ended' },
+      toIncoming: () => this.setState({ screen: 'incoming' }),
+      decline: () => this.setState({ screen: 'snoozed' }),
+      answer: () => this.startCall(),
+      restart: () => this.startCall(),
+      clock: mm + ':' + (ss < 10 ? '0' : '') + ss,
+      listening: !s.muted && s.talking, idleMic: !s.muted && !s.talking, muted: s.muted, mutedState: s.muted,
+      muteLabel: s.muted ? 'unmute' : 'mute',
+      toggleMute: () => this.setState({ muted: !s.muted }),
+      stages: labels.map((l, i) => ({ label: l, cls: i < s.stage ? 'done' : (i === s.stage ? 'cur' : '') })),
+      msgs: s.msgs.map(m => Object.assign({}, blank, m)),
+      feedRef: this._fr,
+      busy: s.busy,
+      nextLabel: ['that’s all', 'next', 'next', 'end call'][s.stage],
+      next: () => this.next(),
+      setup: this.setupList().map((x, i) => Object.assign({}, x, { status: i < s.done ? x.status : 'working…', op: i < s.done ? '1' : '.6' }))
+    };
+  }
+}
+</script>
+</body>
+</html>

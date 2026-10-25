@@ -18,6 +18,8 @@ data class ConnectorManifest(
     val version: String,
     /** Nouns this connector wants to push. The user must grant each one before ingest is accepted. */
     val produces: Set<Noun>,
+    /** Action kinds this connector can execute (see `shared/action`). */
+    val handles: Set<net.robog.clarity.shared.governance.ActionKind> = emptySet(),
     val configSchema: JsonObject = JsonObject(emptyMap()),
     /**
      * Public key (X25519, base64url) the app uses to seal secret config values (passwords,

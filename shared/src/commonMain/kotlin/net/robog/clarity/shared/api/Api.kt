@@ -12,6 +12,21 @@ object ApiPaths {
     /** Model Context Protocol endpoint (streamable HTTP), device-authenticated. */
     const val MCP = "/mcp"
     const val HEALTH = "/healthz"
+
+    // App API (under APP)
+    const val SETUP_MODEL_KEY = "$APP/setup/model-key"
+    const val SETTINGS = "$APP/settings"
+    const val FEED = "$APP/feed"
+    const val EVENTS = "$APP/events"
+    const val INPUT = "$APP/input"
+    const val SESSIONS = "$APP/sessions"
+    const val TODAY = "$APP/today"
+    const val CONSTITUTION = "$APP/constitution"
+    const val HELD = "$APP/held"
+    const val ACTIVITY = "$APP/activity"
+
+    // Connector API (under INGEST)
+    const val ACTIONS = "$INGEST/actions"
     const val READY = "/readyz"
 }
 
