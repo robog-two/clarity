@@ -1,0 +1,23 @@
+# Defaults. Every value can be overridden by the environment variable named in config/ConfigLoading.kt.
+clarity:
+  instance:
+    name: Clarity
+  http:
+    port: 8080
+  database:
+    url: jdbc:postgresql://localhost:5432/clarity
+    user: clarity
+    maxPoolSize: 10
+  dataDir: ./data
+  enrollment:
+    mode: tofu
+  connectors:
+    autoGrant: false
+    secretsDir: /run/secrets
+  agent:
+    model: claude-opus-5-5
+    effort: medium
+    reviewInterval: 2h
+    maxTurns: 30
+    maxConcurrentRuns: 2
+    mcpServers: ""
