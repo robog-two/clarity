@@ -20,9 +20,38 @@ use `up -d --build` (the `build:` sections use `deploy/container/jvm-app.Contain
 
 | Profile | Adds | Enable |
 |---|---|---|
-| (none) | `postgres`, `backend` | |
+| (none) | `postgres`, `backend`, `caddy` (TLS) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
 | `browser` | `browser` (Playwright MCP, headless Chromium) | `--profile browser`, and set `CLARITY_MCP_SERVERS=browser=http://browser:8931/mcp` |
+
+## TLS (Caddy)
+
+`caddy` fronts the backend and provisions/renews its own certificates; nothing else to run.
+Clients use `https://<CLARITY_DOMAIN>[:CLARITY_HTTPS_PORT]`. The backend's plain-HTTP port stays on loopback.
+
+| `CLARITY_DOMAIN` | Certificate |
+|---|---|
+| `localhost` (default), an IP, `*.local`/`*.lan` | Caddy's built-in local CA. Works offline, but clients must trust its root (below). |
+| a public DNS name (`clarity.example.com`) | Let's Encrypt / ZeroSSL via ACME. Needs the name pointing at this host and ports 80 and 443 reachable from the internet. Trusted everywhere, including Android release builds. |
+
+Pick the address family with `CLARITY_PUBLIC_BIND`: `[::]` (default; IPv6, and whether it also accepts IPv4
+depends on the host's dual-stack setting), `0.0.0.0` for IPv4 only, or a specific address like `[2001:db8::5]`. The
+ACME egress network has IPv6 enabled so issuance works on IPv6-only hosts.
+
+Certificates, the ACME account and the local CA live in the `caddy-data` volume (back it up, or you
+re-issue on loss). Rootless Podman can't publish ports below 1024 by default: either
+`sudo sysctl -w net.ipv4.ip_unprivileged_port_start=80` (persist in `/etc/sysctl.d/`) or set
+`CLARITY_HTTP_PORT`/`CLARITY_HTTPS_PORT` (ACME then only works if those are what the internet reaches).
+
+Trusting the local CA (only for the internal-CA case):
+
+```sh
+podman compose -f deploy/compose.yaml cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+```
+
+Install that file on the client (Android: Settings > Security > Encryption & credentials > Install a certificate > CA certificate).
+Release builds of the app only trust the system store plus user CAs if the app's network security config allows it; for anything
+beyond local testing use a real domain.
 
 ## Enrolling the phone
 
@@ -35,8 +64,7 @@ podman compose -f deploy/compose.yaml exec backend cat /data/enrollment-token
 ```
 
 In `tofu` mode (default) the first device to enroll while none exists needs no token; use
-`CLARITY_ENROLLMENT_MODE=token` to always require it. Reach the backend from the phone through a TLS
-reverse proxy or VPN; the port is published on loopback only (`CLARITY_BIND`).
+`CLARITY_ENROLLMENT_MODE=token` to always require it. Reach the backend from the phone through Caddy (above); the plain-HTTP port is published on loopback only (`CLARITY_BIND`).
 
 ## Adding a connector
 
@@ -50,7 +78,7 @@ reverse proxy or VPN; the port is published on loopback only (`CLARITY_BIND`).
 
 ## Security model
 
-- Networks: `db`, `ingest`, `tools` are `internal` (no route off the host). Each service that needs the
+- Networks: `db`, `ingest`, `tools`, `proxy` are `internal` (no route off the host). Each service that needs the
   internet gets its own egress network. Postgres is only on `db`; connectors only on `ingest` plus
   their own egress, so they cannot reach the database, the browser or each other.
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and

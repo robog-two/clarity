@@ -1,0 +1,19 @@
+# TLS front for the backend. Certificates are provisioned and renewed by Caddy itself:
+#
+#   CLARITY_DOMAIN=localhost (default)  -> Caddy's built-in local CA ("internal"); no outside services
+#   CLARITY_DOMAIN=clarity.example.com  -> Let's Encrypt / ZeroSSL via ACME (needs public DNS + ports 80/443)
+#   IPs and local names (*.local, *.lan, ...) also get the internal CA.
+#
+# See deploy/README.md.
+{
+	# don't try to install the local CA into the (read-only) container trust store
+	skip_install_trust
+}
+
+{$CLARITY_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy backend:8080 {
+		# MCP / streaming responses should not be buffered
+		flush_interval -1
+	}
+}
