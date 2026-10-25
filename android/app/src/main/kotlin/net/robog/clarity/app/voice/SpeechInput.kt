@@ -2,6 +2,7 @@ package net.robog.clarity.app.voice
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -100,7 +101,9 @@ class AndroidSpeechInput(private val context: Context) : SpeechInput {
 
     private fun create(): SpeechRecognizer? {
         val r = when {
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(context) -> SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            // On-device recognition exists from Android 13; minSdk is 31 (Android 12).
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && SpeechRecognizer.isOnDeviceRecognitionAvailable(context) ->
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
             SpeechRecognizer.isRecognitionAvailable(context) -> SpeechRecognizer.createSpeechRecognizer(context)
             else -> return null
         }
