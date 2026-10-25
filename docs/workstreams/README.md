@@ -13,6 +13,7 @@ Each workstream is one spec file here, implemented by one agent on its own branc
 | 2 | `lead` | Lead thread, inbox, helpers, memory, feed + SSE, durable scheduler, domain tools | harness, governance |
 | 2 | `connectors` | New noun (document); `mail` and `dav` connectors with actions | governance |
 | 2 | `app-core` | Android: theme, networking + SSE, card renderer, voice, onboarding | 0 |
+| 2 | `egress` | Egress proxy: browser can reach only the public internet, backend only the model API | computers |
 | 3 | `sessions` | Morning call, values interview, amend, Today, settings, setup API | lead |
 | 3 | `app-screens` | Android: call + scheduling/notifications, Today, Ask, Held, Amend, Settings, phone connector | app-core, sessions contracts |
 | 3 | `vault` | Credential vault: phone-held key, forms, fill + scrubbing, biometric approval | governance, computers, lead |
