@@ -23,5 +23,6 @@ include(
     ":backend",
     ":connector-sdk",
     ":connectors:example",
+    ":computers:sandbox",
 )
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")

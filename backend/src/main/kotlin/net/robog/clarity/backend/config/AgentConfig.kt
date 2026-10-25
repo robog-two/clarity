@@ -15,4 +15,8 @@ data class AgentConfig(
     val mcpServers: List<McpServerConfig> = emptyList(),
 )
 
-data class McpServerConfig(val name: String, val url: String)
+/**
+ * One external MCP server. [keyFile] (optional) holds a bearer key sent as `Authorization: Bearer`
+ * (e.g. a Podman secret mounted at /run/secrets/sandbox_key).
+ */
+data class McpServerConfig(val name: String, val url: String, val keyFile: String? = null)

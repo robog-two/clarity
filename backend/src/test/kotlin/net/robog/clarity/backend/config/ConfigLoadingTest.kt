@@ -86,6 +86,10 @@ class ConfigLoadingTest : FunSpec({
             McpServerConfig("other", "http://o/mcp?a=b"),
         )
         parseMcpServers("") shouldBe emptyList()
+        parseMcpServers("sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://b/mcp") shouldBe listOf(
+            McpServerConfig("sandbox", "http://sandbox:8940/mcp", "/run/secrets/sandbox_key"),
+            McpServerConfig("browser", "http://b/mcp"),
+        )
         load(mapOf("CLARITY_MCP_SERVERS" to "browser=http://b/mcp")).getOrNull()!!.agent.mcpServers shouldBe
             listOf(McpServerConfig("browser", "http://b/mcp"))
     }
