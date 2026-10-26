@@ -42,7 +42,8 @@ import kotlinx.serialization.json.putJsonObject
  *  - web search / fetch: `BetaWebSearchTool20260209` / `BetaWebFetchTool20260209`;
  *  - caching: top-level `cacheControl(BetaCacheControlEphemeral)` and per-block `cacheControl`
  *    with `ttl` (`5m`/`1h`); usage exposes `cacheCreation` with the 5m/1h split;
- *  - mid-conversation system messages: `addMessage(BetaSystemMessageParam)` (no beta header);
+ *  - mid-conversation system messages: `addMessage(BetaSystemMessageParam)` (no beta header); their
+ *    `outputConfig(BetaSystemMessageOutputConfig)` (`effort`) needs beta `mid-conversation-output-config-2026-07-01`;
  *  - refusal fallback: `fallbacksDefault()`; effort: `BetaOutputConfig.effort`;
  *  - `thinking.display`: `BetaThinkingConfigAdaptive.display`; structured output: `output_config.format`
  *    (`json_schema`), set through the SDK's own JSON mapping so field names stay the API's.
@@ -89,6 +90,9 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
         /** Beta flag for server-side compaction. */
         const val COMPACTION_BETA = "compact-2026-01-12"
 
+        /** Beta flag for `output_config.effort` on mid-conversation system messages. */
+        const val MID_CONVERSATION_EFFORT_BETA = "mid-conversation-output-config-2026-07-01"
+
         const val TOOL_SEARCH_TYPE = "tool_search_tool_bm25_20251119"
         const val TOOL_SEARCH_NAME = "tool_search_tool_bm25"
 
@@ -106,6 +110,7 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
                     builder.addMessage(message.toWire().toSdk<BetaMessageParam>())
                 }
             }
+            if (request.messages.any { it.effort != null }) builder.addBeta(MID_CONVERSATION_EFFORT_BETA)
             request.cache?.takeIf { it.automatic }?.let { builder.cacheControl(it.ephemeral().toSdk<BetaCacheControlEphemeral>()) }
             if (request.fallbacks) builder.addBeta(FALLBACK_BETA).fallbacksDefault()
 
@@ -201,6 +206,7 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
                 },
             )
             put("content", JsonArray(content.map { it.toWire() }))
+            if (role == Role.SYSTEM && effort != null) putJsonObject("output_config") { put("effort", effort) }
         }
 
         private fun Block.toWire(): JsonObject = when (this) {

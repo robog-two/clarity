@@ -28,6 +28,10 @@ import net.robog.clarity.backend.governance.OutboxSignals
 import net.robog.clarity.backend.governance.UtcPersonZone
 import net.robog.clarity.backend.persistence.ExposedNounReader
 import net.robog.clarity.backend.persistence.tx
+import net.robog.clarity.backend.sessions.CallEffortOverride
+import net.robog.clarity.backend.sessions.DayPlanStore
+import net.robog.clarity.backend.sessions.SessionService
+import net.robog.clarity.backend.sessions.SessionStore
 import net.robog.clarity.backend.triggers.ExposedTriggerStore
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.ModelGateway
@@ -106,15 +110,22 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val external = ExternalTools(gate)
     val domain = DomainTools(ExposedNounReader(database), ExposedTriggerStore(database, clock))
 
+    val sessionService = SessionService(SessionStore(database), feed, inbox, heldStore, constitutions, clock)
+    val dayPlans = DayPlanStore(database, clock)
+    val sessionTools = SessionTools(sessionService, feed, dayPlans, tasks, constitutions, settingsProvider, clock)
+
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
     val lead: LeadAgent
 
     init {
         val helperTools = HelperTools(lazy { helpers })
-        toolbox = AgentToolbox(domain, own, external, helperTools, large, mcp)
+        toolbox = AgentToolbox(domain, own, external, helperTools, large, mcp, sessionTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
-        lead = LeadAgent(config, runtime, journal, inbox, signals, threads, constitutions, memory, toolbox, large, feed, settingsProvider, clock)
+        lead = LeadAgent(
+            config, runtime, journal, inbox, signals, threads, constitutions, memory, toolbox, large, feed, settingsProvider, clock,
+            CallEffortOverride(sessionService),
+        )
     }
 
     /** Empties every table the lead touches so tests do not see each other. */
@@ -122,7 +133,8 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
         database.tx {
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
-                    "constitution_version, amendment, memory_journal, memory_scratch, agent_task, scheduled_job, tool_result, message " +
+                    "constitution_version, amendment, memory_journal, memory_scratch, agent_task, scheduled_job, tool_result, message, " +
+                    "agent_session, day_plan, settings " +
                     "RESTART IDENTITY CASCADE",
             )
         }

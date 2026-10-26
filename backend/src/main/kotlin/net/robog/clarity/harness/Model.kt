@@ -58,10 +58,22 @@ enum class Role { USER, ASSISTANT, SYSTEM }
  * cache, and must satisfy [systemPlacementViolations].
  */
 @Serializable
-data class Message(val role: Role, val content: List<Block>) {
+data class Message(
+    val role: Role,
+    val content: List<Block>,
+    /**
+     * Only on [Role.SYSTEM] messages: the effort (`low|medium|high|xhigh|max`) the model uses from this
+     * point of the conversation on (beta `mid-conversation-output-config-2026-07-01`). Sent as the
+     * message's `output_config`; an effort-only message has empty [content].
+     */
+    val effort: String? = null,
+) {
     companion object {
         fun user(text: String) = Message(Role.USER, listOf(Block.Text(text)))
         fun system(text: String) = Message(Role.SYSTEM, listOf(Block.Text(text)))
+
+        /** An effort-only operator message: changes the effort for the rest of the conversation without breaking the cached prefix. */
+        fun effort(effort: String) = Message(Role.SYSTEM, emptyList(), effort)
     }
 }
 
