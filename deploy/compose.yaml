@@ -125,6 +125,7 @@ services:
       CLARITY_DOMAIN: ${CLARITY_DOMAIN:-localhost}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro,z
+      - ./secrets/tls:/etc/caddy/certs:ro,z   # your own certificates, if any (see the Caddyfile)
       - caddy-data:/data       # certificates, ACME account, local CA root
       - caddy-config:/config
     depends_on:

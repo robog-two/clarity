@@ -140,6 +140,26 @@ Clients use `https://<CLARITY_DOMAIN>[:CLARITY_HTTPS_PORT]`. The backend's plain
 |---|---|
 | `localhost` (default), an IP, `*.local`/`*.lan` | Caddy's built-in local CA. Works offline, but clients must trust its root (below). |
 | a public DNS name (`clarity.example.com`) | Let's Encrypt / ZeroSSL via ACME. Needs the name pointing at this host and ports 80 and 443 reachable from the internet. Trusted everywhere, including Android release builds. |
+| a name you have a certificate for | Your certificate (see "Your own certificate" below); no ACME for that name. |
+
+List several names separated by commas: `CLARITY_DOMAIN="clarity.example.com, clarity.example.net"`. Each one
+gets its certificate the way the table says.
+
+### Your own certificate (e.g. behind Cloudflare)
+
+A name proxied through Cloudflare (orange cloud) points at Cloudflare, so ACME cannot validate it through
+Caddy, and Cloudflare reports **525** if Caddy has no certificate for the name. Create a Cloudflare Origin
+Certificate for it (SSL/TLS -> Origin Server), set the SSL mode to *Full (strict)*, and:
+
+```sh
+# certificate and key as two files with the same name (anything ending in .pem / .key)
+$EDITOR deploy/secrets/clarity-origin.pem deploy/secrets/clarity-origin.key
+./deploy/init-secrets.sh            # bundles them into deploy/secrets/tls/ for Caddy
+# add the name to CLARITY_DOMAIN in deploy/.env, then restart caddy
+```
+
+Caddy serves a loaded certificate for every name it covers and skips ACME for those names. `deploy/secrets/` is
+gitignored. The same works for any certificate you already have (an internal CA, a wildcard).
 
 Pick the address family with `CLARITY_PUBLIC_BIND`: `[::]` (default; IPv6, and whether it also accepts IPv4
 depends on the host's dual-stack setting), `0.0.0.0` for IPv4 only, or a specific address like `[2001:db8::5]`. The

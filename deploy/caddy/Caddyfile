@@ -3,6 +3,12 @@
 #   CLARITY_DOMAIN=localhost (default)  -> Caddy's built-in local CA ("internal"); no outside services
 #   CLARITY_DOMAIN=clarity.example.com  -> Let's Encrypt / ZeroSSL via ACME (needs public DNS + ports 80/443)
 #   IPs and local names (*.local, *.lan, ...) also get the internal CA.
+#   Several names: CLARITY_DOMAIN="a.example.com, b.example.com".
+#
+# Your own certificates (e.g. a Cloudflare Origin Certificate behind a proxied DNS name): put
+# deploy/secrets/<name>.pem (certificate) and deploy/secrets/<name>.key (its key), run
+# deploy/init-secrets.sh, and list the name in CLARITY_DOMAIN. Caddy serves a loaded certificate
+# for every name it covers and only requests certificates for the other names.
 #
 # See deploy/README.md.
 {
@@ -11,6 +17,10 @@
 }
 
 {$CLARITY_DOMAIN:localhost} {
+	tls {
+		# certificate+key bundles written by deploy/init-secrets.sh (empty unless you add your own)
+		load /etc/caddy/certs
+	}
 	encode zstd gzip
 	reverse_proxy backend:8080 {
 		# MCP / streaming responses should not be buffered

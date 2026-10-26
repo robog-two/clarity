@@ -60,7 +60,29 @@ else
 fi
 chmod 600 "$dir/anthropic_api_key"
 
+# Your own TLS certificates: each <name>.pem with a matching <name>.key becomes the bundle
+# tls/<name>.pem, which Caddy loads (deploy/caddy/Caddyfile). Bundles whose pair is gone are removed.
+mkdir -p "$dir/tls"
+chmod 700 "$dir/tls"
+for bundle in "$dir"/tls/*.pem; do
+    [ -f "$bundle" ] || continue
+    name="$(basename "$bundle" .pem)"
+    [ -f "$dir/$name.pem" ] && [ -f "$dir/$name.key" ] || { rm -f "$bundle"; echo "removed tls/$name.pem"; }
+done
+for cert in "$dir"/*.pem; do
+    [ -f "$cert" ] || continue
+    name="$(basename "$cert" .pem)"
+    key="$dir/$name.key"
+    [ -f "$key" ] || { echo "skip    $name.pem (no $name.key next to it)"; continue; }
+    chmod 600 "$cert" "$key"
+    tmp="$(mktemp "$dir/tls/.bundle.XXXXXX")"
+    # a trailing newline after the certificate keeps the two PEM blocks apart
+    { cat "$cert"; echo; cat "$key"; } | sed '/^[[:space:]]*$/d' >"$tmp"
+    if cmp -s "$tmp" "$dir/tls/$name.pem"; then rm -f "$tmp"; else mv "$tmp" "$dir/tls/$name.pem"; echo "bundled tls/$name.pem"; fi
+done
+
 for f in "$dir"/*; do
+    case "$f" in *.pem|*.key) continue ;; esac   # TLS files go to Caddy as a folder, not as Podman secrets
     [ -f "$f" ] && load_into_podman "$(basename "$f")"
 done
 exit 0
