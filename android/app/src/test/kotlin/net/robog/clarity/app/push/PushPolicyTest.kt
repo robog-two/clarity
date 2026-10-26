@@ -232,6 +232,21 @@ class NotificationDecisionTest {
         assertEquals(NotifyKind.InApp, parseNotify("something_new"))
         assertEquals(NotifyKind.Hold, parseNotify("hold_until:2026-10-26T12:00:00Z"))
         assertEquals(NotifyKind.EveningBatch, parseNotify("evening_batch:2026-10-26T18:00:00Z"))
+        assertEquals(NotifyKind.Released(kotlin.time.Instant.parse("2026-10-26T12:00:00Z")), parseNotify("released:2026-10-26T12:00:00Z"))
+        assertEquals(NotifyKind.Released(null), parseNotify("released:garbled"))
+    }
+
+    @Test fun aReleasedHoldNotifiesLikePushNowWithItsAgeCountedFromTheRelease() {
+        val elsewhere = Front.Showing(Place.Tab(MainTab.Settings))
+        // sent three hours ago during protected time, released just now
+        val released = item("released:$NOW").copy(at = NOW - 3.hours)
+        val p = plan(Arrival.Item(released), elsewhere)!!
+        assertEquals(PushChannel.Agent, p.channel)
+        assertEquals(plan(Arrival.Item(item("push_now")), elsewhere)!!.channel, p.channel, "the channel push-now uses")
+        assertEquals(PlanStyle.Message, p.style)
+        assertNull(plan(Arrival.Item(item("released:${NOW - 3.hours}"))), "released long ago")
+        assertNull(plan(Arrival.Item(released), Front.Showing(Place.Tab(MainTab.Today))), "the feed shows it")
+        assertNull(plan(Arrival.Item(released), canPost = false))
     }
 
     @Test fun textIsTheFirstLineOfTheItemsOwnWordsAndIsShortened() {

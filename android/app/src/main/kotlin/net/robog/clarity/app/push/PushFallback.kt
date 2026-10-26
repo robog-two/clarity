@@ -32,13 +32,15 @@ import net.robog.clarity.app.data.feed.FeedSync
  * The arrivals both paths have already handled, for one server and device ([scope]). Items are
  * remembered by seq: everything at or below [floor] is done, plus the recent [seqs] above it (kept
  * as a set so that two paths finishing out of order never skip one). Held actions have no seq, so
- * the most recent [held] ids are kept instead.
+ * the most recent [held] ids are kept instead. A released hold reuses the seq its item was first
+ * claimed under, so the most recent [released] seqs are kept apart.
  */
 data class Notified(
     val scope: String = "",
     val floor: Long = 0,
     val seqs: List<Long> = emptyList(),
     val held: List<String> = emptyList(),
+    val released: List<Long> = emptyList(),
 ) {
     /** The highest seq either path has notified (or decided not to). */
     val lastSeq: Long get() = seqs.maxOrNull() ?: floor
@@ -48,6 +50,11 @@ data class Notified(
         // A different server or device starts over: its seqs mean something else.
         val base = if (scope == this.scope) this else Notified(scope)
         return when (arrival) {
+            is Arrival.Item if arrival.item.notify.startsWith("released:") -> {
+                val seq = arrival.item.seq
+                if (seq in base.released) return null
+                base.copy(released = (base.released + seq).takeLast(keep))
+            }
             is Arrival.Item -> {
                 val seq = arrival.item.seq
                 if (seq <= base.floor || seq in base.seqs) return null
@@ -100,6 +107,7 @@ class DataStoreNotifiedLedger(
         floor = prefs[FLOOR] ?: 0,
         seqs = prefs[SEQS].orEmpty().split(',').mapNotNull { it.toLongOrNull() },
         held = prefs[HELD].orEmpty().split('\n').filter { it.isNotEmpty() },
+        released = prefs[RELEASED].orEmpty().split(',').mapNotNull { it.toLongOrNull() },
     )
 
     private fun write(prefs: MutablePreferences, n: Notified) {
@@ -107,6 +115,7 @@ class DataStoreNotifiedLedger(
         prefs[FLOOR] = n.floor
         prefs[SEQS] = n.seqs.joinToString(",")
         prefs[HELD] = n.held.joinToString("\n")
+        prefs[RELEASED] = n.released.joinToString(",")
     }
 
     private companion object {
@@ -114,6 +123,7 @@ class DataStoreNotifiedLedger(
         val FLOOR = longPreferencesKey("push_notified_floor")
         val SEQS = stringPreferencesKey("push_notified_seqs")
         val HELD = stringPreferencesKey("push_notified_held")
+        val RELEASED = stringPreferencesKey("push_notified_released")
     }
 }
 

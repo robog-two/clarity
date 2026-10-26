@@ -32,6 +32,7 @@ import net.robog.clarity.backend.auth.DevicePrincipal
 import net.robog.clarity.backend.http.EdgeProblem
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.respondProblem
+import net.robog.clarity.backend.scheduler.RELEASE_RESEND
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.feed.Card
@@ -68,8 +69,8 @@ fun isNewerThan(event: FeedEvent, replayedSeq: Long): Boolean = when (event) {
 
 /**
  * The app's feed: `GET /api/v1/feed?after=` (paging), `GET /api/v1/events?after=` (SSE: replay the
- * items after `after`, then live events; a heartbeat comment keeps it open; closed when the JWT
- * expires so the client reconnects with a fresh one) and `POST /api/v1/input`.
+ * items after `after` and the holds released lately, then live events; a heartbeat comment keeps it
+ * open; closed when the JWT expires so the client reconnects with a fresh one) and `POST /api/v1/input`.
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
@@ -146,6 +147,8 @@ class FeedRoutes(
             }
             if (!page.hasMore) break
         }
+        // Holds released lately on items the client already has: it notifies once and remembers it.
+        feed.releasedSince(clock.now() - RELEASE_RESEND).filter { it.seq <= after }.forEach { send(frame(FeedEvent.ItemFinal(it))) }
         for (event in live) {
             if (!isNewerThan(event, replayed)) continue
             send(frame(event))

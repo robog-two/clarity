@@ -59,7 +59,10 @@ sealed interface SyncSignal {
     data class SessionChanged(val sessionId: SessionId) : SyncSignal
 }
 
-/** Something that reached this phone for the first time: the push service decides if it deserves a notification. */
+/**
+ * Something that reached this phone for the first time, or a held item the server just released:
+ * the push service decides if it deserves a notification.
+ */
 sealed interface Arrival {
     data class Item(val item: FeedItem) : Arrival
     data class Held(val action: HeldAction) : Arrival
@@ -89,7 +92,7 @@ class FeedSync(
     val signals: SharedFlow<SyncSignal> = _signals.asSharedFlow()
 
     private val _arrivals = MutableSharedFlow<Arrival>(extraBufferCapacity = 64)
-    /** New feed items (once complete) and newly held actions, once each; the push service and its fallback listen. */
+    /** New feed items (once complete), released holds and newly held actions, once each; the push service and its fallback listen. */
     val arrivals: SharedFlow<Arrival> = _arrivals.asSharedFlow()
 
     private val nudges = Channel<Unit>(Channel.CONFLATED)
@@ -186,7 +189,8 @@ class FeedSync(
 
     /**
      * Pages through the feed from [resumePoint] until the server says there is no more. Starting
-     * before a cached item that is still streaming fetches its final version if it was missed.
+     * before a cached item that is still streaming, or still held, fetches its final version or its
+     * release if it was missed (the fallback has no stream to hear them on).
      */
     suspend fun fillGap(onArrival: (Arrival) -> Unit = {}) {
         var after = resumePoint()
@@ -211,22 +215,23 @@ class FeedSync(
         }
     }
 
-    /** The last cached seq, or just before the oldest recent item still streaming. */
+    /** The last cached seq, or just before the oldest recent item still streaming or held. */
     private suspend fun resumePoint(): Long {
         val last = store.lastSeq()
-        val streaming = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming }.minOfOrNull { it.seq } ?: return last
-        return minOf(last, streaming - 1)
+        val open = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming || isHeld(it) }.minOfOrNull { it.seq } ?: return last
+        return minOf(last, open - 1)
     }
 
     /**
      * Stores [item]; it arrives (for notifications) once, when the cache first holds it complete:
-     * first seen already final, or a streaming copy being finished. Partials never arrive.
+     * first seen already final, or a streaming copy being finished. Partials never arrive. A held
+     * item arrives a second time, once, when the server releases it.
      */
     private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: (Arrival) -> Unit = {}) {
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            if (becameComplete(existing, it)) arrive(Arrival.Item(it), onArrival)
+            if (becameComplete(existing, it) || holdReleased(existing, it)) arrive(Arrival.Item(it), onArrival)
         }
     }
 
