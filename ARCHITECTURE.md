@@ -416,8 +416,8 @@ Two containers on the internal `tools` network, each an MCP server the backend c
   credentials come only from the vault), headless, with uBlock Origin and Privacy
   Badger preinstalled in a fixed profile (ad/tracker blocking makes pages lighter and the
   accessibility snapshot shorter), driven by Mozilla's Firefox DevTools MCP server over WebDriver
-  BiDi; exposed as streamable HTTP. Its own egress network; no access to other internal
-  networks. Page reading order: accessibility/DOM snapshot with element uids first, screenshot
+  BiDi; exposed as streamable HTTP. Reaches the public internet only through the egress proxy;
+  no access to other internal networks. Page reading order: accessibility/DOM snapshot with element uids first, screenshot
   only when needed. Screenshots and long pages go to a helper, not the lead.
 
 The cheapest-first ladder in the system prompt: what the agent already knows → domain tools →
@@ -479,8 +479,8 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
   production path for systemd hosts.
 - Networks: `db` (internal: postgres + backend), `ingest` (internal: backend + connectors),
   `tools` (internal: backend + sandbox + browser), `proxy` (internal: caddy + backend), and one
-  non-internal **egress network per service** that needs the internet (backend for the model API,
-  each connector for its upstream, caddy). The sandbox has no egress network.
+  non-internal **egress network per service** that needs the internet (each connector for its
+  upstream, caddy; the browser and backend go through the egress proxy instead). The sandbox has no egress network.
 - **Egress proxy** (`egress`, Squid): the browser and the backend have no direct route out; they
   reach the internet only through this proxy, which refuses private, loopback and link-local
   destinations (it resolves names itself, so DNS tricks don't bypass it). The browser may reach

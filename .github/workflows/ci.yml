@@ -102,3 +102,20 @@ jobs:
         run: podman build -f deploy/container/browser.Containerfile -t ghcr.io/robog-two/clarity-browser:local .
       - name: Browser smoke test
         run: computers/browser/smoke.sh ghcr.io/robog-two/clarity-browser:local
+
+  # Builds the egress proxy with Podman and checks its policy against real containers: public HTTPS
+  # works; private, loopback, link-local, ULA and DNS-to-private destinations and non-443 CONNECT are
+  # refused; the backend listener allows only the model API; clients have no direct route out.
+  # The browser image is built too, to prove Firefox works through the proxy.
+  egress-smoke:
+    name: Egress proxy smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build egress image
+        run: podman build -f deploy/container/egress.Containerfile -t ghcr.io/robog-two/clarity-egress:local .
+      - name: Build browser image
+        run: podman build -f deploy/container/browser.Containerfile -t ghcr.io/robog-two/clarity-browser:local .
+      - name: Egress smoke test (with the browser through the proxy)
+        run: SMOKE_BROWSER_IMAGE=ghcr.io/robog-two/clarity-browser:local computers/egress/smoke.sh ghcr.io/robog-two/clarity-egress:local
