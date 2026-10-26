@@ -34,7 +34,7 @@ podman run -d --name "$egress" --user 10001:10001 --read-only --cap-drop ALL --s
   --tmpfs /tmp:rw,nosuid,size=64m --memory 128m \
   --add-host private.test:10.1.2.3 --add-host private6.test:fd00::5 \
   -e CLARITY_BACKEND_EGRESS_ALLOW=example.com \
-  --network "$net_browser:alias=egress-browser" --network "$net_backend:alias=egress-backend" --network "$net_out" \
+  --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_out" \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
   podman exec "$egress" nc -z 127.0.0.1 3130 >/dev/null 2>&1 && break
@@ -84,6 +84,22 @@ expect "backend network: no direct route to a public name" 000 "$(client "$net_b
 browser_ip="$(podman exec "$egress" getent ahostsv4 egress-browser | awk 'NR==1{print $1}')"
 expect "backend network cannot reach the browser listener" 000 "$(client "$net_backend" -x "http://$browser_ip:3128" https://example.com/)"
 expect "browser network cannot use the backend listener name" 000 "$(client "$net_browser" -x http://egress-backend:3128 https://example.com/)"
+
+# --- optional: the real browser, on the browser network only, through the proxy -------------------
+# SMOKE_BROWSER_IMAGE=ghcr.io/robog-two/clarity-browser:local computers/egress/smoke.sh
+if [ -n "${SMOKE_BROWSER_IMAGE:-}" ]; then
+  here="$(cd "$(dirname "$0")" && pwd)"
+  browser="clarity-egsmoke-firefox-$id"
+  trap 'podman rm -f "$browser" >/dev/null 2>&1 || true; cleanup' EXIT
+  podman run -d --name "$browser" --read-only --cap-drop ALL --cap-add SYS_CHROOT --security-opt no-new-privileges \
+    --tmpfs /tmp:rw,nosuid,size=512m --shm-size 512m --memory 1536m --pids-limit 1024 \
+    -e BROWSER_ALLOW_NO_AUTH=true --network "$net_browser" "$SMOKE_BROWSER_IMAGE" >/dev/null
+  for _ in $(seq 1 60); do
+    podman exec "$browser" node -e "fetch('http://127.0.0.1:8931/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))" 2>/dev/null && break
+    sleep 1
+  done
+  podman exec -i "$browser" node - <"$here/browser-check.mjs" || { podman logs "$browser" 2>&1 | tail -20 >&2; fail "browser through the proxy"; }
+fi
 
 # --- the proxy logged the refusals ---------------------------------------------------------------
 podman logs "$egress" 2>&1 | grep -q 'TCP_DENIED' || fail "no denials in the access log"
