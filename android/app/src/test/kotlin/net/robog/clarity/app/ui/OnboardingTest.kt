@@ -777,6 +777,21 @@ class ValuesStepViewModelTest {
         assertEquals("2 of 7", r.vm.state.value.position)
     }
 
+    @Test fun aNewItemInTheSessionReloadsItEvenWhenTheSignalWasMissed() = withMain {
+        val r = Rig()
+        r.sessions.current = session(0, line = null)
+        r.sessions.startResult = ApiResult.Success(r.sessions.current)
+        r.vm.begin()
+        assertFalse(r.vm.state.value.canDecide)
+        val id = SessionId("s1")
+        r.feed.itemsFlow.value = listOf(agentItem(1, "Think of a time…", id))
+        // The agent captures a line while the stream is reconnecting: no signal, only the gap-filled card.
+        r.sessions.current = session(0)
+        r.feed.itemsFlow.value = r.feed.itemsFlow.value + agentItem(2, "captured as · value", id)
+        assertEquals("rule 0", r.vm.state.value.captured?.text)
+        assertTrue(r.vm.state.value.canDecide)
+    }
+
     @Test fun keepingTheLastQuestionFinishesTheInterview() = withMain {
         val r = Rig(); r.vm.begin()
         r.sessions.controlResult = ApiResult.Success(session(6, Session.State.ENDED))
