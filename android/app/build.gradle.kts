@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.metro)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.compose.screenshot)
 }
 
 android {
@@ -43,6 +44,9 @@ android {
             signingConfig = releaseSigning
         }
     }
+
+    // Screenshot previews (app/src/screenshotTest); also needs the flag in gradle.properties.
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
 
     buildFeatures {
         compose = true
@@ -100,6 +104,9 @@ dependencies {
     implementation(libs.bundles.ktor.client)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)
+
+    screenshotTestImplementation(libs.compose.screenshot.validation.api)
+    screenshotTestImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlin.test.junit)

@@ -1,0 +1,124 @@
+package net.robog.clarity.app.preview
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import com.android.tools.screenshot.PreviewTest
+import kotlin.time.Instant
+import net.robog.clarity.app.ui.cards.AttachmentPager
+import net.robog.clarity.app.ui.cards.CardEnv
+import net.robog.clarity.app.ui.cards.FeedItemView
+import net.robog.clarity.app.ui.cards.LiveBubble
+import net.robog.clarity.app.ui.held.HeldContent
+import net.robog.clarity.app.ui.held.HeldUiState
+import net.robog.clarity.app.ui.held.heldRows
+import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.Chip
+import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.FeedItemId
+import net.robog.clarity.shared.feed.IfThen
+import net.robog.clarity.shared.feed.InputSource
+import net.robog.clarity.shared.governance.Decision
+import net.robog.clarity.shared.governance.GuardVerdict
+import net.robog.clarity.shared.governance.HeldAction
+import net.robog.clarity.shared.governance.HeldActionId
+import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.shared.governance.Urgency
+import kotlinx.datetime.TimeZone
+
+private val at = Instant.parse("2026-10-26T14:04:00Z")
+
+private fun held(id: String, summary: String, status: HeldAction.Status) = HeldAction(
+    id = HeldActionId(id),
+    createdAt = at,
+    action = ProposedAction.MoveEvent(idempotencyKey = id, summary = summary, event = EntityId("e"), start = at, end = at, notifyAttendees = true),
+    verdict = GuardVerdict(Decision.ASK, rationale = "It’s her invite."),
+    agentView = "Thursday 2:00 is clear for both of you.",
+    urgency = Urgency.NORMAL,
+    status = status,
+)
+
+private val waiting = held("h1", "Move call with Dana to Thursday 2:00", HeldAction.Status.HELD)
+private val done = held("h2", "Add “Devils with Nick” to Tuesday 8:30pm", HeldAction.Status.EXECUTED)
+
+private val context = Card.Context(
+    "“Dana’s contract” · 2 found",
+    listOf(ContextItem("mail · yesterday", "Re: Revised Terms"), ContextItem("files · tue", "Contract_v3.pdf")),
+)
+private val waitingOn = Card.Chips(
+    "Waiting on",
+    listOf(
+        Chip("Ulta store’s phone number", "want me to look it up?"),
+        Chip("Duplicate movie event", "if a second held copy is in your feed, discard it"),
+        Chip("Old Nick draft", "out of date now, please trash it"),
+    ),
+)
+private val plan = Card.Plan(listOf(IfThen("it’s 9:30", "spec at my desk until 12"), IfThen("Dana emails", "it waits until 12")))
+
+private fun item(seq: Long, author: FeedItem.Author, vararg cards: Card) =
+    FeedItem(FeedItemId("f$seq"), seq, at, author, cards = cards.toList())
+
+private val sampleThread = listOf(
+    item(1, FeedItem.Author.USER, Card.Said("Dana wants the contract signed by Friday. Can we move our call?", InputSource.TYPED)),
+    item(2, FeedItem.Author.AGENT, Card.Text("Found the thread and the latest draft. Thursday 2:00 is clear for both of you."), context, Card.Proposal(waiting.id)),
+    item(3, FeedItem.Author.USER, Card.Said("what are you working on?", InputSource.TYPED)),
+    item(
+        4, FeedItem.Author.AGENT,
+        Card.Text("Nothing is running right now. Here’s what’s open."), waitingOn, plan,
+        Card.Chips("Watching", listOf(Chip("New mail from Nick", "I’ll tell you"))),
+        Card.Note("I couldn’t reach the model just now. I’ll try again shortly."),
+    ),
+    item(5, FeedItem.Author.AGENT, Card.Text("Added the movie. Tuesday reminders are at 7:30 and 8:15."), Card.Proposal(done.id)),
+)
+
+private val env = CardEnv(held = mapOf(waiting.id to waiting, done.id to done))
+
+@Composable
+private fun Frame(dark: Boolean, content: @Composable () -> Unit) {
+    ClarityTheme(darkTheme = dark) {
+        Surface(color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
+        }
+    }
+}
+
+@PreviewTest
+@Preview(widthDp = 412)
+@Composable
+fun ChatThreadLight() = Frame(dark = false) {
+    sampleThread.forEach { FeedItemView(it, env = env) }
+    LiveBubble("and then I need to call the school about")
+}
+
+@PreviewTest
+@Preview(widthDp = 412)
+@Composable
+fun ChatThreadDark() = Frame(dark = true) {
+    sampleThread.forEach { FeedItemView(it, env = env) }
+    LiveBubble("and then I need to call the school about")
+}
+
+@PreviewTest
+@Preview(widthDp = 412)
+@Composable
+fun AttachmentSheetPage() = Frame(dark = false) {
+    AttachmentPager(listOf(waitingOn, plan, context), emptyMap())
+}
+
+@PreviewTest
+@Preview(widthDp = 412, heightDp = 700)
+@Composable
+fun HeldList() = ClarityTheme(darkTheme = false) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        HeldContent(HeldUiState(rows = heldRows(listOf(waiting, done), TimeZone.UTC), waiting = 1, allowedCount = 14), {}, {})
+    }
+}
