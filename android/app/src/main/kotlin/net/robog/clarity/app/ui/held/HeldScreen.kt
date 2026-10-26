@@ -51,22 +51,12 @@ fun HeldContent(
     ) {
         Kicker(state.kicker)
         ScreenTitle("Held for You")
-        Hint("Things I tried that hit one of your lines. Tap one to talk it through.")
+        Hint("Things I tried that hit one of your lines. Tap one to review it.")
         Column {
             if (state.rows.isEmpty()) Hint("Nothing is held right now.")
             state.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Row(
-                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { if (row.review) onReview(row.id) else onOpen(row.id) }.padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Kicker(row.whenText)
-                        Text(row.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-                    }
-                    Text(row.status, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                }
+                HeldRowView(row, onClick = { if (row.review) onReview(row.id) else onOpen(row.id) })
             }
             if (state.rows.isNotEmpty()) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }

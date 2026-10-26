@@ -68,7 +68,8 @@ fun heldWhen(held: HeldAction, zone: TimeZone): String =
 /** The right-hand word of a held row: an arrow while it waits, else how it ended. */
 fun heldRowStatus(status: HeldAction.Status): String = when (status) {
     HeldAction.Status.HELD, HeldAction.Status.BLOCKED -> "→"
-    HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED -> "sent"
+    HeldAction.Status.APPROVED -> "approved"
+    HeldAction.Status.EXECUTED -> "done"
     HeldAction.Status.DECLINED -> "not now"
     HeldAction.Status.KEPT -> "kept"
     HeldAction.Status.RULE_UPDATED -> "rule updated"

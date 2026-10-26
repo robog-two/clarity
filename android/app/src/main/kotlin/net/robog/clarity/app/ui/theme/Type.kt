@@ -97,6 +97,10 @@ data class ClarityTextStyles(
     val contextBody: TextStyle,
     /** Big onboarding headings (`h1` 40 / 36). */
     val hero: TextStyle,
+    /** Chat bubbles and the rows under them (sans, like the rest of Material). */
+    val chat: TextStyle,
+    /** Secondary lines in chat rows. */
+    val chatSmall: TextStyle,
 )
 
 fun clarityTextStyles(uiFamily: FontFamily, readingFamily: FontFamily): ClarityTextStyles = ClarityTextStyles(
@@ -106,6 +110,8 @@ fun clarityTextStyles(uiFamily: FontFamily, readingFamily: FontFamily): ClarityT
     kicker = ui(500, 12, 16, 0.4f, uiFamily),
     contextBody = ui(500, 14, 20, 0f, uiFamily),
     hero = ui(600, 40, 44, 0f, uiFamily),
+    chat = ui(400, 16, 24, 0f, uiFamily),
+    chatSmall = ui(400, 14, 20, 0.1f, uiFamily),
 )
 
 val LocalClarityText = staticCompositionLocalOf<ClarityTextStyles> {

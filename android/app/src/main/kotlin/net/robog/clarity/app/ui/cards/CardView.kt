@@ -66,7 +66,7 @@ data class CardEnv(
     val resetKey: Any? = null,
 )
 
-private const val CURSOR = "▍"
+private const val AGENT_CURSOR = "▍"
 
 /** One renderer for every [Card] type, shared by the call, ask and feed screens. */
 @Composable
@@ -84,55 +84,14 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
     }
 }
 
-/** All cards of one feed item, stacked. While the item streams, its last text card shows a cursor. */
-@Composable
-fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = CardEnv()) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item.cards.forEachIndexed { i, card ->
-            CardView(card, streaming = item.streaming && i == item.cards.lastIndex, env = env)
-        }
-    }
-}
-
 /** `.ag`: the agent speaking. */
 @Composable
 fun AgentText(text: String, modifier: Modifier = Modifier, streaming: Boolean = false) {
     Text(
-        if (streaming) text + CURSOR else text,
+        if (streaming) text + AGENT_CURSOR else text,
         modifier.fillMaxWidth(),
         style = MaterialTheme.clarityText.agent,
     )
-}
-
-/** `.you`: what the person said, right-aligned. */
-@Composable
-fun SaidBubble(text: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text,
-            Modifier
-                .widthIn(max = 280.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, BubbleShape)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            style = MaterialTheme.clarityText.reading,
-        )
-    }
-}
-
-/** `.live`: words heard so far (dashed, not yet sent). */
-@Composable
-fun LiveBubble(text: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text,
-            Modifier
-                .widthIn(max = 280.dp)
-                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), BubbleShape)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            style = MaterialTheme.clarityText.reading,
-        )
-    }
 }
 
 /** `.ctx`: records looked up for something the person mentioned. */

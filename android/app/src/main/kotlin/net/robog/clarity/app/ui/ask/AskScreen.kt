@@ -140,8 +140,8 @@ fun AskContent(
                 value = state.draft,
                 onValueChange = onDraft,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { contentDescription = "ask anything" },
-                placeholder = { Text("type, or tap talk", style = MaterialTheme.clarityText.reading) },
-                textStyle = MaterialTheme.clarityText.reading,
+                placeholder = { Text("type, or tap talk", style = MaterialTheme.clarityText.chat) },
+                textStyle = MaterialTheme.clarityText.chat,
                 shape = MaterialTheme.shapes.extraLarge,
                 colors = TextFieldDefaults.colors(
                     focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
