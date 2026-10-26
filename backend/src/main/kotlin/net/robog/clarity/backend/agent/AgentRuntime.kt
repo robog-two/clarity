@@ -135,6 +135,15 @@ fun shouldCompactNow(
     return estimatedTokens >= net.robog.clarity.harness.COMPACTION_MIN_TRIGGER_TOKENS
 }
 
+/**
+ * Pure: the part of [messages] the provider still reads: from the message holding the latest
+ * compaction block on (everything before it is dropped server-side), or all of them.
+ */
+fun sinceLastCompaction(messages: List<Message>): List<Message> {
+    val last = messages.indexOfLast { m -> m.content.any { it is net.robog.clarity.harness.Block.Raw && it.isCompaction } }
+    return if (last < 0) messages else messages.subList(last, messages.size)
+}
+
 /** Pure: a rough token count for a journal (4 characters per token). */
 fun estimateTokens(messages: List<Message>): Long =
     messages.sumOf { net.robog.clarity.harness.HarnessJson.encodeToString(Message.serializer(), it).length.toLong() } / 4
