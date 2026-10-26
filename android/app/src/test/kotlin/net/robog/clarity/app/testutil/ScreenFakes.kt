@@ -69,7 +69,8 @@ class ScreenFeed : FeedRepository {
     override val items: Flow<List<FeedItem>> = itemsFlow
     override val tasks: Flow<List<AgentTask>> = tasksFlow
     override val held: Flow<List<HeldAction>> = heldFlow
-    override val syncState: Flow<SyncState> = MutableStateFlow(SyncState.Live)
+    val syncFlow = MutableStateFlow(SyncState.Live)
+    override val syncState: Flow<SyncState> = syncFlow
     override val agentBusy: Flow<Boolean> = busyFlow
     override val signals: Flow<SyncSignal> = signalFlow
 

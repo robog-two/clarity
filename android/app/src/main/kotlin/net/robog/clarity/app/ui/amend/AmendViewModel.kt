@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -20,6 +23,7 @@ import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.SessionsRepository
 import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.Toasts
 import net.robog.clarity.app.ui.held.waiting
 import net.robog.clarity.app.ui.sentence
@@ -130,6 +134,12 @@ class AmendViewModel(
                 }
         }
         viewModelScope.launch {
+            // Updates sent while the stream was down are lost: look again once it is back.
+            feed.syncState.distinctUntilChanged().drop(1).filter { it == SyncState.Live }.collect {
+                _state.value.session?.let { refreshSession(it) }
+            }
+        }
+        viewModelScope.launch {
             feed.signals.filterIsInstance<SyncSignal.SessionChanged>().collect { s ->
                 val current = _state.value.session ?: return@collect
                 if (s.sessionId == current.id) refreshSession(current)
@@ -147,6 +157,14 @@ class AmendViewModel(
             _state.update { it.copy(held = held) }
             if (held != null && !held.waiting) {
                 _state.update { it.copy(loading = false, settled = true) }
+                return@launch
+            }
+            // Coming back to the screen (or the app reloading) picks up the talk already going, so
+            // a change the agent proposed in it is not thrown away by starting over.
+            val ongoing = (sessions.active(SessionKind.AMEND) as? ApiResult.Success)?.value?.takeIf { it.heldActionId == id }
+            if (ongoing != null) {
+                _state.update { it.copy(loading = false, session = ongoing) }
+                refreshSession(ongoing)
                 return@launch
             }
             when (val r = sessions.start(SessionKind.AMEND, id)) {
