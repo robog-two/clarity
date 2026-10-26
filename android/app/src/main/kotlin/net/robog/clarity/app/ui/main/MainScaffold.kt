@@ -97,6 +97,7 @@ fun MainScaffold(
             SnackbarHost(snackbar) { data ->
                 Snackbar(
                     data,
+                    actionColor = MaterialTheme.colorScheme.inversePrimary,
                     shape = MaterialTheme.shapes.extraSmall,
                     containerColor = MaterialTheme.colorScheme.inverseSurface,
                     contentColor = MaterialTheme.colorScheme.inverseOnSurface,
@@ -122,10 +123,16 @@ fun TabBar(selected: MainTab, heldWaiting: Int, onSelect: (MainTab) -> Unit) {
             NavigationBarItem(
                 selected = t == selected,
                 onClick = { onSelect(t) },
-                icon = { Icon(t.icon(), contentDescription = null) },
-                label = {
-                    Text(if (t == MainTab.Held) heldTabLabel(heldWaiting) else t.label, style = MaterialTheme.typography.labelMedium)
+                icon = {
+                    if (t == MainTab.Held && heldWaiting > 0) {
+                        androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge { Text("$heldWaiting") } }) {
+                            Icon(t.icon(), contentDescription = heldTabLabel(heldWaiting))
+                        }
+                    } else {
+                        Icon(t.icon(), contentDescription = null)
+                    }
                 },
+                label = { Text(net.robog.clarity.app.ui.components.sentenceCase(t.label), style = MaterialTheme.typography.labelMedium) },
                 colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.secondaryContainer),
             )
         }

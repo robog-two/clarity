@@ -75,7 +75,7 @@ fun ConnectorsContent(
         Hint("Tap each one to set it up. Then sync, and I’ll test them all.")
         if (state.notRunning.isNotEmpty()) {
             Hint(
-                "${state.notRunning.joinToString { it.row.title.lowercase() }} isn’t running on your server. " +
+                "${state.notRunning.joinToString { it.row.title }} isn’t running on your server. " +
                     "You can set it up later; it won’t stop you here.",
             )
         }
@@ -84,7 +84,7 @@ fun ConnectorsContent(
         Column {
             state.items.forEach { item ->
                 SelectRow(
-                    title = item.row.title.lowercase(),
+                    title = item.row.title,
                     caption = item.caption,
                     status = item.status,
                     statusAlpha = if (item.saved || item.test != null) 1f else 0.72f,
@@ -205,21 +205,28 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
     ) {
         if (state.loading) Hint("Loading…")
         if (state.missing) ErrorBox("${state.title} is not on this server.", "Check that its container is part of your setup.")
-        state.failedReason?.let {
-            ErrorBox(
-                "sync failed · $it",
-                if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
-            )
-        }
         if (state.notRunning) {
             InfoBox {
-                Text("not running on your server", style = MaterialTheme.typography.titleMedium)
+                Text("Not running on your server", style = MaterialTheme.typography.titleMedium)
                 Hint(state.blurb)
             }
         } else if (!state.missing && !state.loading) {
             Hint(state.blurb)
         }
-        state.problem?.let { ErrorBox(it.message()) }
+        // One error box: the failed sync and any problem saving go together.
+        val problem = state.problem?.message()
+        val failed = state.failedReason
+        if (failed != null) {
+            ErrorBox(
+                "Sync failed · $failed",
+                listOfNotNull(
+                    if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
+                    problem,
+                ).joinToString("\n").ifEmpty { null },
+            )
+        } else {
+            problem?.let { ErrorBox(it) }
+        }
         val errors = state.errors
         state.form.fields.forEach { field ->
             FieldInput(
@@ -245,7 +252,7 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
         }
         if (state.phone != null) {
             InfoBox {
-                Text("Allow access to ${state.title.lowercase()}?", style = MaterialTheme.typography.titleMedium)
+                Text("Allow access to ${state.title}?", style = MaterialTheme.typography.titleMedium)
                 Hint("Read only. You can turn this off in settings.")
                 if (state.allowed) {
                     StatusLine("● allowed")
@@ -263,7 +270,7 @@ private fun PresetChooserContent(state: ConnectorSetupState, collection: String,
     val presets = state.collectionField(collection)?.collection?.presets.orEmpty()
     StepScaffold(
         step = step,
-        backLabel = "← ${state.title.lowercase()}",
+        backLabel = state.title,
         onBack = actions.onCloseChooser,
         kicker = "new account",
         title = "Which Kind?",
@@ -292,7 +299,7 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     val title = field?.let { form.itemTitle(it, ItemValues(editor.id, editor.values)) }?.takeIf { !editor.isNew }
     StepScaffold(
         step = step,
-        backLabel = "← ${state.title.lowercase()}",
+        backLabel = state.title,
         onBack = actions.onCancelItem,
         kicker = if (editor.isNew) "new account" else "edit account",
         title = title ?: if (editor.isNew) "New Account" else "Account",

@@ -122,10 +122,10 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        BackLink("← settings", onBack)
+        BackLink("Settings", onBack)
         val c = state.constitution
         if (c != null) Kicker(versionKicker(c.version))
-        ScreenTitle("How I Want to Work")
+        ScreenTitle("How I want to work")
         state.error?.let { ErrorBox(it) }
         when {
             state.loading -> Hint("Loading…")

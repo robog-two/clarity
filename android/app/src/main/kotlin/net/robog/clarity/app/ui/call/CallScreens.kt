@@ -88,7 +88,7 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
     ) {
         Kicker(if (state.callTime.isEmpty()) "incoming call" else "incoming call · ${state.callTime}")
         Text("Personal Agent", style = MaterialTheme.typography.displaySmall.copy(fontSize = 34.sp), textAlign = TextAlign.Center)
-        Hint("morning meeting · about 8 min", Modifier.fillMaxWidth())
+        Hint("Morning call · about 8 min")
         Spacer(Modifier.weight(1f))
         state.message?.let { ErrorBox(it) }
         Hint("You talk. I answer in text, on screen.", Modifier.padding(bottom = 24.dp))
@@ -239,7 +239,7 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             }
             items(state.setup, key = { it.id.value }) { SetupRow(it) }
         }
-        PrimaryButton("open the app →", onOpenApp, Modifier.fillMaxWidth())
+        PrimaryButton("Open the app", onOpenApp, Modifier.fillMaxWidth())
         SecondaryButton("replay the call", onReplay, Modifier.fillMaxWidth())
     }
 }
@@ -249,12 +249,12 @@ private fun SetupRow(task: AgentTask) {
     val working = task.status == AgentTask.Status.WORKING
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Row(
-        Modifier.fillMaxWidth().heightIn(min = 52.dp),
+        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(task.title, style = MaterialTheme.clarityText.reading.copy(fontSize = 15.sp))
+            Text(task.title, style = MaterialTheme.clarityText.chat)
             Kicker(task.detail)
         }
         Text(
@@ -270,7 +270,7 @@ private fun SetupRow(task: AgentTask) {
 private fun ReplayScreen(state: CallUiState, onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 16.dp)) {
         Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            net.robog.clarity.app.ui.components.BackLink("← your morning", onClose)
+            net.robog.clarity.app.ui.components.BackLink("Your morning", onClose)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         SessionFeed(state.copy(live = null), Modifier.weight(1f))

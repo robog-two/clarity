@@ -50,7 +50,7 @@ fun HeldContent(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Kicker(state.kicker)
-        ScreenTitle("Held for You")
+        ScreenTitle("Held for you")
         Hint("Things I tried that hit one of your lines. Tap one to review it.")
         Column {
             if (state.rows.isEmpty()) Hint("Nothing is held right now.")

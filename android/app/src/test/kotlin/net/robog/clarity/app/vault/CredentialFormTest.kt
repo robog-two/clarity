@@ -131,7 +131,7 @@ class CredentialFormTest {
         model.save()
         assertEquals("4242424242424242", vault.savedValues.single()["number"])
         val done = assertIs<FormCardState.Done>(model.state)
-        assertTrue("bank_login" in done.line)
+        assertTrue("Bank login" in done.line)
         // typed values are gone with the editing state
         model.edit(cardFields[0], "x")
         assertIs<FormCardState.Done>(model.state)

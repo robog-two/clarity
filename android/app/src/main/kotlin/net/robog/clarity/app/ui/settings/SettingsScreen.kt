@@ -16,7 +16,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import net.robog.clarity.app.ui.components.ToggleRow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -159,7 +167,7 @@ fun SettingsContent(
         if (settings == null) {
             Hint("Loading…")
         } else {
-            SectionTitle("Morning Call")
+            SectionTitle("Morning call")
             Column {
                 SelectRow("time", callTimeSummary(settings.morningCall), "change", { pickingTime = TIME_CALL })
                 Kicker("days", Modifier.padding(top = 8.dp))
@@ -168,14 +176,16 @@ fun SettingsContent(
                         PillChoice(dayInitial(day), day in settings.morningCall.days, { actions.onToggleDay(day) }, description = dayName(day))
                     }
                 }
-                SelectRow(
-                    "heads-up 10 min before", "a notification, then the call",
-                    if (settings.morningCall.headsUpMinutes != null) "on" else "off", actions.onToggleHeadsUp,
+                ToggleRow(
+                    "Heads-up 10 min before", "A notification, then the call",
+                    settings.morningCall.headsUpMinutes != null, { actions.onToggleHeadsUp() },
                 )
-                SelectRow(
-                    "how I reach you", "tap to switch",
-                    if (settings.morningCall.mode == MorningCall.Mode.CALL) "call me" else "notify", actions.onToggleMode,
-                )
+                Kicker("how I reach you", Modifier.padding(top = 12.dp))
+                val calling = settings.morningCall.mode == MorningCall.Mode.CALL
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                    SegmentedButton(calling, { if (!calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Call me") }
+                    SegmentedButton(!calling, { if (calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Notify me") }
+                }
                 if (!state.notificationsOn) SelectRow("notifications", "off, so I can’t reach you", "allow", actions.onAllowNotifications)
                 if (state.needsExactAlarms) SelectRow("exact timing", "the call may ring a few minutes late", "allow", actions.onAllowExactAlarms)
                 if (!state.fullScreenOk && settings.morningCall.mode == MorningCall.Mode.CALL) {
@@ -185,41 +195,41 @@ fun SettingsContent(
 
             SectionTitle("Voice")
             Column {
-                SelectRow(
-                    "mic during calls", "always on, so you can jump in",
-                    if (settings.micAlwaysOn) "on" else "push to talk", actions.onToggleMic,
+                ToggleRow(
+                    "Mic always on during calls", if (settings.micAlwaysOn) "So you can jump in" else "Push to talk",
+                    settings.micAlwaysOn, { actions.onToggleMic() },
                 )
-                SelectRow("my replies", "I answer in text, on screen", "always text", {})
+                Hint("I always answer in text, on screen.", Modifier.padding(top = 8.dp))
             }
 
             SectionTitle("Constitution")
-            SelectRow("How I Want to Work", state.constitution ?: "not written yet", "→", actions.onOpenConstitution)
+            SelectRow("How I want to work", state.constitution ?: "not written yet", "→", actions.onOpenConstitution)
 
-            SectionTitle("Held Actions")
+            SectionTitle("Held actions")
             Column {
-                SelectRow(
-                    "low-urgency holds", "reviewed together in the evening",
-                    if (settings.batchLowUrgency) "evening" else "right away", actions.onToggleBatch,
+                ToggleRow(
+                    "Save low-urgency holds for the evening", if (settings.batchLowUrgency) "Reviewed together in the evening" else "Shown right away",
+                    settings.batchLowUrgency, { actions.onToggleBatch() },
                 )
                 if (settings.batchLowUrgency) {
                     SelectRow("evening summary", "when the batch arrives", formatTime(settings.eveningSummaryAt), { pickingTime = TIME_EVENING })
                 }
-                SelectRow(
-                    "urgent holds", "a notification as it happens",
-                    if (settings.pushUrgent) "on" else "off", actions.onTogglePush,
+                ToggleRow(
+                    "Notify me about urgent holds", "A notification as it happens",
+                    settings.pushUrgent, { actions.onTogglePush() },
                 )
             }
         }
 
         SectionTitle("Push")
         Column {
-            SelectRow(
-                "stay connected", "keeps a quiet note in your notifications so urgent things arrive at once",
-                if (state.pushOn) "on" else "off", actions.onTogglePushService,
+            ToggleRow(
+                "Stay connected", "Keeps a quiet note in your notifications so urgent things arrive at once",
+                state.pushOn, { actions.onTogglePushService() },
             )
             if (state.pushOn) {
                 if (state.batteryUnrestricted) {
-                    SelectRow("battery", "unrestricted, so pushes arrive right away", "on", {})
+                    Hint("Battery use is unrestricted, so pushes arrive right away.", Modifier.padding(top = 8.dp))
                 } else {
                     SelectRow("battery", "without it your phone may delay pushes", "allow", actions.onAllowBattery)
                 }
@@ -253,8 +263,14 @@ fun SettingsContent(
         }
 
         SecondaryButton("redo onboarding", actions.onRedoOnboarding, Modifier.fillMaxWidth().padding(top = 12.dp))
-        SecondaryButton("forget this server", { confirming = true }, Modifier.fillMaxWidth())
-        Kicker(state.instanceUrl.ifEmpty { "not connected" } + if (state.deviceId.isNotEmpty()) " · ${state.deviceId}" else "", Modifier.padding(top = 4.dp))
+        OutlinedButton(
+            onClick = { confirming = true },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+        ) { Text("Forget this server", style = MaterialTheme.typography.labelLarge) }
+        Kicker(state.instanceUrl.ifEmpty { "not connected" }, Modifier.padding(top = 4.dp))
     }
 
     pickingTime?.let { which ->
@@ -269,8 +285,8 @@ fun SettingsContent(
             onDismissRequest = { confirming = false },
             title = { Text("Forget this server?") },
             text = { Text("This removes the device key and the saved feed from this phone. You will need to set up again.") },
-            confirmButton = { TextButton(onClick = { confirming = false; actions.onForget() }) { Text("forget") } },
-            dismissButton = { TextButton(onClick = { confirming = false }) { Text("cancel") } },
+            confirmButton = { TextButton(onClick = { confirming = false; actions.onForget() }) { Text("Forget", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } },
         )
     }
 }
@@ -280,7 +296,8 @@ private const val TIME_EVENING = "evening"
 
 @Composable
 private fun SourceItem(row: SourceRow, onClick: () -> Unit) {
-    SelectRow(row.title, row.sub, row.sync, onClick, statusColor = MaterialTheme.colorScheme.onSurfaceVariant)
+    val failed = row.sync.contains("fail", ignoreCase = true)
+    SelectRow(row.title, row.sub, row.sync, onClick, statusColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -290,7 +307,7 @@ private fun TimeDialog(initial: LocalTime, onDismiss: () -> Unit, onPick: (Local
     AlertDialog(
         onDismissRequest = onDismiss,
         text = { TimePicker(state = picker) },
-        confirmButton = { TextButton(onClick = { onPick(LocalTime(picker.hour, picker.minute)) }) { Text("ok") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("cancel") } },
+        confirmButton = { TextButton(onClick = { onPick(LocalTime(picker.hour, picker.minute)) }) { Text("OK") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

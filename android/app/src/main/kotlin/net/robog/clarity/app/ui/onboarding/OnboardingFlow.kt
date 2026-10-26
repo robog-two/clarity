@@ -223,7 +223,7 @@ fun ServerContent(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
         )
         ClarityField(
-            label = "setup code (optional)",
+            label = "Setup code (optional)",
             value = state.code,
             onValueChange = onCodeChanged,
             supporting = "Only needed if your server shows one.",
@@ -234,7 +234,7 @@ fun ServerContent(
         when {
             state.checking -> StatusLine("checking…")
             state.probe != null -> StatusLine(
-                "● reachable · ${if (state.probe.tls) "tls ok" else "no tls"} · ${state.probe.latencyMillis} ms",
+                if (state.probe.tls) "● Reachable, connected securely" else "● Reachable, but not over a secure connection",
             )
             state.enrolled -> StatusLine("● connected")
         }
@@ -289,7 +289,7 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
     ) {
         Hint("I run on your own Anthropic API key. Usage is billed to your account, and requests go straight from your server.")
         ClarityField(
-            label = "anthropic api key",
+            label = "Anthropic API key",
             value = state.key,
             onValueChange = onKeyChanged,
             placeholder = "sk-ant-…",
@@ -303,9 +303,13 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
             is ModelResult.Rejected -> ErrorBox("The key was not accepted.", r.detail)
             ModelResult.ServerNotReady -> Hint("This server can’t take the key yet. You can continue and add it in settings later.")
             ModelResult.Failed -> ErrorBox("Could not check the key.", "Try again in a moment.")
-            null -> if (state.checking) StatusLine("checking…")
+            null -> if (state.checking) {
+                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    CircularProgressIndicator(Modifier.padding(4.dp), strokeWidth = 2.dp)
+                    StatusLine("Checking…")
+                }
+            }
         }
-        if (state.checking) CircularProgressIndicator(Modifier.padding(top = 4.dp), strokeWidth = 2.dp)
         Spacer(Modifier.height(1.dp))
     }
 }

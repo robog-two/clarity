@@ -125,7 +125,7 @@ fun ValuesContent(
         },
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Kicker("step 2 of 4 · ${state.position}".trimEnd(' ', '·'))
+            Kicker(if (state.position.isEmpty()) "step 2 of 4" else "question ${state.position}")
             Row(verticalAlignment = Alignment.CenterVertically) {
                 MicStateChip(state.mic)
                 if (state.mic == MicChipState.Muted) {

@@ -83,8 +83,25 @@ val HeldAction.waiting: Boolean get() = status == HeldAction.Status.HELD || stat
 fun orderedHeld(held: List<HeldAction>): List<HeldAction> =
     held.sortedWith(compareByDescending<HeldAction> { it.waiting }.thenByDescending { it.createdAt })
 
-/** "checked against your lines · 2 apply" / "· none apply". */
-fun checkedLine(held: HeldAction): String {
+/** "Checked against your rules · 2 apply"; null when none apply (nothing worth saying). */
+fun checkedLine(held: HeldAction): String? {
     val n = held.verdict.lines.size
-    return "checked against your lines · " + if (n == 0) "none apply" else "$n apply"
+    return if (n == 0) null else "Checked against your rules · $n apply"
 }
+
+/** What became of a held action, for its review screen; null while it still waits. */
+fun heldOutcome(status: HeldAction.Status): String? = when (status) {
+    HeldAction.Status.HELD -> null
+    HeldAction.Status.BLOCKED -> null
+    HeldAction.Status.APPROVED -> "Approved"
+    HeldAction.Status.EXECUTED -> "Done"
+    HeldAction.Status.DECLINED -> "You said not now"
+    HeldAction.Status.KEPT -> "Kept as is"
+    HeldAction.Status.RULE_UPDATED -> "Approved, and your rule was updated"
+    HeldAction.Status.FAILED -> "Approved, but it couldn’t finish"
+    HeldAction.Status.EXPIRED -> "Expired before you answered"
+}
+
+/** "Dana Whitfield <dana@example.com>", or just the address. */
+fun handleLine(h: net.robog.clarity.shared.noun.Handle): String =
+    h.displayName?.takeIf { it.isNotBlank() }?.let { "$it <${h.value}>" } ?: h.value

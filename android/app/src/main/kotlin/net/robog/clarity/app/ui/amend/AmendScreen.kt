@@ -81,12 +81,12 @@ fun AmendContent(
             state.held?.let { held ->
                 InfoBox {
                     Kicker(heldWhen(held, kotlinx.datetime.TimeZone.currentSystemDefault()))
-                    ReadingText(held.action.summary)
+                    Text(held.action.summary, style = MaterialTheme.clarityText.chat)
                     Hint(held.verdict.rationale)
                 }
             }
             if (state.settled) Hint("This one is settled. Nothing more to decide here.")
-            else if (!agentHasSpoken(state.talk)) AgentText(fallbackQuestion(state.held != null))
+            else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
             state.talk.forEach { FeedItemView(it) }
             state.live?.let { LiveBubble(it) }
             if (state.waitingAgent) Hint("working on it…", italic = true)

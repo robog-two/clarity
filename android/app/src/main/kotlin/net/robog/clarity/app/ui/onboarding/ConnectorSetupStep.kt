@@ -86,8 +86,12 @@ data class ConnectorSetupState(
 
     /** What the last test said about the account called [label], if it names it. */
     fun testLineFor(label: String): TestLine? =
-        lastTest?.let { t -> accountTestLine(t.text, label)?.let { TestLine(it, t.ok) } }
+        lastTest?.let { t -> accountTestLine(t.text, label)?.let { TestLine(it, t.ok || accountLineOk(it)) } }
 }
+
+/** Pure: whether one account's line of a failed test still reads as fine ("Work · 4,218 messages"). */
+fun accountLineOk(line: String): Boolean =
+    !Regex("fail|reject|error|denied|invalid|couldn|can’t|can't|cannot|timed out|unreachable|refused", RegexOption.IGNORE_CASE).containsMatchIn(line)
 
 /** The form of one connector, generated from its manifest's `configSchema` (or the phone permission step). */
 @Inject
@@ -135,7 +139,7 @@ class ConnectorSetupViewModel(
                 } ?: row.summary.lastTest?.let { TestLine(it.message, it.ok) }
                 _state.value = ConnectorSetupState(
                     key = row.key, title = row.title, proto = row.proto,
-                    blurb = description ?: "Connect ${row.title.lowercase()} so I can read it.",
+                    blurb = description ?: "Connect ${row.title} so I can read it.",
                     form = form, values = form.initialValues(), failedReason = failedReason, lastTest = last,
                 )
                 // Prefill what the server already has (secrets come back sealed and are kept as they are).

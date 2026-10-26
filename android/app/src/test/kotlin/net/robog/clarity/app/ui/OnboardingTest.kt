@@ -378,10 +378,13 @@ class ScheduleRulesTest {
     private val call = Settings.MorningCall(days = setOf(1, 2, 3, 4, 5), at = LocalTime(9, 0))
 
     @Test fun timeFormattingAndChoices() {
-        assertEquals("9:00", formatTime(LocalTime(9, 0)))
-        assertEquals("8:05", formatTime(LocalTime(8, 5)))
+        assertEquals("9:00 am", formatTime(LocalTime(9, 0)))
+        assertEquals("8:05 am", formatTime(LocalTime(8, 5)))
+        assertEquals("12:00 pm", formatTime(LocalTime(12, 0)))
+        assertEquals("12:15 am", formatTime(LocalTime(0, 15)))
+        assertEquals("6:30 pm", formatTime(LocalTime(18, 30)))
         assertEquals(3, callTimeChoices(LocalTime(9, 30)).size)
-        assertEquals(listOf("8:30", "9:00", "9:30", "10:15"), callTimeChoices(LocalTime(10, 15)).map(::formatTime))
+        assertEquals(listOf("8:30 am", "9:00 am", "9:30 am", "10:15 am"), callTimeChoices(LocalTime(10, 15)).map(::formatTime))
     }
 
     @Test fun daysToggleBothWays() {
@@ -403,9 +406,9 @@ class ScheduleRulesTest {
             "I’ll send a heads-up 10 minutes before, then a notification to start.",
             doneLine(call.copy(mode = Settings.MorningCall.Mode.NOTIFY)),
         )
-        assertEquals("I’ll call at 9:00. Pick up in the app.", doneLine(call.copy(headsUpMinutes = null)))
+        assertEquals("I’ll call at 9:00 am. Pick up in the app.", doneLine(call.copy(headsUpMinutes = null)))
         assertEquals(
-            "You’ll get a notification at 9:00.",
+            "You’ll get a notification at 9:00 am.",
             doneLine(call.copy(headsUpMinutes = null, mode = Settings.MorningCall.Mode.NOTIFY)),
         )
     }

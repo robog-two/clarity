@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,6 +16,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import kotlinx.datetime.TimeZone
+import net.robog.clarity.app.ui.call.formatClock
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,7 +34,6 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
-import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.ReadingText
 import net.robog.clarity.app.ui.components.SlideToConfirm
@@ -55,6 +59,7 @@ fun DraftReviewScreen(
         onDecline = viewModel::decline,
         onAlways = viewModel::approveAlways,
         onCode = viewModel::editCode,
+        onRetry = { viewModel.load(heldId) },
     )
 }
 
@@ -73,29 +78,61 @@ fun DraftReviewContent(
     onAlways: (String, String) -> Unit = { _, _ -> },
     onCode: (String) -> Unit = {},
     extras: HeldExtras = LocalHeldExtras.current,
+    onRetry: (() -> Unit)? = null,
 ) {
     val held = state.held
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        BackLink("← back", onBack)
+        BackLink("Back", onBack)
         if (held == null) {
-            if (!state.loading) ErrorBox("Can’t open this one", state.message)
-            else Hint("Loading…")
+            if (!state.loading) {
+                ErrorBox("Can’t open this one", state.message)
+                onRetry?.let { TextButton(onClick = it) { Text("Try again") } }
+            } else {
+                Hint("Loading…")
+            }
             return@Column
         }
+        val outcome = heldOutcome(held.status)
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val email = state.email
-            Kicker("needs your ok · ${held.action.summary}")
+            Kicker(outcome ?: "needs your ok · ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
             Text(email?.subject ?: held.action.summary, style = MaterialTheme.typography.headlineSmall)
 
+            if (email != null) {
+                // Who it goes to comes first: it is sent as the person.
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    RecipientLine("To", email.to.joinToString { handleLine(it) })
+                    if (email.cc.isNotEmpty()) RecipientLine("Cc", email.cc.joinToString { handleLine(it) })
+                }
+                OutlinedTextField(
+                    value = state.body,
+                    onValueChange = onEdit,
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    enabled = !state.decided,
+                    label = { Text("Draft") },
+                    textStyle = MaterialTheme.clarityText.chat,
+                    shape = MaterialTheme.shapes.medium,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    minLines = 5,
+                )
+            }
+            extras(held)
+            if (email == null && held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
+
+            Kicker("why I’m asking", Modifier.padding(top = 8.dp))
+            ReadingText(held.agentView)
+            Hint(held.verdict.rationale)
+            checkedLine(held)?.let { Kicker(it) }
+
             if (held.context.isNotEmpty()) {
-                Kicker(email?.let { recipientName(it) }?.let { "what $it asked" } ?: "what prompted this", Modifier.padding(top = 4.dp))
+                Kicker(email?.let { recipientName(it) }?.let { "what $it asked" } ?: "what prompted this", Modifier.padding(top = 8.dp))
                 held.context.forEach { item ->
                     Column(
                         Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium).padding(horizontal = 14.dp, vertical = 12.dp),
@@ -107,33 +144,10 @@ fun DraftReviewContent(
                 }
             }
 
-            Kicker("what I think", Modifier.padding(top = 4.dp))
-            ReadingText(held.agentView)
-            Hint(held.verdict.rationale)
-
-            if (email != null) {
-                Kicker("draft", Modifier.padding(top = 4.dp))
-                OutlinedTextField(
-                    value = state.body,
-                    onValueChange = onEdit,
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !state.decided,
-                    textStyle = MaterialTheme.clarityText.reading,
-                    shape = MaterialTheme.shapes.medium,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    minLines = 5,
-                )
-            } else {
-                InfoBox { Text(held.action.summary, style = MaterialTheme.typography.titleMedium) }
-                if (held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
-            }
-            Kicker(checkedLine(held))
-            extras(held)
-
             state.message?.let { ErrorBox(it) }
         }
         if (state.decided) {
-            Hint("This one is settled.")
+            Text(outcome ?: "Settled", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         } else {
             SlideToConfirm(
                 slideLabel(held.action.kind),
@@ -143,6 +157,14 @@ fun DraftReviewContent(
             )
             NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
         }
+    }
+}
+
+@Composable
+private fun RecipientLine(label: String, value: String) {
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, Modifier.width(28.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+        Text(value, style = MaterialTheme.clarityText.chatSmall)
     }
 }
 
@@ -156,7 +178,8 @@ fun CodeField(value: String, onChange: (String) -> Unit, modifier: Modifier = Mo
         onValueChange = onChange,
         modifier = modifier.fillMaxWidth(),
         enabled = enabled,
-        label = { Text("code") },
+        label = { Text("Code") },
+        supportingText = { Text("Used once, never saved") },
         singleLine = true,
         shape = MaterialTheme.shapes.medium,
         keyboardOptions = secretKeyboard(KeyboardType.Password),

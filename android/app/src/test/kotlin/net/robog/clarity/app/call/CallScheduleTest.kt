@@ -137,7 +137,7 @@ class HeadsUpTextTest {
     }
 
     @Test fun fixedLineWhenThePrepJobLeftNothing() {
-        assertEquals("I’ll call at 9:00.", headsUpBody(LocalTime(9, 0), emptyList(), now))
+        assertEquals("I’ll call at 9:00 am.", headsUpBody(LocalTime(9, 0), emptyList(), now))
     }
 
     @Test fun usesTheAgentsFirstLineFromTheFeed() {
@@ -154,7 +154,7 @@ class HeadsUpTextTest {
             agentItem(2, "Yesterday").copy(at = at("2026-10-25T08:00:00Z")),
             agentItem(3, "Still typing", streaming = true).copy(at = at("2026-10-26T08:45:00Z")),
         )
-        assertEquals("I’ll call at 9:30.", headsUpBody(LocalTime(9, 30), items, now))
+        assertEquals("I’ll call at 9:30 am.", headsUpBody(LocalTime(9, 30), items, now))
     }
 }
 
@@ -225,20 +225,20 @@ class CallAlarmHandlerTest {
 
     @Test fun callAlarmPostsTheFullScreenCallAndArmsTomorrow() = runBlocking {
         handler.onAlarm(AlarmSlot.Call)
-        assertEquals(listOf("incoming:FullScreenCall@9:00", "cancelHeadsUp"), notifier.log)
+        assertEquals(listOf("incoming:FullScreenCall@9:00 am", "cancelHeadsUp"), notifier.log)
         assertEquals(at("2026-10-27T09:00:00Z"), alarms.set[AlarmSlot.Call])
     }
 
     @Test fun withoutFullScreenPermissionItIsAHeadsUpCall() = runBlocking {
         caps.fullScreen = false
         handler.onAlarm(AlarmSlot.Call)
-        assertEquals("incoming:HeadsUpCall@9:00", notifier.log.first())
+        assertEquals("incoming:HeadsUpCall@9:00 am", notifier.log.first())
     }
 
     @Test fun notifyModeDoesNotRing() = runBlocking {
         cache.settings = settings(mode = MorningCall.Mode.NOTIFY)
         handler.onAlarm(AlarmSlot.Call)
-        assertEquals("incoming:Plain@9:00", notifier.log.first())
+        assertEquals("incoming:Plain@9:00 am", notifier.log.first())
     }
 
     @Test fun noNotificationsMeansNothingIsPosted() = runBlocking {
@@ -250,7 +250,7 @@ class CallAlarmHandlerTest {
 
     @Test fun headsUpUsesTheFixedLineWithoutAPreparedOne() = runBlocking {
         handler.onAlarm(AlarmSlot.HeadsUp)
-        assertEquals(listOf("headsUp:We’re scheduled in 10! :)|I’ll call at 9:00."), notifier.log)
+        assertEquals(listOf("headsUp:We’re scheduled in 10! :)|I’ll call at 9:00 am."), notifier.log)
     }
 
     @Test fun snoozedCallDoesNotMoveTheRegularAlarms() = runBlocking {

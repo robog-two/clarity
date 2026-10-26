@@ -94,6 +94,7 @@ class CallStageRulesTest {
     @Test fun elapsedTimeIsMinutesAndSeconds() {
         assertEquals("0:00", formatElapsed(0.seconds))
         assertEquals("7:05", formatElapsed(7.minutes + 5.seconds))
+        assertEquals("1:02:03", formatElapsed(62.minutes + 3.seconds))
     }
 
     @Test fun planAndSetupComeFromTheCallsCards() {
@@ -112,7 +113,7 @@ class CallViewModelTest {
     @Test fun startsOnTheIncomingScreenWhenNoCallIsRunning() = withMain {
         val r = CallRig()
         assertEquals(CallScreen.Incoming, r.state.screen)
-        assertEquals("9:00", r.state.callTime)
+        assertEquals("9:00 am", r.state.callTime)
         assertTrue(r.sessions.started.isEmpty(), "nothing starts before answering")
     }
 
@@ -151,7 +152,7 @@ class CallViewModelTest {
         r.vm.decline()
         assertEquals(CallScreen.Snoozed, r.state.screen)
         assertEquals(listOf<SessionControl>(SessionControl.Snooze(15)), r.sessions.controls)
-        assertEquals("9:15", r.state.snoozedUntil)
+        assertEquals("9:15 am", r.state.snoozedUntil)
         assertEquals(T0 + 15.minutes, r.alarms.set[AlarmSlot.Snooze])
     }
 

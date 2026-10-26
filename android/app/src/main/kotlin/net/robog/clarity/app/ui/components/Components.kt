@@ -14,7 +14,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -39,10 +42,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.theme.clarityText
 
+/** Pure: sentence case for UI labels ("not now" → "Not now"); the rest of the text is kept. */
+fun sentenceCase(text: String): String = text.replaceFirstChar { it.titlecase() }
+
 /** `.k`: the small caption line. */
 @Composable
 fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    Text(text, modifier, color = color, style = MaterialTheme.clarityText.kicker)
+    Text(sentenceCase(text), modifier, color = color, style = MaterialTheme.clarityText.kicker)
 }
 
 /** `.h`: the screen heading. */
@@ -79,7 +85,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
         enabled = enabled,
         shape = MaterialTheme.shapes.extraLarge,
         contentPadding = ButtonDefaults.ContentPadding,
-    ) { Text(text, style = MaterialTheme.typography.labelLarge) }
+    ) { Text(sentenceCase(text), style = MaterialTheme.typography.labelLarge) }
 }
 
 /** Outlined pill button (`.btn`). */
@@ -91,13 +97,24 @@ fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modi
         enabled = enabled,
         shape = MaterialTheme.shapes.extraLarge,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (enabled) 1f else 0.38f)),
-    ) { Text(text, style = MaterialTheme.typography.labelLarge) }
+    ) { Text(sentenceCase(text), style = MaterialTheme.typography.labelLarge) }
 }
 
 /** `.back`: the "← previous step" text button. */
 @Composable
 fun BackLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    TextButton(onClick = onClick, modifier = modifier) { Text(text, style = MaterialTheme.typography.labelLarge) }
+    // A top-bar style back row: the arrow icon lines up with the content edge, the label names where it goes.
+    Row(
+        modifier.offset(x = (-12).dp).heightIn(min = 48.dp).clickable(onClick = onClick).padding(end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        androidx.compose.material3.Icon(
+            Icons.AutoMirrored.Outlined.ArrowBack,
+            contentDescription = null,
+            modifier = Modifier.padding(12.dp),
+        )
+        Text(sentenceCase(text.removePrefix("←").trim()), style = MaterialTheme.typography.titleMedium)
+    }
 }
 
 /** The 4-segment progress bar at the top of the onboarding screens. */
@@ -175,15 +192,15 @@ fun SelectRow(
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 4.dp, vertical = 8.dp),
+                .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
+                Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
                 Kicker(caption)
             }
-            Text(status, color = statusColor.copy(alpha = statusAlpha), style = MaterialTheme.typography.labelLarge)
+            Text(sentenceCase(status), color = statusColor.copy(alpha = statusAlpha), style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -197,13 +214,12 @@ fun ToggleRow(title: String, caption: String, checked: Boolean, onCheckedChange:
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
-                .clickable { onCheckedChange(!checked) }
-                .padding(horizontal = 4.dp),
+                .clickable { onCheckedChange(!checked) },
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
                 Kicker(caption)
             }
             Switch(checked = checked, onCheckedChange = null)
@@ -226,6 +242,10 @@ fun RowScope.PillChoice(label: String, selected: Boolean, onClick: () -> Unit, m
             )
         },
         shape = MaterialTheme.shapes.small,
+        colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+            selectedContainerColor = MaterialTheme.colorScheme.primary,
+            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+        ),
         modifier = modifier
             .weight(1f)
             .heightIn(min = 48.dp)

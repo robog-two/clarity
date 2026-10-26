@@ -45,7 +45,11 @@ fun dayInitial(isoDay: Int): String = "SMTWTFS"[DayOrder.indexOf(isoDay)].toStri
 fun dayName(isoDay: Int): String = DayOfWeek(isoDay).name.lowercase().replaceFirstChar { it.uppercase() }
 
 /** "9:00" */
-fun formatTime(t: LocalTime): String = "${t.hour}:${t.minute.toString().padStart(2, '0')}"
+/** "9:00 am", "6:30 pm" (12-hour, matching the time picker). */
+fun formatTime(t: LocalTime): String {
+    val hour = (t.hour % 12).let { if (it == 0) 12 else it }
+    return "$hour:${t.minute.toString().padStart(2, '0')} ${if (t.hour < 12) "am" else "pm"}"
+}
 
 fun callTimeChoices(current: LocalTime): List<LocalTime> =
     if (current in DefaultCallTimes) DefaultCallTimes else (DefaultCallTimes + current).sorted()

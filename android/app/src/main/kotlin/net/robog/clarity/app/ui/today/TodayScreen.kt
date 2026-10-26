@@ -10,7 +10,15 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.ui.graphics.Color
+import net.robog.clarity.app.ui.components.sentenceCase
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -58,7 +66,10 @@ fun TodayContent(
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
             ScreenTitle("Today")
-            state.error?.let { ErrorBox(it) }
+            state.error?.let {
+                ErrorBox(it)
+                androidx.compose.material3.TextButton(onClick = onRefresh) { Text("Try again") }
+            }
             val today = state.today
             when {
                 state.loading -> Hint("Loading…")
@@ -79,9 +90,10 @@ fun TodayContent(
                         Hint("No plan yet. It appears here after your morning call.")
                     }
                     if (state.doing.isNotEmpty()) {
-                        SectionTitle("I’m Doing")
+                        SectionTitle("I’m doing")
                         Column {
                             state.doing.forEach { DoingRowView(it, onReview) }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
                     }
                     HeldRow(state.heldWaiting, onOpenHeld)
@@ -103,36 +115,29 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 @Composable
 private fun DoingRowView(row: DoingRow, onReview: (HeldActionId) -> Unit) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(row.task.title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-            Kicker(row.task.detail)
-        }
-        if (row.review != null) {
-            PrimaryButton("review →", { onReview(row.review) }, Modifier.heightIn(min = 44.dp))
-        } else {
-            Text(taskStatusLabel(row.task.status), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-        }
-    }
+    ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text(row.task.title, style = MaterialTheme.clarityText.chat) },
+        supportingContent = { Text(sentenceCase(row.task.detail), style = MaterialTheme.clarityText.chatSmall) },
+        trailingContent = {
+            if (row.review != null) {
+                FilledTonalButton(onClick = { onReview(row.review) }) { Text("Review") }
+            } else {
+                Text(sentenceCase(taskStatusLabel(row.task.status)), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            }
+        },
+    )
 }
 
 @Composable
 private fun HeldRow(waiting: Int, onOpenHeld: () -> Unit) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).clickable(onClick = onOpenHeld),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("held for you", style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-            Kicker(heldLine(waiting))
-        }
-        Text("→", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-    }
+    ListItem(
+        modifier = Modifier.clickable(onClick = onOpenHeld),
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+        headlineContent = { Text("Held for you", style = MaterialTheme.clarityText.chat) },
+        supportingContent = { Text(sentenceCase(heldLine(waiting)), style = MaterialTheme.clarityText.chatSmall) },
+        trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+    )
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 }

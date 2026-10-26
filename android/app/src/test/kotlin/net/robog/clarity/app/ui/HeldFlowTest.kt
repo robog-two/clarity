@@ -121,7 +121,7 @@ class HeldRulesTest {
         assertEquals("kept", heldRowStatus(HeldAction.Status.KEPT))
         assertEquals("rule updated", heldRowStatus(HeldAction.Status.RULE_UPDATED))
         val rows = heldRows(listOf(heldAction()), TimeZone.UTC)
-        assertEquals("9:00 · send email", rows.single().whenText)
+        assertEquals("9:00 am · send email", rows.single().whenText)
     }
 
     @Test fun everyWaitingRowOpensTheReviewScreenWithApprove() {
@@ -161,8 +161,8 @@ class HeldRulesTest {
     }
 
     @Test fun checkedLineCountsTheLinesThatApply() {
-        assertEquals("checked against your lines · 1 apply", checkedLine(heldAction()))
-        assertEquals("checked against your lines · none apply", checkedLine(heldAction(lines = emptyList())))
+        assertEquals("Checked against your rules · 1 apply", checkedLine(heldAction()))
+        assertEquals(null, checkedLine(heldAction(lines = emptyList())))
     }
 
     @Test fun allowedActionsListNewestFirst() {
@@ -174,7 +174,7 @@ class HeldRulesTest {
             TimeZone.UTC,
         )
         assertEquals(listOf("drafted reply to Dana", "held 9:30–12 for the spec"), rows.map { it.title })
-        assertEquals("9:04", rows.first().whenText)
+        assertEquals("9:04 am", rows.first().whenText)
         assertFalse(rows.first().ok)
     }
 

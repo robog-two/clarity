@@ -64,7 +64,7 @@ class SettingsRulesTest {
         assertEquals("weekends", daysSummary(setOf(6, 7)))
         assertEquals("Mon, Wed", daysSummary(setOf(3, 1)))
         assertEquals("no days", daysSummary(emptySet()))
-        assertEquals("9:00 · weekdays", callTimeSummary(MorningCall()))
+        assertEquals("9:00 am · weekdays", callTimeSummary(MorningCall()))
     }
 }
 
