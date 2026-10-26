@@ -13,12 +13,17 @@ import io.ktor.http.headersOf
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
@@ -34,7 +39,9 @@ import net.robog.clarity.app.nav.RootViewModel
 import net.robog.clarity.app.net.DeviceJwtSigner
 import net.robog.clarity.app.net.KtorClarityApi
 import net.robog.clarity.app.net.createHttpClient
+import net.robog.clarity.app.push.pushConditions
 import net.robog.clarity.app.testutil.FakeDeviceKey
+import net.robog.clarity.app.testutil.FakePushPrefs
 import net.robog.clarity.app.testutil.FakeSessionStore
 import net.robog.clarity.app.testutil.InMemoryFeedStore
 import net.robog.clarity.app.testutil.agentItem
@@ -259,4 +266,110 @@ class RootViewModelTest {
         }
     }
 
+    /** Like the DataStore one: done and redo re-emit on every write to the file, whatever key changed. */
+    private class FileFlag(done: Boolean = false, redo: Boolean = false) : OnboardingFlagStore {
+        data class File(val done: Boolean, val redo: Boolean, val writes: Int = 0)
+        val file = kotlinx.coroutines.flow.MutableStateFlow(File(done, redo))
+        override val done = file.map { it.done }
+        override val redo = file.map { it.redo }
+        override suspend fun markDone() = file.update { it.copy(done = true, redo = false, writes = it.writes + 1) }
+        override suspend fun startRedo() = file.update { it.copy(redo = true, writes = it.writes + 1) }
+        /** Any other key in the same file (battery asked, the SMS cursor...). */
+        fun otherWrite() = file.update { it.copy(writes = it.writes + 1) }
+    }
+
+    private class CountingSetup(val status: SetupStatus?) : SetupRepository {
+        var asks = 0
+        override suspend fun status(): SetupStatus? { asks++; return status }
+        override suspend fun submitModelKey(apiKey: String) = ModelKeyOutcome.Works
+    }
+
+    /** Runs [block] with the root's state collected, on one test dispatcher. */
+    private fun withRoot(sessions: Sessions, flag: OnboardingFlagStore, setup: SetupRepository, block: suspend kotlinx.coroutines.test.TestScope.(RootViewModel) -> Unit) {
+        val main = UnconfinedTestDispatcher()
+        Dispatchers.setMain(main)
+        try {
+            runTest(main) {
+                val vm = RootViewModel(sessions, flag, setup)
+                backgroundScope.launch { vm.state.collect {} }
+                block(vm)
+            }
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    @Test fun theServerFallbackMarksDoneOnceAndSettlesOnTheApp() {
+        val flag = FileFlag()
+        val setup = CountingSetup(complete)
+        withRoot(Sessions(true), flag, setup) { vm ->
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value)
+            assertEquals(1, setup.asks)
+            assertEquals(1, flag.file.value.writes, "marking done re-emits the file, which lands on Ready without another write")
+            repeat(3) { flag.otherWrite() }
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value)
+            assertEquals(1, setup.asks)
+        }
+    }
+
+    @Test fun otherWritesDuringOnboardingDoNotAskTheServerAgain() {
+        val flag = FileFlag()
+        val setup = CountingSetup(complete.copy(constitutionVersion = null))
+        withRoot(Sessions(true), flag, setup) { vm ->
+            advanceUntilIdle()
+            assertEquals(RootState.Onboarding, vm.state.value)
+            repeat(3) { flag.otherWrite() }
+            advanceUntilIdle()
+            assertEquals(RootState.Onboarding, vm.state.value, "onboarding is not swapped for the app halfway through")
+            assertEquals(1, setup.asks)
+            flag.markDone()
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value, "its last screen still shows the app")
+        }
+    }
+
+    @Test fun redoShowsOnboardingAgainAndFinishingItShowsTheApp() {
+        val flag = FileFlag(done = true)
+        val setup = CountingSetup(complete)
+        withRoot(Sessions(true), flag, setup) { vm ->
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value)
+            flag.startRedo()
+            advanceUntilIdle()
+            assertEquals(RootState.Onboarding, vm.state.value)
+            flag.otherWrite()
+            advanceUntilIdle()
+            assertEquals(RootState.Onboarding, vm.state.value)
+            flag.markDone()
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value)
+            assertEquals(0, setup.asks, "a finished device never asks the server")
+        }
+    }
+
+    @Test fun afterTheServerFallbackThePushServiceShouldRun() {
+        val sessions = Sessions(true)
+        val flag = FileFlag()
+        val prefs = FakePushPrefs(enabled = true)
+        withRoot(sessions, flag, CountingSetup(complete)) { vm ->
+            assertFalse(pushConditions(sessions.store, FileFlag(), prefs).first().shouldRun, "not set up: no service")
+            advanceUntilIdle()
+            assertEquals(RootState.Ready, vm.state.value)
+            assertTrue(pushConditions(sessions.store, flag, prefs).first().shouldRun)
+            prefs.setEnabled(false)
+            assertFalse(pushConditions(sessions.store, flag, prefs).first().shouldRun, "the person's switch still wins")
+        }
+    }
+
+    @Test fun anIncompleteServerKeepsThePushServiceOff() {
+        val sessions = Sessions(true)
+        val flag = FileFlag()
+        withRoot(sessions, flag, CountingSetup(null)) { vm ->
+            advanceUntilIdle()
+            assertEquals(RootState.Onboarding, vm.state.value)
+            assertFalse(pushConditions(sessions.store, flag, FakePushPrefs(enabled = true)).first().shouldRun)
+        }
+    }
 }
