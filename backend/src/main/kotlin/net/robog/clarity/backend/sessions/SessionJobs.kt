@@ -44,7 +44,7 @@ class MorningCallPrepJob(private val inbox: InboxStore, private val plans: DayPl
     override suspend fun fire(context: FireContext) {
         val call = context.settings.morningCall
         if (!call.enabled) return
-        val callDate = localDate(context.scheduledFor + prepLead(call), context.settings.timeZone)
+        val callDate = localDate(context.scheduledFor + prepLead(call), context.settings.homeZone)
         val yesterday = plans.get(callDate.minus(DatePeriod(days = 1)))
         inbox.enqueue(
             InboxItem.System(prepInstruction(yesterday), Priority.LOW),

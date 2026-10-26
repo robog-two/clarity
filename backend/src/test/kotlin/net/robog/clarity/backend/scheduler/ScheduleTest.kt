@@ -22,8 +22,9 @@ class ScheduleTest : FunSpec({
         daily.nextAfter(Instant.parse("2026-10-25T20:00:00Z"), TimeZone.UTC) shouldBe Instant.parse("2026-10-26T18:00:00Z")
     }
 
-    test("daily follows the person's zone, including the clock change") {
-        val daily = Schedule.DailyAt(LocalTime(18, 0))
+    test("a stored daily time stays on the home clock through the clock change") {
+        // 17:00 stored = 18:00 Berlin standard time
+        val daily = Schedule.DailyAt(LocalTime(17, 0))
         // 2026-10-25 is the day Europe/Berlin returns to standard time (UTC+1 from 03:00 local)
         daily.nextAfter(Instant.parse("2026-10-24T20:00:00Z"), berlin) shouldBe Instant.parse("2026-10-25T17:00:00Z")
         daily.nextAfter(Instant.parse("2026-10-23T20:00:00Z"), berlin) shouldBe Instant.parse("2026-10-24T16:00:00Z")

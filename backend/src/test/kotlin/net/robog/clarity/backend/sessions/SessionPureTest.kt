@@ -190,8 +190,8 @@ class SessionPureTest : FunSpec({
     context("settings and setup") {
         test("settings validation") {
             (validateSettings(Settings()) is Either.Right) shouldBe true
-            (validateSettings(Settings(timeZone = "Europe/Berlin")) is Either.Right) shouldBe true
-            (validateSettings(Settings(timeZone = "Mars/Olympus")) as Either.Left).value shouldContain "time zone"
+            (validateSettings(Settings(homeZone = "Europe/Berlin")) is Either.Right) shouldBe true
+            (validateSettings(Settings(homeZone = "Mars/Olympus")) as Either.Left).value shouldContain "time zone"
             (validateSettings(Settings(morningCall = Settings.MorningCall(days = setOf(0, 3)))) as Either.Left).value shouldContain "weekdays"
             (validateSettings(Settings(morningCall = Settings.MorningCall(days = emptySet()))) as Either.Left).value shouldContain "day"
             (validateSettings(Settings(morningCall = Settings.MorningCall(enabled = false, days = emptySet()))) is Either.Right) shouldBe true

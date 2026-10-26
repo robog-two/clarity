@@ -9,15 +9,17 @@ import kotlinx.datetime.atTime
 import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import net.robog.clarity.shared.time.ScheduleClock
+import net.robog.clarity.shared.time.WeeklyTime
 
-/** When a job runs. Pure; evaluated in the person's time zone. */
+/** When a job runs. Pure; times are stored UTC, with daylight saving following the person's home zone. */
 sealed interface Schedule {
     /** Every [interval], measured from the previous run (a late run does not trigger a burst of catch-up runs). */
     data class Every(val interval: Duration) : Schedule {
         init { require(interval.isPositive()) { "interval must be positive" } }
     }
 
-    /** Once a day at local [time]. */
+    /** Once a day at stored (UTC) [time]; see [ScheduleClock]. */
     data class DailyAt(val time: LocalTime) : Schedule
 
     /** A schedule derived from the person's settings (for example the call prep, which follows the call's time and days). */
@@ -28,9 +30,5 @@ sealed interface Schedule {
 fun Schedule.nextAfter(after: Instant, zone: TimeZone): Instant = when (this) {
     is Schedule.Every -> after + interval
     is Schedule.Computed -> next(after, zone)
-    is Schedule.DailyAt -> {
-        val today = after.toLocalDateTime(zone).date
-        val candidate = today.atTime(time).toInstant(zone)
-        if (candidate > after) candidate else today.plus(1, DateTimeUnit.DAY).atTime(time).toInstant(zone)
-    }
+    is Schedule.DailyAt -> checkNotNull(ScheduleClock.nextOccurrence(WeeklyTime(time, ScheduleClock.EVERY_DAY), zone, after))
 }

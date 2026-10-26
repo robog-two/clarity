@@ -36,7 +36,7 @@ object SettingsRows : Table("settings") {
 fun validateSettings(settings: Settings): Either<String, Settings> {
     val call = settings.morningCall
     return when {
-        runCatching { TimeZone.of(settings.timeZone) }.isFailure -> "unknown time zone '${settings.timeZone}' (use an IANA name like Europe/Berlin)".left()
+        runCatching { TimeZone.of(settings.homeZone) }.isFailure -> "unknown time zone '${settings.homeZone}' (use an IANA name like Europe/Berlin)".left()
         call.days.any { it !in 1..7 } -> "call days are ISO weekdays 1 (Monday) to 7 (Sunday)".left()
         call.enabled && call.days.isEmpty() -> "pick at least one day for the morning call".left()
         call.headsUpMinutes != null && call.headsUpMinutes !in 1..120 -> "the heads-up is 1 to 120 minutes before the call, or off".left()
@@ -71,5 +71,5 @@ class SettingsStore(private val database: Database, private val clock: Clock) : 
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class, replaces = [UtcPersonZone::class])
 class SettingsPersonZone(private val settings: SettingsStore) : PersonZone {
-    override suspend fun zone(): TimeZone = net.robog.clarity.backend.governance.zoneOrUtc(settings.current().timeZone)
+    override suspend fun zone(): TimeZone = net.robog.clarity.backend.governance.zoneOrUtc(settings.current().homeZone)
 }

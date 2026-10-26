@@ -27,6 +27,7 @@ import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
+import net.robog.clarity.backend.governance.zoneOrUtc
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.FinishReason
@@ -213,7 +214,7 @@ class LeadAgent(
 
     /** The memory context message, only when it differs from what the thread last saw. */
     private suspend fun memoryDelivery(now: Instant): List<Delivery> {
-        val zone = settings.current().timeZone
+        val zone = settings.current().homeZone
         val today = journalDate(now, zone)
         val yesterday = today.minus(DatePeriod(days = 1))
         val text = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now))
@@ -229,7 +230,7 @@ class LeadAgent(
         val request = roleRequest(
             role = config.roles.lead,
             runId = threadId,
-            system = leadSystemBlocks(constitution),
+            system = leadSystemBlocks(constitution, HomeClock(zoneOrUtc(settings.current().homeZone), clock.now())),
             messages = emptyList(),
             tools = tools.loaded,
             deferred = tools.deferred,

@@ -55,7 +55,7 @@ import net.robog.clarity.shared.session.Settings
 
 private val call = SessionId("call1")
 
-private class CallRig(active: Session? = null, settings: Settings = Settings(timeZone = "UTC")) {
+private class CallRig(active: Session? = null, settings: Settings = Settings(homeZone = "UTC")) {
     val clock = FixedClock(T0)
     val sessions = ScriptedSessions(active)
     val feed = ScreenFeed()
@@ -239,7 +239,7 @@ class CallViewModelTest {
     }
 
     @Test fun pushToTalkReplacesMuteWithTalk() = withMain {
-        val r = CallRig(active = callSession(), settings = Settings(micAlwaysOn = false, timeZone = "UTC"))
+        val r = CallRig(active = callSession(), settings = Settings(micAlwaysOn = false, homeZone = "UTC"))
         assertTrue(r.state.pushToTalk)
         assertEquals(listOf("start(false)"), r.speech.calls)
         r.vm.toggleMute()

@@ -149,15 +149,15 @@ class SessionsWiringTest : FunSpec({
             client.get("/api/v1/settings") { asDevice() }.body<Settings>() shouldBe Settings()
             val mine = Settings(
                 morningCall = Settings.MorningCall(at = LocalTime(8, 30), days = setOf(1, 3, 5), headsUpMinutes = null, mode = Settings.MorningCall.Mode.NOTIFY),
-                timeZone = "Europe/Berlin",
+                homeZone = "Europe/Berlin",
                 micAlwaysOn = false,
             )
             client.put("/api/v1/settings") { asDevice(); contentType(ContentType.Application.Json); setBody(mine) }.body<Settings>() shouldBe mine
             client.get("/api/v1/settings") { asDevice() }.body<Settings>() shouldBe mine
             client.put("/api/v1/settings") {
-                asDevice(); contentType(ContentType.Application.Json); setBody(mine.copy(timeZone = "Mars/Base"))
+                asDevice(); contentType(ContentType.Application.Json); setBody(mine.copy(homeZone = "Mars/Base"))
             }.status shouldBe HttpStatusCode.BadRequest
-            client.get("/api/v1/settings") { asDevice() }.body<Settings>().timeZone shouldBe "Europe/Berlin"
+            client.get("/api/v1/settings") { asDevice() }.body<Settings>().homeZone shouldBe "Europe/Berlin"
 
             // sessions
             client.get("/api/v1/sessions?active=true") { asDevice() }.body<List<Session>>().shouldBeEmpty()

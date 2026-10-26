@@ -40,7 +40,7 @@ class TodayService(
     private val clock: Clock,
 ) {
     suspend fun today(): Today {
-        val date = localDate(clock.now(), settings.current().timeZone)
+        val date = localDate(clock.now(), settings.current().homeZone)
         return todayOf(date, plans.get(date), tasks.list(includeFinished = false), held.count(PENDING_STATUSES).toInt())
     }
 }

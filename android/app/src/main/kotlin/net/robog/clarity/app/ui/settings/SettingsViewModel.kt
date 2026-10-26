@@ -14,6 +14,8 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalTime
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.connector.PhoneConnector
+import net.robog.clarity.app.data.seenSettings
+import net.robog.clarity.app.data.storedSettings
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
@@ -101,13 +103,19 @@ class SettingsViewModel(
         refreshDevice()
     }
 
+    /** What the server last stored; the screen shows [seenSettings] of it. */
+    private var stored: Settings? = null
+
     private suspend fun load() {
         when (val r = settingsRepository.load()) {
-            is ApiResult.Success -> _state.update { it.copy(loading = false, settings = r.value, localOnly = false) }
+            is ApiResult.Success -> {
+                stored = r.value
+                _state.update { it.copy(loading = false, settings = seenSettings(r.value, clock.zone(), clock.now()), localOnly = false) }
+            }
             is ApiResult.Failure -> _state.update {
                 it.copy(
                     loading = false,
-                    settings = it.settings ?: Settings(timeZone = java.util.TimeZone.getDefault().id),
+                    settings = it.settings ?: Settings(), // the defaults, read as times on this phone
                     localOnly = r.error is ApiError.NotFound,
                     message = r.error.takeUnless { e -> e is ApiError.NotFound }?.sentence(),
                 )
@@ -174,14 +182,16 @@ class SettingsViewModel(
     }
 
     private suspend fun persist(updated: Settings) {
-        when (val r = settingsRepository.save(updated)) {
+        val toStore = storedSettings(updated, stored, clock.zone(), clock.now())
+        stored = toStore
+        when (val r = settingsRepository.save(toStore)) {
             is ApiResult.Success -> _state.update { it.copy(localOnly = false) }
             is ApiResult.Failure -> _state.update {
                 if (r.error is ApiError.NotFound) it.copy(localOnly = true) else it.copy(message = r.error.sentence())
             }
         }
         // The alarms follow the settings even when the server could not store them.
-        scheduler.apply(updated)
+        scheduler.apply(toStore)
         refreshDevice()
     }
 

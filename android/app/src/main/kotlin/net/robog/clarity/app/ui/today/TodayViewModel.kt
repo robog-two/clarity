@@ -133,9 +133,9 @@ class TodayViewModel(
         when (val r = repository.today()) {
             is ApiResult.Success -> {
                 fetched = r.value
-                val now = clock.now().toLocalDateTime(TimeZone.currentSystemDefault())
+                val now = clock.now().toLocalDateTime(clock.zone())
                 _state.update {
-                    it.copy(loading = false, refreshing = false, today = r.value, unavailable = false, error = null, kicker = dateKicker(r.value.date, now.time))
+                    it.copy(loading = false, refreshing = false, today = r.value, unavailable = false, error = null, kicker = dateKicker(now.date, now.time))
                 }
                 publish()
             }

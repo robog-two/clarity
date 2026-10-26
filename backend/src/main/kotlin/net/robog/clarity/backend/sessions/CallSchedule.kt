@@ -12,6 +12,8 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.shared.session.Settings
+import net.robog.clarity.shared.time.ScheduleClock
+import net.robog.clarity.shared.time.WeeklyTime
 
 /** How long before the call the lead prepares when the heads-up is off. */
 val DEFAULT_PREP_LEAD: Duration = 10.minutes
@@ -20,9 +22,8 @@ val DEFAULT_PREP_LEAD: Duration = 10.minutes
 fun prepLead(call: Settings.MorningCall): Duration = (call.headsUpMinutes ?: 10).minutes
 
 /**
- * Pure: the first moment strictly after [after] at which the call is due (its local time on one of
- * its days, in [zone]); null when the call is off or has no days. A local time that does not exist
- * on a DST change moves forward, one that exists twice takes the first.
+ * Pure: the first moment strictly after [after] at which the call is due (its stored UTC time on one
+ * of its days, moved by daylight saving in the home zone [zone]); null when the call is off or has no days.
  */
 fun nextCallAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): Instant? =
     firstAfter(call, after, zone, Duration.ZERO)
@@ -31,13 +32,5 @@ fun nextCallAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): I
 fun nextPrepAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): Instant? =
     firstAfter(call, after, zone, prepLead(call))
 
-private fun firstAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone, lead: Duration): Instant? {
-    if (!call.enabled || call.days.isEmpty()) return null
-    // A prep before midnight belongs to the next day's call, so the scan starts a day early.
-    val start = after.toLocalDateTime(zone).date.minus(DatePeriod(days = 1))
-    return (0..8).asSequence()
-        .map { start.plus(DatePeriod(days = it)) }
-        .filter { it.dayOfWeek.isoDayNumber in call.days }
-        .map { it.atTime(call.at).toInstant(zone) - lead }
-        .firstOrNull { it > after }
-}
+private fun firstAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone, lead: Duration): Instant? =
+    if (!call.enabled) null else ScheduleClock.nextOccurrence(WeeklyTime(call.at, call.days), zone, after, lead)

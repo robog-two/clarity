@@ -29,7 +29,7 @@ private fun settings(
     zone: String = "UTC",
     enabled: Boolean = true,
     mode: MorningCall.Mode = MorningCall.Mode.CALL,
-) = Settings(morningCall = MorningCall(enabled, at, days, headsUp, mode), timeZone = zone)
+) = Settings(morningCall = MorningCall(enabled, at, days, headsUp, mode), homeZone = zone)
 
 // 2026-10-26 is a Monday.
 private fun at(iso: String) = Instant.parse(iso)
@@ -67,30 +67,23 @@ class NextCallPlanTest {
         assertEquals(at("2026-10-27T09:00:00Z"), plan.callAt)
     }
 
-    @Test fun evaluatedInThePersonsZone() {
-        // 9:00 in New York (UTC-4 in October) is 13:00 UTC.
-        val plan = nextCallPlan(settings(zone = "America/New_York"), at("2026-10-26T10:00:00Z"))!!
+    @Test fun storedUtcIsMovedByTheHomeZonesDaylightSaving() {
+        // Stored 14:00 = 9:00 in New York; 13:00 UTC while New York is on daylight time (UTC-4).
+        val plan = nextCallPlan(settings(at = LocalTime(14, 0), zone = "America/New_York"), at("2026-10-26T10:00:00Z"))!!
         assertEquals(at("2026-10-26T13:00:00Z"), plan.callAt)
     }
 
     @Test fun wallClockHoldsAcrossDst() {
         // US clocks go back on 2026-11-01 (a Sunday). Saturday's call is UTC-4, Monday's is UTC-5.
-        val s = settings(zone = "America/New_York", days = setOf(6, 1))
+        val s = settings(at = LocalTime(14, 0), zone = "America/New_York", days = setOf(6, 1))
         val saturday = nextCallPlan(s, at("2026-10-31T00:00:00Z"))!!
         assertEquals(at("2026-10-31T13:00:00Z"), saturday.callAt)
         val monday = nextCallPlan(s, at("2026-10-31T14:00:00Z"))!!
         assertEquals(at("2026-11-02T14:00:00Z"), monday.callAt)
     }
 
-    @Test fun springForwardGapStillProducesACall() {
-        // 2026-03-08: 2:30 does not exist in New York; the call lands after the gap.
-        val s = settings(at = LocalTime(2, 30), zone = "America/New_York", days = setOf(7))
-        val plan = nextCallPlan(s, at("2026-03-07T12:00:00Z"))!!
-        assertTrue(plan.callAt > at("2026-03-08T06:30:00Z") && plan.callAt <= at("2026-03-08T07:30:00Z"), "${plan.callAt}")
-    }
-
-    @Test fun unknownZoneFallsBackToTheSystemZone() {
-        assertTrue(nextCallPlan(settings(zone = "Mars/Olympus"), at("2026-10-26T00:00:00Z")) != null)
+    @Test fun unknownHomeZoneIsTreatedAsUtc() {
+        assertEquals(at("2026-10-26T09:00:00Z"), nextCallPlan(settings(zone = "Mars/Olympus"), at("2026-10-26T00:00:00Z"))!!.callAt)
     }
 
     @Test fun onlyTheSelectedDaysRing() {

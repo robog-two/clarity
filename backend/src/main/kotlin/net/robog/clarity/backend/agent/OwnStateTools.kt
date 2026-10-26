@@ -265,7 +265,7 @@ class OwnStateTools(
         if (task == null) ToolResult.Error("No task with id ${input.id}.") else ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
 
-    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().timeZone)).date
+    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().homeZone)).date
 
     private companion object { const val MAX_FACT_CHARS = 240 }
 }

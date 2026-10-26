@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.shared.time.ScheduleClock
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.AutonomyTier
 import net.robog.clarity.shared.governance.Constitution
@@ -42,11 +43,17 @@ Actions that reach the outside world pass through a guard and may be held for th
 """.trimIndent()
 
     /** The system block that changes only when the constitution is amended: lines, tiers, people, times, profile. */
-    fun constitutionBlock(constitution: Constitution?): String = renderConstitution(constitution)
+    fun constitutionBlock(constitution: Constitution?, home: HomeClock? = null): String = renderConstitution(constitution, home)
 }
 
-/** Pure, deterministic rendering of the constitution and profile for the system prompt. */
-fun renderConstitution(c: Constitution?): String {
+/** The person's home zone and the moment to convert around, for showing stored times to the agent. */
+data class HomeClock(val zone: kotlinx.datetime.TimeZone, val near: kotlin.time.Instant)
+
+/**
+ * Pure, deterministic rendering of the constitution and profile for the system prompt. Protected
+ * times are stored in UTC; with [home] they are shown on the person's home clock, else as UTC.
+ */
+fun renderConstitution(c: Constitution?, home: HomeClock? = null): String {
     if (c == null || c.version == 0) {
         return "Constitution: none yet (the person has not done the values interview). Treat every action that reaches outside as ask-first."
     }
@@ -73,8 +80,10 @@ fun renderConstitution(c: Constitution?): String {
             append("\n\nWho gets through during protected time: ").append(c.getsThrough.joinToString { it.name })
         }
         if (c.protectedTimes.isNotEmpty()) {
-            append("\n\nProtected time:")
-            c.protectedTimes.forEach { b ->
+            append("\n\nProtected time (").append(home?.let { "the person's local time, ${it.zone.id}" } ?: "UTC").append("):")
+            c.protectedTimes.map { stored ->
+                home?.let { ScheduleClock.blockToSeen(stored, it.zone, it.zone, it.near) } ?: stored
+            }.forEach { b ->
                 append("\n- ").append(b.label).append(": days ").append(b.days.sorted().joinToString(",")).append(' ')
                     .append(b.start).append('-').append(b.end)
             }

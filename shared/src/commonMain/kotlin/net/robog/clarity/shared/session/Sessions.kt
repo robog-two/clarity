@@ -108,6 +108,10 @@ data class Today(
 /**
  * `GET/PUT /api/v1/settings`.
  *
+ * Repeating times ([MorningCall.at] and its days, [eveningSummaryAt]) are stored in UTC at the
+ * standard offset of [homeZone]; convert them with [net.robog.clarity.shared.time.ScheduleClock],
+ * never by hand.
+ *
  * [ClarityJson] omits nulls, and an omitted `headsUpMinutes` would decode as its default of 10, so
  * "heads-up off" could never travel; [MorningCallSerializer] writes that null explicitly.
  */
@@ -116,19 +120,24 @@ data class Settings(
     @Serializable(with = MorningCallSerializer::class) val morningCall: MorningCall = MorningCall(),
     /** "low-urgency holds": reviewed together in the evening, or right away. */
     val batchLowUrgency: Boolean = true,
+    /** UTC (see above). */
     val eveningSummaryAt: LocalTime = LocalTime(18, 0),
     /** "urgent holds": a notification as it happens. */
     val pushUrgent: Boolean = true,
     /** "mic during calls": always on, or push to talk. */
     val micAlwaysOn: Boolean = true,
-    /** IANA zone of the person; schedules are evaluated in it. */
-    val timeZone: String = "UTC",
+    /**
+     * IANA zone the person was in when they last set a time. Its daylight-saving rules move the
+     * repeating times and it sets where their day starts; no time is stored in it.
+     */
+    val homeZone: String = "UTC",
 ) {
     @Serializable
     data class MorningCall(
         val enabled: Boolean = true,
+        /** UTC (see [Settings]). */
         val at: LocalTime = LocalTime(9, 0),
-        /** ISO days, 1 = Monday. */
+        /** ISO days, 1 = Monday, in UTC: the days [at] falls on. */
         val days: Set<Int> = setOf(1, 2, 3, 4, 5),
         val headsUpMinutes: Int? = 10,
         val mode: Mode = Mode.CALL,

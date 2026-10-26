@@ -11,6 +11,7 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.shared.governance.TimeBlock
+import net.robog.clarity.shared.time.ScheduleClock
 
 /** One concrete occurrence of a recurring [TimeBlock]: `[start, end)`. */
 data class Occurrence(val block: TimeBlock, val start: Instant, val end: Instant) {
@@ -19,12 +20,13 @@ data class Occurrence(val block: TimeBlock, val start: Instant, val end: Instant
 }
 
 /** A zone id that falls back to UTC instead of throwing, for settings the person typed. */
-fun zoneOrUtc(id: String): TimeZone = runCatching { TimeZone.of(id) }.getOrDefault(TimeZone.UTC)
+fun zoneOrUtc(id: String): TimeZone = net.robog.clarity.shared.time.zoneOrUtc(id)
 
 /**
- * Occurrences of [blocks] that start on any local date from [from] to [until] (inclusive), in
- * [zone]. A block whose end is not after its start crosses midnight and ends on the next date.
- * Days are ISO (1 = Monday) and refer to the date the block *starts* on.
+ * Occurrences of stored [blocks] that start on any UTC date from [from] to [until] (inclusive), with
+ * daylight saving following the home zone [rules] (see [ScheduleClock]). A block whose end is not
+ * after its start crosses midnight and ends on the next date. Days are ISO (1 = Monday) UTC days and
+ * refer to the date the block *starts* on.
  */
 fun occurrences(blocks: List<TimeBlock>, from: LocalDate, until: LocalDate, zone: TimeZone): List<Occurrence> {
     val result = ArrayList<Occurrence>()
@@ -33,7 +35,7 @@ fun occurrences(blocks: List<TimeBlock>, from: LocalDate, until: LocalDate, zone
         for (block in blocks) {
             if (date.dayOfWeek.isoDayNumber !in block.days) continue
             val endDate = if (block.end <= block.start) date.plus(1, DateTimeUnit.DAY) else date
-            result += Occurrence(block, date.atTime(block.start).toInstant(zone), endDate.atTime(block.end).toInstant(zone))
+            result += Occurrence(block, ScheduleClock.occurrence(date, block.start, zone), ScheduleClock.occurrence(endDate, block.end, zone))
         }
         date = date.plus(1, DateTimeUnit.DAY)
     }
@@ -44,8 +46,8 @@ fun occurrences(blocks: List<TimeBlock>, from: LocalDate, until: LocalDate, zone
 private fun candidates(blocks: List<TimeBlock>, from: Instant, until: Instant, zone: TimeZone): List<Occurrence> =
     occurrences(
         blocks,
-        from.toLocalDateTime(zone).date.plus(-1, DateTimeUnit.DAY),
-        until.toLocalDateTime(zone).date,
+        from.toLocalDateTime(TimeZone.UTC).date.plus(-1, DateTimeUnit.DAY),
+        until.toLocalDateTime(TimeZone.UTC).date.plus(1, DateTimeUnit.DAY),
         zone,
     )
 
