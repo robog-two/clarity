@@ -1,5 +1,7 @@
 package net.robog.clarity.backend.scheduler
 
+import net.robog.clarity.backend.agent.wire
+import net.robog.clarity.backend.governance.NotifyDecision
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
@@ -69,7 +71,8 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
                 author = FeedItem.Author.AGENT,
                 cards = cards,
                 clientInputId = ClientInputId("evening:${context.scheduledFor}"),
-                notify = "in_app",
+                // the summary itself is the evening notification (phone: low-importance channel)
+                notify = NotifyDecision.EveningBatch(context.scheduledFor).wire(),
             ),
         )
         store.markSummarized(pending.map { it.id })

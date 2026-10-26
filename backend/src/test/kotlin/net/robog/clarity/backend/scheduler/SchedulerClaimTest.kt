@@ -172,6 +172,7 @@ class SchedulerClaimTest : FunSpec({
         val visible = feed.page(0, 10).items
         visible shouldHaveSize 1
         (visible.single().cards[0] as Card.Text).text shouldBe "2 things waited for tonight."
+        visible.single().notify shouldBe "evening_batch:2026-10-25T18:00:00Z" // the phone posts it on the low-importance channel
         feedStore.pendingBatch().shouldBeEmpty()
     }
 })
