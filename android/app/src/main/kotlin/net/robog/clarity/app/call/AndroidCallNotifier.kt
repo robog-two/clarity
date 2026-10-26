@@ -1,0 +1,132 @@
+package net.robog.clarity.app.call
+
+import android.annotation.SuppressLint
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
+import androidx.core.net.toUri
+import net.robog.clarity.R
+import net.robog.clarity.app.MainActivity
+import net.robog.clarity.app.nav.DeepLink
+import net.robog.clarity.app.nav.toUri
+
+/** Posts the heads-up, the incoming call (`CallStyle`, full-screen intent) and the ongoing-call notification. */
+@SuppressLint("MissingPermission") // POST_NOTIFICATIONS is checked through DeviceCapabilities before posting
+class AndroidCallNotifier(private val context: Context) : CallNotifier {
+    private val manager = context.getSystemService(NotificationManager::class.java)
+    private val agent = Person.Builder().setName(AGENT_NAME).setImportant(true).build()
+
+    init {
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_HEADS_UP, "Heads-up before the call", NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_CALL, "Morning call", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "The call that starts your morning meeting"
+                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            },
+        )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_ONGOING, "Call in progress", NotificationManager.IMPORTANCE_LOW),
+        )
+    }
+
+    override fun headsUp(title: String, body: String) {
+        val notification = NotificationCompat.Builder(context, CHANNEL_HEADS_UP)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setCategory(NotificationCompat.CATEGORY_REMINDER)
+            .setAutoCancel(true)
+            .setContentIntent(callScreen(answer = false, code = 1))
+            .build()
+        manager.notify(ID_HEADS_UP, notification)
+    }
+
+    override fun incoming(presentation: IncomingPresentation, callTime: String) {
+        when (presentation) {
+            IncomingPresentation.None -> Unit
+            IncomingPresentation.Plain -> manager.notify(
+                ID_INCOMING,
+                NotificationCompat.Builder(context, CHANNEL_CALL)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle("Time for your morning meeting")
+                    .setContentText("Open the app when you’re ready.")
+                    .setAutoCancel(true)
+                    .setContentIntent(mainScreen(DeepLink.Today, code = 2))
+                    .build(),
+            )
+            IncomingPresentation.FullScreenCall, IncomingPresentation.HeadsUpCall -> {
+                val builder = NotificationCompat.Builder(context, CHANNEL_CALL)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentText("morning meeting · about 8 min")
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setOngoing(true)
+                    .setContentIntent(callScreen(answer = false, code = 3))
+                    .setStyle(NotificationCompat.CallStyle.forIncomingCall(agent, decline(), callScreen(answer = true, code = 4)))
+                if (presentation == IncomingPresentation.FullScreenCall) {
+                    builder.setFullScreenIntent(callScreen(answer = false, code = 5), true)
+                }
+                manager.notify(ID_INCOMING, builder.build())
+            }
+        }
+    }
+
+    override fun ongoing(sessionId: String) {
+        val hangUp = PendingIntent.getBroadcast(
+            context, 6,
+            Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_HANG_UP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_ONGOING)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentText("morning meeting")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setOngoing(true)
+            .setUsesChronometer(true)
+            .setOnlyAlertOnce(true)
+            .setContentIntent(callScreen(answer = false, code = 7))
+            .setStyle(NotificationCompat.CallStyle.forOngoingCall(agent, hangUp))
+            .build()
+        manager.notify(ID_ONGOING, notification)
+    }
+
+    override fun cancelHeadsUp() = manager.cancel(ID_HEADS_UP)
+    override fun cancelIncoming() = manager.cancel(ID_INCOMING)
+    override fun cancelOngoing() = manager.cancel(ID_ONGOING)
+
+    private fun decline(): PendingIntent = PendingIntent.getBroadcast(
+        context, 8,
+        Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_DECLINE),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
+    private fun callScreen(answer: Boolean, code: Int): PendingIntent {
+        val intent = Intent(Intent.ACTION_VIEW, DeepLink.Call(answer).toUri().toUri(), context, CallActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
+    private fun mainScreen(link: DeepLink, code: Int): PendingIntent {
+        val intent = Intent(Intent.ACTION_VIEW, link.toUri().toUri(), context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
+    private companion object {
+        const val AGENT_NAME = "Personal Agent"
+        const val CHANNEL_HEADS_UP = "heads_up"
+        const val CHANNEL_CALL = "morning_call"
+        const val CHANNEL_ONGOING = "call_in_progress"
+        const val ID_HEADS_UP = 9101
+        const val ID_INCOMING = 9102
+        const val ID_ONGOING = 9103
+    }
+}
