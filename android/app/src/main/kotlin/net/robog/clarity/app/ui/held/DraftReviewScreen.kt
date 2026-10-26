@@ -48,7 +48,12 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.governance.HeldActionId
 
 @Composable
-fun DraftReviewScreen(heldId: HeldActionId, onBack: () -> Unit, viewModel: DraftReviewViewModel = metroViewModel()) {
+fun DraftReviewScreen(
+    heldId: HeldActionId,
+    onBack: () -> Unit,
+    onAmend: () -> Unit = {},
+    viewModel: DraftReviewViewModel = metroViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val mic = rememberMicAccess(viewModel::onMicPermission)
     LaunchedEffect(heldId) { viewModel.load(heldId) }
@@ -63,6 +68,7 @@ fun DraftReviewScreen(heldId: HeldActionId, onBack: () -> Unit, viewModel: Draft
         onApprove = viewModel::approve,
         onDecline = viewModel::decline,
         onCode = viewModel::editCode,
+        onAmend = onAmend,
     )
 }
 
@@ -76,6 +82,8 @@ fun DraftReviewContent(
     onApprove: () -> Unit,
     onDecline: () -> Unit,
     onCode: (String) -> Unit = {},
+    /** Talk through the rule that caught this, instead of this one draft. */
+    onAmend: () -> Unit = {},
     extras: HeldExtras = LocalHeldExtras.current,
 ) {
     val held = state.held
@@ -166,6 +174,7 @@ fun DraftReviewContent(
                 )
             }
             SecondaryButton("not now", onDecline, Modifier.fillMaxWidth(), enabled = !state.busy)
+            SecondaryButton("amend a rule", onAmend, Modifier.fillMaxWidth(), enabled = !state.busy)
         }
     }
 }

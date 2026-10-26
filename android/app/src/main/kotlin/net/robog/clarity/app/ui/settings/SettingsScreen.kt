@@ -62,6 +62,8 @@ data class SettingsActions(
     val onToggleMic: () -> Unit = {},
     val onToggleBatch: () -> Unit = {},
     val onTogglePush: () -> Unit = {},
+    val onTogglePushService: () -> Unit = {},
+    val onAllowBattery: () -> Unit = {},
     val onEveningAt: (LocalTime) -> Unit = {},
     val onOpenConstitution: () -> Unit = {},
     val onAllowNotifications: () -> Unit = {},
@@ -96,6 +98,11 @@ fun SettingsTab(onOpenConstitution: () -> Unit, modifier: Modifier = Modifier, v
             onToggleMic = viewModel::toggleMic,
             onToggleBatch = viewModel::toggleBatch,
             onTogglePush = viewModel::togglePushUrgent,
+            onTogglePushService = viewModel::togglePushService,
+            onAllowBattery = {
+                viewModel.batteryAsked()
+                context.openSystem(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, withPackage = true)
+            },
             onEveningAt = viewModel::setEveningAt,
             onOpenConstitution = onOpenConstitution,
             onAllowNotifications = {
@@ -195,6 +202,23 @@ fun SettingsContent(
                     "urgent holds", "a notification as it happens",
                     if (settings.pushUrgent) "on" else "off", actions.onTogglePush,
                 )
+            }
+        }
+
+        SectionTitle("Push")
+        Column {
+            SelectRow(
+                "stay connected", "keeps a quiet note in your notifications so urgent things arrive at once",
+                if (state.pushOn) "on" else "off", actions.onTogglePushService,
+            )
+            if (state.pushOn) {
+                if (state.batteryUnrestricted) {
+                    SelectRow("battery", "unrestricted, so pushes arrive right away", "on", {})
+                } else {
+                    SelectRow("battery", "without it your phone may delay pushes", "allow", actions.onAllowBattery)
+                }
+            } else {
+                Hint("With this off I catch up when you open the app and every 15 minutes or so.")
             }
         }
 

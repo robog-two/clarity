@@ -11,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import net.robog.clarity.app.push.LocalFrontScreen
 import net.robog.clarity.app.ui.held.LocalHeldExtras
 import net.robog.clarity.app.vault.LocalVaultRepository
 import net.robog.clarity.app.vault.vaultExtras
@@ -35,6 +36,7 @@ class MainActivity : FragmentActivity() {
                 LocalMetroViewModelFactory provides graph.metroViewModelFactory,
                 LocalVaultRepository provides graph.vaultRepository,
                 LocalHeldExtras provides vaultExtras,
+                LocalFrontScreen provides graph.frontScreen,
             ) {
                 ClarityTheme {
                     ClarityNavHost(deepLink = pendingLink.value, onDeepLinkHandled = { pendingLink.value = null })
@@ -48,6 +50,7 @@ class MainActivity : FragmentActivity() {
         val graph = (application as ClarityApp).graph
         // The biometric prompt needs the activity in front.
         graph.foregroundActivity.set(this)
+        graph.frontScreen.appVisible(true)
         // Make sure the server knows this phone's vault key and approval key (a no-op when nothing is set up yet).
         lifecycleScope.launch(Dispatchers.Default) {
             if (graph.sessionStore.session.first() != null) graph.vaultRepository.register()
@@ -56,6 +59,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         (application as ClarityApp).graph.foregroundActivity.set(null)
+        (application as ClarityApp).graph.frontScreen.appVisible(false)
         super.onStop()
     }
 

@@ -25,6 +25,10 @@ import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SettingsRepository
 import net.robog.clarity.app.data.SetupRepository
+import net.robog.clarity.app.device.DeviceCapabilities
+import net.robog.clarity.app.push.PushController
+import net.robog.clarity.app.push.shouldAskBattery
+import kotlinx.coroutines.flow.first
 import net.robog.clarity.shared.session.Settings
 import net.robog.clarity.shared.session.Settings.MorningCall
 
@@ -147,6 +151,8 @@ data class DoneState(
     val connectors: Int = 0,
     val constitutionVersion: Int? = null,
     val nextDay: String? = null,
+    /** Explain the battery exemption and offer it: asked once, and only while the phone restricts the app. */
+    val askBattery: Boolean = false,
 )
 
 /** The last screen; "open the app" marks onboarding as done on this device. */
@@ -158,6 +164,8 @@ class DoneStepViewModel(
     private val setup: SetupRepository,
     private val flag: OnboardingFlagStore,
     private val clock: AppClock,
+    private val device: DeviceCapabilities,
+    private val push: PushController,
 ) : ViewModel() {
     private val _state = MutableStateFlow(DoneState())
     val state: StateFlow<DoneState> = _state.asStateFlow()
@@ -167,8 +175,15 @@ class DoneStepViewModel(
             val call = (settings.load() as? ApiResult.Success)?.value?.morningCall ?: MorningCall()
             val status = setup.status()
             val today = clock.now().toLocalDateTime(zone).date
-            _state.value = DoneState(call, status?.connectorsReady ?: 0, status?.constitutionVersion, nextCallDay(call, today))
+            val ask = shouldAskBattery(device.batteryUnrestricted(), push.batteryAsked.first())
+            _state.value = DoneState(call, status?.connectorsReady ?: 0, status?.constitutionVersion, nextCallDay(call, today), ask)
         }
+    }
+
+    /** The system dialog is about to show: do not offer it again. */
+    fun batteryAsked() {
+        _state.update { it.copy(askBattery = false) }
+        viewModelScope.launch { push.markBatteryAsked() }
     }
 
     fun openApp() {

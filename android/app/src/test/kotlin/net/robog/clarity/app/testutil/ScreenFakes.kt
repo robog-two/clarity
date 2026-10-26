@@ -190,10 +190,12 @@ class FakeCapabilities(
     var exactAlarms: Boolean = true,
     var sms: Boolean = true,
     var dnd: Boolean = true,
+    var battery: Boolean = true,
 ) : DeviceCapabilities {
     override fun notificationsEnabled() = notifications
     override fun canUseFullScreenIntent() = fullScreen
     override fun canScheduleExactAlarms() = exactAlarms
     override fun smsGranted() = sms
     override fun dndAccessGranted() = dnd
+    override fun batteryUnrestricted() = battery
 }

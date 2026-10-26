@@ -1,6 +1,12 @@
 package net.robog.clarity.app.ui.onboarding
 
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings as AndroidSettings
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.platform.LocalContext
+import net.robog.clarity.app.ui.components.InfoBox
+import net.robog.clarity.app.ui.components.SecondaryButton
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -98,11 +104,23 @@ fun ScheduleContent(
 fun DoneScreen(viewModel: DoneStepViewModel = metroViewModel()) {
     LaunchedEffect(Unit) { viewModel.load() }
     val state by viewModel.state.collectAsStateWithLifecycle()
-    DoneContent(state, viewModel::openApp)
+    val context = LocalContext.current
+    DoneContent(
+        state,
+        viewModel::openApp,
+        onAllowBattery = {
+            viewModel.batteryAsked()
+            runCatching {
+                context.startActivity(
+                    Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.fromParts("package", context.packageName, null)),
+                )
+            }
+        },
+    )
 }
 
 @Composable
-fun DoneContent(state: DoneState, onOpenApp: () -> Unit) {
+fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> Unit = {}) {
     Column(
         Modifier
             .fillMaxSize()
@@ -120,6 +138,17 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit) {
                 style = MaterialTheme.clarityText.hero.copy(fontSize = 36.sp),
             )
             ReadingText(doneLine(state.call), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (state.askBattery) {
+                InfoBox {
+                    Text("Let me stay awake in the background", style = MaterialTheme.typography.titleMedium)
+                    Hint(
+                        "To tell you about urgent things the moment they happen, I keep a quiet connection to your server open. " +
+                            "Your phone may pause that to save battery. Allowing it costs very little. If you skip it, " +
+                            "pushes still work but may be late. You can change this in settings.",
+                    )
+                    SecondaryButton("allow", onAllowBattery, Modifier.fillMaxWidth())
+                }
+            }
         }
         PrimaryButton("open the app", onOpenApp, Modifier.fillMaxWidth())
     }

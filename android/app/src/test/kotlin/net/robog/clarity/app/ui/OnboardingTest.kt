@@ -853,14 +853,34 @@ class DoneStepViewModelTest {
         val settings = FakeSettings(ApiResult.Success(Settings(morningCall = Settings.MorningCall(at = LocalTime(9, 0), days = setOf(1, 2, 3, 4, 5)))))
         val setup = FakeSetup(SetupStatus(SetupStatus.KeyState.VALID, 6, 1, Settings()))
         // Monday 2026-10-26 12:00 UTC.
-        val vm = DoneStepViewModel(settings, setup, flag, { kotlin.time.Instant.parse("2026-10-26T12:00:00Z") })
+        val vm = DoneStepViewModel(
+            settings, setup, flag, { kotlin.time.Instant.parse("2026-10-26T12:00:00Z") },
+            net.robog.clarity.app.testutil.FakeCapabilities(), net.robog.clarity.app.testutil.FakePushController(),
+        )
         vm.load(kotlinx.datetime.TimeZone.UTC)
         val s = vm.state.value
         assertEquals(6, s.connectors)
         assertEquals(1, s.constitutionVersion)
         assertEquals("tomorrow", s.nextDay)
         assertFalse(flag.state.value)
+        assertFalse(s.askBattery, "no explanation when the phone already lets the app run")
         vm.openApp()
         assertTrue(flag.state.value)
+    }
+
+    @Test fun explainsTheBatteryExemptionOnceWhileTheAppIsRestricted() = withMain {
+        val push = net.robog.clarity.app.testutil.FakePushController()
+        val vm = DoneStepViewModel(
+            FakeSettings(ApiResult.Success(Settings())), FakeSetup(SetupStatus(SetupStatus.KeyState.VALID, 1, 1, Settings())), FakeFlag(),
+            { kotlin.time.Instant.parse("2026-10-26T12:00:00Z") },
+            net.robog.clarity.app.testutil.FakeCapabilities(battery = false), push,
+        )
+        vm.load(kotlinx.datetime.TimeZone.UTC)
+        assertTrue(vm.state.value.askBattery)
+        vm.batteryAsked()
+        assertFalse(vm.state.value.askBattery)
+        assertTrue(push.askedState.value)
+        vm.load(kotlinx.datetime.TimeZone.UTC)
+        assertFalse(vm.state.value.askBattery, "asked once is enough")
     }
 }

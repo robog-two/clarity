@@ -14,6 +14,8 @@ import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
 import dev.zacsweers.metrox.viewmodel.metroViewModel
+import net.robog.clarity.app.push.LocalFrontScreen
+import net.robog.clarity.app.push.placeFor
 import net.robog.clarity.app.ui.amend.AmendScreen
 import net.robog.clarity.app.ui.constitution.ConstitutionScreen
 import net.robog.clarity.app.ui.held.DraftReviewScreen
@@ -61,6 +63,11 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
         onDeepLinkHandled()
     }
 
+    // Tell the push service what is on screen, so it does not notify about what the person is reading.
+    val front = LocalFrontScreen.current
+    val top = backStack.lastOrNull()
+    LaunchedEffect(tab, top) { front?.showing(placeFor(top, tab)) }
+
     fun push(key: NavKey) {
         backStack.add(key)
     }
@@ -84,7 +91,11 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                 )
             }
             entry<DraftReview> { key ->
-                DraftReviewScreen(HeldActionId(key.heldId), onBack = { backStack.removeLastOrNull() })
+                DraftReviewScreen(
+                    HeldActionId(key.heldId),
+                    onBack = { backStack.removeLastOrNull() },
+                    onAmend = { push(Amend(key.heldId)) },
+                )
             }
             entry<Amend> { key ->
                 AmendScreen(

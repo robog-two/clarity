@@ -23,6 +23,7 @@ import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SessionRepository
 import net.robog.clarity.app.data.SettingsRepository
 import net.robog.clarity.app.device.DeviceCapabilities
+import net.robog.clarity.app.push.PushController
 import net.robog.clarity.app.ui.onboarding.toggleDay
 import net.robog.clarity.app.ui.onboarding.toggledMode
 import net.robog.clarity.app.ui.onboarding.withHeadsUp
@@ -49,6 +50,10 @@ data class SettingsUiState(
     val fullScreenOk: Boolean = true,
     /** The call is on but exact alarms are not allowed: it may ring a few minutes late. */
     val needsExactAlarms: Boolean = false,
+    /** Keep the connection to the server open so pushes arrive at once (the foreground service). */
+    val pushOn: Boolean = true,
+    /** The system does not restrict background work, so pushes are not delayed. */
+    val batteryUnrestricted: Boolean = true,
 )
 
 /**
@@ -69,6 +74,7 @@ class SettingsViewModel(
     private val phone: PhoneConnector,
     private val flag: OnboardingFlagStore,
     private val clock: AppClock,
+    private val push: PushController,
 ) : ViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
@@ -82,6 +88,7 @@ class SettingsViewModel(
         viewModelScope.launch {
             phone.lastSyncAt.collect { at -> _state.update { it.copy(smsLastSync = relativeTime(at, clock.now())) } }
         }
+        viewModelScope.launch { push.enabled.collect { on -> _state.update { it.copy(pushOn = on) } } }
         viewModelScope.launch { load() }
         refreshDevice()
     }
@@ -122,6 +129,7 @@ class SettingsViewModel(
                 dndGranted = device.dndAccessGranted(),
                 notificationsOn = device.notificationsEnabled(),
                 fullScreenOk = device.canUseFullScreenIntent(),
+                batteryUnrestricted = device.batteryUnrestricted(),
                 needsExactAlarms = it.settings?.let { s -> scheduler.needsExactAlarmPermission(s) } ?: false,
             )
         }
@@ -162,11 +170,27 @@ class SettingsViewModel(
     fun toggleMic() = edit { it.copy(micAlwaysOn = !it.micAlwaysOn) }
     fun toggleBatch() = edit { it.copy(batchLowUrgency = !it.batchLowUrgency) }
     fun togglePushUrgent() = edit { it.copy(pushUrgent = !it.pushUrgent) }
+
+    /** "live connection": starts or stops the foreground service that keeps pushes instant. */
+    fun togglePushService() {
+        val next = !_state.value.pushOn
+        _state.update { it.copy(pushOn = next) }
+        viewModelScope.launch { push.setEnabled(next) }
+    }
+
+    /** The battery explanation is being shown to the person (they are about to see the system dialog). */
+    fun batteryAsked() {
+        viewModelScope.launch { push.markBatteryAsked() }
+    }
+
     fun setEveningAt(time: LocalTime) = edit { it.copy(eveningSummaryAt = time) }
 
     /** Clears the session and device key; the root navigation returns to onboarding. */
     fun forgetInstance() {
-        viewModelScope.launch { sessions.forget() }
+        viewModelScope.launch {
+            sessions.forget()
+            push.reconcile() // nothing to keep open any more
+        }
     }
 
     /** "redo onboarding": the root navigation shows the flow again, from the server step. */

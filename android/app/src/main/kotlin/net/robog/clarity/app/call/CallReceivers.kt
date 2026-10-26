@@ -62,6 +62,8 @@ class ScheduleReceiver : BroadcastReceiver() {
         if (intent.action !in HANDLED) return
         val graph = context.graph()
         async {
+            // Boot and app update may start the push service from the background; do it first.
+            graph.pushController.reconcile()
             graph.callScheduler.refresh()
             graph.phoneConnector.schedule()
             graph.dndActions.endIfDue()
