@@ -101,6 +101,8 @@ import net.robog.clarity.app.ui.onboarding.dayName
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.today.SectionTitle
 import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.app.ui.theme.ClarityFonts
+import androidx.compose.ui.text.font.FontStyle
 import net.robog.clarity.app.vault.CredentialRow
 import net.robog.clarity.app.vault.VaultKeyStatus
 import net.robog.clarity.app.vault.VaultSection
@@ -288,7 +290,12 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
             Text(
                 "Settings",
                 Modifier.padding(top = 20.dp),
-                style = MaterialTheme.typography.headlineLarge,
+                // Libre Caslon Text italic, with its decorative ligatures (the joined "tt").
+                style = MaterialTheme.typography.displaySmall.copy(
+                    fontFamily = ClarityFonts.reading,
+                    fontStyle = FontStyle.Italic,
+                    fontFeatureSettings = "liga, dlig",
+                ),
                 textAlign = TextAlign.Center,
             )
         }
