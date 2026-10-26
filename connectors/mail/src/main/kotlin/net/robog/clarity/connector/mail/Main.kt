@@ -30,6 +30,9 @@ private val RUN_WINDOW = 10.minutes
 /** Longest single IDLE; servers drop idle connections after ~30 minutes, NATs much sooner. */
 private val IDLE_SLICE = 4.minutes
 
+/** Failed IDLEs in a row before an account waits for the next sync run. */
+private const val MAX_IDLE_FAILURES = 3
+
 fun mailManifest(runtime: ConnectorRuntime) = ConnectorManifest(
     kind = "mail",
     displayName = "Email (IMAP/SMTP)",
@@ -59,7 +62,10 @@ fun idleForChange(access: MailAccess, folderName: String, timeout: Duration): Bo
                     Thread.sleep(timeout.inWholeMilliseconds)
                     // any command from another thread ends the IDLE
                     f.doCommand { p -> p.simpleCommand("NOOP", null); null }
-                } catch (_: InterruptedException) { }
+                } catch (_: InterruptedException) {
+                } catch (_: Exception) {
+                    // the connection is already gone; idle() reports it
+                }
             }.apply { isDaemon = true; start() }
             try {
                 f.idle()
@@ -99,13 +105,26 @@ suspend fun main() {
     }
 }
 
-/** Keeps one account in step with its server for up to [RUN_WINDOW]; stops early on a server without IDLE or on an error. */
+/**
+ * Keeps one account in step with its server for up to [RUN_WINDOW]; stops early on a server without
+ * IDLE or after [MAX_IDLE_FAILURES] failures in a row. A dropped connection (a quiet connection that
+ * something on the way closed) reconnects and syncs, since mail may have arrived while it was dead.
+ */
 private suspend fun watchAccount(cfg: MailConfig, sync: MailSync, push: suspend (List<IngestRecord>) -> Unit) {
     val access = MailAccess(cfg)
     val started = TimeSource.Monotonic.markNow()
+    var failures = 0
     try {
         while (started.elapsedNow() < RUN_WINDOW - IDLE_SLICE) {
-            val changed = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.firstOrNull() ?: "INBOX", IDLE_SLICE) }.getOrElse { log.warn { "IDLE failed for '${cfg.label}': ${it.message}" }; null } }
+            val outcome = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.firstOrNull() ?: "INBOX", IDLE_SLICE) } }
+            val changed = outcome.getOrElse { e ->
+                failures++
+                log.warn { "IDLE failed for '${cfg.label}' ($failures in a row): ${e.message}" }
+                if (failures >= MAX_IDLE_FAILURES) return
+                delay(5.seconds)
+                true // reconnect and catch up on anything missed
+            }
+            if (outcome.isSuccess) failures = 0
             when (changed) {
                 null -> return
                 true -> sync.syncAll(push)
