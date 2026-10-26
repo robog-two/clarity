@@ -25,6 +25,8 @@ import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
+import net.robog.clarity.app.ui.components.SlideToConfirm
+import net.robog.clarity.app.ui.held.NotNow
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.theme.BubbleShape
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -58,6 +60,10 @@ data class CardEnv(
     val onDecision: (HeldActionId, HeldDecision) -> Unit = { _, _ -> },
     /** Opens the full review screen (a two-factor code is typed there). */
     val onReview: (HeldActionId) -> Unit = {},
+    /** "approve automatically from now on" with the (edited) rule text and reason. */
+    val onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
+    /** Changes when a decision failed, so an approve slider springs back. */
+    val resetKey: Any? = null,
 )
 
 private const val CURSOR = "▍"
@@ -72,7 +78,7 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Chips -> ChipList(card, modifier)
         is Card.Plan -> PlanBox(card, modifier)
         is Card.Note -> NoteBox(card.text, modifier)
-        is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier, env.onReview)
+        is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier, env.onReview, env.onAlways, env.resetKey)
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
     }
@@ -222,6 +228,8 @@ fun ProposalBox(
     onDecision: (HeldActionId, HeldDecision) -> Unit,
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = {},
+    onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
+    resetKey: Any? = null,
 ) {
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         if (held == null) {
@@ -236,11 +244,12 @@ fun ProposalBox(
         Hint(held.verdict.rationale)
         val done = heldStatusLabel(held.status)
         if (done == null) {
-            Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SecondaryButton("not now", { onDecision(held.id, HeldDecision.Decline) }, Modifier.weight(1f))
-                if (held.needsCode) PrimaryButton("enter the code", { onReview(held.id) }, Modifier.weight(1f))
-                else PrimaryButton(approveLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.weight(1f))
+            if (held.needsCode) {
+                PrimaryButton("enter the code", { onReview(held.id) }, Modifier.fillMaxWidth().padding(top = 6.dp))
+            } else {
+                SlideToConfirm(slideLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.padding(top = 6.dp), resetKey = held to resetKey)
             }
+            NotNow(held, onDeny = { onDecision(held.id, HeldDecision.Decline) }, onAlways = { t, b -> onAlways(held.id, t, b) })
         } else {
             Text(done, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }

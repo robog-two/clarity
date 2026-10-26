@@ -2,6 +2,7 @@ package net.robog.clarity.backend.governance
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import net.robog.clarity.shared.ConnectorId
@@ -11,6 +12,9 @@ import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.Amendment
 import net.robog.clarity.shared.governance.AmendmentId
+import net.robog.clarity.shared.governance.AutonomyChange
+import net.robog.clarity.shared.governance.AutonomyTier
+import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.LineId
 import net.robog.clarity.shared.noun.Noun
 
@@ -54,6 +58,28 @@ class OutboxLogicTest : FunSpec({
         applyAmendment(c, amendment(null, "c")).getOrNull()!!.lines.map { it.id.value } shouldBe listOf("a", "b", "c")
         applyAmendment(c, amendment(null, "a")).leftOrNull() shouldBe GovernanceError.InvalidConstitution("a line 'a' already exists")
         applyAmendment(c, amendment("ghost", "x")).leftOrNull() shouldBe GovernanceError.LineNotFound("ghost")
+    }
+
+    test("an amendment can move one kind of action to another tier, and the pre-check follows it") {
+        val c = constitution(autonomy = mapOf(ActionKind.SEND_EMAIL to AutonomyTier.ASK_FIRST))
+        val event = ProposedAction.CreateEvent("k", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes)
+        deterministicVerdict(event, c, trusted()).decision shouldBe net.robog.clarity.shared.governance.Decision.ASK
+        fun amendment(change: AutonomyChange) =
+            Amendment(AmendmentId("1"), null, null, line("n", "Add events, then tell me."), "because", null, Amendment.Status.PROPOSED, change)
+
+        val amended = applyAmendment(c, amendment(AutonomyChange(ActionKind.CREATE_EVENT, AutonomyTier.DO_THEN_TELL))).getOrNull()!!
+        amended.autonomy shouldBe mapOf(ActionKind.SEND_EMAIL to AutonomyTier.ASK_FIRST, ActionKind.CREATE_EVENT to AutonomyTier.DO_THEN_TELL)
+        amended.lines.map { it.id.value } shouldBe listOf("n")
+        deterministicVerdict(event, amended, trusted()).decision shouldBe net.robog.clarity.shared.governance.Decision.ALLOW
+    }
+
+    test("talking cannot loosen a saved login or a never") {
+        val c = constitution(autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.NEVER))
+        autonomyProblem(AutonomyChange(ActionKind.USE_CREDENTIAL, AutonomyTier.DO_THEN_TELL), c)!! shouldContain "phone"
+        autonomyProblem(AutonomyChange(ActionKind.PAYMENT, AutonomyTier.ASK_FIRST), c)!! shouldContain "never"
+        autonomyProblem(AutonomyChange(ActionKind.CREATE_EVENT, AutonomyTier.NEVER), c) shouldBe null
+        val bad = Amendment(AmendmentId("1"), null, null, line("n"), "r", null, Amendment.Status.PROPOSED, AutonomyChange(ActionKind.PAYMENT, AutonomyTier.DO_THEN_TELL))
+        applyAmendment(c, bad).isLeft() shouldBe true
     }
 
     test("constitutions need unique, non-blank lines") {

@@ -62,7 +62,9 @@ class PreemptionEvalTest : FunSpec({
         r.model.requests shouldHaveSize 3
         val second = r.model.requests[1].transcript()
         second shouldContain "Newsletter digest arrived"
-        second shouldContain "USER: move my 3pm to 4pm"
+        // the person's words go in a user message ahead of the operator update, never after it (the API refuses that)
+        second shouldContain "USER: (operator update follows)\nmove my 3pm to 4pm"
+        net.robog.clarity.harness.systemPlacementViolations(r.model.requests[1].messages) shouldBe emptyList()
         r.model.requests[1].messages.count { it.role == Role.ASSISTANT } shouldBe 0
 
         // journal shape: the inputs first, then the assistant's work; no half-finished background answer

@@ -78,15 +78,43 @@ data class Message(
 }
 
 /**
- * Placement rule for mid-conversation system messages: each must follow a user message (possibly
- * through other system messages) or directly precede an assistant turn. Returns the offending
- * indexes (empty means valid). Pure, so callers can check before appending.
+ * Placement rule for mid-conversation system messages: each must be followed (possibly through other
+ * system messages) by an assistant turn or end the conversation, and one that ends it must follow a
+ * user message. So never a system message right before a user message. Effort-only messages (no
+ * content) are allowed anywhere. Returns the offending indexes (empty means valid). Pure, so callers
+ * can check before appending.
  */
 fun systemPlacementViolations(messages: List<Message>): List<Int> = messages.indices.filter { i ->
-    if (messages[i].role != Role.SYSTEM) return@filter false
+    val m = messages[i]
+    if (m.role != Role.SYSTEM || (m.content.isEmpty() && m.effort != null)) return@filter false
     val before = messages.subList(0, i).lastOrNull { it.role != Role.SYSTEM }?.role
     val after = messages.subList(i + 1, messages.size).firstOrNull { it.role != Role.SYSTEM }?.role
-    !(before == Role.USER || after == Role.ASSISTANT)
+    when (after) {
+        Role.ASSISTANT -> false
+        null -> before != Role.USER
+        else -> true
+    }
+}
+
+/**
+ * Pure: [messages] in an order the API accepts. A user message that lands right after system
+ * messages (the person spoke while an operator update was being answered) moves in front of them,
+ * joining the user message there. The journal keeps the order things happened in; only the request
+ * is reordered, the same way every time, so the cached prefix stays stable.
+ */
+fun wireOrder(messages: List<Message>): List<Message> {
+    val out = ArrayList<Message>(messages.size)
+    for (m in messages) {
+        if (m.role != Role.USER || out.lastOrNull()?.role != Role.SYSTEM) {
+            out += m
+            continue
+        }
+        var start = out.size
+        while (start > 0 && out[start - 1].role == Role.SYSTEM) start--
+        val previous = out.getOrNull(start - 1)
+        if (previous?.role == Role.USER) out[start - 1] = previous.copy(content = previous.content + m.content) else out.add(start, m)
+    }
+    return out
 }
 
 /** Token accounting, summed across the turns of a run. */

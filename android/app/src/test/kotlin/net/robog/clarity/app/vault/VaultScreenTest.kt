@@ -78,7 +78,7 @@ class VaultScreenTest {
     private class Rig(held: HeldAction) {
         val feed = ScreenFeed().also { it.heldFlow.value = listOf(held) }
         val gate = RecordingGate()
-        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf(held.id.value to held)), ScriptedSessions(), gate, ScreenSpeech())
+        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf(held.id.value to held)), ScriptedSessions(), gate, ScreenSpeech(), net.robog.clarity.app.ui.held.AlwaysAllow(net.robog.clarity.app.testutil.FakeAmendments()))
         init { vm.load(held.id) }
     }
 

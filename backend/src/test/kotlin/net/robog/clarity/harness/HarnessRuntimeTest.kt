@@ -48,6 +48,37 @@ class HarnessRuntimeTest : FunSpec({
         systemPlacementViolations(listOf(u, a, s)) shouldBe listOf(2) // trails an assistant turn
         systemPlacementViolations(listOf(s)) shouldBe listOf(0)
         systemPlacementViolations(listOf(u, a, s, u)) shouldBe listOf(2) // between an assistant and a user turn
+        systemPlacementViolations(listOf(u, s, s, u)) shouldBe listOf(1, 2) // right before a user turn: the API refuses it
+        systemPlacementViolations(listOf(u, a, Message.effort("low"), u)) shouldBe emptyList() // effort-only goes anywhere
+    }
+
+    test("wireOrder moves a user message that follows system messages in front of them") {
+        val a = Message(Role.ASSISTANT, listOf(Block.Text("a")))
+        val placeholder = Message.user("(operator update follows)")
+        val memory = Message.system("memory")
+        val inbox = Message.system("inbox")
+        val said = Message.user("can we look at hair appointments")
+        // What the lead's journal held when the person spoke during an operator-update turn.
+        val journal = listOf(Message.user("go"), a, placeholder, memory, inbox, said)
+        val wire = wireOrder(journal)
+        wire shouldBe listOf(
+            Message.user("go"), a,
+            Message(Role.USER, placeholder.content + said.content), memory, inbox,
+        )
+        systemPlacementViolations(wire) shouldBe emptyList()
+        wireOrder(wire) shouldBe wire // already valid histories are untouched
+        // With no user message before the system run, the user message goes in front of it.
+        wireOrder(listOf(Message.system("s"), said)) shouldBe listOf(said, Message.system("s"))
+    }
+
+    test("a run resumed from a journal with a user message after system messages sends a valid request") {
+        val gateway = ScriptedGateway(listOf(response(StopReason.END_TURN, Block.Text("ok"))))
+        val history = listOf(
+            Message.user("go"), Message(Role.ASSISTANT, listOf(Block.Text("a"))),
+            Message.user("(operator update follows)"), Message.system("inbox"), Message.user("hello"),
+        )
+        Harness(gateway).run(req().copy(messages = history), kotlinx.coroutines.flow.emptyFlow()).toList()
+        systemPlacementViolations(gateway.requests.single().messages) shouldBe emptyList()
     }
 
     test("planTools hides, sorts, and never defers everything") {

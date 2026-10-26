@@ -72,6 +72,7 @@ class DraftReviewViewModel(
     private val sessions: SessionsRepository,
     private val gate: ApprovalGate,
     speech: SpeechInput,
+    private val alwaysAllow: AlwaysAllow,
 ) : ViewModel() {
     private val _state = MutableStateFlow(DraftReviewState())
     val state: StateFlow<DraftReviewState> = _state.asStateFlow()
@@ -159,20 +160,33 @@ class DraftReviewViewModel(
         }
     }
 
-    /** Approve (the button reads "send" for mail), with the edited text if the person changed it. */
-    fun approve() {
+    /** "approve automatically from now on" with the (edited) rule: saves the rule, then approves this one. */
+    fun approveAlways(text: String, because: String) = approve(rule = text to because)
+
+    /** Approve (the slider reads "send" for mail), with the edited text if the person changed it. */
+    fun approve(rule: Pair<String, String>? = null) {
         val s = _state.value
         val held = s.held ?: return
         if (s.busy || s.decided) return
         _state.update { it.copy(requesting = true, message = null) }
         viewModelScope.launch {
-            when (val r = gate.authorize(held, ApprovalInput(code = _state.value.code))) {
-                ApprovalResult.Proceed -> finish(held.id, approvalFor(held, _state.value.body))
-                ApprovalResult.Done -> {
-                    endTalk()
-                    _state.update { it.copy(requesting = false, finished = true, code = "") }
+            val r = gate.authorize(held, ApprovalInput(code = _state.value.code))
+            if (r is ApprovalResult.Denied) {
+                _state.update { it.copy(requesting = false, message = r.message) }
+                return@launch
+            }
+            if (rule != null) {
+                (alwaysAllow.save(held, rule.first, rule.second) as? ApiResult.Failure)?.let { failed ->
+                    _state.update { it.copy(requesting = false, message = "The rule wasn’t saved: ${failed.error.sentence()}") }
+                    if (r == ApprovalResult.Proceed) return@launch
                 }
-                is ApprovalResult.Denied -> _state.update { it.copy(requesting = false, message = r.message) }
+            }
+            when (r) {
+                ApprovalResult.Proceed -> finish(held.id, approvalFor(held, _state.value.body))
+                else -> {
+                    endTalk()
+                    _state.update { it.copy(requesting = false, finished = it.message == null, code = "") }
+                }
             }
         }
     }

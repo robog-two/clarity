@@ -97,7 +97,8 @@ sealed interface InboxItem {
     @Serializable @SerialName("held_decided")
     data class HeldDecided(val heldId: String, val status: String, val actionSummary: String) : InboxItem {
         override val priority get() = Priority.NORMAL
-        override val summary get() = "The person ruled on the held action \"$actionSummary\" ($heldId): $status."
+        override val summary get() = "The person ruled on the held action \"$actionSummary\" ($heldId): $status." +
+            if (status == "approved") " If it was a browser or login step, take it now (snapshot again if needed); it goes through without asking again." else ""
     }
 
     @Serializable @SerialName("constitution_changed")

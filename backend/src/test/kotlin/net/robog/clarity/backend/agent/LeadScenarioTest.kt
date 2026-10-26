@@ -89,7 +89,9 @@ class LeadScenarioTest : FunSpec({
         r.model.requests shouldHaveSize 2
         val second = allText(r.model.requests[1])
         second shouldContain "a background note"
-        second shouldContain "USER: move my 3pm to 4pm"
+        // the person's words go in a user message ahead of the operator update, never after it (the API refuses that)
+        second shouldContain "USER: (operator update follows)\nmove my 3pm to 4pm"
+        net.robog.clarity.harness.systemPlacementViolations(r.model.requests[1].messages) shouldBe emptyList()
         // the cancelled call left nothing behind: no assistant message between the two inputs
         r.model.requests[1].messages.count { it.role == Role.ASSISTANT } shouldBe 0
         r.inbox.pending().shouldBeEmpty()

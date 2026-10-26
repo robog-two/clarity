@@ -286,6 +286,8 @@ data class HeldAction(
     val urgency: Urgency,
     val status: Status,
     val decidedAt: Instant? = null,
+    /** "Approve automatically from now on", written ahead by a small model; the person edits it before saving. */
+    val ruleDraft: RuleDraft? = null,
 ) {
     @Serializable
     enum class Status {
@@ -340,6 +342,8 @@ data class Amendment(
     val reason: String,
     val fromHeld: HeldActionId? = null,
     val status: Status,
+    /** How much the agent may do alone for one kind of action, changed along with the line. */
+    val autonomy: AutonomyChange? = null,
 ) {
     @Serializable
     enum class Status {
@@ -348,6 +352,20 @@ data class Amendment(
         @SerialName("discarded") DISCARDED,
     }
 }
+
+/** A constitution line drafted for a held action's kind, in the person's voice. */
+@Serializable
+data class RuleDraft(val text: String, val because: String)
+
+/**
+ * Kinds that never get "approve automatically": money, saved logins and codes always need the
+ * person, and browser steps are judged step by step on the page, so one tier cannot cover them.
+ */
+val NEVER_AUTOMATIC: Set<ActionKind> = setOf(ActionKind.PAYMENT, ActionKind.USE_CREDENTIAL, ActionKind.TWO_FACTOR_CODE, ActionKind.EXTERNAL_TOOL)
+
+/** One kind of action moved to another autonomy tier ("add calendar events, then tell me"). */
+@Serializable
+data class AutonomyChange(val kind: ActionKind, val tier: AutonomyTier)
 
 /** An action taken alone ("see allowed actions"). */
 @Serializable

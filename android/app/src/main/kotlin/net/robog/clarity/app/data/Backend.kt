@@ -33,6 +33,7 @@ import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldDecision
+import net.robog.clarity.shared.governance.ProposeAmendment
 import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
@@ -255,6 +256,8 @@ interface AmendmentsRepository {
     /** Saves the amendment; the reply is the new constitution. */
     suspend fun save(id: AmendmentId): ApiResult<Constitution>
     suspend fun discard(id: AmendmentId): ApiResult<Amendment>
+    /** Proposes a change; it does nothing until [save]d. */
+    suspend fun propose(request: ProposeAmendment): ApiResult<Amendment>
 }
 
 class DefaultAmendmentsRepository(private val api: ClarityApi) : AmendmentsRepository {
@@ -262,6 +265,7 @@ class DefaultAmendmentsRepository(private val api: ClarityApi) : AmendmentsRepos
         api.amendments(Amendment.Status.PROPOSED).map { list -> list.firstOrNull { it.id == id } }
     override suspend fun save(id: AmendmentId) = api.saveAmendment(id)
     override suspend fun discard(id: AmendmentId) = api.discardAmendment(id)
+    override suspend fun propose(request: ProposeAmendment) = api.proposeAmendment(request)
 }
 
 // --- feed ---

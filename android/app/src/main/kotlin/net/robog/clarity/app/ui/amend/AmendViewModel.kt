@@ -26,6 +26,7 @@ import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.Toasts
 import net.robog.clarity.app.ui.held.waiting
+import net.robog.clarity.app.ui.onboarding.tierLabel
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.SpeechInput
@@ -35,6 +36,7 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.governance.Amendment
+import net.robog.clarity.shared.governance.AutonomyChange
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
@@ -53,6 +55,10 @@ fun agentHasSpoken(talk: List<FeedItem>): Boolean =
 /** "change to a line · writing" / "new line · people": the caption of the proposed change box. */
 fun proposalLabel(amendment: Amendment): String =
     (if (amendment.lineId == null) "new line" else "change to a line") + " · " + amendment.proposed.section.name.lowercase().replace('_', ' ')
+
+/** "create event: do it, then tell me" */
+fun autonomyChangeLine(change: AutonomyChange): String =
+    change.kind.name.lowercase().replace('_', ' ') + ": " + tierLabel(change.tier)
 
 /** "Rule saved. Constitution v3." */
 fun ruleSavedToast(version: Int): String = "Rule saved. Constitution v$version."

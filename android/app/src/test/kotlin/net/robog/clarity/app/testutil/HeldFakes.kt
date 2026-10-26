@@ -69,6 +69,11 @@ class FakeHeldRepo(
 class FakeAmendments(var proposed: Amendment? = null, var version: Int = 2) : AmendmentsRepository {
     val saved = mutableListOf<AmendmentId>()
     val discarded = mutableListOf<AmendmentId>()
+    val requests = mutableListOf<net.robog.clarity.shared.governance.ProposeAmendment>()
+    override suspend fun propose(request: net.robog.clarity.shared.governance.ProposeAmendment): ApiResult<Amendment> {
+        requests += request
+        return ApiResult.Success(Amendment(AmendmentId("p${requests.size}"), request.lineId, null, request.proposed, request.reason, request.fromHeld, Amendment.Status.PROPOSED, request.autonomy))
+    }
     var saveFailure: ApiError? = null
     override suspend fun proposed(id: AmendmentId): ApiResult<Amendment?> = ApiResult.Success(proposed?.takeIf { it.id == id })
     override suspend fun save(id: AmendmentId): ApiResult<Constitution> {

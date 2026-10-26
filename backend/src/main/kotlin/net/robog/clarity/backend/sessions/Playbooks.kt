@@ -160,6 +160,7 @@ object Playbooks {
         append(
             "Ask which rule and what they want instead, and why, in their words. Read the constitution in your prompt; do not guess a line id. " +
                 "Hard lines cannot be changed by talking. When you know, call propose_amendment(lineId?, text, because, reason); it appears for them to save or discard. " +
+                "If the change is about what you may do alone for a kind of action (adding events, saving drafts...), also pass autonomy {kind, tier}; the line text alone does not change what is checked. " +
                 "Say in one sentence what it changes. The session ends when they save or discard it.",
         )
     }

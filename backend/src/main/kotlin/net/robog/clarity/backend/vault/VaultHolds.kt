@@ -9,6 +9,9 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import net.robog.clarity.backend.governance.ActionGate
 import net.robog.clarity.backend.governance.HeldActionStore
 import net.robog.clarity.backend.governance.LocalOutcome
@@ -48,6 +51,26 @@ interface VaultGovernance {
 }
 
 private val RECENT_DECLINE = 10.minutes
+
+/** How long the person's yes to a browser step waits for the agent to take it. */
+internal val APPROVAL_LASTS = 30.minutes
+
+private val UID_KEYS = setOf("uid", "fromUid", "toUid")
+
+/** Pure: [element] without snapshot uids, which change every time the agent looks at the page again. */
+internal fun withoutUids(element: JsonElement): JsonElement = when (element) {
+    is JsonObject -> JsonObject(element.filterKeys { it !in UID_KEYS }.mapValues { withoutUids(it.value) })
+    is JsonArray -> JsonArray(element.map(::withoutUids))
+    else -> element
+}
+
+/**
+ * Pure: whether two browser steps are the same step. The summary names the element and page
+ * ("Click button \"Sign in\" on www.ulta.com/u/login", or "Click element e46" when it has no label),
+ * so the uid itself is left out: after a fresh snapshot the same button has a new uid.
+ */
+internal fun sameBrowserStep(a: ProposedAction.ExternalTool, b: ProposedAction.ExternalTool): Boolean =
+    a.server == b.server && a.tool == b.tool && a.summary == b.summary && withoutUids(a.input) == withoutUids(b.input)
 
 /** [VaultGovernance] over the action gate, held-action store and feed. */
 @Inject
@@ -107,8 +130,9 @@ class GovernedVaultHolds(
         reason: String,
         context: List<ContextItem>,
     ): Hold = proposing.withLock {
-        val same = { a: ProposedAction -> a is ProposedAction.ExternalTool && a.server == action.server && a.tool == action.tool && a.input == action.input && a.summary == action.summary }
-        held.list(setOf(HeldAction.Status.APPROVED), limit = 200).firstOrNull { same(it.action) }?.let { approved ->
+        val same = { a: ProposedAction -> a is ProposedAction.ExternalTool && sameBrowserStep(a, action) }
+        val fresh = clock.now() - APPROVAL_LASTS
+        held.list(setOf(HeldAction.Status.APPROVED), limit = 200).firstOrNull { same(it.action) && (it.decidedAt ?: fresh) > fresh }?.let { approved ->
             if (held.transition(approved.id, setOf(HeldAction.Status.APPROVED), HeldAction.Status.EXECUTED)) return@withLock Hold.Proceed
         }
         pendingOrDeclined(same, "that step")?.let { return@withLock it }
@@ -151,7 +175,8 @@ class GovernedVaultHolds(
             "$base The person has to approve on their phone (fingerprint or face). Do not retry now; carry on with something else, and repeat the same step after you are told it was approved."
         is ProposedAction.AskCode -> base
         else ->
-            "$base Do not retry now; if you are told it was approved, repeat exactly the same call."
+            "$base Do not retry now; carry on with something else. When you are told it was approved, take the same step on the same element " +
+                "(a fresh snapshot is fine); the approval lasts ${APPROVAL_LASTS.inWholeMinutes} minutes."
     }
 }
 

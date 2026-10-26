@@ -30,15 +30,15 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ui.cards.AgentText
 import net.robog.clarity.app.ui.cards.LiveBubble
 import net.robog.clarity.app.ui.cards.SaidBubble
-import net.robog.clarity.app.ui.cards.approveLabel
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
-import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
-import net.robog.clarity.app.ui.components.SecondaryButton
+import net.robog.clarity.app.ui.components.SlideToConfirm
+import androidx.compose.material3.TextButton
+import net.robog.clarity.app.ui.cards.slideLabel
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.voice.MicAccess
 import net.robog.clarity.app.voice.MicRationale
@@ -65,8 +65,9 @@ fun DraftReviewScreen(
         onBack = { viewModel.close(); onBack() },
         onEdit = viewModel::edit,
         onTalk = { if (mic.granted) viewModel.talk() else mic.request() },
-        onApprove = viewModel::approve,
+        onApprove = { viewModel.approve() },
         onDecline = viewModel::decline,
+        onAlways = viewModel::approveAlways,
         onCode = viewModel::editCode,
         onAmend = onAmend,
     )
@@ -81,6 +82,8 @@ fun DraftReviewContent(
     onTalk: () -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
+    /** "approve automatically from now on" with the (edited) rule text and reason. */
+    onAlways: (String, String) -> Unit = { _, _ -> },
     onCode: (String) -> Unit = {},
     /** Talk through the rule that caught this, instead of this one draft. */
     onAmend: () -> Unit = {},
@@ -164,17 +167,19 @@ fun DraftReviewContent(
         if (state.decided) {
             Hint("This one is settled.")
         } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SecondaryButton("talk about it", onTalk, Modifier.weight(1f), enabled = !state.busy)
-                PrimaryButton(
-                    approveLabel(held.action.kind),
-                    onApprove,
-                    Modifier.weight(1f),
-                    enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
-                )
+            SlideToConfirm(
+                slideLabel(held.action.kind),
+                onApprove,
+                enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
+                resetKey = state.message,
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
+                Row {
+                    TextButton(onClick = onTalk, enabled = !state.busy) { Text("talk about it", style = MaterialTheme.typography.labelLarge) }
+                    TextButton(onClick = onAmend, enabled = !state.busy) { Text("amend a rule", style = MaterialTheme.typography.labelLarge) }
+                }
             }
-            SecondaryButton("not now", onDecline, Modifier.fillMaxWidth(), enabled = !state.busy)
-            SecondaryButton("amend a rule", onAmend, Modifier.fillMaxWidth(), enabled = !state.busy)
         }
     }
 }

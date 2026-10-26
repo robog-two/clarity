@@ -14,4 +14,6 @@ data class ProposeAmendment(
     val proposed: Line,
     val reason: String,
     val fromHeld: HeldActionId? = null,
+    /** Also move one kind of action to another tier; the check before every action reads this. */
+    val autonomy: AutonomyChange? = null,
 )
