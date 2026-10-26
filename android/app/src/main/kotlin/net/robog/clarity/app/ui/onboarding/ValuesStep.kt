@@ -19,6 +19,7 @@ import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.SessionsRepository
 import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.SpeechEvent
 import net.robog.clarity.app.voice.SpeechInput
@@ -99,6 +100,7 @@ class ValuesStepViewModel(
     private val sessions: SessionsRepository,
     private val feed: FeedRepository,
     private val speech: SpeechInput,
+    private val connection: ConnectionHolder,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ValuesState())
     val state: StateFlow<ValuesState> = _state.asStateFlow()
@@ -144,6 +146,9 @@ class ValuesStepViewModel(
     private fun observe(id: SessionId) {
         observers?.cancel()
         observers = viewModelScope.launch {
+            // Onboarding comes before the main screen and the push service, so nothing else has the
+            // feed open yet: without this the agent's questions and replies never reach the phone.
+            launch { connection.holdFeed() }
             launch {
                 feed.items.collect { items ->
                     val view = deriveInterview(items, id)
