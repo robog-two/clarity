@@ -9,6 +9,8 @@ import dev.zacsweers.metro.SingleIn
 import io.ktor.http.HttpStatusCode
 import java.util.concurrent.atomic.AtomicBoolean
 import net.robog.clarity.backend.agent.AgentRuntime
+import net.robog.clarity.backend.agent.wireName
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.connectors.ConnectorRegistry
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.http.HttpProblem
@@ -46,6 +48,17 @@ sealed interface SetupError : HttpProblem {
     }
 }
 
+/**
+ * Pure: the model key state the app shows. Valid when every provider some role uses has a key;
+ * otherwise the Anthropic key decides (the one the app can enter), and a missing server-only key
+ * (OpenRouter) reads as missing, named in [SetupStatus.missingKeys].
+ */
+fun modelKeyState(missing: Set<ModelProvider>, refused: Boolean): SetupStatus.KeyState = when {
+    missing.isEmpty() -> SetupStatus.KeyState.VALID
+    ModelProvider.ANTHROPIC in missing && refused -> SetupStatus.KeyState.INVALID
+    else -> SetupStatus.KeyState.MISSING
+}
+
 /** Pure: connectors that announced themselves and have at least one granted noun. */
 fun connectorsReady(connectors: List<ConnectorSummary>): Int =
     connectors.count { it.manifest != null && it.grants.values.any { state -> state == GrantState.GRANTED } }
@@ -64,16 +77,16 @@ class SetupService(
     /** A key was refused and nothing works yet. */
     private val refused = AtomicBoolean(false)
 
-    suspend fun status(): SetupStatus = SetupStatus(
-        modelKey = when {
-            runtime.enabled -> SetupStatus.KeyState.VALID
-            refused.get() -> SetupStatus.KeyState.INVALID
-            else -> SetupStatus.KeyState.MISSING
-        },
-        connectorsReady = connectorsReady(connectors.list()),
-        constitutionVersion = constitutions.current()?.version,
-        settings = settings.current(),
-    )
+    suspend fun status(): SetupStatus {
+        val missing = runtime.missingKeys()
+        return SetupStatus(
+            modelKey = modelKeyState(missing, refused.get()),
+            connectorsReady = connectorsReady(connectors.list()),
+            constitutionVersion = constitutions.current()?.version,
+            settings = settings.current(),
+            missingKeys = missing.map { it.wireName }.sorted(),
+        )
+    }
 
     /** Validates [apiKey] with Anthropic, stores it (0600) and enables the agents at once. */
     suspend fun setModelKey(apiKey: String): Either<SetupError, SetupStatus> {
@@ -82,7 +95,7 @@ class SetupService(
         if (runtime.keyFromConfig) return SetupError.ManagedByServer.left()
         return when (val check = validator.validate(key)) {
             is KeyCheck.Rejected -> {
-                if (!runtime.enabled) refused.set(true)
+                if (ModelProvider.ANTHROPIC !in runtime.providersWithKeys) refused.set(true)
                 SetupError.Rejected(check.reason).left()
             }
             is KeyCheck.Unreachable -> SetupError.Unreachable(check.reason).left()

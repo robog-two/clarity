@@ -43,9 +43,9 @@ class ModelCostsTest : FunSpec({
         }
         val seen = mutableListOf<Pair<String, Usage>>()
         val request = ModelRequest("claude-opus-5-5", emptyList(), emptyList(), emptyList(), 10, null)
-        RecordingGateway(inner) { m, u -> seen += m to u }.generate(request) shouldBe response
-        RecordingGateway(inner) { m, u -> seen += m to u }.complete(request) shouldBe response
+        RecordingGateway(inner, { m, u, _ -> seen += m to u }).generate(request) shouldBe response
+        RecordingGateway(inner, { m, u, _ -> seen += m to u }).complete(request) shouldBe response
         seen shouldBe listOf("claude-opus-5-5" to Usage(10, 5), "claude-opus-5-5" to Usage(10, 5))
-        RecordingGateway(inner) { _, _ -> error("db down") }.generate(request) shouldBe response
+        RecordingGateway(inner, { _, _, _ -> error("db down") }).generate(request) shouldBe response
     }
 })

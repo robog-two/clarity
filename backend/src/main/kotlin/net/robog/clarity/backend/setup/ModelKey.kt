@@ -19,6 +19,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.agent.AgentRuntime
 import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.config.AppConfig
 import net.robog.clarity.backend.lifecycle.StartupTask
 
@@ -96,7 +97,7 @@ class StoredModelKeyLoader(private val keys: ModelKeyStore, private val runtime:
     override val name = "load-model-key"
 
     override suspend fun run() {
-        if (runtime.enabled) return
+        if (ModelProvider.ANTHROPIC in runtime.providersWithKeys) return
         keys.read()?.let { runtime.installKey(it) }
     }
 }

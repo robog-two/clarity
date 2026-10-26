@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.backend.config.AgentRoles
 import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.config.RoleConfig
 import net.robog.clarity.harness.CachePolicy
@@ -23,37 +24,57 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 
 /**
- * The model gateways, one per provider, and which role uses which ([gatewayFor]). The Anthropic one
+ * The model gateways, one per provider, and which role uses which ([bind]). The Anthropic one
  * is built from the configured API key (a Podman secret or environment), or later from the key the
  * person enters in setup ([installKey]), so that agents start without a restart; the OpenRouter one
  * from `OPENROUTER_API_KEY`. Agents are disabled until every provider a role runs on has a key;
  * [awaitEnabled] suspends until then. A configured Anthropic key always wins over one entered at runtime.
+ *
+ * Which provider and model a role uses comes from [settings] and can change at any time, so every
+ * caller binds the role when it calls (or when a run starts), never once at construction.
  */
 @Inject
 @SingleIn(AppScope::class)
-class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFactory, private val usage: UsageRecorder) {
+class AgentRuntime(
+    val config: AgentConfig,
+    val settings: ModelSettings,
+    private val factory: ModelGatewayFactory,
+    private val usage: UsageRecorder,
+) {
     private val configured: Boolean = !config.anthropicApiKey.isNullOrBlank()
-
-    /** Every gateway records each call's tokens and cost (`model_call`). */
-    private fun create(provider: ModelProvider, apiKey: String): ModelGateway = RecordingGateway(factory.create(provider, apiKey), usage)
 
     private val gateways = MutableStateFlow(
         buildMap {
-            config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.ANTHROPIC, create(ModelProvider.ANTHROPIC, it)) }
-            config.openRouterApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.OPENROUTER, create(ModelProvider.OPENROUTER, it)) }
+            config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.ANTHROPIC, factory.create(ModelProvider.ANTHROPIC, it)) }
+            config.openRouterApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.OPENROUTER, factory.create(ModelProvider.OPENROUTER, it)) }
         },
     )
 
-    /** The gateway of [role]'s provider, or null while that provider has no key. */
-    fun gatewayFor(role: AgentRole): ModelGateway? = gateways.value[config.roles[role].provider]
+    /** The providers that have a key now. */
+    val providersWithKeys: Set<ModelProvider> get() = gateways.value.keys
 
-    val enabled: Boolean get() = ready(gateways.value)
+    /**
+     * [role]'s current settings and its provider's gateway, which records every call as [role]
+     * (`model_call`); null while that provider has no key.
+     */
+    fun bind(role: AgentRole): BoundRole? {
+        val roleConfig = settings[role]
+        val gateway = gateways.value[roleConfig.provider] ?: return null
+        return BoundRole(role, roleConfig, RecordingGateway(gateway, usage, role))
+    }
 
-    private fun ready(available: Map<ModelProvider, ModelGateway>): Boolean = config.providersInUse.all { it in available }
+    /** The gateway of [role]'s current provider, or null while that provider has no key. */
+    fun gatewayFor(role: AgentRole): ModelGateway? = bind(role)?.gateway
+
+    /** The providers some role uses now that have no key (empty when agents can run). */
+    fun missingKeys(roles: AgentRoles = settings.roles.value): Set<ModelProvider> = roles.providersInUse - gateways.value.keys
+
+    val enabled: Boolean get() = missingKeys().isEmpty()
 
     /** True when the Anthropic key comes from configuration; a key entered in setup is then stored but not used. */
     val keyFromConfig: Boolean get() = configured
@@ -61,18 +82,24 @@ class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFac
     /** Uses [apiKey] for Anthropic from now on, unless a configured key takes precedence. Returns whether it is in use. */
     fun installKey(apiKey: String): Boolean {
         if (configured) return false
-        gateways.update { it + (ModelProvider.ANTHROPIC to create(ModelProvider.ANTHROPIC, apiKey)) }
+        gateways.update { it + (ModelProvider.ANTHROPIC to factory.create(ModelProvider.ANTHROPIC, apiKey)) }
         return true
     }
 
-    /** Suspends until every provider in use has a key. */
+    /** Suspends until every provider in use has a key (a key arriving, or a role moving to a provider that has one). */
     suspend fun awaitEnabled() {
-        gateways.first(::ready)
+        combine(gateways, settings.roles) { available, roles -> roles.providersInUse.all { it in available } }.first { it }
     }
 
-    /** A harness on [role]'s gateway (the lead, or a helper running as `helper` or `triage`). */
-    fun harness(journal: RunJournal, role: AgentRole = AgentRole.LEAD): Harness =
-        Harness(requireNotNull(gatewayFor(role)) { "agents are disabled: no API key for ${config.roles[role].provider}" }, journal)
+    /** A harness on [role]'s gateway (the lead, or a helper running as `helper` or `triage`), bound now. */
+    fun harness(journal: RunJournal, role: AgentRole = AgentRole.LEAD): Harness = harness(journal, bindOrFail(role))
+
+    /** A harness on [bound]'s gateway; the run keeps it to the end. */
+    fun harness(journal: RunJournal, bound: BoundRole): Harness = Harness(bound.gateway, journal)
+
+    /** [bind], or fails when [role]'s provider has no key. */
+    fun bindOrFail(role: AgentRole): BoundRole =
+        requireNotNull(bind(role)) { "agents are disabled: no API key for ${settings[role].provider.wireName}" }
 }
 
 private const val COMPACTION_INSTRUCTIONS =
@@ -92,8 +119,8 @@ fun leadSystemBlocks(constitution: Constitution?, home: HomeClock? = null): List
 fun helperSystemBlocks(): List<SystemBlock> = listOf(SystemBlock(AgentPrompts.HELPER_SYSTEM, cacheBreakpoint = true))
 
 /**
- * Pure: the harness request for a role. Roles never switch models inside a thread (the cache is
- * per model), so the request is a function of the role's configuration alone.
+ * Pure: the harness request for a role, a function of the role's configuration alone. The caller
+ * passes the settings bound at the start of the run, so a run never switches models halfway.
  */
 fun roleRequest(
     role: RoleConfig,

@@ -135,16 +135,17 @@ class HelperManager(
 
     private suspend fun execute(run: HelperRun) {
         val agentRole = delegableRole(run.role) ?: net.robog.clarity.backend.config.AgentRole.HELPER
-        val roleConfig = config.roles[agentRole]
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
         live[run.id] = interrupts
         var terminal: HarnessEvent.Terminal? = null
         try {
             runs.markRunning(run.id)
+            // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
+            val bound = runtime.bindOrFail(agentRole)
             val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task)
             val set = toolbox.value.helperTools(runScope, run.tools).tools
             val request = roleRequest(
-                role = roleConfig,
+                role = bound.config,
                 runId = run.id,
                 system = helperSystemBlocks(),
                 messages = listOf(Message.user(helperPrompt(run.task, clock.now()))),
@@ -153,7 +154,7 @@ class HelperManager(
                 maxTurns = config.maxTurns,
                 sink = large.sink,
             )
-            runtime.harness(journal, agentRole).resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
+            runtime.harness(journal, bound).resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
                 if (event is HarnessEvent.Terminal) terminal = event
             }
         } catch (e: CancellationException) {

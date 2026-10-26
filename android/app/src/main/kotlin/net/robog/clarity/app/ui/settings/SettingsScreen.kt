@@ -135,6 +135,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
         ),
         modifier = modifier,
         vault = { VaultSection() },
+        models = { ModelsSection() },
     )
 }
 
@@ -153,6 +154,8 @@ fun SettingsContent(
     modifier: Modifier = Modifier,
     /** A section between the held-action settings and the sources (the credential vault). */
     vault: @Composable () -> Unit = {},
+    /** The "Models" section, after the sources. */
+    models: @Composable () -> Unit = {},
 ) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     var pickingTime by rememberSaveable { mutableStateOf<String?>(null) }
@@ -264,6 +267,8 @@ fun SettingsContent(
                 { if (!state.dndGranted) actions.onAllowDnd() },
             )
         }
+
+        models()
 
         SecondaryButton("redo onboarding", actions.onRedoOnboarding, Modifier.fillMaxWidth().padding(top = 12.dp))
         OutlinedButton(

@@ -18,13 +18,13 @@ data class AgentConfig(
     /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
     val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
 ) {
-    /** The providers some role runs on; agents are enabled once each has a key. */
-    val providersInUse: Set<ModelProvider> get() = AgentRole.entries.mapTo(sortedSetOf()) { roles[it].provider }
+    /** The providers some boot-time role runs on; the live set comes from [net.robog.clarity.backend.agent.ModelSettings]. */
+    val providersInUse: Set<ModelProvider> get() = roles.providersInUse
 
-    /** The lead role's model (the former single `CLARITY_AGENT_MODEL`). */
+    /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
 
-    /** The lead role's effort: low | medium | high | xhigh | max. */
+    /** The lead role's boot-time effort: low | medium | high | xhigh | max. */
     val effort: String get() = roles.lead.effort
 }
 
@@ -43,12 +43,20 @@ const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
  */
 enum class ModelProvider { ANTHROPIC, OPENROUTER }
 
-/** Who is calling the model; roles never switch models inside a thread (the cache is per model). */
+/**
+ * Who is calling the model. A role's settings can change at runtime
+ * ([net.robog.clarity.backend.agent.ModelSettings]), but never inside a run: the lead picks them up
+ * at its next turn, a helper keeps those it started with, guard and triage read them per call.
+ * A switch costs one cold prompt cache (the cache is per model).
+ */
 enum class AgentRole { LEAD, HELPER, GUARD, TRIAGE }
 
+/** The efforts the Messages API takes (`output_config.effort`). */
+val EFFORTS: List<String> = net.robog.clarity.shared.session.ModelRoles.EFFORTS
+
 /**
- * Per-role model settings. [effort] is the Messages API `output_config.effort`
- * (`low | medium | high | xhigh | max`); [cacheTtl] is `5m` or `1h`; [compaction] turns on
+ * Per-role model settings (from env or yaml, under any runtime override). [effort] is the Messages
+ * API `output_config.effort` (one of [EFFORTS]); [cacheTtl] is `5m` or `1h`; [compaction] turns on
  * server-side compaction (only the long-lived lead thread needs it); [compactAtTokens] is when.
  */
 data class RoleConfig(
@@ -81,4 +89,7 @@ data class AgentRoles(
         AgentRole.GUARD -> guard
         AgentRole.TRIAGE -> triage
     }
+
+    /** The providers some role runs on; agents are enabled once each has a key. */
+    val providersInUse: Set<ModelProvider> get() = AgentRole.entries.mapTo(sortedSetOf()) { this[it].provider }
 }
