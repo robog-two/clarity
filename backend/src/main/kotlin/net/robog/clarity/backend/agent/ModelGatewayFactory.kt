@@ -14,5 +14,5 @@ fun interface ModelGatewayFactory {
 @Inject
 @ContributesBinding(AppScope::class)
 class AnthropicGatewayFactory : ModelGatewayFactory {
-    override fun create(apiKey: String): ModelGateway = AnthropicModelGateway(apiKey)
+    override fun create(apiKey: String): ModelGateway = AnthropicModelGateway(apiKey, net.robog.clarity.harness.httpsProxyFromEnv(System.getenv()))
 }

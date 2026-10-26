@@ -61,7 +61,9 @@ import kotlinx.serialization.json.putJsonObject
  */
 class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway {
 
-    constructor(apiKey: String) : this(AnthropicOkHttpClient.builder().apiKey(apiKey).build())
+    constructor(apiKey: String, proxy: java.net.Proxy? = null) : this(
+        AnthropicOkHttpClient.builder().apiKey(apiKey).apply { if (proxy != null) proxy(proxy) }.build(),
+    )
 
     override suspend fun generate(request: ModelRequest, onTextDelta: (String) -> Unit): ModelResponse {
         val params = buildParams(request)

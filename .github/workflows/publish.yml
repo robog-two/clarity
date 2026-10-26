@@ -31,6 +31,8 @@ jobs:
           # The agent's computers (module/app/dir are unused by their Containerfiles).
           - { service: sandbox, file: deploy/container/sandbox.Containerfile, module: "", app: "", dir: "" }
           - { service: browser, file: deploy/container/browser.Containerfile, module: "", app: "", dir: "" }
+          # The outbound proxy for the browser and the backend (Squid).
+          - { service: egress, file: deploy/container/egress.Containerfile, module: "", app: "", dir: "" }
     steps:
       - uses: actions/checkout@v7
 

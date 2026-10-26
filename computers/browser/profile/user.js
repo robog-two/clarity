@@ -55,3 +55,19 @@ user_pref("browser.download.dir", "/tmp/downloads");
 user_pref("browser.download.useDownloadDir", true);
 user_pref("browser.download.manager.addToRecentDocs", false);
 user_pref("browser.helperApps.deleteTempFileOnExit", true);
+// All traffic goes through the egress proxy (computers/egress), which refuses private, loopback and
+// link-local destinations. The container has no other route out. No bypass list, not even
+// localhost: the proxy refuses it anyway, and file:// pages do not use the proxy.
+user_pref("network.proxy.type", 1);
+user_pref("network.proxy.http", "egress");
+user_pref("network.proxy.http_port", 3128);
+user_pref("network.proxy.ssl", "egress");
+user_pref("network.proxy.ssl_port", 3128);
+user_pref("network.proxy.share_proxy_settings", true);
+user_pref("network.proxy.socks", "");
+user_pref("network.proxy.socks_port", 0);
+user_pref("network.proxy.socks_remote_dns", true);
+user_pref("network.proxy.no_proxies_on", "");
+user_pref("network.proxy.failover_timeout", 5);
+// WebRTC off so nothing (STUN/ICE) goes around the proxy.
+user_pref("media.peerconnection.enabled", false);
