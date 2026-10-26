@@ -41,8 +41,6 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.UserInput
 
-private const val RELEASED_PREFIX = "released:"
-
 /** How often an idle SSE connection gets a comment so proxies keep it open. */
 val SSE_HEARTBEAT: Duration = 20.seconds
 
@@ -60,12 +58,12 @@ fun eventName(event: FeedEvent): String = when (event) {
 
 /**
  * Pure: whether a live [event] should still be sent after the items up to [replayedSeq] were
- * replayed from the store. Item events at or below the replayed position are already known, except
- * a released hold: it changes an old item, and the phone notifies on that change.
+ * replayed from the store. An appended item at or below the replayed position is already known. A
+ * finished item always goes out: it changes an item the client already has (usually one it was
+ * just sent), and clients apply it idempotently.
  */
 fun isNewerThan(event: FeedEvent, replayedSeq: Long): Boolean = when (event) {
     is FeedEvent.ItemAppended -> event.item.seq > replayedSeq
-    is FeedEvent.ItemFinal -> event.item.seq > replayedSeq || event.item.notify.startsWith(RELEASED_PREFIX)
     else -> true
 }
 

@@ -6,19 +6,28 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.harness.AnthropicModelGateway
 import net.robog.clarity.harness.ModelGateway
+import net.robog.clarity.harness.OpenRouterModelGateway
 
-/** Builds the model gateway once an API key is known; a seam so runs can be tested without a network. */
+/** Builds a provider's model gateway once its API key is known; a seam so runs can be tested without a network. */
 fun interface ModelGatewayFactory {
-    fun create(apiKey: String): ModelGateway
+    fun create(provider: ModelProvider, apiKey: String): ModelGateway
 }
 
 @Inject
 @ContributesBinding(AppScope::class)
-class AnthropicGatewayFactory(private val config: AgentConfig) : ModelGatewayFactory {
-    override fun create(apiKey: String): ModelGateway = AnthropicModelGateway(anthropicClientBuilder(apiKey, config).build())
+class ProviderGatewayFactory(private val config: AgentConfig) : ModelGatewayFactory {
+    override fun create(provider: ModelProvider, apiKey: String): ModelGateway = when (provider) {
+        ModelProvider.ANTHROPIC -> AnthropicModelGateway(anthropicClientBuilder(apiKey, config).build())
+        ModelProvider.OPENROUTER -> openRouterGateway(apiKey, config)
+    }
 }
+
+/** The OpenRouter gateway, through the same egress proxy as Anthropic (`CLARITY_HTTPS_PROXY`). */
+fun openRouterGateway(apiKey: String, config: AgentConfig, env: Map<String, String> = System.getenv()): OpenRouterModelGateway =
+    OpenRouterModelGateway(apiKey, config.openRouterBaseUrl, httpsProxyFromEnv(env))
 
 /**
  * The one place Anthropic SDK clients are configured: API key, optional base URL (tests), and the

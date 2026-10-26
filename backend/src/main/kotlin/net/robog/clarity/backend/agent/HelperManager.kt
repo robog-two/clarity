@@ -134,7 +134,8 @@ class HelperManager(
     }
 
     private suspend fun execute(run: HelperRun) {
-        val roleConfig = config.roles[delegableRole(run.role) ?: net.robog.clarity.backend.config.AgentRole.HELPER]
+        val agentRole = delegableRole(run.role) ?: net.robog.clarity.backend.config.AgentRole.HELPER
+        val roleConfig = config.roles[agentRole]
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
         live[run.id] = interrupts
         var terminal: HarnessEvent.Terminal? = null
@@ -152,7 +153,7 @@ class HelperManager(
                 maxTurns = config.maxTurns,
                 sink = large.sink,
             )
-            runtime.harness(journal).resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
+            runtime.harness(journal, agentRole).resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
                 if (event is HarnessEvent.Terminal) terminal = event
             }
         } catch (e: CancellationException) {

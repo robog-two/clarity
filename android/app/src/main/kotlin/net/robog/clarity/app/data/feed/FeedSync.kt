@@ -92,7 +92,7 @@ class FeedSync(
     val signals: SharedFlow<SyncSignal> = _signals.asSharedFlow()
 
     private val _arrivals = MutableSharedFlow<Arrival>(extraBufferCapacity = 64)
-    /** New feed items, released holds and newly held actions, once each; only the push service listens. */
+    /** New feed items (once complete), released holds and newly held actions, once each; the push service and its fallback listen. */
     val arrivals: SharedFlow<Arrival> = _arrivals.asSharedFlow()
 
     private val nudges = Channel<Unit>(Channel.CONFLATED)
@@ -166,10 +166,35 @@ class FeedSync(
 
     private class GapFailed(val state: SyncState) : Exception()
 
-    /** Pages through the feed after the last cached seq until the server says there is no more. */
-    suspend fun fillGap() {
+    /** What one [catchUp] pass brought: the first-time arrivals, and whether every request got through. */
+    data class CatchUp(val arrived: List<Arrival>, val complete: Boolean)
+
+    /**
+     * One pass without the stream, for the background fallback: fills the gap and reloads the held
+     * list. The arrivals also go out on [arrivals] as usual; they are returned so that the caller
+     * sees every one even with nobody collecting. A failure part way keeps what already arrived.
+     */
+    suspend fun catchUp(): CatchUp {
+        val arrived = mutableListOf<Arrival>()
+        return try {
+            fillGap(arrived::add)
+            refreshHeld(arrived::add)
+            CatchUp(arrived, complete = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            CatchUp(arrived, complete = false)
+        }
+    }
+
+    /**
+     * Pages through the feed from [resumePoint] until the server says there is no more. Starting
+     * before a cached item that is still streaming, or still held, fetches its final version or its
+     * release if it was missed (the fallback has no stream to hear them on).
+     */
+    suspend fun fillGap(onArrival: (Arrival) -> Unit = {}) {
+        var after = resumePoint()
         while (true) {
-            val after = store.lastSeq()
             when (val result = backend.feed(after)) {
                 is ApiResult.Failure -> throw GapFailed(
                     when (result.error) {
@@ -180,28 +205,47 @@ class FeedSync(
                 )
                 is ApiResult.Success -> {
                     val page = result.value
-                    page.items.sortedBy { it.seq }.forEach { storeItem(it, final = true) }
+                    page.items.sortedBy { it.seq }.forEach { storeItem(it, final = true, onArrival) }
+                    val next = page.items.maxOfOrNull { it.seq } ?: return
                     // No progress means nothing new; stop even if the server claims more.
-                    if (!page.hasMore || page.items.isEmpty() || store.lastSeq() <= after) return
+                    if (!page.hasMore || next <= after) return
+                    after = next
                 }
             }
         }
     }
 
-    private suspend fun storeItem(item: FeedItem, final: Boolean) {
+    /** The last cached seq, or just before the oldest recent item still streaming or held. */
+    private suspend fun resumePoint(): Long {
+        val last = store.lastSeq()
+        val open = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming || isHeld(it) }.minOfOrNull { it.seq } ?: return last
+        return minOf(last, open - 1)
+    }
+
+    /**
+     * Stores [item]; it arrives (for notifications) once, when the cache first holds it complete:
+     * first seen already final, or a streaming copy being finished. Partials never arrive. A held
+     * item arrives a second time, once, when the server releases it.
+     */
+    private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: (Arrival) -> Unit = {}) {
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            if (isArrival(existing, it)) _arrivals.tryEmit(Arrival.Item(it))
+            if (becameComplete(existing, it) || holdReleased(existing, it)) arrive(Arrival.Item(it), onArrival)
         }
     }
 
+    private fun arrive(arrival: Arrival, onArrival: (Arrival) -> Unit) {
+        _arrivals.tryEmit(arrival)
+        onArrival(arrival)
+    }
+
     /** Reloads the held list; actions that are waiting and new to this phone arrive once. */
-    private suspend fun refreshHeld() {
+    private suspend fun refreshHeld(onArrival: (Arrival) -> Unit = {}) {
         val fresh = (backend.held() as? ApiResult.Success)?.value ?: return
         val known = store.held.first().filter { it.status == HeldAction.Status.HELD }.map { it.id }.toSet()
         store.replaceHeld(fresh)
-        fresh.filter { it.status == HeldAction.Status.HELD && it.id !in known }.forEach { _arrivals.tryEmit(Arrival.Held(it)) }
+        fresh.filter { it.status == HeldAction.Status.HELD && it.id !in known }.forEach { arrive(Arrival.Held(it), onArrival) }
     }
 
     internal suspend fun apply(event: FeedEvent) {
@@ -220,3 +264,10 @@ class FeedSync(
         }
     }
 }
+
+/** Whether storing [stored] over [existing] is the first time the cache holds that item complete. */
+fun becameComplete(existing: FeedItem?, stored: FeedItem): Boolean =
+    !stored.streaming && (existing == null || existing.streaming)
+
+/** How far back [FeedSync.fillGap] looks for items left streaming (a reply cut off by a dropped stream). */
+private const val STREAMING_LOOKBACK = 50

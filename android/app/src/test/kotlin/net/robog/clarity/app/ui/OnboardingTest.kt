@@ -205,7 +205,6 @@ private class FakeFeed : FeedRepository {
         return ApiResult.Success(InputAccepted(userItem(100, text, sessionId)))
     }
     override suspend fun decideHeld(id: HeldActionId, decision: HeldDecision) = ApiResult.Success(Unit)
-    override suspend fun sync() = Unit
 }
 
 private class FakeSpeech : SpeechInput {

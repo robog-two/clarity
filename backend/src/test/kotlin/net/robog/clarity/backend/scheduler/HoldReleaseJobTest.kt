@@ -85,7 +85,6 @@ class HoldOutcomeTest : FunSpec({
             notify = releasedNotify(at("2026-03-04T12:00:00Z")),
         )
         isNewerThan(FeedEvent.ItemFinal(item), 10) shouldBe true
-        isNewerThan(FeedEvent.ItemFinal(item.copy(notify = "push_now")), 10) shouldBe false
     }
 })
 

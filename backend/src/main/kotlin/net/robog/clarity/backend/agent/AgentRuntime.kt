@@ -5,6 +5,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.config.RoleConfig
 import net.robog.clarity.harness.CachePolicy
 import net.robog.clarity.harness.CompactionConfig
@@ -22,14 +23,15 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 
 /**
- * The model gateway shared by the lead and the helpers. Built from the configured API key (a Podman
- * secret or environment), or later from the key the person enters in setup ([installKey]), so that
- * agents start without a restart. Null (agents disabled) while there is no key; [awaitEnabled]
- * suspends until there is one. A configured key always wins over one entered at runtime.
+ * The model gateways, one per provider, and which role uses which ([gatewayFor]). The Anthropic one
+ * is built from the configured API key (a Podman secret or environment), or later from the key the
+ * person enters in setup ([installKey]), so that agents start without a restart; the OpenRouter one
+ * from `OPENROUTER_API_KEY`. Agents are disabled until every provider a role runs on has a key;
+ * [awaitEnabled] suspends until then. A configured Anthropic key always wins over one entered at runtime.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -37,28 +39,40 @@ class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFac
     private val configured: Boolean = !config.anthropicApiKey.isNullOrBlank()
 
     /** Every gateway records each call's tokens and cost (`model_call`). */
-    private fun create(apiKey: String): ModelGateway = RecordingGateway(factory.create(apiKey), usage)
+    private fun create(provider: ModelProvider, apiKey: String): ModelGateway = RecordingGateway(factory.create(provider, apiKey), usage)
 
-    private val current = MutableStateFlow<ModelGateway?>(config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let(::create))
+    private val gateways = MutableStateFlow(
+        buildMap {
+            config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.ANTHROPIC, create(ModelProvider.ANTHROPIC, it)) }
+            config.openRouterApiKey?.takeIf { it.isNotBlank() }?.let { put(ModelProvider.OPENROUTER, create(ModelProvider.OPENROUTER, it)) }
+        },
+    )
 
-    val gateway: ModelGateway? get() = current.value
+    /** The gateway of [role]'s provider, or null while that provider has no key. */
+    fun gatewayFor(role: AgentRole): ModelGateway? = gateways.value[config.roles[role].provider]
 
-    val enabled: Boolean get() = gateway != null
+    val enabled: Boolean get() = ready(gateways.value)
 
-    /** True when the key comes from configuration; a key entered in setup is then stored but not used. */
+    private fun ready(available: Map<ModelProvider, ModelGateway>): Boolean = config.providersInUse.all { it in available }
+
+    /** True when the Anthropic key comes from configuration; a key entered in setup is then stored but not used. */
     val keyFromConfig: Boolean get() = configured
 
-    /** Uses [apiKey] from now on, unless a configured key takes precedence. Returns whether it is in use. */
+    /** Uses [apiKey] for Anthropic from now on, unless a configured key takes precedence. Returns whether it is in use. */
     fun installKey(apiKey: String): Boolean {
         if (configured) return false
-        current.value = create(apiKey)
+        gateways.update { it + (ModelProvider.ANTHROPIC to create(ModelProvider.ANTHROPIC, apiKey)) }
         return true
     }
 
-    /** Suspends until a model key is available. */
-    suspend fun awaitEnabled(): ModelGateway = current.filterNotNull().first()
+    /** Suspends until every provider in use has a key. */
+    suspend fun awaitEnabled() {
+        gateways.first(::ready)
+    }
 
-    fun harness(journal: RunJournal): Harness = Harness(requireNotNull(gateway) { "agents are disabled: no API key" }, journal)
+    /** A harness on [role]'s gateway (the lead, or a helper running as `helper` or `triage`). */
+    fun harness(journal: RunJournal, role: AgentRole = AgentRole.LEAD): Harness =
+        Harness(requireNotNull(gatewayFor(role)) { "agents are disabled: no API key for ${config.roles[role].provider}" }, journal)
 }
 
 private const val COMPACTION_INSTRUCTIONS =

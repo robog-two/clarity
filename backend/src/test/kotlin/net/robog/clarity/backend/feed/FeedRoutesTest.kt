@@ -268,6 +268,29 @@ class FeedRoutesTest : FunSpec({
         received.map { (it as FeedEvent.ItemFinal).item.id } shouldContainExactly listOf(old.id, seen.id)
     }
 
+    test("SSE delivers the final version of an item the client was already sent") {
+        val known = feed.append(agentItem("seen")).item
+        val received = mutableListOf<Pair<String?, String?>>()
+        withServer { client ->
+            withTimeout(10.seconds) {
+                client.sse("/api/v1/events?after=${known.seq}", request = { header(HttpHeaders.Authorization, TOKEN) }) {
+                    // A streamed reply: appended while streaming, then finished with its final cards.
+                    val started = feed.append(agentItem("").copy(streaming = true, notify = "push_now")).item
+                    incoming.take(2).collect { event ->
+                        received += event.event to event.data
+                        if (received.size == 1) hub.publish(FeedEvent.ItemFinal(started.copy(cards = listOf(Card.Text("done")), streaming = false)))
+                    }
+                }
+            }
+        }
+        received.map { it.first } shouldContainExactly listOf("item", "item_final")
+        ClarityJson.decodeFromString(FeedEvent.serializer(), received[1].second!!)
+            .shouldBeInstanceOf<FeedEvent.ItemFinal>().item.let {
+                it.streaming shouldBe false
+                it.notify shouldBe "push_now"
+            }
+    }
+
     test("SSE sends a heartbeat comment while idle (on the wire; clients skip comments)") {
         var line: String? = null
         withServer(heartbeat = 100.milliseconds) { client ->

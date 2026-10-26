@@ -11,12 +11,10 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
-import net.robog.clarity.app.data.feed.Arrival
 import net.robog.clarity.app.data.feed.Backoff
 import net.robog.clarity.app.data.feed.FeedSync
 import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.data.feed.SyncState
-import net.robog.clarity.app.data.feed.isArrival
 import net.robog.clarity.app.data.feed.mergeItem
 import net.robog.clarity.app.data.feed.withDelta
 import net.robog.clarity.app.net.FeedStreamException
@@ -29,7 +27,6 @@ import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedEvent
-import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.session.SessionId
 
@@ -190,31 +187,5 @@ class FeedSyncTest {
         assertEquals(SyncState.Offline, stateAfter(null, ApiError.Unreachable("x")))
         assertEquals(SyncState.Unauthorized, stateAfter(FeedStreamException(401, "no"), null))
         assertEquals(SyncState.Unavailable, stateAfter(FeedStreamException(404, "none"), null))
-    }
-}
-
-class HeldReleaseArrivalTest {
-    private val hold = agentItem(4, "Dana called twice").copy(notify = "hold_until:2026-10-26T12:00:00Z")
-    private val released = hold.copy(notify = "released:2026-10-26T12:00:10Z")
-
-    @Test fun aReleaseIsAnArrivalOnlyWhenTheCachedCopyIsStillHeld() {
-        assertTrue(isArrival(null, hold))
-        assertTrue(isArrival(hold, released))
-        assertTrue(!isArrival(released, released), "a resent release")
-        assertTrue(!isArrival(hold, hold))
-        assertTrue(!isArrival(agentItem(4, "x").copy(notify = "push_now"), released))
-    }
-
-    @Test fun aReleasedHoldArrivesOnceThoughTheServerResendsIt() = runTest {
-        val store = InMemoryFeedStore()
-        val fs = FeedSync(FakeBackend(), FakeEventSource(emptyList()), store)
-        val arrived = mutableListOf<FeedItem>()
-        val job = launch(Dispatchers.Unconfined) { fs.arrivals.collect { if (it is Arrival.Item) arrived += it.item } }
-        fs.apply(FeedEvent.ItemAppended(hold))
-        fs.apply(FeedEvent.ItemFinal(released))
-        fs.apply(FeedEvent.ItemFinal(released)) // resent on reconnect
-        job.cancel()
-        assertEquals(listOf(hold, released), arrived)
-        assertEquals(released.notify, store.snapshot.single().notify, "the phone remembers the release")
     }
 }

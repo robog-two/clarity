@@ -29,10 +29,13 @@ fun mergeItem(existing: FeedItem?, incoming: FeedItem, final: Boolean): FeedItem
     else -> null
 }
 
+/** The item's notification still waits for protected time to end (`hold_until:`). */
+fun isHeld(item: FeedItem): Boolean = item.notify.startsWith("hold_until")
+
 /**
- * Whether storing [incoming] over [existing] is an arrival the push service should hear about: the
- * first sight of a seq, or a hold the server has just released (`hold_until:` turned `released:`).
- * The stored copy then says released, so a resent release does not arrive twice.
+ * Whether storing [stored] over [existing] is the server releasing a hold the cache had: the
+ * cached copy said `hold_until:` and this one says `released:`. The cache then says released, so a
+ * resent release is not a second one.
  */
-fun isArrival(existing: FeedItem?, incoming: FeedItem): Boolean =
-    existing == null || (existing.notify.startsWith("hold_until") && incoming.notify.startsWith("released:"))
+fun holdReleased(existing: FeedItem?, stored: FeedItem): Boolean =
+    existing != null && isHeld(existing) && !stored.streaming && stored.notify.startsWith("released:")

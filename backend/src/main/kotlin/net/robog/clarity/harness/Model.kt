@@ -204,6 +204,8 @@ data class Usage(
     val cacheCreation5mTokens: Long = 0,
     /** The part of [cacheCreationInputTokens] written with the 1 hour TTL, when the provider splits it. */
     val cacheCreation1hTokens: Long = 0,
+    /** What the provider says the call cost, in millionths of a dollar (OpenRouter); null when it does not say. */
+    val reportedCostMicros: Long? = null,
 ) {
     operator fun plus(other: Usage) = Usage(
         inputTokens + other.inputTokens,
@@ -212,6 +214,7 @@ data class Usage(
         cacheReadInputTokens + other.cacheReadInputTokens,
         cacheCreation5mTokens + other.cacheCreation5mTokens,
         cacheCreation1hTokens + other.cacheCreation1hTokens,
+        if (reportedCostMicros == null && other.reportedCostMicros == null) null else (reportedCostMicros ?: 0) + (other.reportedCostMicros ?: 0),
     )
 
     companion object {
