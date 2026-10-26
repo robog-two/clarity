@@ -67,6 +67,16 @@ class ExposedNounReader(private val database: Database) : NounReader {
             }
         }
 
+    override suspend fun emailFolders(): List<String> = database.tx {
+        // One sample source id per folder prefix; emailFolder() turns it into the folder name.
+        val samples = mutableListOf<String>()
+        exec(
+            "SELECT DISTINCT ON (regexp_replace(source_id, '/[0-9]+/[0-9]+$', '')) source_id FROM source_link " +
+                "WHERE noun = 'message' AND deleted_at IS NULL AND source_id ~ '/[0-9]+/[0-9]+$'",
+        ) { rs -> while (rs.next()) samples += rs.getString(1) }
+        samples.mapNotNull(::emailFolder).distinct().sorted()
+    }
+
     override suspend fun calendarEvents(range: TimeRange, limit: Int): List<Stored<CalendarEventPayload>> =
         database.tx {
             // overlap test: starts before the range ends and ends after it begins
