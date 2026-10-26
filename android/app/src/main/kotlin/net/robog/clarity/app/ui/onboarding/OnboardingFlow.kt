@@ -325,7 +325,7 @@ private fun ServerPreview() = ClarityTheme {
 @Composable
 private fun ModelPreview() = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        ModelContent(ModelState(key = "sk-ant-api03-7Qx2Lm9vRt4KpZ8wNc1yHd6Fb3Js", result = ModelResult.Works), {}, {}, {}, {})
+        ModelContent(ModelState(key = "sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE", result = ModelResult.Works), {}, {}, {}, {})
     }
 }
 
