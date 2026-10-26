@@ -165,7 +165,7 @@ object Playbooks {
         )
     }
 
-    fun amendEnded(): String = "The amend session ended. Nothing further to do unless a rule changed (the inbox will tell you)."
+    fun amendEnded(): String = "The amend session ended. Nothing further to do; if a rule changed, your system prompt shows it from your next turn."
 
     const val INTERVIEW_ENDED: String =
         "The values interview ended. If a constitution was written you have the new text in your prompt; otherwise nothing changed."

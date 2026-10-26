@@ -24,6 +24,11 @@ user_pref("browser.messaging-system.whatsNewPanel.enabled", false);
 user_pref("browser.newtabpage.enabled", false);
 user_pref("browser.tabs.warnOnClose", false);
 user_pref("browser.sessionstore.resume_from_crash", false);
+// Cookies live in the kept profile, so a sign-in survives a restart. Session restore keeps nothing
+// extra on disk (no form data, no session cookies): the agent types secrets into forms.
+user_pref("browser.sessionstore.privacy_level", 2);
+user_pref("network.cookie.lifetimePolicy", 0);
+user_pref("privacy.sanitize.sanitizeOnShutdown", false);
 // No password manager, form autofill, or credit cards.
 user_pref("signon.rememberSignons", false);
 user_pref("signon.autofillForms", false);

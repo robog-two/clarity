@@ -5,7 +5,11 @@ import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -13,6 +17,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import net.robog.clarity.backend.governance.ActionGate
+import net.robog.clarity.backend.governance.GovernanceEvent
+import net.robog.clarity.backend.governance.GovernanceEvents
 import net.robog.clarity.backend.governance.HeldActionStore
 import net.robog.clarity.backend.governance.LocalOutcome
 import net.robog.clarity.shared.feed.ContextItem
@@ -48,9 +54,18 @@ interface VaultGovernance {
      * when the same step was approved earlier (consumed here, so one yes is one step), else holds it.
      */
     suspend fun browserStep(action: ProposedAction.ExternalTool, provenance: Provenance, reason: String, context: List<ContextItem>): Hold
+
+    /**
+     * Waits until the person decides [heldId] or [timeout] passes. Returns the status it settled
+     * in (an item that is not simply held, such as a blocked one, returns at once), or null when
+     * the time ran out.
+     */
+    suspend fun awaitDecision(heldId: HeldActionId, timeout: Duration): HeldAction.Status? = null
 }
 
 private val RECENT_DECLINE = 10.minutes
+
+private val DECISION_POLL = 3.seconds
 
 /** How long the person's yes to a browser step waits for the agent to take it. */
 internal val APPROVAL_LASTS = 30.minutes
@@ -80,7 +95,19 @@ class GovernedVaultHolds(
     private val gate: ActionGate,
     private val held: HeldActionStore,
     private val clock: Clock,
+    private val events: GovernanceEvents,
 ) : VaultGovernance {
+    override suspend fun awaitDecision(heldId: HeldActionId, timeout: Duration): HeldAction.Status? = withTimeoutOrNull(timeout) {
+        suspend fun now() = held.get(heldId)?.status ?: HeldAction.Status.EXPIRED
+        var status = now()
+        while (status == HeldAction.Status.HELD) {
+            // Woken by the decision event; the poll is the fallback if an event was dropped.
+            withTimeoutOrNull(DECISION_POLL) { events.events.first { it is GovernanceEvent.HeldChanged && it.held.id == heldId } }
+            status = now()
+        }
+        status
+    }
+
     /**
      * Looking for an open identical proposal and holding a new one happen under one lock: the guard
      * takes seconds, and the agent often fills a login's fields in parallel calls, which otherwise
@@ -98,7 +125,7 @@ class GovernedVaultHolds(
         val same = { a: ProposedAction -> a is ProposedAction.UseCredential && a.credentialId == credential.id && a.site == domain }
         pendingOrDeclined(same, "using ${credential.name} on $domain")?.let { return@withLock it }
         val differs = Sites.registrableDomain(credential.site)?.let { it != domain } ?: false
-        val summary = "Use ${credential.name} (${credential.fields.joinToString { it.name }}) on $domain for 5 minutes" +
+        val summary = "Use ${credential.name} (${credential.fields.joinToString { it.name }}) on $domain for this task (up to an hour)" +
             if (differs) " [saved for ${credential.site}, not $domain]" else ""
         val action = ProposedAction.UseCredential(
             idempotencyKey = "vault:use:${Uuid.random()}",
@@ -136,7 +163,8 @@ class GovernedVaultHolds(
             if (held.transition(approved.id, setOf(HeldAction.Status.APPROVED), HeldAction.Status.EXECUTED)) return@withLock Hold.Proceed
         }
         pendingOrDeclined(same, "that step")?.let { return@withLock it }
-        hold(action.copy(idempotencyKey = "browser:${Uuid.random()}"), reason, context, provenance, "in_app")
+        // The helper waits for this answer, so it notifies like a login does.
+        hold(action.copy(idempotencyKey = "browser:${Uuid.random()}"), reason, context, provenance, "push_now")
     }
 
     /** A still-open or just-declined identical proposal, as the answer to give instead of asking again. */

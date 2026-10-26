@@ -52,7 +52,7 @@ class HeldAmendEvalTest : FunSpec({
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     afterSpec { scope.cancel() }
 
-    test("held -> amend session -> constitution v2 -> the lead is told and its prompt changes") {
+    test("held -> amend session -> constitution v2 -> the lead's prompt changes") {
         val r = EvalDb.rig()
         r.constitutions.create(
             Constitution(
@@ -62,7 +62,7 @@ class HeldAmendEvalTest : FunSpec({
             ),
         ).ok()
         r.guardVerdict = GuardVerdict(Decision.ASK, listOf(LineId("l-send")), "It goes out as you.")
-        scope.launch { InboxForwarder(r.events, r.results, r.inbox).run() }
+        scope.launch { InboxForwarder(r.events, r.results, r.inbox, net.robog.clarity.backend.governance.HeldWaiters(Clock.System)).run() }
         delay(300) // let the forwarder subscribe before anything is published
 
         // 1. the lead proposes a send; it is held
@@ -95,17 +95,15 @@ class HeldAmendEvalTest : FunSpec({
         r.sessionService.get(session.id).ok().state shouldBe Session.State.ENDED
         r.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.RULE_UPDATED
 
-        // 4. the forwarder wakes the lead with the decision and the new version
+        // 4. the forwarder notes the decision for the lead (the new version is in its prompt, not its inbox)
         withTimeout(10.seconds) {
-            while (r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.ConstitutionChanged>().isEmpty()) delay(50)
+            while (r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.HeldDecided>().isEmpty()) delay(50)
         }
+        r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.ConstitutionChanged>() shouldHaveSize 0
+        r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.HeldDecided>().single().priority shouldBe net.robog.clarity.backend.agent.Priority.LOW
         r.model.handler = { end("noted") }
         r.lead.step() shouldBe true
         val last = r.model.requests.last()
-        last.messages.filter { it.role == net.robog.clarity.harness.Role.SYSTEM }.joinToString { it.text() }.let {
-            it shouldContain "version 2"
-            it shouldContain "rule_updated"
-        }
         // the system prompt now carries the new line; the tools did not move
         val after = last.prefix()
         after.system.joinToString { it.text } shouldContain NEW_LINE

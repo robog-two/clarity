@@ -54,7 +54,7 @@ class GatewayRuleDrafter(
             system = SYSTEM,
             messages = listOf(Message.user(render(held, constitution, json))),
             tools = emptyList(),
-            maxTokens = 300,
+            maxTokens = 2_000,
             effort = "low",
         )
         return parse(gateway().generate(request).text, json)

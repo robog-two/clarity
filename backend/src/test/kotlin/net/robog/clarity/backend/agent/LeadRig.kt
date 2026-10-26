@@ -20,6 +20,7 @@ import net.robog.clarity.backend.governance.ActionResults
 import net.robog.clarity.backend.governance.ConnectorRouter
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.governance.GovernanceEvents
+import net.robog.clarity.backend.governance.HeldWaiters
 import net.robog.clarity.backend.governance.Guard
 import net.robog.clarity.backend.governance.GuardModel
 import net.robog.clarity.backend.governance.HeldActionStore
@@ -83,7 +84,7 @@ const val HELPER_MODEL = "claude-sonnet-5-5"
 class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: String? = "sk-test") {
     val model = FakeModel()
     val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2)
-    val runtime = AgentRuntime(config, ModelGatewayFactory { model })
+    val runtime = AgentRuntime(config, ModelGatewayFactory { model }, UsageRecorder { _, _ -> })
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)
@@ -121,10 +122,11 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val sessionTools = SessionTools(sessionService, feed, dayPlans, tasks, constitutions, settingsProvider, clock)
     val vaultStore = ExposedVaultStore(database, clock)
     val grants = GrantStore(clock)
-    val vaultHolds = GovernedVaultHolds(gate, heldStore, clock)
+    val vaultHolds = GovernedVaultHolds(gate, heldStore, clock, events)
     val vaultService = VaultService(vaultStore, grants, heldStore, events, inbox)
     var triageVerdict = TriageVerdict(true, "ordinary")
-    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock)
+    val heldWaiters = HeldWaiters(clock)
+    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters)
 
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox

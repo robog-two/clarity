@@ -4,7 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -27,9 +26,6 @@ import net.robog.clarity.app.vault.secretKeyboard
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
-import net.robog.clarity.app.ui.cards.AgentText
-import net.robog.clarity.app.ui.cards.LiveBubble
-import net.robog.clarity.app.ui.cards.SaidBubble
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
@@ -37,56 +33,45 @@ import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.ReadingText
 import net.robog.clarity.app.ui.components.SlideToConfirm
-import androidx.compose.material3.TextButton
 import net.robog.clarity.app.ui.cards.slideLabel
 import net.robog.clarity.app.ui.theme.clarityText
-import net.robog.clarity.app.voice.MicAccess
-import net.robog.clarity.app.voice.MicRationale
-import net.robog.clarity.app.voice.MicStateChip
-import net.robog.clarity.app.voice.rememberMicAccess
-import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.governance.HeldActionId
 
 @Composable
 fun DraftReviewScreen(
     heldId: HeldActionId,
     onBack: () -> Unit,
-    onAmend: () -> Unit = {},
     viewModel: DraftReviewViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val mic = rememberMicAccess(viewModel::onMicPermission)
     LaunchedEffect(heldId) { viewModel.load(heldId) }
     LaunchedEffect(state.finished) { if (state.finished) onBack() }
-    BackHandler { viewModel.close(); onBack() }
+    BackHandler { onBack() }
     DraftReviewContent(
         state = state,
-        mic = mic,
-        onBack = { viewModel.close(); onBack() },
+        onBack = onBack,
         onEdit = viewModel::edit,
-        onTalk = { if (mic.granted) viewModel.talk() else mic.request() },
         onApprove = { viewModel.approve() },
         onDecline = viewModel::decline,
         onAlways = viewModel::approveAlways,
         onCode = viewModel::editCode,
-        onAmend = onAmend,
     )
 }
 
+/**
+ * The one approval screen: what was asked, what the agent thinks, the draft or code when there is
+ * one, the slider, and "not now" (deny, or approve automatically from now on with an edited rule).
+ */
 @Composable
 fun DraftReviewContent(
     state: DraftReviewState,
-    mic: MicAccess,
     onBack: () -> Unit,
     onEdit: (String) -> Unit,
-    onTalk: () -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
     /** "approve automatically from now on" with the (edited) rule text and reason. */
     onAlways: (String, String) -> Unit = { _, _ -> },
     onCode: (String) -> Unit = {},
-    /** Talk through the rule that caught this, instead of this one draft. */
-    onAmend: () -> Unit = {},
     extras: HeldExtras = LocalHeldExtras.current,
 ) {
     val held = state.held
@@ -95,10 +80,7 @@ fun DraftReviewContent(
             .padding(horizontal = 20.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            BackLink("← back", onBack)
-            MicStateChip(state.mic)
-        }
+        BackLink("← back", onBack)
         if (held == null) {
             if (!state.loading) ErrorBox("Can’t open this one", state.message)
             else Hint("Loading…")
@@ -148,21 +130,7 @@ fun DraftReviewContent(
             Kicker(checkedLine(held))
             extras(held)
 
-            state.talk.forEach { item ->
-                item.cards.forEach { card ->
-                    when (card) {
-                        is Card.Said -> SaidBubble(card.text)
-                        is Card.Text -> AgentText(card.text, streaming = item.streaming)
-                        else -> Unit
-                    }
-                }
-            }
-            state.live?.let { LiveBubble(it) }
-            if (state.waitingAgent) Hint("working on it…", italic = true)
             state.message?.let { ErrorBox(it) }
-        }
-        if (!mic.granted && mic.refused) {
-            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings)
         }
         if (state.decided) {
             Hint("This one is settled.")
@@ -173,13 +141,7 @@ fun DraftReviewContent(
                 enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
                 resetKey = state.message,
             )
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
-                Row {
-                    TextButton(onClick = onTalk, enabled = !state.busy) { Text("talk about it", style = MaterialTheme.typography.labelLarge) }
-                    TextButton(onClick = onAmend, enabled = !state.busy) { Text("amend a rule", style = MaterialTheme.typography.labelLarge) }
-                }
-            }
+            NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
         }
     }
 }

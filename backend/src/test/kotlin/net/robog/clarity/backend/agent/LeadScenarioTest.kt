@@ -122,6 +122,9 @@ class LeadScenarioTest : FunSpec({
         request.deferredTools.map { it.name } shouldBe request.deferredTools.map { it.name }.sorted()
         (request.tools.map { it.name }.containsAll(listOf("send_to_user", "delegate", "remember_fact"))) shouldBe true
         (request.deferredTools.map { it.name }.containsAll(listOf("create_reminder", "move_event"))) shouldBe true
+        // the lead dispatches: no browser or sandbox tools of its own, and its prompt says to delegate them
+        (request.tools + request.deferredTools).none { it.name.contains("__") } shouldBe true
+        AgentPrompts.LEAD_SYSTEM shouldContain "You have no browser or sandbox yourself"
     }
 
     test("a helper's result comes back to the lead as an inbox item, quoted as untrusted") {

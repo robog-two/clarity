@@ -88,7 +88,7 @@ class GatewayGuardModel(
             system = SYSTEM,
             messages = listOf(Message.user(render(question, json))),
             tools = emptyList(),
-            maxTokens = 600,
+            maxTokens = 2_000,
             effort = "low",
         )
         return parseVerdict(gateway().generate(request).text, json)

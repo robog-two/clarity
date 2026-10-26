@@ -65,9 +65,19 @@ class FeedPureTest : FunSpec({
         inboxFor(GovernanceEvent.HeldChanged(held(HeldAction.Status.HELD))) shouldBe null
         inboxFor(GovernanceEvent.HeldChanged(held(HeldAction.Status.BLOCKED))) shouldBe null
         val (declined, key) = inboxFor(GovernanceEvent.HeldChanged(held(HeldAction.Status.DECLINED)))!!
-        declined shouldBe InboxItem.HeldDecided("h1", "declined", "Send reply to Dana")
+        declined shouldBe InboxItem.HeldDecided("h1", "declined", "Send reply to Dana", Priority.LOW)
         key shouldBe "held:h1:declined"
-        inboxFor(GovernanceEvent.ConstitutionChanged(5))!!.first shouldBe InboxItem.ConstitutionChanged(5)
+        // a saved rule is in the lead's prompt from its next turn; an approved send reports through its result
+        inboxFor(GovernanceEvent.ConstitutionChanged(5)) shouldBe null
+        inboxFor(GovernanceEvent.HeldChanged(held(HeldAction.Status.APPROVED))) shouldBe null
+    }
+
+    test("a decision a helper is waiting on does not reach the lead; an unwaited browser approval does") {
+        val step = held(HeldAction.Status.APPROVED).copy(
+            action = ProposedAction.ExternalTool("k", "Click button \"Sign in\" on www.ulta.com/u/login", "browser", "click_by_uid", kotlinx.serialization.json.JsonObject(emptyMap())),
+        )
+        inboxFor(GovernanceEvent.HeldChanged(step)) { "helper-1" } shouldBe null
+        inboxFor(GovernanceEvent.HeldChanged(step))!!.first.priority shouldBe Priority.NORMAL
     }
 
     test("action results: done and failed") {

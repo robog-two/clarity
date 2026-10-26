@@ -30,7 +30,9 @@ import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.shared.DeviceId
 import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.backend.governance.HeldWaiters
 import net.robog.clarity.shared.governance.HeldActionId
+import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Provenance
 import net.robog.clarity.shared.vault.CredentialId
@@ -52,7 +54,7 @@ class BrowserGateTest : FunSpec({
     val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
     val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
 
-    class Rig(purpose: String? = null) {
+    class Rig(purpose: String? = null, lead: Boolean = true) {
         val clock = StepClock()
         val browser = FakeBrowser()
         val vault = MemoryVault(listOf(login, card))
@@ -60,8 +62,9 @@ class BrowserGateTest : FunSpec({
         val governance = FakeGovernance()
         var triage = TriageVerdict(true, "ordinary")
         val triaged = CopyOnWriteArrayList<TriageStep>()
-        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock)
-        val scope = RunScope("run-1", isLead = true, purpose = purpose)
+        val waiters = HeldWaiters(clock)
+        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters)
+        val scope = RunScope("run-1", isLead = lead, purpose = purpose)
         val tools: Map<String, Tool> = gate.wrap(scope, browser.tools).associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue("browser__$name").invoke(input)
@@ -224,7 +227,7 @@ class BrowserGateTest : FunSpec({
         rig.call("click_by_uid", args("uid" to "1_3")) shouldBe ToolResult.Ok("clicked 1_3")
         rig.call("click_by_uid", args("uid" to "1_3")) shouldBe ToolResult.Ok("clicked 1_3")
         rig.triaged.size shouldBe 1
-        rig.triaged.single().description shouldBe "Click button \"Next\" on bank.example.com/login"
+        rig.triaged.single().description shouldBe "Click button \"Review details\" on bank.example.com/login"
         rig.clock.advance(6.minutes)
         rig.call("click_by_uid", args("uid" to "1_3"))
         rig.triaged.size shouldBe 2
@@ -235,16 +238,88 @@ class BrowserGateTest : FunSpec({
         rig.browser.snapshot = """
             uid=e1 RootWebArea "Hair salon"
               uid=e260 a "Book an appointment" href="https://beautyservices.ulta..." text="Book an appointment"
-              uid=e336 button "I Understand" text="I Understand"
+              uid=e336 button "More options" text="More options"
         """.trimIndent()
         rig.snapshot()
         rig.call("click_by_uid", args("uid" to "e336"))
         val step = rig.triaged.single()
         step.task shouldBe "Find open haircut slots at the nearest salon"
-        step.target shouldBe "button \"I Understand\""
+        step.target shouldBe "button \"More options\""
         // A link to another page is browsing: it passes the rules without a triage.
         rig.call("click_by_uid", args("uid" to "e260")) shouldBe ToolResult.Ok("clicked e260")
         rig.triaged.size shouldBe 1
+    }
+
+    test("plain buttons that only move along or acknowledge pass without asking anyone") {
+        val rig = Rig()
+        rig.browser.snapshot = """
+            uid=e1 RootWebArea "Hair salon"
+              uid=e2 button "I Understand"
+              uid=e3 button "Continue"
+              uid=e4 button "Sign in"
+        """.trimIndent()
+        rig.snapshot()
+        listOf("e2", "e3", "e4").forEach { rig.call("click_by_uid", args("uid" to it)) shouldBe ToolResult.Ok("clicked $it") }
+        rig.triaged.shouldBeEmpty()
+        rig.governance.steps.shouldBeEmpty()
+    }
+
+    test("with a live login for the site, the sign-in page's own steps pass; without one they are checked") {
+        val rig = Rig()
+        rig.browser.url = "https://www.ulta.com/u/mfa-sms-challenge"
+        rig.browser.snapshot = """
+            uid=e1 RootWebArea "Select a method to verify"
+              uid=e2 button "SMS"
+        """.trimIndent()
+        rig.snapshot()
+        rig.call("click_by_uid", args("uid" to "e2"))
+        rig.triaged.size shouldBe 1
+        rig.grants.put("ulta_login", "ulta.com", mapOf("email" to "sam@example.com", "password" to "pw-123456"), 60.minutes)
+        rig.clock.advance(6.minutes) // past the triage cache
+        rig.call("click_by_uid", args("uid" to "e2")) shouldBe ToolResult.Ok("clicked e2")
+        rig.triaged.size shouldBe 1
+    }
+
+    test("a helper's held step waits for the person, then runs by itself on the same page") {
+        val rig = Rig(lead = false)
+        rig.snapshot()
+        rig.governance.decision = HeldAction.Status.APPROVED
+        rig.governance.onDecision = { rig.governance.stepAnswer = Hold.Proceed }
+        rig.call("click_by_uid", args("uid" to "1_4")) shouldBe ToolResult.Ok("clicked 1_4")
+        rig.governance.awaited shouldBe listOf(HeldActionId("h1"))
+        rig.browser.calls("click_by_uid").size shouldBe 1
+        rig.waiters.helperFor(HeldActionId("h1")) shouldBe "run-1"
+    }
+
+    test("a helper's held login waits, then the same fill goes through with the released values") {
+        val rig = Rig(lead = false)
+        rig.snapshot()
+        rig.governance.decision = HeldAction.Status.APPROVED
+        rig.governance.onDecision = { rig.grantLogin() }
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]")) shouldBe
+            ToolResult.Ok("filled 1_2 with [secret:bank_login_password]")
+        rig.governance.awaited shouldBe listOf(HeldActionId("h-bank_login"))
+    }
+
+    test("a helper is told when the person said no, or did not answer in time; nothing runs") {
+        val declined = Rig(lead = false)
+        declined.snapshot()
+        declined.governance.decision = HeldAction.Status.DECLINED
+        (declined.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok).content shouldContain "did not approve"
+        declined.browser.calls("click_by_uid").shouldBeEmpty()
+
+        val silent = Rig(lead = false)
+        silent.snapshot()
+        (silent.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok).content shouldContain "has not answered"
+        silent.browser.calls("click_by_uid").shouldBeEmpty()
+    }
+
+    test("the lead never waits on a held step") {
+        val rig = Rig(lead = true)
+        rig.snapshot()
+        rig.governance.decision = HeldAction.Status.APPROVED
+        (rig.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok).content shouldContain "Waiting"
+        rig.governance.awaited.shouldBeEmpty()
     }
 
     test("a snapshot of part of the page adds to the known elements instead of replacing them") {
@@ -253,7 +328,7 @@ class BrowserGateTest : FunSpec({
         rig.browser.snapshot = "uid=9_1 button \"Close\""
         rig.call("take_snapshot", args("selector" to "dialog"))
         rig.call("click_by_uid", args("uid" to "1_3"))
-        rig.triaged.single().target shouldBe "button \"Next\""
+        rig.triaged.single().target shouldBe "button \"Review details\""
         rig.call("take_snapshot", JsonObject(emptyMap()))
         rig.call("click_by_uid", args("uid" to "1_3"))
         rig.triaged.size shouldBe 1 // cached

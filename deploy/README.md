@@ -103,14 +103,15 @@ Things worth knowing:
   timeout, default 60 s, max 600 s), at most 4 at a time, with a scrubbed environment (no secrets). The full output
   of long commands is kept in `/workspace/.logs/`. Limits: 1 GB RAM, 1 CPU, 512 pids.
 - **What the browser can reach**: any public website on port 80/443, since that is its job, and nothing else:
-  your LAN, the host and your other containers are refused by the `egress` proxy (see below). It runs with a fresh, empty profile each start (no cookies or logins survive a
-  restart) unless you set `BROWSER_PROFILE_DIR` to a mounted volume. uBlock Origin and Privacy Badger are baked
+  your LAN, the host and your other containers are refused by the `egress` proxy (see below). Its profile is kept on the `browser-profile` volume
+  (`BROWSER_PROFILE_DIR`), so cookies and site logins survive a restart; saved passwords, form data and session
+  restore stay off. Delete the volume to start with an empty browser. uBlock Origin and Privacy Badger are baked
   in at pinned versions, with telemetry, updates, password saving and first-run pages switched off.
 - **Firefox's own sandbox stays on.** It needs the `SYS_CHROOT` capability, which the browser service adds back
   (to nothing else); every other capability is dropped and `no-new-privileges` is set.
 - **Transport**: the Firefox DevTools MCP server only speaks stdio, so `supergateway` (pinned) exposes it as
   streamable HTTP and enforces the bearer key. Sessions are stateful: one Firefox per MCP session, released after
-  10 idle minutes.
+  6 idle hours (`BROWSER_SESSION_TIMEOUT_MS`), so open pages survive a helper waiting for an approval.
 - **Watching the browser** live (noVNC) is not included; use `screenshot_page` through the agent for now.
 - Images are built from `deploy/container/sandbox.Containerfile` and `deploy/container/browser.Containerfile`
   (`up -d --build`). The browser build runs Firefox once for about 80 s to pre-warm the profile.

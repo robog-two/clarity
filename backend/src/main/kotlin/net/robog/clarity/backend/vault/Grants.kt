@@ -8,6 +8,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import net.robog.clarity.shared.vault.VaultNames
 import kotlin.time.Instant
 
 /** One released credential on one site: the secret values, in memory only, until [expiresAt]. */
@@ -124,6 +126,12 @@ class GrantStore(private val clock: Clock) {
         return grants.firstOrNull { it.credential == credential && it.domain == domain }
     }
 
+    /** Whether a saved login (not a two-factor code) was released for [domain] and is still live. */
+    fun hasLiveLogin(domain: String): Boolean {
+        sweep(clock.now())
+        return grants.any { it.domain == domain && it.credential != "code" }
+    }
+
     /** Drops every live grant of [credential] (it was deleted). Remembered values stay for scrubbing. */
     fun revoke(credential: String) {
         grants.removeAll { it.credential == credential }
@@ -153,7 +161,7 @@ class GrantStore(private val clock: Clock) {
     }
 
     companion object {
-        val MAX_TTL: Duration = 5.minutes
+        val MAX_TTL: Duration = VaultNames.MAX_GRANT_SECONDS.seconds
         val SCRUB_RETENTION: Duration = 15.minutes
     }
 }

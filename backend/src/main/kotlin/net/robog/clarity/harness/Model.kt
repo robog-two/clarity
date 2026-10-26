@@ -97,6 +97,26 @@ fun systemPlacementViolations(messages: List<Message>): List<Int> = messages.ind
 }
 
 /**
+ * Pure: [messages] without tool-search references to tools that are no longer offered ([available]).
+ * The API refuses a request whose history names a tool it was not sent (for example after the
+ * lead stopped getting the browser tools). Applied the same way every time, so the prefix stays stable.
+ */
+fun withoutMissingToolReferences(messages: List<Message>, available: Set<String>): List<Message> = messages.map { message ->
+    if (message.content.none { it is Block.Raw && it.json["type"]?.let { t -> (t as? JsonPrimitive)?.contentOrNull } == "tool_search_tool_result" }) message
+    else message.copy(content = message.content.map { block -> if (block is Block.Raw) dropMissingReferences(block, available) else block })
+}
+
+private fun dropMissingReferences(block: Block.Raw, available: Set<String>): Block.Raw {
+    if ((block.json["type"] as? JsonPrimitive)?.contentOrNull != "tool_search_tool_result") return block
+    val content = block.json["content"] as? JsonObject ?: return block
+    val refs = content["tool_references"] as? kotlinx.serialization.json.JsonArray ?: return block
+    val kept = refs.filter { ref -> ((ref as? JsonObject)?.get("tool_name") as? JsonPrimitive)?.contentOrNull in available }
+    if (kept.size == refs.size) return block
+    val newContent = JsonObject(content + ("tool_references" to kotlinx.serialization.json.JsonArray(kept)))
+    return Block.Raw(JsonObject(block.json + ("content" to newContent)))
+}
+
+/**
  * Pure: [messages] in an order the API accepts. A user message that lands right after system
  * messages (the person spoke while an operator update was being answered) moves in front of them,
  * joining the user message there. The journal keeps the order things happened in; only the request

@@ -93,7 +93,7 @@ COPY computers/browser/prewarm.sh /tmp/prewarm.sh
 RUN sh /tmp/prewarm.sh /opt/profile-template && rm /tmp/prewarm.sh
 
 # Downloads: a volume shared read-only with the sandbox (compose mounts browser-downloads here).
-RUN mkdir -p /downloads && chown 10001:10001 /downloads
+RUN mkdir -p /downloads /profile && chown 10001:10001 /downloads /profile
 
 # Numeric unprivileged user; everything mutable lives on /tmp (tmpfs), except /downloads (a volume).
 ENV HOME=/tmp/home \

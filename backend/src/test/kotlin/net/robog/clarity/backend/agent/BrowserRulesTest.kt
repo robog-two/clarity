@@ -131,9 +131,34 @@ class BrowserRulesTest : FunSpec({
         }
 
         test("an unremarkable button goes to the triage") {
-            click("button", "Next") shouldBe StepVerdict.Triage
-            click("button", "Show more") shouldBe StepVerdict.Triage
+            click("button", "More options") shouldBe StepVerdict.Triage
+            click("button", "Show details for Tuesday") shouldBe StepVerdict.Triage
             click(null, null) shouldBe StepVerdict.Triage
+        }
+
+        test("a button that only moves along, signs in or acknowledges a notice passes off payment pages") {
+            listOf("Next", "Continue", "Sign in", "Log in", "I Understand", "Got it", "Accept all cookies", "Not now", "Show more", "Find a salon")
+                .forEach { click("button", it) shouldBe StepVerdict.Pass }
+            click("button", "Continue to payment").shouldBeInstanceOf<StepVerdict.Ask>()
+            click("button", "Book now").shouldBeInstanceOf<StepVerdict.Ask>()
+            click("button", "Confirm booking").shouldBeInstanceOf<StepVerdict.Ask>()
+            click("button", "Continue", "https://shop.example.com/checkout").shouldBeInstanceOf<StepVerdict.Ask>()
+        }
+
+        test("a sign-in page's own steps pass only under a live login for the site, and only on a sign-in page") {
+            fun signIn(name: String, url: String, live: Boolean) =
+                stepVerdict("click_by_uid", obj("uid" to "e1"), listOf(Element("button", name)), url, signingIn = live)
+            signIn("SMS", "https://www.ulta.com/u/mfa-sms-challenge", live = true) shouldBe StepVerdict.Pass
+            signIn("Send code", "https://accounts.example.com/verify", live = true) shouldBe StepVerdict.Pass
+            signIn("Submit", "https://www.ulta.com/u/login/password", live = true) shouldBe StepVerdict.Pass
+            signIn("Send code", "https://accounts.example.com/verify", live = false).shouldBeInstanceOf<StepVerdict.Ask>()
+            // Signed in, but on the booking page: confirming still asks.
+            signIn("Confirm", "https://beautyservices.ulta.com/appointment/review", live = true).shouldBeInstanceOf<StepVerdict.Ask>()
+            isSignInPage("https://www.ulta.com/u/login?state=x") shouldBe true
+            isSignInPage("https://login.example.com/") shouldBe true
+            isSignInPage("https://beautyservices.ulta.com/welcome") shouldBe false
+            // Enter on a sign-in page submits the code
+            stepVerdict("press_key", obj("key" to "Enter"), emptyList(), "https://www.ulta.com/u/mfa-sms-challenge", signingIn = true) shouldBe StepVerdict.Pass
         }
 
         test("on a payment page the step buttons ask as payments") {

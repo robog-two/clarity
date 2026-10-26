@@ -97,7 +97,7 @@ class VaultTools(
     private fun askCode(scope: RunScope): Tool = tool<AskCodeInput>(
         name = "ask_code",
         description = "Ask the person for a two-factor or one-time code a site sent them. Codes are not stored. Returns a placeholder " +
-            "[secret:code_<id>] to type into the site's code field once they have entered it (it is valid for 5 minutes on that site).",
+            "[secret:code_<id>] to type into the site's code field once they have entered it (it stays valid on that site for the rest of the task).",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->

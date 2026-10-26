@@ -220,11 +220,9 @@ class HeldViewModelTest {
 private class DraftRig(held: HeldAction = heldAction()) {
     val feed = ScreenFeed().also { it.heldFlow.value = listOf(held) }
     val repo = FakeHeldRepo(mapOf(held.id.value to held))
-    val sessions = ScriptedSessions()
     val gate = RecordingGate()
-    val speech = ScreenSpeech()
     val amendments = FakeAmendments()
-    val vm = DraftReviewViewModel(feed, repo, sessions, gate, speech, AlwaysAllow(amendments))
+    val vm = DraftReviewViewModel(feed, repo, gate, AlwaysAllow(amendments))
     val state get() = vm.state.value
     init { vm.load(held.id) }
 }
@@ -240,13 +238,13 @@ class DraftReviewViewModelTest {
     @Test fun fallsBackToTheServerWhenNotCached() = withMain {
         val held = heldAction("h9")
         val feed = ScreenFeed()
-        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf("h9" to held)), ScriptedSessions(), RecordingGate(), ScreenSpeech(), AlwaysAllow(FakeAmendments()))
+        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf("h9" to held)), RecordingGate(), AlwaysAllow(FakeAmendments()))
         vm.load(held.id)
         assertEquals(held, vm.state.value.held)
     }
 
     @Test fun unknownItemShowsAMessage() = withMain {
-        val vm = DraftReviewViewModel(ScreenFeed(), FakeHeldRepo(), ScriptedSessions(), RecordingGate(), ScreenSpeech(), AlwaysAllow(FakeAmendments()))
+        val vm = DraftReviewViewModel(ScreenFeed(), FakeHeldRepo(), RecordingGate(), AlwaysAllow(FakeAmendments()))
         vm.load(HeldActionId("nope"))
         assertNull(vm.state.value.held)
         assertNotNull(vm.state.value.message)
@@ -318,49 +316,11 @@ class DraftReviewViewModelTest {
         assertEquals(HeldDecision.Decline, r.feed.decisions.single().second)
     }
 
-    @Test fun talkOpensAnAmendSessionOnThisActionAndListens() = withMain {
+    @Test fun aRevisedDraftFromTheServerReplacesTheField() = withMain {
         val r = DraftRig()
-        r.vm.talk()
-        assertEquals(started(SessionKind.AMEND to HeldActionId("h1")), r.sessions.started)
-        assertEquals(listOf("start(false)"), r.speech.calls)
-        r.vm.talk() // the session is reused
-        assertEquals(1, r.sessions.started.size)
-    }
-
-    @Test fun spokenRequestGoesToTheSessionAndTheButtonsWaitForTheRevision() = withMain {
-        val r = DraftRig()
-        r.vm.talk()
-        val session = r.sessions.current!!
-        r.speech.flow.tryEmit(SpeechEvent.Partial("make it shorter"))
-        assertEquals("make it shorter", r.state.live)
-        r.speech.flow.tryEmit(SpeechEvent.Final("make it shorter and say Thursday"))
-        assertEquals(listOf(Triple<String, InputSource, SessionId?>("make it shorter and say Thursday", InputSource.VOICE, session.id)), r.feed.sent)
-        assertTrue(r.state.busy, "waiting for the agent")
-
-        // The agent revises: the held action updates and the field takes the new text.
         val revised = heldAction(action = sendEmail("Hi Dana,\n\nThe revised terms work. I’ll sign Thursday.\n\nSam"))
         r.feed.heldFlow.value = listOf(revised)
         assertEquals("Hi Dana,\n\nThe revised terms work. I’ll sign Thursday.\n\nSam", r.state.body)
-        assertFalse(r.state.busy)
-    }
-
-    @Test fun anAgentReplyAlsoEndsTheWait() = withMain {
-        val r = DraftRig()
-        r.vm.talk()
-        val session = r.sessions.current!!
-        r.speech.flow.tryEmit(SpeechEvent.Final("hmm"))
-        assertTrue(r.state.busy)
-        r.feed.itemsFlow.value = r.feed.itemsFlow.value + agentItem(2000, "Shorter, and Thursday. Anything else?", session.id)
-        assertFalse(r.state.busy)
-        assertEquals(2, r.state.talk.size)
-    }
-
-    @Test fun leavingEndsTheConversation() = withMain {
-        val r = DraftRig()
-        r.vm.talk()
-        r.vm.close()
-        assertEquals(SessionControl.End, r.sessions.controls.last())
-        assertTrue("stop" in r.speech.calls)
     }
 
     @Test fun anAlreadySettledActionCannotBeApprovedAgain() = withMain {
