@@ -104,7 +104,7 @@ fun roleRequest(
     runId = runId,
     deferredTools = deferred,
     cache = CachePolicy(ttl = role.cacheTtl),
-    compaction = if (role.compaction) CompactionConfig(instructions = COMPACTION_INSTRUCTIONS) else null,
+    compaction = if (role.compaction) CompactionConfig(triggerInputTokens = role.compactAtTokens, instructions = COMPACTION_INSTRUCTIONS) else null,
     resultSink = sink,
     compactNow = compactNow,
 )

@@ -38,6 +38,7 @@ class ConfigLoadingTest : FunSpec({
         roles[AgentRole.LEAD].model shouldBe "claude-opus-5-5"
         roles[AgentRole.LEAD].compaction shouldBe true
         roles[AgentRole.LEAD].cacheTtl shouldBe "1h"
+        roles[AgentRole.LEAD].compactAtTokens shouldBe 60_000
         roles[AgentRole.HELPER].model shouldBe "claude-sonnet-5-5"
         roles[AgentRole.GUARD].model shouldBe "claude-haiku-5-5"
         roles[AgentRole.TRIAGE].effort shouldBe "low"
@@ -58,6 +59,8 @@ class ConfigLoadingTest : FunSpec({
         roles.triage.compaction shouldBe true
         load(mapOf("CLARITY_AGENT_LEAD_MODEL" to "lead", "CLARITY_AGENT_MODEL" to "legacy")).getOrNull()!!.agent.model shouldBe "lead"
         load(mapOf("CLARITY_AGENT_GUARD_CACHE_TTL" to "2h")).shouldBeInstanceOf<Either.Left<*>>()
+        load(mapOf("CLARITY_AGENT_LEAD_COMPACT_AT_TOKENS" to "80000")).getOrNull()!!.agent.roles.lead.compactAtTokens shouldBe 80_000
+        load(mapOf("CLARITY_AGENT_LEAD_COMPACT_AT_TOKENS" to "20000")).shouldBeInstanceOf<Either.Left<*>>()
     }
 
     test("environment overrides yaml") {

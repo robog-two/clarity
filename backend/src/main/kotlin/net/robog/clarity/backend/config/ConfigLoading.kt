@@ -97,8 +97,8 @@ private class Lookup(
     }
 
     /**
-     * `CLARITY_AGENT_<ROLE>_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION` (yaml
-     * `agent.roles.<role>.model|effort|maxTokens|cacheTtl|compaction`). The legacy
+     * `CLARITY_AGENT_<ROLE>_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION|_COMPACT_AT_TOKENS` (yaml
+     * `agent.roles.<role>.model|effort|maxTokens|cacheTtl|compaction|compactAtTokens`). The legacy
      * `CLARITY_AGENT_MODEL` / `CLARITY_AGENT_EFFORT` (yaml `agent.model` / `agent.effort`) are the
      * lead's fallback.
      */
@@ -120,12 +120,17 @@ private class Lookup(
             val effort = pick("EFFORT", "CLARITY_AGENT_EFFORT", "agent.effort") ?: base.effort
             val ttl = string("CLARITY_AGENT_${name}_CACHE_TTL", "agent.roles.$yamlKey.cacheTtl") ?: base.cacheTtl
             if (ttl != "5m" && ttl != "1h") raise(ConfigError.Invalid("CLARITY_AGENT_${name}_CACHE_TTL", ttl, "expected 5m or 1h"))
+            val compactAt = int(
+                "CLARITY_AGENT_${name}_COMPACT_AT_TOKENS", "agent.roles.$yamlKey.compactAtTokens", base.compactAtTokens.toInt(),
+                min = net.robog.clarity.harness.COMPACTION_MIN_TRIGGER_TOKENS.toInt(),
+            ).toLong()
             return RoleConfig(
                 model = model,
                 effort = effort,
                 maxTokens = int("CLARITY_AGENT_${name}_MAX_TOKENS", "agent.roles.$yamlKey.maxTokens", base.maxTokens.toInt()).toLong(),
                 cacheTtl = ttl,
                 compaction = bool("CLARITY_AGENT_${name}_COMPACTION", "agent.roles.$yamlKey.compaction", base.compaction),
+                compactAtTokens = compactAt,
             )
         }
         return AgentRoles(

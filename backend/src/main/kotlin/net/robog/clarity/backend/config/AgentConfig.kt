@@ -33,7 +33,7 @@ enum class AgentRole { LEAD, HELPER, GUARD, TRIAGE }
 /**
  * Per-role model settings. [effort] is the Messages API `output_config.effort`
  * (`low | medium | high | xhigh | max`); [cacheTtl] is `5m` or `1h`; [compaction] turns on
- * server-side compaction (only the long-lived lead thread needs it).
+ * server-side compaction (only the long-lived lead thread needs it); [compactAtTokens] is when.
  */
 data class RoleConfig(
     val model: String,
@@ -41,10 +41,12 @@ data class RoleConfig(
     val maxTokens: Long = 32_000,
     val cacheTtl: String = "5m",
     val compaction: Boolean = false,
+    /** Compact once the prompt reaches this many tokens (at least 50K). Smaller is cheaper per turn but forgets sooner. */
+    val compactAtTokens: Long = 150_000,
 )
 
 data class AgentRoles(
-    val lead: RoleConfig = RoleConfig("claude-opus-5-5", effort = "medium", maxTokens = 64_000, cacheTtl = "1h", compaction = true),
+    val lead: RoleConfig = RoleConfig("claude-opus-5-5", effort = "medium", maxTokens = 64_000, cacheTtl = "1h", compaction = true, compactAtTokens = 60_000),
     val helper: RoleConfig = RoleConfig("claude-sonnet-5-5", effort = "medium", maxTokens = 32_000),
     val guard: RoleConfig = RoleConfig("claude-haiku-5-5", effort = "low", maxTokens = 4_000),
     val triage: RoleConfig = RoleConfig("claude-haiku-5-5", effort = "low", maxTokens = 4_000),
