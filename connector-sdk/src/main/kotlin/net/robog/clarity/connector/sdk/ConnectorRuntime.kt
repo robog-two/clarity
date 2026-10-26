@@ -45,6 +45,11 @@ class ConnectorRuntime(
     /** Plaintext of a sealed secret field of [config], or null when unset. */
     fun secret(config: ConnectorConfig, name: String): String? = config.secret(name, keys, connectorId)
 
+    /** Plaintext of sealed secret [property] of the collection item [item]; a legacy flat item keeps the plain field name. */
+    fun secret(config: ConnectorConfig, item: ConfigItem, property: String): String? =
+        if (item.legacy) item.values.sealedSecret(property, keys, connectorId, property)
+        else config.itemSecret(item.collection, item.id, property, keys, connectorId)
+
     internal fun accept(config: ConnectorConfig, newEtag: String?) {
         etag = newEtag
         latest.value = config

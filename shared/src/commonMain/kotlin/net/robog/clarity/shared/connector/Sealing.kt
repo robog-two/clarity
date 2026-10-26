@@ -20,4 +20,10 @@ object Sealing {
 
     /** The HPKE `info` string for a value of config [field] sealed for [connectorId]. */
     fun info(connectorId: String, field: String): String = "$INFO_PREFIX$connectorId:$field"
+
+    /**
+     * The `field` of a secret inside item [itemId] of the config collection [collection]
+     * (`"accounts/k3j9x2p1/password"`), so an item's secret stays valid when items are reordered or removed.
+     */
+    fun itemField(collection: String, itemId: String, property: String): String = "$collection/$itemId/$property"
 }

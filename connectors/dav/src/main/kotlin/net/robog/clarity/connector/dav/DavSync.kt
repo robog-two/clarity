@@ -98,13 +98,13 @@ class DavSync(
             }
             val ids = parsed.associateBy { it.key.orEmpty() }
             val before = old.occurrences[path].orEmpty()
-            (before - ids.keys).forEach { records += tombstone(sourceIdOf(path, it), now, Noun.CALENDAR_EVENT) }
-            for ((k, occ) in ids) records += IngestRecord.Upsert(SourceId(sourceIdOf(path, k)), version, now, occ.payload)
+            (before - ids.keys).forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
+            for ((k, occ) in ids) records += IngestRecord.Upsert(SourceId(sourceIdOf(config.id, path, k)), version, now, occ.payload)
             occurrences[path] = ids.keys.toList()
             counts.events += ids.size
         }
         for (path in changes.removed) {
-            old.occurrences[path].orEmpty().ifEmpty { listOf("") }.forEach { records += tombstone(sourceIdOf(path, it), now, Noun.CALENDAR_EVENT) }
+            old.occurrences[path].orEmpty().ifEmpty { listOf("") }.forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
             occurrences.remove(path)
             counts.removed++
         }
@@ -125,11 +125,11 @@ class DavSync(
             val (etag, vcf) = pair
             val contact = try { contactsFrom(vcf).firstOrNull() } catch (e: Exception) { log.warn(e) { "skipping unreadable vCard $path" }; null }
             if (contact != null) {
-                records += IngestRecord.Upsert(SourceId(path), etag ?: hash(vcf), now, contact)
+                records += IngestRecord.Upsert(SourceId(sourceIdOf(config.id, path)), etag ?: hash(vcf), now, contact)
                 counts.contacts++
             }
         }
-        for (path in changes.removed) { records += tombstone(path, now, Noun.CONTACT); counts.removed++ }
+        for (path in changes.removed) { records += tombstone(sourceIdOf(config.id, path), now, Noun.CONTACT); counts.removed++ }
         pushAll(records, push)
         state.putAs(key, CollectionState(changes.syncToken, changes.etags))
     }
@@ -156,7 +156,7 @@ class DavSync(
                 server.get(server.resolve(base, entry.path))?.second?.let { extractText(name, mime, it) }.orEmpty()
             } else ""
             records += IngestRecord.Upsert(
-                SourceId(entry.path), fingerprints.getValue(entry.path), now,
+                SourceId(sourceIdOf(config.id, entry.path)), fingerprints.getValue(entry.path), now,
                 DocumentPayload(
                     store = store, path = java.net.URLDecoder.decode(relative, Charsets.UTF_8), title = name, mimeType = mime,
                     size = entry.length, modifiedAt = entry.modifiedAt, excerpt = text.take(DocumentPayload.MAX_EXCERPT_BYTES),
@@ -164,7 +164,7 @@ class DavSync(
             )
             counts.documents++
         }
-        for (gone in old.etags.keys - fingerprints.keys) { records += tombstone(gone, now, Noun.DOCUMENT); counts.removed++ }
+        for (gone in old.etags.keys - fingerprints.keys) { records += tombstone(sourceIdOf(config.id, gone), now, Noun.DOCUMENT); counts.removed++ }
         pushAll(records, push)
         state.putAs(key, CollectionState(etags = fingerprints))
     }
@@ -199,5 +199,19 @@ class DavSync(
     private fun hash(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 }
 
-/** Source id of a calendar object (`<path>`) or of one occurrence of a recurring one (`<path>#<epoch seconds>`). */
-fun sourceIdOf(path: String, occurrenceKey: String): String = if (occurrenceKey.isEmpty()) path else "$path#$occurrenceKey"
+/**
+ * Source id of a resource of account [accountId]: `<accountId>:<path>` for a calendar object,
+ * contact or file, and `<accountId>:<path>#<epoch seconds>` for one occurrence of a recurring event.
+ */
+fun sourceIdOf(accountId: String, path: String, occurrenceKey: String = ""): String =
+    "$accountId:" + if (occurrenceKey.isEmpty()) path else "$path#$occurrenceKey"
+
+/** A source id split into its account and the rest (`<path>` or `<path>#<occurrence>`). */
+data class DavRef(val accountId: String, val path: String) {
+    companion object {
+        /** Parses [sourceId]; the old form, a bare path starting with `/`, belongs to account [DEFAULT_ACCOUNT]. */
+        fun parse(sourceId: String): DavRef =
+            if (sourceId.startsWith("/") || ':' !in sourceId) DavRef(DEFAULT_ACCOUNT, sourceId)
+            else DavRef(sourceId.substringBefore(':'), sourceId.substringAfter(':'))
+    }
+}
