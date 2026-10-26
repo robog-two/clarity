@@ -6,19 +6,22 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import net.robog.clarity.app.call.CallScheduler
+import net.robog.clarity.app.connector.PhoneConnector
 import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.feed.SyncState
-import net.robog.clarity.shared.feed.AgentTask
-import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.app.ui.Toasts
+import net.robog.clarity.app.ui.held.heldOutcomeToasts
 import net.robog.clarity.shared.governance.HeldAction
 
+/** What the tab bar needs: the number on "held · N" and whether the connection is up. */
 data class MainUiState(
-    val items: List<FeedItem> = emptyList(),
-    val tasks: List<AgentTask> = emptyList(),
     val held: List<HeldAction> = emptyList(),
     val sync: SyncState = SyncState.Connecting,
     val busy: Boolean = false,
@@ -30,15 +33,45 @@ data class MainUiState(
 /** Tab labels in the prototype: "today", "ask", "held · 2", "settings". */
 fun heldTabLabel(waiting: Int): String = if (waiting > 0) "held · $waiting" else "held"
 
-/** The cached feed for the placeholder tabs; keeps the cache in sync while the app is on screen. */
+/**
+ * The signed-in shell: the held badge, the confirmation toasts when held actions run, and the
+ * background work that belongs to being in front (feed sync, call alarms, the phone connector).
+ */
 @Inject
 @ViewModelKey(MainViewModel::class)
 @ContributesIntoMap(AppScope::class)
-class MainViewModel(private val feed: FeedRepository) : ViewModel() {
-    val state: StateFlow<MainUiState> = combine(feed.items, feed.tasks, feed.held, feed.syncState, feed.agentBusy) { items, tasks, held, sync, busy ->
-        MainUiState(items, tasks, held, sync, busy)
+class MainViewModel(
+    private val feed: FeedRepository,
+    private val toasts: Toasts,
+    private val scheduler: CallScheduler,
+    private val phone: PhoneConnector,
+) : ViewModel() {
+    /** Confirmations to show above the tab bar. */
+    val messages = toasts.messages
+
+    val state: StateFlow<MainUiState> = combine(feed.held, feed.syncState, feed.agentBusy) { held, sync, busy ->
+        MainUiState(held, sync, busy)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MainUiState())
 
+    init {
+        // "Sent to Dana." when an approved action has run.
+        viewModelScope.launch {
+            var previous: List<HeldAction>? = null
+            feed.held.collect { next ->
+                previous?.let { prev -> heldOutcomeToasts(prev, next).forEach(toasts::show) }
+                previous = next
+            }
+        }
+    }
+
     /** Suspends until cancelled; call it while the app is started. */
-    suspend fun keepInSync() = feed.sync()
+    suspend fun keepInSync() = coroutineScope {
+        launch { feed.sync() }
+        launch {
+            scheduler.refresh()
+            phone.schedule()
+            phone.syncOnce()
+            phone.runActionLoop()
+        }
+    }
 }

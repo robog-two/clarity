@@ -38,10 +38,11 @@ class RootViewModel(
     flag: OnboardingFlagStore,
     setup: SetupRepository,
 ) : ViewModel() {
-    val state: StateFlow<RootState> = combine(sessions.session, flag.done) { session, done -> (session != null) to done }
-        .transformLatest { (enrolled, done) ->
+    val state: StateFlow<RootState> = combine(sessions.session, flag.done, flag.redo) { session, done, redo -> Triple(session != null, done, redo) }
+        .transformLatest { (enrolled, done, redo) ->
             when {
                 !enrolled -> emit(RootState.Onboarding)
+                redo -> emit(RootState.Onboarding)
                 done -> emit(RootState.Ready)
                 // Enrolled but not marked done: ask the server once (the previous value stays until it answers).
                 else -> emit(if (isServerSetupComplete(setup.status())) RootState.Ready else RootState.Onboarding)

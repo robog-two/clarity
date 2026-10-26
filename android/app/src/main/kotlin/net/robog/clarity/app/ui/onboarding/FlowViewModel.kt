@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SessionRepository
 import net.robog.clarity.app.data.SetupRepository
 
@@ -28,6 +29,7 @@ data class FlowState(
 class OnboardingFlowViewModel(
     private val sessions: SessionRepository,
     private val setup: SetupRepository,
+    private val flag: OnboardingFlagStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(FlowState())
     val state: StateFlow<FlowState> = _state.asStateFlow()
@@ -36,7 +38,9 @@ class OnboardingFlowViewModel(
         viewModelScope.launch {
             val enrolled = sessions.session.first() != null
             val status = if (enrolled) setup.status() else null
-            _state.value = FlowState(initialStep(enrolled, status), ready = true)
+            // "redo onboarding" from settings starts at the server step instead of resuming at the end.
+            val start = if (enrolled && flag.redo.first()) OnboardingStep.Server else initialStep(enrolled, status)
+            _state.value = FlowState(start, ready = true)
         }
     }
 

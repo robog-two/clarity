@@ -25,7 +25,11 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.UserInput
+import net.robog.clarity.shared.governance.ActivityEntry
+import net.robog.clarity.shared.governance.Amendment
+import net.robog.clarity.shared.governance.AmendmentId
 import net.robog.clarity.shared.governance.Constitution
+import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldDecision
 import net.robog.clarity.shared.session.ModelKeyRequest
@@ -36,6 +40,7 @@ import net.robog.clarity.shared.session.SessionKind
 import net.robog.clarity.shared.session.Settings
 import net.robog.clarity.shared.session.SetupStatus
 import net.robog.clarity.shared.session.StartSession
+import net.robog.clarity.shared.session.Today
 
 /** Ids the client mints (injected so tests are deterministic). */
 fun interface IdGenerator { fun newId(): String }
@@ -171,15 +176,59 @@ class DefaultConnectorsRepository(
 // --- sessions ---
 
 interface SessionsRepository {
-    suspend fun start(kind: SessionKind): ApiResult<Session>
+    /** [heldActionId] ties an AMEND session to the held action it talks about. */
+    suspend fun start(kind: SessionKind, heldActionId: HeldActionId? = null): ApiResult<Session>
     suspend fun get(id: SessionId): ApiResult<Session>
     suspend fun control(id: SessionId, control: SessionControl): ApiResult<Session>
+    /** The session of [kind] that is active, busy or snoozed right now, if any. */
+    suspend fun active(kind: SessionKind): ApiResult<Session?>
 }
 
 class DefaultSessionsRepository(private val api: ClarityApi) : SessionsRepository {
-    override suspend fun start(kind: SessionKind) = api.startSession(StartSession(kind))
+    override suspend fun start(kind: SessionKind, heldActionId: HeldActionId?) =
+        api.startSession(StartSession(kind, heldActionId))
     override suspend fun get(id: SessionId) = api.session(id)
     override suspend fun control(id: SessionId, control: SessionControl) = api.controlSession(id, control)
+    override suspend fun active(kind: SessionKind): ApiResult<Session?> =
+        api.activeSessions().map { list ->
+            list.filter { it.kind == kind && it.state != Session.State.ENDED }.maxByOrNull { it.startedAt }
+        }
+}
+
+// --- today, held details, amendments ---
+
+interface TodayRepository {
+    suspend fun today(): ApiResult<Today>
+}
+
+class DefaultTodayRepository(private val api: ClarityApi) : TodayRepository {
+    override suspend fun today() = api.today()
+}
+
+interface HeldRepository {
+    suspend fun get(id: HeldActionId): ApiResult<HeldAction>
+    /** Actions the agent took alone ("see allowed actions"). */
+    suspend fun activity(): ApiResult<List<ActivityEntry>>
+}
+
+class DefaultHeldRepository(private val api: ClarityApi) : HeldRepository {
+    override suspend fun get(id: HeldActionId) = api.heldAction(id)
+    override suspend fun activity() = api.activity()
+}
+
+interface AmendmentsRepository {
+    /** The amendment with [id] if it is still proposed. */
+    suspend fun proposed(id: AmendmentId): ApiResult<Amendment?>
+    /** Saves the amendment; the reply is the new constitution. */
+    suspend fun save(id: AmendmentId): ApiResult<Constitution>
+    suspend fun discard(id: AmendmentId): ApiResult<Amendment>
+}
+
+class DefaultAmendmentsRepository(private val api: ClarityApi) : AmendmentsRepository {
+    override suspend fun proposed(id: AmendmentId): ApiResult<Amendment?> =
+        api.amendments(Amendment.Status.PROPOSED).map { list -> list.firstOrNull { it.id == id } }
+    override suspend fun save(id: AmendmentId) = api.saveAmendment(id)
+    override suspend fun discard(id: AmendmentId) = api.discardAmendment(id)
 }
 
 // --- feed ---

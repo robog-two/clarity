@@ -5,6 +5,7 @@ import io.ktor.client.call.body
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.timeout
 import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.sse.SSE
@@ -29,6 +30,8 @@ import kotlinx.serialization.SerializationException
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.SessionStore
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.encodeToString
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.api.ApiPaths
@@ -40,6 +43,15 @@ import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorSummary
 import net.robog.clarity.shared.connector.ConnectorTestResult
 import net.robog.clarity.shared.connector.GrantsUpdate
+import net.robog.clarity.shared.action.ActionId
+import net.robog.clarity.shared.action.ActionPoll
+import net.robog.clarity.shared.action.ActionResult
+import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.governance.Amendment
+import net.robog.clarity.shared.governance.AmendmentId
+import net.robog.clarity.shared.governance.ProposeAmendment
+import net.robog.clarity.shared.ingest.IngestBatch
+import net.robog.clarity.shared.ingest.IngestResponse
 import net.robog.clarity.shared.feed.FeedPage
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.UserInput
@@ -100,6 +112,30 @@ interface ClarityApi : FeedBackend {
     override suspend fun held(): ApiResult<List<HeldAction>>
     suspend fun decideHeld(id: HeldActionId, decision: HeldDecision): ApiResult<Unit>
     suspend fun activity(): ApiResult<List<ActivityEntry>>
+
+    /** `GET /sessions?active=true`: sessions that are active, busy or snoozed. */
+    suspend fun activeSessions(): ApiResult<List<Session>>
+    suspend fun heldAction(id: HeldActionId): ApiResult<HeldAction>
+    /** Held actions in any of [statuses] (all when empty). */
+    suspend fun heldByStatus(statuses: Set<HeldAction.Status>): ApiResult<List<HeldAction>>
+
+    suspend fun amendments(status: Amendment.Status?): ApiResult<List<Amendment>>
+    suspend fun proposeAmendment(request: ProposeAmendment): ApiResult<Amendment>
+    /** Applies the amendment; the reply is the new constitution version. */
+    suspend fun saveAmendment(id: AmendmentId): ApiResult<Constitution>
+    suspend fun discardAmendment(id: AmendmentId): ApiResult<Amendment>
+}
+
+/**
+ * The connector side of the API, used by the phone connector. The device JWT authenticates as
+ * connector `device-<deviceId>` on these `/ingest/v1` routes.
+ */
+interface IngestApi {
+    suspend fun putManifest(manifest: ConnectorManifest): ApiResult<Unit>
+    suspend fun pushBatch(batch: IngestBatch): ApiResult<IngestResponse>
+    /** Long-polls for actions addressed to this phone ([waitSeconds] 0..30). */
+    suspend fun pollActions(waitSeconds: Int): ApiResult<ActionPoll>
+    suspend fun reportResult(id: ActionId, result: ActionResult): ApiResult<Unit>
 }
 
 internal val SkipAuth = AttributeKey<Boolean>("clarity.skipAuth")
@@ -132,7 +168,7 @@ fun createHttpClient(
 class KtorClarityApi(
     private val client: HttpClient,
     private val sessions: SessionStore,
-) : ClarityApi {
+) : ClarityApi, IngestApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -223,6 +259,63 @@ class KtorClarityApi(
 
     override suspend fun activity(): ApiResult<List<ActivityEntry>> = get(ApiPaths.ACTIVITY)
 
+    override suspend fun activeSessions(): ApiResult<List<Session>> =
+        get(ApiPaths.SESSIONS) { parameter("active", true) }
+
+    override suspend fun heldAction(id: HeldActionId): ApiResult<HeldAction> = get("${ApiPaths.HELD}/$id")
+
+    override suspend fun heldByStatus(statuses: Set<HeldAction.Status>): ApiResult<List<HeldAction>> =
+        get(ApiPaths.HELD) {
+            if (statuses.isNotEmpty()) parameter("status", statuses.joinToString(",") { it.wire() })
+        }
+
+    override suspend fun amendments(status: Amendment.Status?): ApiResult<List<Amendment>> =
+        get("${ApiPaths.CONSTITUTION}/amendments") { if (status != null) parameter("status", status.wire()) }
+
+    override suspend fun proposeAmendment(request: ProposeAmendment): ApiResult<Amendment> =
+        authed { base ->
+            client.post {
+                url(base + "${ApiPaths.CONSTITUTION}/amendments")
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+        }
+
+    override suspend fun saveAmendment(id: AmendmentId): ApiResult<Constitution> =
+        authed { base -> client.post { url(base + "${ApiPaths.CONSTITUTION}/amendments/$id/save") } }
+
+    override suspend fun discardAmendment(id: AmendmentId): ApiResult<Amendment> =
+        authed { base -> client.post { url(base + "${ApiPaths.CONSTITUTION}/amendments/$id/discard") } }
+
+    // --- ingest (phone connector) ---
+
+    override suspend fun putManifest(manifest: ConnectorManifest): ApiResult<Unit> =
+        putUnit("${ApiPaths.INGEST}/manifest", manifest)
+
+    override suspend fun pushBatch(batch: IngestBatch): ApiResult<IngestResponse> =
+        authed { base ->
+            client.post {
+                url(base + "${ApiPaths.INGEST}/batches")
+                contentType(ContentType.Application.Json)
+                setBody(batch)
+            }
+        }
+
+    override suspend fun pollActions(waitSeconds: Int): ApiResult<ActionPoll> =
+        get(ApiPaths.ACTIONS) {
+            parameter("wait", waitSeconds.coerceIn(0, 30))
+            timeout { requestTimeoutMillis = (waitSeconds.coerceIn(0, 30) + 15) * 1000L }
+        }
+
+    override suspend fun reportResult(id: ActionId, result: ActionResult): ApiResult<Unit> =
+        authedUnit { base ->
+            client.post {
+                url(base + "${ApiPaths.ACTIONS}/$id/result")
+                contentType(ContentType.Application.Json)
+                setBody(result)
+            }
+        }
+
     // --- plumbing ---
 
     private suspend inline fun <reified T> get(
@@ -293,3 +386,6 @@ internal suspend fun HttpResponse.toError(): ApiError {
         else -> ApiError.Http(status.value, problem)
     }
 }
+
+/** The `@SerialName` of an enum constant, as it appears in query strings. */
+internal inline fun <reified E : Enum<E>> E.wire(): String = ClarityJson.encodeToString(this).trim('"')
