@@ -96,6 +96,7 @@ class FakeBrowser {
           uid=1_5 textbox "Card number"
     """.trimIndent()
     var echo = true
+    var pageText = "page shows the password hunter2! and card 4111 1111 1111 1111 and q=hunter2%21"
 
     fun tool(name: String, body: (JsonObject) -> ToolResult): Tool = object : Tool {
         override val name = "browser__$name"
@@ -119,7 +120,7 @@ class FakeBrowser {
         tool("fill_form_by_uid") { ToolResult.Ok("filled form: $it") },
         tool("type_text") { ToolResult.Ok("typed ${(it["text"] as kotlinx.serialization.json.JsonPrimitive).content}") },
         tool("click_by_uid") { ToolResult.Ok("clicked ${it.str("uid")}") },
-        tool("get_page_text") { ToolResult.Ok("page shows the password hunter2! and card 4111 1111 1111 1111 and q=hunter2%21") },
+        tool("get_page_text") { ToolResult.Ok(pageText) },
         tool("screenshot_page") { ToolResult.Ok("[ImageContent omitted]") },
         tool("evaluate_script") { ToolResult.Ok("pwned") },
         tool("send_bidi_command") { ToolResult.Ok("pwned") },
