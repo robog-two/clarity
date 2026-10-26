@@ -20,15 +20,11 @@ import net.robog.clarity.backend.governance.PhoneApprovals
 import net.robog.clarity.shared.governance.ApprovalPayload
 import net.robog.clarity.shared.governance.SignedDecision
 import net.robog.clarity.shared.governance.payloadFor
-import net.robog.clarity.backend.feed.FeedDraft
-import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.GovernanceEvent
 import net.robog.clarity.backend.governance.GovernanceEvents
 import net.robog.clarity.backend.governance.HeldActionStore
 import net.robog.clarity.backend.governance.PENDING_STATUSES
 import net.robog.clarity.shared.DeviceId
-import net.robog.clarity.shared.feed.Card
-import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
@@ -124,7 +120,6 @@ class VaultService(
     private val grants: GrantStore,
     private val held: HeldActionStore,
     private val events: GovernanceEvents,
-    private val feed: FeedService,
     private val inbox: InboxStore,
 ) {
     suspend fun registerKey(device: DeviceId, request: RegisterVaultKey): Either<VaultError, DeviceVaultKey> = either {
@@ -137,26 +132,25 @@ class VaultService(
 
     suspend fun deviceKeys(): List<DeviceVaultKey> = store.deviceKeys()
 
-    /** The agent's `request_credential`: stores the request and puts a form card in the feed. */
+    /**
+     * The agent's `request_credential`: stores the request. The form reaches the chat only when the
+     * agent posts its `credential_request` card with `send_to_user`.
+     *
+     * With [replace], [name] may already be saved: the new entry takes its place once the person
+     * saves it (until then the old one stays usable). Without it a taken name is refused.
+     */
     suspend fun requestCredential(
         name: String?,
         kind: CredentialKind,
         fields: List<FieldSpec>,
         site: String,
         purpose: String,
+        replace: Boolean = false,
     ): Either<VaultError, CredentialRequest> = either {
         val handle = name?.takeIf { it.isNotBlank() } ?: VaultNames.slugOf("${Sites.registrableDomain(site) ?: site}_${kind.label()}")
         requestProblem(handle, fields, site, purpose)?.let { raise(VaultError.Invalid(it)) }
-        ensure(store.byName(handle) == null) { VaultError.NameTaken(handle) }
-        val request = store.createRequest(handle, kind, fields, site.trim(), purpose.trim())
-        feed.append(
-            FeedDraft(
-                author = FeedItem.Author.AGENT,
-                cards = listOf(Card.Text("I need ${fields.joinToString { it.label.lowercase() }} for ${Sites.registrableDomain(site) ?: site}. $purpose"), Card.CredentialRequest(request.id)),
-                notify = "push_now",
-            ),
-        )
-        request
+        if (!replace) ensure(store.byName(handle) == null) { VaultError.NameTaken(handle) }
+        store.createRequest(handle, kind, fields, site.trim(), purpose.trim())
     }
 
     suspend fun request(id: CredentialRequestId): Either<VaultError, CredentialRequest> = either {
@@ -176,6 +170,8 @@ class VaultService(
         }
         when (val outcome = store.createCredential(new.requestId, new.hints, new.envelopes)) {
             is CreateOutcome.Created -> outcome.meta.also {
+                // Values released for the entry it replaced must not be typed any more.
+                if (outcome.replaced) grants.revoke(it.name)
                 // Metadata only: the lead learns it can continue, never a value.
                 inbox.enqueue(
                     InboxItem.System("Credential \"${it.name}\" for ${it.site} is ready (use it with [secret:${it.name}_<field>] placeholders; fields: ${it.fields.joinToString { f -> f.name }})."),

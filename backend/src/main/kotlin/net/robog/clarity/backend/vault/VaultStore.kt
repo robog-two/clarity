@@ -88,7 +88,7 @@ object CredentialEnvelopes : Table("credential_envelope") {
 
 /** What [VaultStore.createCredential] can refuse. */
 sealed interface CreateOutcome {
-    data class Created(val meta: CredentialMeta) : CreateOutcome
+    data class Created(val meta: CredentialMeta, val replaced: Boolean = false) : CreateOutcome
     data object NameTaken : CreateOutcome
     data object RequestNotOpen : CreateOutcome
     data object UnknownRequest : CreateOutcome
@@ -227,7 +227,11 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
                 ?: return@tx CreateOutcome.UnknownRequest
             val req = row.toRequest()
             if (req.status != CredentialRequestStatus.OPEN) return@tx CreateOutcome.RequestNotOpen
-            if (Credentials.selectAll().where { Credentials.name eq req.name }.any()) return@tx CreateOutcome.NameTaken
+            // An open request for a saved name was made to replace it (requests for taken names are
+            // refused otherwise), unless that entry was saved after the request: then two forms raced.
+            val existing = Credentials.selectAll().where { Credentials.name eq req.name }.forUpdate().singleOrNull()
+            if (existing != null && existing[Credentials.createdAt] > req.createdAt) return@tx CreateOutcome.NameTaken
+            if (existing != null) Credentials.deleteWhere { Credentials.id eq existing[Credentials.id] }
             val id = Uuid.random()
             val now = clock.now()
             Credentials.insert {
@@ -251,7 +255,7 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
                 it[status] = CredentialRequestStatus.FULFILLED.wire()
                 it[credentialId] = id
             }
-            CreateOutcome.Created(Credentials.selectAll().where { Credentials.id eq id }.single().toMeta())
+            CreateOutcome.Created(Credentials.selectAll().where { Credentials.id eq id }.single().toMeta(), replaced = existing != null)
         }
     }
 

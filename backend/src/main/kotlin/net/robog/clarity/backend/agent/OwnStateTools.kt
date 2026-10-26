@@ -67,7 +67,7 @@ class OwnStateTools(
 ) {
     @Serializable
     class SendToUserInput(
-        @Description("What to show, in order. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}.")
+        @Description("What to show, in order. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}. Held items and credential forms are not in the chat until you post their card; post each once.")
         val cards: List<Card>,
         @Description("urgent = interrupt now (respects protected time), normal = shows in the app, batch = evening summary. Default normal.")
         val urgency: Urgency = Urgency.NORMAL,

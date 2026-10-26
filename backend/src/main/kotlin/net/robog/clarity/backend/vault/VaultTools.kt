@@ -47,6 +47,8 @@ class VaultTools(
         @Description("One short sentence for the person: why you need it.") val purpose: String,
         @Description("Handle for placeholders, lowercase snake_case (e.g. bank_login). Default: derived from the site and kind.")
         val name: String? = null,
+        @Description("true to have the person enter a saved credential again (it was wrong or changed): `name` is the saved one, and the new entry replaces it once they save it. The placeholders stay the same.")
+        val replace: Boolean = false,
     )
 
     @Serializable
@@ -63,16 +65,21 @@ class VaultTools(
     private fun requestCredential(): Tool = tool<RequestInput>(
         name = "request_credential",
         description = "Ask the person to enter a login, card or other credential on their phone. You never see the values: you learn only that it was saved, then use " +
-            "[secret:<name>_<field>] placeholders in browser tool inputs. Returns the request id; check list_credentials later to see whether it was saved.",
+            "[secret:<name>_<field>] placeholders in browser tool inputs. This makes the form but does not show it: post a credential_request card {requestId} " +
+            "with send_to_user, once. To have them enter a saved one again, pass its name with replace=true (you cannot delete saved credentials; " +
+            "the person can, in Settings > Vault).",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
-        vault.requestCredential(input.name, input.kind, input.fields, input.site, input.purpose).fold(
+        vault.requestCredential(input.name, input.kind, input.fields, input.site, input.purpose, input.replace).fold(
             { ToolResult.Error(it.detail ?: it.title) },
             { request ->
                 ToolResult.Ok(
-                    "Asked the person (request ${request.id}). They fill it in on their phone. Once saved it appears in list_credentials as ${request.name}; " +
-                        "write " + request.fields.joinToString(" ") { VaultNames.placeholder(request.name, it.name) } + " in browser tool inputs. Do not ask again; carry on.",
+                    "Made the form (request ${request.id}). It is not in the chat yet: show it with send_to_user as one credential_request card " +
+                        "{\"type\": \"credential_request\", \"requestId\": \"${request.id}\"}, with a short line saying why. " +
+                        (if (input.replace) "Once they save it, it replaces the saved ${request.name}. " else "") +
+                        "Once saved it appears in list_credentials as ${request.name}; write " +
+                        request.fields.joinToString(" ") { VaultNames.placeholder(request.name, it.name) } + " in browser tool inputs. Do not ask again; carry on.",
                 )
             },
         )

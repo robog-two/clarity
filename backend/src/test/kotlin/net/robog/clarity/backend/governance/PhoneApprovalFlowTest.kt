@@ -230,7 +230,7 @@ class PhoneApprovalFlowTest : FunSpec({
             constitutions, heldStore, ActionOutbox(database, Clock.System, heldStore, OutboxSignals(), GovernanceEvents(), ActionResults()),
             ConnectorRouter(database, NoConnectorPreferences()), GovernanceEvents(), UtcPersonZone(), Clock.System,
         )
-        val holds = GovernedVaultHolds(slowGate, heldStore, FeedService(ExposedFeedStore(database, Clock.System), FeedHub()), Clock.System)
+        val holds = GovernedVaultHolds(slowGate, heldStore, Clock.System)
         val login = CredentialMeta(
             CredentialId(Uuid.random().toString()), "shop_login", CredentialKind.LOGIN, "shop.example.com", "orders",
             listOf(FieldSpec("email", "Email", FieldType.EMAIL), FieldSpec("password", "Password", FieldType.PASSWORD)), createdAt = Clock.System.now(),

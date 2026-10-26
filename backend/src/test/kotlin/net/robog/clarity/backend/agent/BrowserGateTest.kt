@@ -14,6 +14,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -300,5 +302,51 @@ class BrowserGateTest : FunSpec({
         val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__type_text" } + boom).associateBy { it.name }
         val result = tools.getValue("browser__type_text").invoke(args("text" to "hello"))
         result.shouldBeInstanceOf<ToolResult.Error>().message shouldBe "Browser tool type_text failed: driver said [secret:bank_login_password]"
+    }
+
+    test("calls sent in parallel reach the browser one at a time, so two fills never type over each other") {
+        val rig = Rig()
+        rig.grantLogin()
+        var active = 0
+        var most = 0
+        val slow = object : Tool {
+            override val name = "browser__fill_by_uid"
+            override val description = "slow fill"
+            override val inputSchema = buildJsonObject { put("type", "object") }
+            override val effect = ToolEffect.EXTERNAL
+            override suspend fun invoke(input: JsonObject): ToolResult {
+                active++
+                most = maxOf(most, active)
+                kotlinx.coroutines.delay(50)
+                active--
+                return ToolResult.Ok("filled")
+            }
+        }
+        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__fill_by_uid" } + slow).associateBy { it.name }
+        tools.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap()))
+        kotlinx.coroutines.coroutineScope {
+            listOf("1_1" to "[secret:bank_login_username]", "1_2" to "[secret:bank_login_password]").map { (uid, value) ->
+                async { tools.getValue("browser__fill_by_uid").invoke(args("uid" to uid, "value" to value)) }
+            }.awaitAll()
+        }
+        most shouldBe 1
+    }
+
+    test("after a secret is typed, that field's value is hidden in snapshots even when it does not match the secret") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.grantLogin()
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.browser.snapshot = """
+            uid=1_1 textbox "Username" value="typed by hand"
+            uid=1_2 textbox "Password" value="hunXter2"
+        """.trimIndent()
+        val text = rig.snapshot().shouldBeInstanceOf<ToolResult.Ok>().content
+        text shouldContain "value=\"typed by hand\""
+        text shouldContain "uid=1_2 textbox \"Password\" value=\"[secret, hidden]\""
+        text shouldNotContain "hunX"
+        // a new page has new elements
+        rig.call("navigate_page", args("url" to "https://bank.example.com/home"))
+        rig.snapshot().shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "hunXter2"
     }
 })

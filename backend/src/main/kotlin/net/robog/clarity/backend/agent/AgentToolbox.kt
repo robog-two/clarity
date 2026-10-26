@@ -42,7 +42,7 @@ class HelperTools(private val helpers: Lazy<HelperManager>) {
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
         val task: String,
-        @Description("Names of the tools the helper may use. Omit for reads, the browser/sandbox and the guarded action tools. Never includes send_to_user.")
+        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions and the vault tools (ask_code, list_credentials). A list REPLACES the defaults: only the tools named, so a browsing helper needs every browser__ tool it uses. Never includes send_to_user.")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
     )
