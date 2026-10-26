@@ -266,8 +266,13 @@ for what our loop already has: an append-only transcript. So:
   search tool, so adding a tool never invalidates the cache.
 - **Compaction**: server-side compaction (beta) keeps the lead thread inside its window; the
   harness appends `response.content` verbatim so compaction blocks survive. When the person goes
-  quiet and the cache is still warm, the backend proactively compacts (cheap while warm), so the
-  next conversation starts from the summary.
+  quiet and the cache is still warm, the backend can compact proactively (off by default).
+  On OpenRouter (no server-side compaction, no prompt cache) the lead compacts client-side: after
+  a turn whose last call's prompt reached `compactAtTokens`, one call on the same model writes a
+  summary, appended to the journal as a user message starting with `[clarity:summary]`. The
+  journal stays append-only; requests start at the latest summary, and an OpenRouter request also
+  starts at the latest Anthropic compaction block (sent as its summary text). `compactAtTokens` is
+  the main cost lever there: every turn resends the whole context since the last summary.
 - **Big outputs go to files**: tool results above a size limit are written to the sandbox
   workspace and the tool returns a path + summary.
 - **Model roles** (config, per role): `lead` (default `claude-opus-5-5`; effort `low` during a
@@ -278,7 +283,11 @@ for what our loop already has: an append-only transcript. So:
   the settings it started with, guard and triage read them per call. A switch costs one cold
   prompt cache (the cache is per model). Thinking blocks from the earlier model stay in the journal
   and are replayed unchanged; the API leaves out, unbilled, what the new model can't read (stripping
-  them would be a history edit). The lead stays on Anthropic until compaction runs client-side.
+  them would be a history edit). Any role may run on OpenRouter, the lead included. There all
+  tools are sent loaded (no tool search), effort is sent per request (the last effort message in
+  the thread, else the role's), Anthropic-only blocks are left out, and OpenRouter's own
+  `reasoning_details` are kept (tagged with provider and model) and replayed only to that model,
+  never to Anthropic.
 - Refusals: server-side fallback (`fallbacks: "default"`) on supported models; a refusal is
   surfaced as a card, never retried silently.
 

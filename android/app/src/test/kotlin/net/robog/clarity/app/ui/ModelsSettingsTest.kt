@@ -96,11 +96,12 @@ class ModelsRulesTest {
         assertEquals(RoleModelOverride(), changedOverride(moved, provider = "anthropic"))
     }
 
-    @Test fun theLeadCannotMoveToOpenRouterAndSaysWhenChangesApply() {
+    @Test fun theLeadCanMoveToOpenRouterAndSaysWhenChangesApply() {
         val rows = modelRows(view())
         val lead = rows.first { it.role == "lead" }
-        assertFalse(lead.openRouterAllowed)
-        assertEquals("Changes apply from its next turn. It runs on Anthropic for now.", lead.note)
+        assertTrue(lead.openRouterAllowed)
+        assertFalse(modelRows(view(keys = listOf("anthropic"))).first { it.role == "lead" }.openRouterAllowed)
+        assertEquals("Changes apply from its next turn. On OpenRouter it summarizes its own thread when the thread gets long.", lead.note)
         assertTrue(rows.first { it.role == "guard" }.openRouterAllowed)
         assertFalse(modelRows(view(keys = listOf("anthropic"))).first { it.role == "guard" }.openRouterAllowed)
         assertTrue(lead.isDefault)

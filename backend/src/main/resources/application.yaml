@@ -18,7 +18,8 @@ clarity:
     # Per-role model settings. CLARITY_AGENT_<ROLE>_PROVIDER / _MODEL / _EFFORT / _MAX_TOKENS / _CACHE_TTL /
     # _COMPACTION override these; the legacy CLARITY_AGENT_MODEL / CLARITY_AGENT_EFFORT set the lead's.
     # provider: anthropic or openrouter (OPENROUTER_API_KEY; model names are OpenRouter's then, e.g.
-    # anthropic/claude-haiku-5.5). OpenRouter has no server-side compaction, so keep the lead on anthropic.
+    # anthropic/claude-haiku-5.5). On OpenRouter the lead compacts its thread client-side at compactAtTokens
+    # (there is no prompt cache there, so that threshold is the main cost lever).
     # These are the defaults: the app's Settings can override provider, model and effort per role at runtime.
     roles:
       lead:

@@ -58,6 +58,7 @@ import kotlinx.serialization.json.putJsonObject
  *    automatic caching;
  *  - tools in the caller's (sorted) order, deferred ones flagged, the BM25 search tool added when any
  *    are deferred; `tool_choice: auto` (forced `any`/`tool` is rejected by this model family);
+ *  - [Block.Raw] blocks another provider wrote ([Block.Raw.foreignProvider]) are left out;
  *  - streamed and accumulated, with eager input streaming on every client tool (the harness validates
  *    inputs against the tool's schema before running anything, and never runs a truncated turn).
  */
@@ -214,7 +215,9 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
             put(
                 "content",
                 JsonArray(
-                    content.mapIndexed { i, block ->
+                    content.mapIndexedNotNull { i, block ->
+                        // Another provider's block (OpenRouter reasoning) is never sent here.
+                        if (block is Block.Raw && block.foreignProvider != null) return@mapIndexedNotNull null
                         val wire = block.toWire()
                         if (breakpoint?.first == i) JsonObject(wire + ("cache_control" to breakpoint.second)) else wire
                     },

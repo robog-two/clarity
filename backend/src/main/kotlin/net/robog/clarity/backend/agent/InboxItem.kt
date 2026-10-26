@@ -159,7 +159,9 @@ data class Delivery(val seqs: List<Long>, val message: Message)
 fun renderDeliveries(items: List<PendingItem>, now: Instant): List<Delivery> {
     val users = items.filter { it.item is InboxItem.UserInput }
     val others = items.filter { it.item !is InboxItem.UserInput }
-    val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user((it.item as InboxItem.UserInput).text)) }
+    // The person's words never pass for a client-side summary (which would cut the context there).
+    fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
+    val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user(spoken((it.item as InboxItem.UserInput).text))) }
     if (others.isEmpty()) return userDeliveries
     val text = buildString {
         append("[inbox, ").append(now).append(']')

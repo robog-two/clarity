@@ -8,11 +8,19 @@ import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.config.AgentRoles
 import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.config.RoleConfig
+import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.CachePolicy
 import net.robog.clarity.harness.CompactionConfig
 import net.robog.clarity.harness.Harness
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
+import net.robog.clarity.harness.ModelRequest
+import net.robog.clarity.harness.Role
+import net.robog.clarity.harness.contextSince
+import net.robog.clarity.harness.definition
+import net.robog.clarity.harness.planTools
+import net.robog.clarity.harness.sinceSummary
+import net.robog.clarity.harness.wireOrder
 import net.robog.clarity.harness.RunJournal
 import net.robog.clarity.harness.RunRequest
 import net.robog.clarity.harness.SystemBlock
@@ -102,9 +110,13 @@ class AgentRuntime(
         requireNotNull(bind(role)) { "agents are disabled: no API key for ${settings[role].provider.wireName}" }
 }
 
-private const val COMPACTION_INSTRUCTIONS =
+const val COMPACTION_INSTRUCTIONS =
     "Summarize the conversation so far for the same agent to continue it: the person's standing preferences and decisions, " +
         "open threads and what each waits on, held items, helpers running, and anything promised. Drop tool output and chatter."
+
+/** The last user message of a client-side compaction call. The tools are still sent (the history calls them), so it says not to. */
+const val CLIENT_COMPACTION_REQUEST =
+    "(housekeeping) $COMPACTION_INSTRUCTIONS Answer with the summary only, as plain text. Do not call any tools."
 
 /**
  * Pure: the system prompt blocks of the lead. The static persona block carries a cache breakpoint,
@@ -121,6 +133,8 @@ fun helperSystemBlocks(): List<SystemBlock> = listOf(SystemBlock(AgentPrompts.HE
 /**
  * Pure: the harness request for a role, a function of the role's configuration alone. The caller
  * passes the settings bound at the start of the run, so a run never switches models halfway.
+ * On OpenRouter there is no prompt cache (no breakpoints, so no cache-miss check either) and no
+ * server-side compaction: a long thread compacts client-side ([shouldCompactClientSide]).
  */
 fun roleRequest(
     role: RoleConfig,
@@ -134,7 +148,7 @@ fun roleRequest(
     compactNow: Boolean = false,
 ): RunRequest = RunRequest(
     model = role.model,
-    system = system,
+    system = if (role.provider == ModelProvider.OPENROUTER) system.map { it.copy(cacheBreakpoint = false) } else system,
     messages = messages,
     tools = tools,
     // Every tool is gated at its own door (the action gate, the browser wrapper), so the harness runs what is visible.
@@ -144,8 +158,8 @@ fun roleRequest(
     effort = role.effort,
     runId = runId,
     deferredTools = deferred,
-    cache = CachePolicy(ttl = role.cacheTtl),
-    compaction = if (role.compaction) CompactionConfig(triggerInputTokens = role.compactAtTokens, instructions = COMPACTION_INSTRUCTIONS) else null,
+    cache = if (role.provider == ModelProvider.OPENROUTER) null else CachePolicy(ttl = role.cacheTtl),
+    compaction = if (role.compaction && role.provider == ModelProvider.ANTHROPIC) CompactionConfig(triggerInputTokens = role.compactAtTokens, instructions = COMPACTION_INSTRUCTIONS) else null,
     resultSink = sink,
     compactNow = compactNow,
 )
@@ -177,12 +191,42 @@ fun shouldCompactNow(
 }
 
 /**
- * Pure: the part of [messages] the provider still reads: from the message holding the latest
- * compaction block on (everything before it is dropped server-side), or all of them.
+ * Pure: the part of [messages] the provider still reads: from the latest compaction point on (an
+ * Anthropic compaction block, before which everything is dropped server-side, or a client summary),
+ * or all of them. See [contextSince].
  */
-fun sinceLastCompaction(messages: List<Message>): List<Message> {
-    val last = messages.indexOfLast { m -> m.content.any { it is net.robog.clarity.harness.Block.Raw && it.isCompaction } }
-    return if (last < 0) messages else messages.subList(last, messages.size)
+fun sinceLastCompaction(messages: List<Message>): List<Message> = contextSince(messages)
+
+/**
+ * Pure: compact the thread client-side now? Only for a role with compaction on a provider without
+ * server-side compaction (OpenRouter), only at a turn boundary (the thread ends in an assistant
+ * turn without open tool calls), and once the prompt of the last call ([lastPromptTokens], from
+ * usage; estimated from the journal when unknown) reached [RoleConfig.compactAtTokens].
+ */
+fun shouldCompactClientSide(role: RoleConfig, lastPromptTokens: Long?, history: List<Message>): Boolean {
+    if (role.provider != ModelProvider.OPENROUTER || !role.compaction) return false
+    val last = history.lastOrNull() ?: return false
+    if (last.role != Role.ASSISTANT || last.content.any { it is Block.ToolUse }) return false
+    return (lastPromptTokens ?: estimateTokens(contextSince(history))) >= role.compactAtTokens
+}
+
+/**
+ * Pure: the one call that writes a client-side summary, on the same model as the thread: the
+ * context since the last compaction point, the same tools (the history calls them) and system
+ * prompt, then [CLIENT_COMPACTION_REQUEST]. Its text goes into the journal as a [Message.summary].
+ */
+fun clientCompactionRequest(role: RoleConfig, system: List<SystemBlock>, history: List<Message>, tools: List<Tool>, deferred: List<Tool>): ModelRequest {
+    val plan = planTools(tools, deferred, ToolPolicy.Gated)
+    return ModelRequest(
+        model = role.model,
+        system = system.map { it.copy(cacheBreakpoint = false) },
+        messages = wireOrder(sinceSummary(history)) + Message.user(CLIENT_COMPACTION_REQUEST),
+        tools = plan.loaded.map { it.definition },
+        maxTokens = role.maxTokens,
+        effort = role.effort,
+        deferredTools = plan.deferred.map { it.definition },
+        cache = null,
+    )
 }
 
 /** Pure: a rough token count for a journal (4 characters per token). */
