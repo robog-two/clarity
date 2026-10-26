@@ -89,4 +89,11 @@ data class ConnectorTestResult(
     val error: String? = null,
     /** Short summary on success ("4,218 messages"). */
     val summary: String? = null,
+    /**
+     * The connector has not reported within the server's wait: the result arrives later as
+     * [ConnectorSummary.lastTest] with this [requestId].
+     */
+    val pending: Boolean = false,
+    /** The test request this answers; set by the server on `POST /api/v1/connectors/{id}/test`. */
+    val requestId: String? = null,
 )
