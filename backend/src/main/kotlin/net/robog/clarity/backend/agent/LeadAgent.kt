@@ -25,6 +25,7 @@ import kotlinx.datetime.minus
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
@@ -36,6 +37,8 @@ import net.robog.clarity.harness.HarnessEvent
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.Role
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.harness.StopReason
+import net.robog.clarity.harness.contextSince
 import net.robog.clarity.harness.foldInterrupts
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
@@ -44,11 +47,15 @@ import net.robog.clarity.shared.feed.FeedItem
 
 private val log = KotlinLogging.logger {}
 
-/** Pure: does a journal end mid-turn (an unanswered user message or tool results, or unanswered tool calls)? */
+/**
+ * Pure: does a journal end mid-turn (an unanswered user message or tool results, or unanswered tool
+ * calls)? A client-side summary at the end is not: it waits for the next turn.
+ */
 fun needsResume(history: List<Message>): Boolean {
     val last = history.lastOrNull() ?: return false
     return when (last.role) {
-        Role.USER, Role.SYSTEM -> true
+        Role.USER -> !last.isSummary
+        Role.SYSTEM -> true
         Role.ASSISTANT -> last.content.any { it is Block.ToolUse }
     }
 }
@@ -78,6 +85,10 @@ val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
  * Inbox rows are marked consumed only when the message carrying them has been journaled.
  *
  * Plain assistant text is never shown to the person; `send_to_user` is the only way out.
+ *
+ * Compaction: on Anthropic the API compacts the thread server-side. On OpenRouter the lead does it
+ * itself after a turn ([compactClientSide]): one summarizing call, whose text is appended to the
+ * journal as a [Message.summary]; requests start there from then on.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -107,6 +118,9 @@ class LeadAgent(
     private var lastMemoryContext: String? = null
     private var lastUserActivity: Instant? = null
     private var failures = 0
+
+    /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
+    private var lastPromptTokens: Long? = null
 
     /** Journal decorator: marks inbox rows consumed once the message carrying them is durable. */
     private val trackedJournal = object : RunJournal {
@@ -160,8 +174,10 @@ class LeadAgent(
                 scope.startTurn(untrusted = true, requestedByUser = false)
                 feed.publish(FeedEvent.Busy(true))
                 try {
-                    runHarness(compactNow = false, runtime.bindOrFail(AgentRole.LEAD))
+                    val bound = runtime.bindOrFail(AgentRole.LEAD)
+                    runHarness(compactNow = false, bound)
                     threads.touchTurn(clock.now())
+                    compactClientSide(bound)
                 } finally {
                     withContext(NonCancellable) { feed.publish(FeedEvent.Busy(false)) }
                 }
@@ -199,7 +215,8 @@ class LeadAgent(
             closing?.let { trackedJournal.append(threadId, it) }
             // A live call runs at low effort and the thread goes back afterwards, by a mid-conversation message (the cache prefix stays intact).
             val roleEffort = bound.config.effort
-            val effortMessage = effortChange(lastEffort(history) ?: roleEffort, effortOverride.current() ?: roleEffort)
+            // Only what the model still reads counts: an effort set before the last compaction point is gone.
+            val effortMessage = effortChange(lastEffort(contextSince(history)) ?: roleEffort, effortOverride.current() ?: roleEffort)
             val messages = foldInterrupts(
                 if (closing != null) Role.USER else history.lastOrNull()?.role,
                 deliveries.map { it.message } + listOfNotNull(effortMessage),
@@ -208,6 +225,7 @@ class LeadAgent(
             messages.forEach { trackedJournal.append(threadId, it) }
             runHarness(compactNow = false, bound)
             threads.touchTurn(clock.now())
+            compactClientSide(bound)
         } finally {
             awaiting.clear()
             withContext(NonCancellable) { feed.publish(FeedEvent.Busy(false)) }
@@ -233,12 +251,11 @@ class LeadAgent(
      * and stripping them would be a history edit that breaks preserved thinking on the way back.
      */
     private suspend fun runHarness(compactNow: Boolean, bound: BoundRole) = coroutineScope {
-        val constitution = constitutions.current()
         val tools = toolbox.leadTools(scope)
         val request = roleRequest(
             role = bound.config,
             runId = threadId,
-            system = leadSystemBlocks(constitution, HomeClock(zoneOrUtc(settings.current().homeZone), clock.now())),
+            system = systemBlocks(),
             messages = emptyList(),
             tools = tools.loaded,
             deferred = tools.deferred,
@@ -253,6 +270,7 @@ class LeadAgent(
             runtime.harness(trackedJournal, bound).resume(threadId, request, interrupts.receiveAsFlow()).collect { event ->
                 when (event) {
                     is HarnessEvent.AssistantText -> log.debug { "lead (not shown): ${event.text.take(200)}" }
+                    is HarnessEvent.Called -> lastPromptTokens = event.usage.promptTokens
                     is HarnessEvent.CacheMiss -> log.warn { "prompt cache miss on lead turn ${event.turn}: ${event.usage}" }
                     is HarnessEvent.Terminal -> terminal = event
                     else -> Unit
@@ -263,6 +281,39 @@ class LeadAgent(
             interrupts.close()
         }
         afterTurn(terminal)
+    }
+
+    private suspend fun systemBlocks() =
+        leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()))
+
+    /**
+     * After a turn on a provider without server-side compaction: once the last call's prompt reached
+     * the role's `compactAtTokens`, one call on the same model summarizes the thread, and the summary
+     * is appended to the journal ([Message.summary]). Nothing earlier is rewritten. A failed or empty
+     * summary is skipped; the next turn tries again.
+     */
+    private suspend fun compactClientSide(bound: BoundRole) {
+        val history = journal.load(threadId)
+        if (!shouldCompactClientSide(bound.config, lastPromptTokens, history)) return
+        log.info { "compacting the lead thread client-side (last prompt ${lastPromptTokens ?: "unknown"} tokens, threshold ${bound.config.compactAtTokens})" }
+        val tools = toolbox.leadTools(scope)
+        val request = clientCompactionRequest(bound.config, systemBlocks(), history, tools.loaded, tools.deferred)
+        val response = try {
+            bound.gateway.complete(request)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(e) { "client-side compaction failed; the next turn tries again" }
+            return
+        }
+        val summary = response.text.trim()
+        if (response.stopReason != StopReason.END_TURN || summary.isEmpty()) {
+            log.warn { "client-side compaction gave no summary (${response.stopReason}); the next turn tries again" }
+            return
+        }
+        trackedJournal.append(threadId, Message.summary(summary))
+        lastPromptTokens = null
+        threads.markCompacted(clock.now())
     }
 
     private suspend fun afterTurn(terminal: HarnessEvent.Terminal?) {
@@ -329,10 +380,12 @@ class LeadAgent(
      * whether a compaction ran. Never blocks a turn: it gives up if the lead is busy.
      */
     suspend fun compactIfIdle(): Boolean {
-        if (!runtime.settings[AgentRole.LEAD].idleCompaction) return false
+        // Idle compaction is for a warm Anthropic cache; OpenRouter compacts client-side after a turn.
+        val role = runtime.settings[AgentRole.LEAD]
+        if (!role.idleCompaction || role.provider != ModelProvider.ANTHROPIC) return false
         if (!runtime.enabled || !::threadId.isInitialized || !turnLock.tryLock()) return false
         try {
-            val bound = runtime.bind(AgentRole.LEAD) ?: return false
+            val bound = runtime.bind(AgentRole.LEAD)?.takeIf { it.config.provider == ModelProvider.ANTHROPIC } ?: return false
             val now = clock.now()
             val thread = threads.ensure()
             val history = journal.load(threadId)

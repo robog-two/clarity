@@ -42,17 +42,22 @@ class OpenRouterException(val status: Int?, message: String) : RuntimeException(
  * `java.net.http` client (no extra dependency) and kotlinx.serialization.
  *
  * Request shape:
+ *  - only the context since the latest compaction point is sent ([contextSince]); an Anthropic
+ *    `compaction` block there becomes a user message with its summary text, so a thread that
+ *    moves here from Anthropic keeps what was summarized;
  *  - the system blocks become one leading `system` message; mid-conversation system messages with
  *    text stay `system` messages in place, effort-only ones are dropped (effort is per request here);
  *  - tool uses become assistant `tool_calls` (arguments as a JSON string), tool results `tool`
- *    messages; [Block.Raw] (thinking, compaction, server tools: Anthropic-only) is dropped;
+ *    messages; other [Block.Raw] (thinking, server tools: Anthropic-only) is dropped, except this
+ *    provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the same model only;
  *  - loaded and deferred tools are all sent as `function` tools (no tool search), `tool_choice: auto`;
- *  - `reasoning.effort` from [ModelRequest.effort], `response_format: json_schema` from
- *    [ModelRequest.structuredOutput], and always `provider.data_collection: deny` (no provider that
+ *  - `reasoning.effort` is the effort in effect for this request: that of the last effort-only
+ *    message since the latest compaction point, else [ModelRequest.effort] ([effortIn]);
+ *    `response_format: json_schema` from [ModelRequest.structuredOutput], and always `provider.data_collection: deny` (no provider that
  *    keeps or trains on prompts) and `usage.include` (the response carries its cost).
  * Not supported: server tools (rejected), prompt-cache breakpoints, refusal fallbacks and
- * server-side compaction (all ignored). So a role with compaction (the lead) must not run here
- * until the client-side compaction exists.
+ * server-side compaction (all ignored). A long thread (the lead) compacts client-side instead
+ * (`LeadAgent`, a [Message.summary] in its journal).
  *
  * Always streamed (SSE) so long outputs do not hit timeouts; the blocking read runs in
  * [runInterruptible], so cancelling the coroutine aborts it. A 429/5xx or a failed connection is
@@ -76,7 +81,7 @@ class OpenRouterModelGateway(
 
     override suspend fun generate(request: ModelRequest, onTextDelta: (String) -> Unit): ModelResponse {
         if (request.compaction != null && compactionWarned.compareAndSet(false, true)) {
-            log.warn { "OpenRouter has no server-side compaction; ${request.model} runs without it (the lead must stay on Anthropic for now)" }
+            log.warn { "OpenRouter has no server-side compaction; ${request.model} runs without it (compact client-side)" }
         }
         val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request))
         val call = HttpRequest.newBuilder(endpoint)
@@ -91,7 +96,7 @@ class OpenRouterModelGateway(
             try {
                 return runInterruptible(Dispatchers.IO) {
                     try {
-                        send(call, onTextDelta)
+                        send(call, request.model, onTextDelta)
                     } catch (e: IOException) {
                         // The JDK stream turns an interrupt into an IOException; surface it as the
                         // interrupt it was, so cancellation reads as cancellation.
@@ -110,7 +115,7 @@ class OpenRouterModelGateway(
     /** Thrown before any of the body was read, so the call can be made again. */
     private class Retryable(message: String, cause: Exception) : RuntimeException(message, cause)
 
-    private fun send(call: HttpRequest, onTextDelta: (String) -> Unit): ModelResponse {
+    private fun send(call: HttpRequest, model: String, onTextDelta: (String) -> Unit): ModelResponse {
         val response = try {
             http.send(call, HttpResponse.BodyHandlers.ofInputStream())
         } catch (e: IOException) {
@@ -123,7 +128,7 @@ class OpenRouterModelGateway(
                 if (status == 408 || status == 429 || status >= 500) throw Retryable("status $status", error)
                 throw error
             }
-            val accumulator = StreamAccumulator(onTextDelta)
+            val accumulator = StreamAccumulator(model, onTextDelta)
             stream.bufferedReader().useLines { lines -> parseSse(lines, accumulator::accept) }
             return accumulator.response()
         }
@@ -153,10 +158,22 @@ class OpenRouterModelGateway(
         /** Prefix of a tool result the tool reported as failed (the wire has no `is_error`). */
         const val ERROR_PREFIX = "[error] "
 
+        /** [Block.Raw.type] of the `reasoning_details` kept from a response, tagged with the provider and [REASONING_MODEL]. */
+        const val REASONING_TYPE = "openrouter_reasoning"
+
+        /** The model that wrote a [REASONING_TYPE] block; it is replayed only to that model. */
+        const val REASONING_MODEL = "model"
+
+        private const val PROVIDER = "openrouter"
+
+        /** What an Anthropic `compaction` block becomes when its summary is encrypted only. */
+        const val UNREADABLE_SUMMARY = "(The earlier conversation was summarized, but the summary can't be read here.)"
+
         /** The request body exactly as it goes over the wire; for tests and debugging. */
         internal fun buildBody(request: ModelRequest): JsonObject {
             require(request.serverTools.isEmpty()) { "OpenRouter does not run server tools (${request.serverTools.joinToString { it.wireName }})" }
-            // request.fallbacks: OpenRouter's own model fallbacks (`models: [...]`) are not used yet.
+            // request.fallbacks: OpenRouter's own fallbacks (`models: [primary, ...]`) would need a configured
+            // fallback list; there is none, so nothing is sent.
             return buildJsonObject {
                 put("model", request.model)
                 put("messages", wireMessages(request))
@@ -165,7 +182,7 @@ class OpenRouterModelGateway(
                 putJsonObject("stream_options") { put("include_usage", true) }
                 putJsonObject("usage") { put("include", true) }
                 putJsonObject("provider") { put("data_collection", "deny") }
-                request.effort?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it)) } }
+                effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it)) } }
                 val tools = request.tools + request.deferredTools
                 if (tools.isNotEmpty()) {
                     put("tools", JsonArray(tools.map { it.toWire() }))
@@ -201,8 +218,17 @@ class OpenRouterModelGateway(
 
         private fun wireMessages(request: ModelRequest): JsonArray = buildJsonArray {
             if (request.system.isNotEmpty()) add(chat("system", JsonPrimitive(request.systemText)))
-            for (message in request.messages) {
-                // Raw blocks are Anthropic-only (thinking signatures, compaction, server tools); no other provider reads them.
+            for (original in contextSince(request.messages)) {
+                // Anthropic drops everything before its compaction block; here the block becomes its summary text.
+                val compaction = original.content.indexOfLast { it is Block.Raw && it.isCompaction }
+                val message = if (compaction < 0) {
+                    original
+                } else {
+                    val summary = (original.content[compaction] as Block.Raw).compactionSummary ?: UNREADABLE_SUMMARY
+                    add(chat("user", JsonPrimitive("$SUMMARY_MARKER\n$summary")))
+                    original.copy(content = original.content.drop(compaction + 1))
+                }
+                // Other Raw blocks are Anthropic-only (thinking signatures, server tools); no other provider reads them.
                 val texts = message.content.filterIsInstance<Block.Text>().map { it.text }
                 when (message.role) {
                     // An effort-only system message is dropped: effort is set per request here.
@@ -225,9 +251,11 @@ class OpenRouterModelGateway(
                     Role.ASSISTANT -> {
                         val calls = message.content.filterIsInstance<Block.ToolUse>()
                         if (texts.isEmpty() && calls.isEmpty()) continue
+                        val reasoning = message.content.firstNotNullOfOrNull { reasoningFor(it, request.model) }
                         add(buildJsonObject {
                             put("role", "assistant")
                             put("content", if (texts.isEmpty()) JsonPrimitive(null as String?) else JsonPrimitive(texts.joinToString("")))
+                            reasoning?.let { put("reasoning_details", it) }
                             if (calls.isNotEmpty()) {
                                 put("tool_calls", JsonArray(calls.map { call ->
                                     buildJsonObject {
@@ -245,6 +273,21 @@ class OpenRouterModelGateway(
                 }
             }
         }
+
+        /** The `reasoning_details` of [block] when this provider wrote it for [model], else null. */
+        private fun reasoningFor(block: Block, model: String): JsonArray? {
+            if (block !is Block.Raw || block.type != REASONING_TYPE || block.foreignProvider != PROVIDER) return null
+            if ((block.json[REASONING_MODEL] as? JsonPrimitive)?.contentOrNull != model) return null
+            return block.json["details"] as? JsonArray
+        }
+
+        /** Pure: the [Block.Raw] that keeps [details] for replay to [model]. */
+        internal fun reasoningBlock(model: String, details: List<JsonObject>): Block.Raw = Block.Raw(buildJsonObject {
+            put("type", REASONING_TYPE)
+            put(Block.Raw.FOREIGN_PROVIDER_KEY, PROVIDER)
+            put(REASONING_MODEL, model)
+            put("details", JsonArray(details))
+        })
 
         private fun chat(role: String, content: JsonElement) = buildJsonObject {
             put("role", role)
@@ -313,8 +356,9 @@ class OpenRouterModelGateway(
     }
 
     /** Folds the stream's chunks into one [ModelResponse]. */
-    internal class StreamAccumulator(private val onTextDelta: (String) -> Unit = {}) {
+    internal class StreamAccumulator(private val model: String = "", private val onTextDelta: (String) -> Unit = {}) {
         private val text = StringBuilder()
+        private val reasoning = sortedMapOf<Int, MutableMap<String, JsonElement>>()
         private val calls = sortedMapOf<Int, Call>()
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
@@ -334,6 +378,17 @@ class OpenRouterModelGateway(
             ((delta?.get("content") as? JsonPrimitive)?.contentOrNull)?.takeIf { it.isNotEmpty() }?.let {
                 text.append(it)
                 onTextDelta(it)
+            }
+            (delta?.get("reasoning_details") as? JsonArray)?.forEach { element ->
+                val part = element as? JsonObject ?: return@forEach
+                val index = (part["index"] as? JsonPrimitive)?.longOrNull?.toInt() ?: reasoning.size
+                val detail = reasoning.getOrPut(index) { linkedMapOf() }
+                // A detail streams in pieces: its text fields are joined, everything else is the latest value.
+                part.forEach { (key, value) ->
+                    val previous = (detail[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    val piece = (value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    detail[key] = if (key in REASONING_TEXT_FIELDS && previous != null && piece != null) JsonPrimitive(previous + piece) else value
+                }
             }
             (delta?.get("tool_calls") as? JsonArray)?.forEach { element ->
                 val part = element as? JsonObject ?: return@forEach
@@ -355,8 +410,14 @@ class OpenRouterModelGateway(
                 val input = runCatching { HarnessJson.parseToJsonElement(call.arguments.toString()) as? JsonObject }.getOrNull()
                 Block.ToolUse(call.id ?: "call_$index", call.name, input ?: JsonObject(emptyMap()))
             }
-            val content = (if (text.isEmpty()) emptyList() else listOf(Block.Text(text.toString()))) + uses
-            return ModelResponse(content, stopReason(finish, uses.isNotEmpty()), usage)
+            val answer = (if (text.isEmpty()) emptyList() else listOf(Block.Text(text.toString()))) + uses
+            // Reasoning is kept only beside an answer, so no assistant turn is reasoning alone.
+            val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
+            return ModelResponse(kept + answer, stopReason(finish, uses.isNotEmpty()), usage)
+        }
+
+        private companion object {
+            val REASONING_TEXT_FIELDS = setOf("text", "summary", "data")
         }
     }
 }

@@ -83,12 +83,13 @@ class ModelSettingsTest : FunSpec({
         effectiveRoles(boot, mapOf(AgentRole.TRIAGE to RoleOverride(cacheTtl = "1h"))).triage shouldBe boot.triage.copy(cacheTtl = "1h")
     }
 
-    test("validation: the lead stays on Anthropic, OpenRouter needs its key, and each value must be one the API takes") {
+    test("validation: any role (the lead too) may run on OpenRouter with its key, and each value must be one the API takes") {
         val boot = AgentRoles()
         fun errors(role: AgentRole, o: RoleOverride, k: Set<ModelProvider> = keys) = validateOverride(role, o, boot[role], k).map { it.field }
 
-        validateOverride(AgentRole.LEAD, RoleOverride(provider = ModelProvider.OPENROUTER, model = "anthropic/claude-opus-5.5"), boot.lead, keys)
-            .single().message shouldContain "the lead runs on Anthropic"
+        errors(AgentRole.LEAD, RoleOverride(provider = ModelProvider.OPENROUTER, model = "anthropic/claude-opus-5.5")).shouldBeEmpty()
+        validateOverride(AgentRole.LEAD, RoleOverride(provider = ModelProvider.OPENROUTER, model = "anthropic/claude-opus-5.5"), boot.lead, setOf(ModelProvider.ANTHROPIC))
+            .single().message shouldContain "OPENROUTER_API_KEY"
         errors(AgentRole.GUARD, RoleOverride(provider = ModelProvider.OPENROUTER, model = "anthropic/claude-haiku-5.5"), setOf(ModelProvider.ANTHROPIC)) shouldContainExactly listOf("provider")
         errors(AgentRole.GUARD, RoleOverride(provider = ModelProvider.OPENROUTER, model = "anthropic/claude-haiku-5.5")).shouldBeEmpty()
         // Switching provider without a model in its naming is caught, both ways.

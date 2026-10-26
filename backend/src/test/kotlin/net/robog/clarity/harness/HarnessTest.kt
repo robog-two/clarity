@@ -22,7 +22,7 @@ class HarnessTest : FunSpec({
         val events = Harness(gateway).run(request()).toList()
 
         events.map { it::class.simpleName } shouldContainExactly
-            listOf("TurnStarted", "TextDelta", "AssistantText", "Finished")
+            listOf("TurnStarted", "TextDelta", "Called", "AssistantText", "Finished")
         val done = events.last().shouldBeInstanceOf<HarnessEvent.Finished>()
         done.reason shouldBe FinishReason.END_TURN
         done.usage shouldBe Usage(inputTokens = 10, outputTokens = 5)

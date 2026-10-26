@@ -86,9 +86,13 @@ class LeadRig(
     val clock: Clock = Clock.System,
     apiKey: String? = "sk-test",
     roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles(),
+    openRouterKey: String? = null,
+    /** The lead's effort override; null for the real one (a live morning call). */
+    effortOverride: EffortOverride? = null,
 ) {
+    /** Answers for every provider (tell them apart by the model name). */
     val model = FakeModel()
-    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
+    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, openRouterApiKey = openRouterKey)
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
     val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { _, _ -> model }, UsageRecorder { _, _, _ -> })
 
@@ -144,7 +148,7 @@ class LeadRig(
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, toolbox, large, feed, settingsProvider, clock,
-            CallEffortOverride(sessionService),
+            effortOverride ?: CallEffortOverride(sessionService),
         )
     }
 

@@ -88,6 +88,9 @@ sealed interface HarnessEvent {
     /** An interrupt cancelled an in-flight model call; its partial response was discarded. */
     data class Preempted(val interruptMessages: Int) : HarnessEvent
 
+    /** A model call finished; [usage] is that call's alone ([Usage.promptTokens] is the size of its prompt). */
+    data class Called(val turn: Int, val usage: Usage) : HarnessEvent
+
     /** A turn after the first read nothing from the prompt cache although caching is on: investigate prefix drift. */
     data class CacheMiss(val turn: Int, val usage: Usage) : HarnessEvent
 
@@ -137,6 +140,9 @@ fun planTools(tools: List<Tool>, deferred: List<Tool>, policy: ToolPolicy): Tool
  * exactly as received (thinking, compaction and server-tool blocks included), which preserved
  * thinking requires and which keeps the prompt cache warm; only JSON key order is normalised
  * ([journalStable]), once, so a replay from a `jsonb` journal is byte-identical to one from memory.
+ *
+ * A client-side compaction summary ([Message.summary]) in the journal cuts what is sent: every
+ * request starts at the latest one ([sinceSummary]), while the journal keeps everything.
  *
  * Durability: the initial messages, each assistant message, each tool-result message and each
  * interrupt are appended to the [journal]; [resume] continues a run from it.
@@ -227,7 +233,7 @@ class Harness(
                 val modelRequest = ModelRequest(
                     model = request.model,
                     system = request.system,
-                    messages = withoutMissingToolReferences(wireOrder(history), (plan.loaded + plan.deferred).map { it.definition.name }.toSet()),
+                    messages = withoutMissingToolReferences(wireOrder(sinceSummary(history)),(plan.loaded + plan.deferred).map { it.definition.name }.toSet()),
                     tools = plan.loaded.map { it.definition },
                     maxTokens = request.maxTokens,
                     effort = request.effort,
@@ -255,6 +261,7 @@ class Harness(
                         val response = outcome.response
                         usage += response.usage
                         completedCalls++
+                        send(HarnessEvent.Called(turn, response.usage))
                         if (request.cache != null && completedCalls > 1 && response.usage.cacheReadInputTokens == 0L) {
                             send(HarnessEvent.CacheMiss(turn, response.usage))
                         }
