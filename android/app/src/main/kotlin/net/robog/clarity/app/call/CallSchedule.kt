@@ -11,8 +11,8 @@ import net.robog.clarity.shared.time.zoneOrUtc
 data class CallPlan(val callAt: Instant, val headsUpAt: Instant?)
 
 /**
- * The next call after [now] under the stored [settings]: its UTC time on one of its UTC days, moved by
- * daylight saving in the home zone (see [ScheduleClock]). Null when the call is off or no day is
+ * The next call after [now] under the stored [settings]: its time on one of its days, on the clock of
+ * the home zone (see [ScheduleClock]). Null when the call is off or no day is
  * selected. The heads-up is omitted when it is already past (the call is less than the heads-up
  * window away).
  */

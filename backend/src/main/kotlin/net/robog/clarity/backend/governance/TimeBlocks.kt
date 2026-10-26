@@ -23,10 +23,10 @@ data class Occurrence(val block: TimeBlock, val start: Instant, val end: Instant
 fun zoneOrUtc(id: String): TimeZone = net.robog.clarity.shared.time.zoneOrUtc(id)
 
 /**
- * Occurrences of stored [blocks] that start on any UTC date from [from] to [until] (inclusive), with
- * daylight saving following the home zone [rules] (see [ScheduleClock]). A block whose end is not
- * after its start crosses midnight and ends on the next date. Days are ISO (1 = Monday) UTC days and
- * refer to the date the block *starts* on.
+ * Occurrences of stored [blocks] that start on any date from [from] to [until] (inclusive), on the
+ * clock of the home zone [zone] (see [ScheduleClock]). A block whose end is not after its start
+ * crosses midnight and ends on the next date. Days are ISO (1 = Monday) home-zone days and refer to
+ * the date the block *starts* on.
  */
 fun occurrences(blocks: List<TimeBlock>, from: LocalDate, until: LocalDate, zone: TimeZone): List<Occurrence> {
     val result = ArrayList<Occurrence>()
@@ -46,8 +46,8 @@ fun occurrences(blocks: List<TimeBlock>, from: LocalDate, until: LocalDate, zone
 private fun candidates(blocks: List<TimeBlock>, from: Instant, until: Instant, zone: TimeZone): List<Occurrence> =
     occurrences(
         blocks,
-        from.toLocalDateTime(TimeZone.UTC).date.plus(-1, DateTimeUnit.DAY),
-        until.toLocalDateTime(TimeZone.UTC).date.plus(1, DateTimeUnit.DAY),
+        from.toLocalDateTime(zone).date.plus(-1, DateTimeUnit.DAY),
+        until.toLocalDateTime(zone).date.plus(1, DateTimeUnit.DAY),
         zone,
     )
 

@@ -103,8 +103,8 @@ class SessionJobsAndKeyTest : FunSpec({
         scheduler.ensureRows()
 
         val mine = Settings(
-            // stored 22:15 UTC = 07:15 in Tokyo
-            morningCall = Settings.MorningCall(at = LocalTime(22, 15), days = setOf(1, 2, 3, 4, 5, 6, 7), headsUpMinutes = 30),
+            // 07:15 in Tokyo
+            morningCall = Settings.MorningCall(at = LocalTime(7, 15), days = setOf(1, 2, 3, 4, 5, 6, 7), headsUpMinutes = 30),
             homeZone = "Asia/Tokyo",
         )
         store.save(mine).ok() shouldBe mine

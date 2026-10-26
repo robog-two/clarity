@@ -81,7 +81,7 @@ data class Person(val name: String, val handles: List<Handle> = emptyList(), val
 
 /**
  * A recurring protected block, e.g. weekdays 09:00–12:00 "deep work". Days are ISO (1 = Monday).
- * Stored in UTC like the settings' times: [start], [end] and [days] are UTC at the standard offset of
+ * Stored like the settings' times: [start], [end] and [days] are wall-clock times in
  * `Settings.homeZone`; convert with [net.robog.clarity.shared.time.ScheduleClock].
  */
 @Serializable
