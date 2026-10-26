@@ -226,7 +226,7 @@ class Harness(
                 val modelRequest = ModelRequest(
                     model = request.model,
                     system = request.system,
-                    messages = wireOrder(history),
+                    messages = withoutMissingToolReferences(wireOrder(history), (plan.loaded + plan.deferred).map { it.definition.name }.toSet()),
                     tools = plan.loaded.map { it.definition },
                     maxTokens = request.maxTokens,
                     effort = request.effort,

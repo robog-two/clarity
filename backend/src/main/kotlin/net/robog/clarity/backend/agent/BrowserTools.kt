@@ -81,11 +81,19 @@ class GatewayBrowserTriage(
                 ),
             ),
             tools = emptyList(),
-            maxTokens = 300,
+            // Haiku 5.5 thinks before answering, even at low effort; 300 tokens cut the answer off.
+            maxTokens = 2_000,
             effort = effort,
             structuredOutput = SCHEMA,
         )
-        val json = g.completeJson(request) as? JsonObject ?: return TriageVerdict(false, "unclear answer")
+        val json = try {
+            g.completeJson(request) as? JsonObject
+        } catch (e: kotlin.coroutines.cancellation.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A cut-off or unreadable answer must become a question for the person, never a failed step.
+            null
+        } ?: return TriageVerdict(false, "I couldn't double-check this step, so I'm asking you")
         val verdict = json["verdict"]?.jsonPrimitive?.contentOrNull
         val reason = json["reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         return TriageVerdict(verdict == "ok", reason)
