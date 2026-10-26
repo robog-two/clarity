@@ -80,6 +80,10 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun pendingBatch() = items.filter { it.second.batchPending }.map { it.first }
     override suspend fun markSummarized(ids: Collection<FeedItemId>) = Unit
     override suspend fun notifyOf(id: FeedItemId): String? = null
+    override suspend fun heldNotifications(): List<FeedItem> = emptyList()
+    override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? = null
+    val released = CopyOnWriteArrayList<FeedItem>()
+    override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
 }
 
 private class MemoryInbox : InboxStore {
@@ -240,6 +244,28 @@ class FeedRoutesTest : FunSpec({
                 it.cards shouldBe listOf(Card.Text("live"))
                 it.notify shouldBe "push_now"
             }
+    }
+
+    test("SSE resends a recently released hold the client already has, then a live release below its position") {
+        val old = feed.append(agentItem("held during focus").copy(notify = "hold_until:2026-03-04T12:00:00Z")).item
+        val seen = feed.append(agentItem("seen")).item
+        store.released += old.copy(notify = "released:2026-03-04T12:00:00Z")
+        val received = mutableListOf<FeedEvent>()
+        try {
+            withServer { client ->
+                withTimeout(10.seconds) {
+                    client.sse("/api/v1/events?after=${seen.seq}", request = { header(HttpHeaders.Authorization, TOKEN) }) {
+                        incoming.take(2).collect { event ->
+                            received += ClarityJson.decodeFromString(FeedEvent.serializer(), event.data!!)
+                            if (received.size == 1) hub.publish(FeedEvent.ItemFinal(seen.copy(notify = "released:2026-03-04T12:01:00Z")))
+                        }
+                    }
+                }
+            }
+        } finally {
+            store.released.clear()
+        }
+        received.map { (it as FeedEvent.ItemFinal).item.id } shouldContainExactly listOf(old.id, seen.id)
     }
 
     test("SSE sends a heartbeat comment while idle (on the wire; clients skip comments)") {

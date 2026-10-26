@@ -5,6 +5,7 @@ import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import net.robog.clarity.backend.agent.FeedItems
 import net.robog.clarity.backend.persistence.parseWire
@@ -21,8 +22,10 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.selectAll
@@ -62,6 +65,19 @@ interface FeedStore {
 
     /** The recorded notification decision of an item. */
     suspend fun notifyOf(id: FeedItemId): String?
+
+    /** Items whose notification is still held for protected time (`hold_until:`), oldest first. */
+    suspend fun heldNotifications(): List<FeedItem>
+
+    /**
+     * Replaces the notify decision of [id] with [to] only if it is still [from], so a second release
+     * of the same hold changes nothing. [releasedAt] marks it released (null when it is dropped
+     * without a notification). Returns the updated item, or null when nothing changed.
+     */
+    suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem?
+
+    /** Items whose held notification was released at or after [since]. */
+    suspend fun releasedSince(since: Instant): List<FeedItem>
 }
 
 @Inject
@@ -128,7 +144,27 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
         return database.tx { FeedItems.selectAll().where { FeedItems.id eq uuid }.singleOrNull()?.get(FeedItems.notify) }
     }
 
+    override suspend fun heldNotifications(): List<FeedItem> = database.tx {
+        FeedItems.selectAll().where { FeedItems.notify like "$HOLD_PREFIX%" }.orderBy(FeedItems.seq).map { it.toItem() }
+    }
+
+    override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx {
+            val changed = FeedItems.update({ (FeedItems.id eq uuid) and (FeedItems.notify eq from) }) {
+                it[notify] = to
+                it[FeedItems.releasedAt] = releasedAt
+            }
+            if (changed == 0) null else FeedItems.selectAll().where { FeedItems.id eq uuid }.singleOrNull()?.toItem()
+        }
+    }
+
+    override suspend fun releasedSince(since: Instant): List<FeedItem> = database.tx {
+        FeedItems.selectAll().where { FeedItems.releasedAt greaterEq since }.orderBy(FeedItems.seq).map { it.toItem() }
+    }
+
     private companion object {
+        const val HOLD_PREFIX = "hold_until:"
         const val PENDING = "pending"
         const val SUMMARIZED = "summarized"
     }

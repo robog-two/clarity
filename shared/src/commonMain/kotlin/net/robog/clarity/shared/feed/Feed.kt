@@ -37,8 +37,9 @@ data class FeedItem(
     val streaming: Boolean = false,
     /**
      * The notification decision recorded for this item: `push_now`, `in_app`, `hold_until:<iso>` or
-     * `evening_batch:<iso>`. Optional on the wire; absent means "show in the app", so old stored JSON
-     * and old servers still decode. Clients post a notification only for `push_now`.
+     * `evening_batch:<iso>`. A hold becomes `released:<iso>` (the release time) once protected time
+     * is over; the server then resends the item as [FeedEvent.ItemFinal] and the phone notifies once.
+     * Optional on the wire; absent means "show in the app", so old stored JSON and old servers still decode.
      */
     val notify: String = NOTIFY_IN_APP,
 ) {

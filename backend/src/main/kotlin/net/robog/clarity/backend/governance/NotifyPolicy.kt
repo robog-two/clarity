@@ -21,7 +21,10 @@ sealed interface NotifyDecision {
     /** Visible in the app, no interruption. */
     data object ShowInApp : NotifyDecision
 
-    /** Urgent, but the person is in protected time and the sender does not get through. */
+    /**
+     * Urgent, but the person is in protected time and the sender does not get through. Shown in the
+     * app now; `HoldReleaseJob` notifies when the protection ends.
+     */
     data class HoldUntil(val at: Instant) : NotifyDecision
 
     /** Waits for the evening summary at [at]. */

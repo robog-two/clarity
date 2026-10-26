@@ -51,6 +51,7 @@ object FeedItems : Table("feed_item") {
     val clientInputId = text("client_input_id").nullable()
     val notify = text("notify").nullable()
     val batchState = text("batch_state").nullable()
+    val releasedAt = timestamp("released_at").nullable()
     override val primaryKey = PrimaryKey(seq)
 }
 

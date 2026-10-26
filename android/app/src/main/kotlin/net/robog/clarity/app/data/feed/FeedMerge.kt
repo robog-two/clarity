@@ -28,3 +28,11 @@ fun mergeItem(existing: FeedItem?, incoming: FeedItem, final: Boolean): FeedItem
     existing.streaming -> incoming
     else -> null
 }
+
+/**
+ * Whether storing [incoming] over [existing] is an arrival the push service should hear about: the
+ * first sight of a seq, or a hold the server has just released (`hold_until:` turned `released:`).
+ * The stored copy then says released, so a resent release does not arrive twice.
+ */
+fun isArrival(existing: FeedItem?, incoming: FeedItem): Boolean =
+    existing == null || (existing.notify.startsWith("hold_until") && incoming.notify.startsWith("released:"))

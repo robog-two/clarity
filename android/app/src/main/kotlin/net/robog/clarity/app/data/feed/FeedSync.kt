@@ -59,7 +59,10 @@ sealed interface SyncSignal {
     data class SessionChanged(val sessionId: SessionId) : SyncSignal
 }
 
-/** Something that reached this phone for the first time: the push service decides if it deserves a notification. */
+/**
+ * Something that reached this phone for the first time, or a held item the server just released:
+ * the push service decides if it deserves a notification.
+ */
 sealed interface Arrival {
     data class Item(val item: FeedItem) : Arrival
     data class Held(val action: HeldAction) : Arrival
@@ -89,7 +92,7 @@ class FeedSync(
     val signals: SharedFlow<SyncSignal> = _signals.asSharedFlow()
 
     private val _arrivals = MutableSharedFlow<Arrival>(extraBufferCapacity = 64)
-    /** New feed items and newly held actions, once each; only the push service listens. */
+    /** New feed items, released holds and newly held actions, once each; only the push service listens. */
     val arrivals: SharedFlow<Arrival> = _arrivals.asSharedFlow()
 
     private val nudges = Channel<Unit>(Channel.CONFLATED)
@@ -189,7 +192,7 @@ class FeedSync(
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            if (existing == null) _arrivals.tryEmit(Arrival.Item(it))
+            if (isArrival(existing, it)) _arrivals.tryEmit(Arrival.Item(it))
         }
     }
 

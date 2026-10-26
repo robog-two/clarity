@@ -32,6 +32,7 @@ import net.robog.clarity.backend.auth.DevicePrincipal
 import net.robog.clarity.backend.http.EdgeProblem
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.respondProblem
+import net.robog.clarity.backend.scheduler.RELEASE_RESEND
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.feed.Card
@@ -39,6 +40,8 @@ import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.UserInput
+
+private const val RELEASED_PREFIX = "released:"
 
 /** How often an idle SSE connection gets a comment so proxies keep it open. */
 val SSE_HEARTBEAT: Duration = 20.seconds
@@ -57,18 +60,19 @@ fun eventName(event: FeedEvent): String = when (event) {
 
 /**
  * Pure: whether a live [event] should still be sent after the items up to [replayedSeq] were
- * replayed from the store. Item events at or below the replayed position are already known.
+ * replayed from the store. Item events at or below the replayed position are already known, except
+ * a released hold: it changes an old item, and the phone notifies on that change.
  */
 fun isNewerThan(event: FeedEvent, replayedSeq: Long): Boolean = when (event) {
     is FeedEvent.ItemAppended -> event.item.seq > replayedSeq
-    is FeedEvent.ItemFinal -> event.item.seq > replayedSeq
+    is FeedEvent.ItemFinal -> event.item.seq > replayedSeq || event.item.notify.startsWith(RELEASED_PREFIX)
     else -> true
 }
 
 /**
  * The app's feed: `GET /api/v1/feed?after=` (paging), `GET /api/v1/events?after=` (SSE: replay the
- * items after `after`, then live events; a heartbeat comment keeps it open; closed when the JWT
- * expires so the client reconnects with a fresh one) and `POST /api/v1/input`.
+ * items after `after` and the holds released lately, then live events; a heartbeat comment keeps it
+ * open; closed when the JWT expires so the client reconnects with a fresh one) and `POST /api/v1/input`.
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
@@ -145,6 +149,8 @@ class FeedRoutes(
             }
             if (!page.hasMore) break
         }
+        // Holds released lately on items the client already has: it notifies once and remembers it.
+        feed.releasedSince(clock.now() - RELEASE_RESEND).filter { it.seq <= after }.forEach { send(frame(FeedEvent.ItemFinal(it))) }
         for (event in live) {
             if (!isNewerThan(event, replayed)) continue
             send(frame(event))
