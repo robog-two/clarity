@@ -52,6 +52,21 @@ import net.robog.clarity.shared.governance.actionHash
 import net.robog.clarity.shared.governance.payloadFor
 import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.vault.DeviceVaultKey
+import net.robog.clarity.shared.vault.CredentialId
+import net.robog.clarity.shared.vault.CredentialKind
+import net.robog.clarity.shared.vault.CredentialMeta
+import net.robog.clarity.shared.vault.FieldSpec
+import net.robog.clarity.shared.vault.FieldType
+import net.robog.clarity.shared.governance.Provenance
+import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.backend.feed.ExposedFeedStore
+import net.robog.clarity.backend.feed.FeedHub
+import net.robog.clarity.backend.feed.FeedService
+import net.robog.clarity.backend.vault.GovernedVaultHolds
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -207,6 +222,26 @@ class PhoneApprovalFlowTest : FunSpec({
             client.signed(never.id.value, SignedDecision(SignedDecision.APPROVE, sig)).status shouldBe HttpStatusCode.Conflict
             heldStore.get(never.id)!!.status shouldBe HeldAction.Status.BLOCKED
         }
+    }
+
+    test("two parallel uses of one login (its email and password fields) ask the person once") {
+        val slowGate = ActionGate(
+            Guard(GuardModel { delay(300); GuardVerdict(Decision.ALLOW, emptyList(), "fine") }),
+            constitutions, heldStore, ActionOutbox(database, Clock.System, heldStore, OutboxSignals(), GovernanceEvents(), ActionResults()),
+            ConnectorRouter(database, NoConnectorPreferences()), GovernanceEvents(), UtcPersonZone(), Clock.System,
+        )
+        val holds = GovernedVaultHolds(slowGate, heldStore, FeedService(ExposedFeedStore(database, Clock.System), FeedHub()), Clock.System)
+        val login = CredentialMeta(
+            CredentialId(Uuid.random().toString()), "shop_login", CredentialKind.LOGIN, "shop.example.com", "orders",
+            listOf(FieldSpec("email", "Email", FieldType.EMAIL), FieldSpec("password", "Password", FieldType.PASSWORD)), createdAt = Clock.System.now(),
+        )
+        val waits = coroutineScope {
+            (1..2).map { async { holds.useCredential(login, "example.com", "https://shop.example.com/login", Provenance("run", untrustedInput = true), "sign in") } }.awaitAll()
+        }
+        val ids = waits.map { (it as net.robog.clarity.backend.vault.Hold.Wait).heldId }
+        ids.distinct().size shouldBe 1
+        heldStore.list(setOf(HeldAction.Status.HELD), limit = 200)
+            .count { (it.action as? ProposedAction.UseCredential)?.credentialId == login.id } shouldBe 1
     }
 
     test("the action hash is stable and the payload has the documented shape") {

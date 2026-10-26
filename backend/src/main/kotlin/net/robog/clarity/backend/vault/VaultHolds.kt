@@ -7,6 +7,8 @@ import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ActionGate
@@ -61,6 +63,12 @@ class GovernedVaultHolds(
     private val feed: FeedService,
     private val clock: Clock,
 ) : VaultGovernance {
+    /**
+     * Looking for an open identical proposal and holding a new one happen under one lock: the guard
+     * takes seconds, and the agent often fills a login's fields in parallel calls, which otherwise
+     * both found nothing pending and asked twice.
+     */
+    private val proposing = Mutex()
 
     override suspend fun useCredential(
         credential: CredentialMeta,
@@ -68,9 +76,9 @@ class GovernedVaultHolds(
         pageUrl: String,
         provenance: Provenance,
         reason: String,
-    ): Hold {
+    ): Hold = proposing.withLock {
         val same = { a: ProposedAction -> a is ProposedAction.UseCredential && a.credentialId == credential.id && a.site == domain }
-        pendingOrDeclined(same, "using ${credential.name} on $domain")?.let { return it }
+        pendingOrDeclined(same, "using ${credential.name} on $domain")?.let { return@withLock it }
         val differs = Sites.registrableDomain(credential.site)?.let { it != domain } ?: false
         val summary = "Use ${credential.name} (${credential.fields.joinToString { it.name }}) on $domain for 5 minutes" +
             if (differs) " [saved for ${credential.site}, not $domain]" else ""
@@ -81,7 +89,7 @@ class GovernedVaultHolds(
             site = domain,
             fields = credential.fields.map { it.name },
         )
-        return hold(action, reason.ifBlank { credential.purpose }, listOf(ContextItem("page", pageUrl), ContextItem("saved for", credential.site)), provenance, "push_now")
+        hold(action, reason.ifBlank { credential.purpose }, listOf(ContextItem("page", pageUrl), ContextItem("saved for", credential.site)), provenance, "push_now")
     }
 
     override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait {
@@ -103,13 +111,13 @@ class GovernedVaultHolds(
         provenance: Provenance,
         reason: String,
         context: List<ContextItem>,
-    ): Hold {
+    ): Hold = proposing.withLock {
         val same = { a: ProposedAction -> a is ProposedAction.ExternalTool && a.server == action.server && a.tool == action.tool && a.input == action.input && a.summary == action.summary }
         held.list(setOf(HeldAction.Status.APPROVED), limit = 200).firstOrNull { same(it.action) }?.let { approved ->
-            if (held.transition(approved.id, setOf(HeldAction.Status.APPROVED), HeldAction.Status.EXECUTED)) return Hold.Proceed
+            if (held.transition(approved.id, setOf(HeldAction.Status.APPROVED), HeldAction.Status.EXECUTED)) return@withLock Hold.Proceed
         }
-        pendingOrDeclined(same, "that step")?.let { return it }
-        return hold(action.copy(idempotencyKey = "browser:${Uuid.random()}"), reason, context, provenance, "in_app")
+        pendingOrDeclined(same, "that step")?.let { return@withLock it }
+        hold(action.copy(idempotencyKey = "browser:${Uuid.random()}"), reason, context, provenance, "in_app")
     }
 
     /** A still-open or just-declined identical proposal, as the answer to give instead of asking again. */
