@@ -71,7 +71,7 @@ class SettingsRulesTest {
 private class ListedConnectors(var result: ApiResult<List<ConnectorSummary>>) : ConnectorsRepository {
     override suspend fun list() = result
     override suspend fun storedConfig(id: ConnectorId) = null
-    override suspend fun save(connector: ConnectorSummary, values: Map<String, String>): SaveConnectorOutcome = SaveConnectorOutcome.Saved
+    override suspend fun save(connector: ConnectorSummary, values: net.robog.clarity.app.connector.FormValues): SaveConnectorOutcome = SaveConnectorOutcome.Saved
     override suspend fun test(id: ConnectorId): ApiResult<ConnectorTestResult> = ApiResult.Success(ConnectorTestResult(true))
 }
 
@@ -203,6 +203,20 @@ class SettingsViewModelTest {
         assertEquals(listOf("MAIL", "DAV"), r.state.serverSources.map { it.title })
         assertEquals("2 min ago", r.state.serverSources.first().sync)
         assertEquals("never", r.state.serverSources.last().sync)
+    }
+
+    @Test fun serverSourcesOpenTheConnectorAndShowOnesThatAreNotRunning() = withMain {
+        val r = SettingsRig(
+            connectors = ApiResult.Success(
+                listOf(
+                    connector("mail", "mail", null),
+                    ConnectorSummary(ConnectorId("dav"), null, emptyMap(), null),
+                ),
+            ),
+        )
+        assertEquals(listOf("mail", "dav"), r.state.serverSources.map { it.id })
+        assertEquals("not running", r.state.serverSources.last().sync)
+        assertEquals("not running on your server", r.state.serverSources.last().sub)
     }
 
     @Test fun phoneSourcesReflectPermissionsAndLastSync() = withMain {

@@ -66,6 +66,7 @@ data class SettingsActions(
     val onAllowBattery: () -> Unit = {},
     val onEveningAt: (LocalTime) -> Unit = {},
     val onOpenConstitution: () -> Unit = {},
+    val onOpenConnector: (String) -> Unit = {},
     val onAllowNotifications: () -> Unit = {},
     val onAllowExactAlarms: () -> Unit = {},
     val onAllowFullScreen: () -> Unit = {},
@@ -76,13 +77,17 @@ data class SettingsActions(
 )
 
 @Composable
-fun SettingsTab(onOpenConstitution: () -> Unit, modifier: Modifier = Modifier, viewModel: SettingsViewModel = metroViewModel()) {
+fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Unit, modifier: Modifier = Modifier, viewModel: SettingsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Coming back from a system settings page: re-read what is allowed now.
     DisposableEffect(lifecycle) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) viewModel.refreshDevice() }
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshDevice()
+                viewModel.refreshSources()
+            }
+        }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
@@ -105,6 +110,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, modifier: Modifier = Modifier, v
             },
             onEveningAt = viewModel::setEveningAt,
             onOpenConstitution = onOpenConstitution,
+            onOpenConnector = onOpenConnector,
             onAllowNotifications = {
                 if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 else context.openSystem(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS) { putExtra(AndroidSettings.EXTRA_APP_PACKAGE, context.packageName) }
@@ -227,7 +233,7 @@ fun SettingsContent(
         SectionTitle("Sources · on your server")
         Column {
             if (state.serverSources.isEmpty()) Hint("No sources connected yet.")
-            state.serverSources.forEach { SourceItem(it) }
+            state.serverSources.forEach { row -> SourceItem(row) { actions.onOpenConnector(row.id) } }
         }
 
         SectionTitle("Sources · on this phone")
@@ -273,8 +279,8 @@ private const val TIME_CALL = "call"
 private const val TIME_EVENING = "evening"
 
 @Composable
-private fun SourceItem(row: SourceRow) {
-    SelectRow(row.title, row.sub, row.sync, {}, statusColor = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun SourceItem(row: SourceRow, onClick: () -> Unit) {
+    SelectRow(row.title, row.sub, row.sync, onClick, statusColor = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

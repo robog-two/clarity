@@ -6,6 +6,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import kotlin.random.Random
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -15,14 +16,35 @@ import kotlinx.serialization.json.JsonPrimitive
 import net.robog.clarity.app.connector.ConfigForm
 import net.robog.clarity.app.connector.ConfigForms
 import net.robog.clarity.app.connector.FieldError
+import net.robog.clarity.app.connector.FormField
+import net.robog.clarity.app.connector.FormValues
+import net.robog.clarity.app.connector.ItemIds
+import net.robog.clarity.app.connector.ItemPreset
+import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
 import net.robog.clarity.app.connector.PhonePermissions
-import net.robog.clarity.app.connector.storedFormValues
+import net.robog.clarity.app.connector.accountTestLine
 import net.robog.clarity.app.data.ApiError
+import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.ConnectorsRepository
 import net.robog.clarity.app.data.SaveConnectorOutcome
 
 enum class SetupProblem { NoSealingKey, NotAvailable, Unreachable, Other }
+
+/** The last test text of a connector, and whether it passed. Account lines are cut out of it. */
+data class TestLine(val text: String, val ok: Boolean)
+
+/** One collection item being added or edited, in its own screen. */
+data class ItemEdit(
+    val collection: String,
+    val id: String,
+    val isNew: Boolean,
+    val values: FormValues,
+    /** The preset's description ("Use an app-specific password from account.apple.com"). */
+    val hint: String? = null,
+    /** Errors are only shown once the person tried to save the item. */
+    val showErrors: Boolean = false,
+)
 
 data class ConnectorSetupState(
     val key: String = "",
@@ -30,22 +52,41 @@ data class ConnectorSetupState(
     val proto: String = "",
     val blurb: String = "",
     val form: ConfigForm = ConfigForm(emptyList()),
-    val values: Map<String, String> = emptyMap(),
+    val values: FormValues = FormValues(),
     /** Errors are only shown once the person tried to save. */
     val showErrors: Boolean = false,
     /** The connector's last test failed: the person re-enters the password. */
     val failedReason: String? = null,
+    val lastTest: TestLine? = null,
     val phone: PhoneConnectorKind? = null,
     val allowed: Boolean = false,
     val saving: Boolean = false,
     val problem: SetupProblem? = null,
     /** Set when saved; the screen leaves and calls [ConnectorSetupViewModel.consumeSaved]. */
     val saved: Boolean = false,
+    /** Looking the connector up (opened from settings). */
+    val loading: Boolean = false,
+    /** A server connector that has no manifest: its container is not running. */
+    val notRunning: Boolean = false,
+    /** The connector is not in the server's list at all. */
+    val missing: Boolean = false,
+    val editor: ItemEdit? = null,
+    /** The collection whose presets are being offered, before the item form opens. */
+    val choosing: String? = null,
 ) {
     val errors: Map<String, FieldError> get() = if (showErrors) form.errors(values) else emptyMap()
+    val editorErrors: Map<String, FieldError>
+        get() = editor?.takeIf { it.showErrors }?.let { e -> itemForm(e.collection)?.errors(e.values) } ?: emptyMap()
     val canSave: Boolean
-        get() = !saving && if (phone != null) allowed else form.errors(values).isEmpty()
+        get() = !saving && !notRunning && if (phone != null) allowed else form.errors(values).isEmpty()
     val saveLabel: String get() = if (failedReason != null) "save and retest" else "save"
+
+    fun collectionField(collection: String): FormField? = form.fields.firstOrNull { it.key == collection }
+    fun itemForm(collection: String): ConfigForm? = collectionField(collection)?.collection?.itemForm
+
+    /** What the last test said about the account called [label], if it names it. */
+    fun testLineFor(label: String): TestLine? =
+        lastTest?.let { t -> accountTestLine(t.text, label)?.let { TestLine(it, t.ok) } }
 }
 
 /** The form of one connector, generated from its manifest's `configSchema` (or the phone permission step). */
@@ -60,8 +101,14 @@ class ConnectorSetupViewModel(
     val state: StateFlow<ConnectorSetupState> = _state.asStateFlow()
 
     private var current: ConnectorRow? = null
+    private var random: Random = Random.Default
 
-    fun open(row: ConnectorRow, failedReason: String?) {
+    /** For tests: a fixed source of item ids. */
+    internal fun useRandom(r: Random) {
+        random = r
+    }
+
+    fun open(row: ConnectorRow, failedReason: String?, test: TestState? = null) {
         current = row
         when (row) {
             is ConnectorRow.Phone -> _state.value = ConnectorSetupState(
@@ -70,18 +117,32 @@ class ConnectorSetupViewModel(
             )
             is ConnectorRow.Server -> {
                 val manifest = row.summary.manifest
-                val form = manifest?.let { ConfigForms.parse(it.configSchema) } ?: ConfigForm(emptyList())
-                val description = (manifest?.configSchema?.get("description") as? JsonPrimitive)?.content
+                if (manifest == null) {
+                    // The container is not running, so there is no schema: say so instead of an empty form.
+                    _state.value = ConnectorSetupState(
+                        key = row.key, title = row.title, proto = row.proto, notRunning = true,
+                        blurb = "${row.title} is not running on your server yet. Start its container " +
+                            "(the `${row.summary.id.value}` compose profile), then come back and check again.",
+                    )
+                    return
+                }
+                val form = ConfigForms.parse(manifest.configSchema)
+                val description = (manifest.configSchema["description"] as? JsonPrimitive)?.content
+                val last = when (test) {
+                    is TestState.Ok -> test.summary?.let { TestLine(it, true) }
+                    is TestState.Failed -> TestLine(test.reason, false)
+                    else -> null
+                } ?: row.summary.lastTest?.let { TestLine(it.message, it.ok) }
                 _state.value = ConnectorSetupState(
                     key = row.key, title = row.title, proto = row.proto,
                     blurb = description ?: "Connect ${row.title.lowercase()} so I can read it.",
-                    form = form, values = form.initialValues(), failedReason = failedReason,
+                    form = form, values = form.initialValues(), failedReason = failedReason, lastTest = last,
                 )
-                // Prefill what the server already has (secrets come back sealed, so they stay empty).
+                // Prefill what the server already has (secrets come back sealed and are kept as they are).
                 viewModelScope.launch {
                     connectors.storedConfig(row.summary.id)?.let { stored ->
                         _state.update { s ->
-                            if (s.key != row.key) s else s.copy(values = s.values + storedFormValues(form, stored.values))
+                            if (s.key != row.key) s else s.copy(values = s.values.overlay(form.valuesFromStored(stored.values)))
                         }
                     }
                 }
@@ -89,10 +150,93 @@ class ConnectorSetupViewModel(
         }
     }
 
+    /** Opened from settings, where only the connector's id is known. */
+    fun openById(id: String) {
+        _state.value = ConnectorSetupState(key = id, title = id, loading = true)
+        viewModelScope.launch {
+            when (val r = connectors.list()) {
+                is ApiResult.Success -> {
+                    val summary = r.value.firstOrNull { it.id.value == id }
+                    if (summary == null) {
+                        _state.value = ConnectorSetupState(key = id, title = id, missing = true)
+                    } else {
+                        open(ConnectorRow.Server(summary), failedReason = null)
+                    }
+                }
+                is ApiResult.Failure -> _state.value = ConnectorSetupState(
+                    key = id, title = id,
+                    problem = if (r.error is ApiError.NotFound) SetupProblem.NotAvailable else SetupProblem.Unreachable,
+                )
+            }
+        }
+    }
+
+    /** "check again" on the not-running screen. */
+    fun recheck() {
+        val id = (current as? ConnectorRow.Server)?.summary?.id?.value ?: return
+        openById(id)
+    }
+
     fun onValueChanged(key: String, value: String) =
-        _state.update { it.copy(values = it.values + (key to value), problem = null) }
+        _state.update { it.copy(values = it.values.withText(key, value), problem = null) }
+
+    fun onListChanged(key: String, value: List<String>) =
+        _state.update { it.copy(values = it.values.withList(key, value), problem = null) }
 
     fun onPermissionResult(granted: Boolean) = _state.update { it.copy(allowed = granted) }
+
+    // --- collections (one card per account) ---
+
+    /** "add account": the presets first when the collection has any, else straight to the empty form. */
+    fun startAdd(collection: String) {
+        val spec = _state.value.collectionField(collection)?.collection ?: return
+        if (spec.presets.isEmpty()) beginItem(collection, null) else _state.update { it.copy(choosing = collection) }
+    }
+
+    /** A preset was chosen, or null for "other". */
+    fun choosePreset(collection: String, preset: ItemPreset?) = beginItem(collection, preset)
+
+    fun closeChooser() = _state.update { it.copy(choosing = null) }
+
+    private fun beginItem(collection: String, preset: ItemPreset?) = _state.update { s ->
+        val form = s.itemForm(collection) ?: return@update s
+        val taken = s.values.items(collection).map { it.id }.toSet()
+        val initial = form.initialValues()
+        s.copy(
+            choosing = null,
+            editor = ItemEdit(
+                collection = collection,
+                id = ItemIds.generate(taken, random),
+                isNew = true,
+                values = if (preset != null) initial.overlay(preset.values) else initial,
+                hint = preset?.description,
+            ),
+        )
+    }
+
+    fun editItem(collection: String, id: String) = _state.update { s ->
+        val item = s.values.items(collection).firstOrNull { it.id == id } ?: return@update s
+        s.copy(editor = ItemEdit(collection, id, isNew = false, values = item.values))
+    }
+
+    fun onItemValueChanged(key: String, value: String) =
+        _state.update { s -> s.copy(editor = s.editor?.let { it.copy(values = it.values.withText(key, value)) }) }
+
+    fun onItemListChanged(key: String, value: List<String>) =
+        _state.update { s -> s.copy(editor = s.editor?.let { it.copy(values = it.values.withList(key, value)) }) }
+
+    /** Keeps the item in the form when it is complete; the config is only sent by [save]. */
+    fun saveItem() = _state.update { s ->
+        val e = s.editor ?: return@update s
+        val form = s.itemForm(e.collection) ?: return@update s
+        if (form.errors(e.values).isNotEmpty()) return@update s.copy(editor = e.copy(showErrors = true))
+        s.copy(values = s.values.withItem(e.collection, ItemValues(e.id, e.values)), editor = null, problem = null)
+    }
+
+    fun cancelItem() = _state.update { it.copy(editor = null) }
+
+    fun removeItem(collection: String, id: String) =
+        _state.update { it.copy(values = it.values.withoutItem(collection, id), problem = null) }
 
     fun save() {
         val s = _state.value

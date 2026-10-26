@@ -6,6 +6,7 @@ import kotlin.time.TimeSource
 import kotlinx.coroutines.flow.Flow
 import net.robog.clarity.app.connector.ConfigForms
 import net.robog.clarity.app.connector.ConfigSealer
+import net.robog.clarity.app.connector.FormValues
 import net.robog.clarity.app.connector.SealingException
 import net.robog.clarity.app.connector.sealerFor
 import net.robog.clarity.app.data.feed.FeedStore
@@ -137,8 +138,11 @@ interface ConnectorsRepository {
     suspend fun list(): ApiResult<List<ConnectorSummary>>
     /** Stored config of a connector, or null if none/unavailable. */
     suspend fun storedConfig(id: ConnectorId): ConnectorConfig?
-    /** Seals secrets, stores the config, then grants every noun the connector produces. */
-    suspend fun save(connector: ConnectorSummary, values: Map<String, String>): SaveConnectorOutcome
+    /**
+     * Seals newly typed secrets, keeps stored ones unchanged, stores the whole config, then grants
+     * every noun the connector produces.
+     */
+    suspend fun save(connector: ConnectorSummary, values: FormValues): SaveConnectorOutcome
     suspend fun test(id: ConnectorId): ApiResult<ConnectorTestResult>
 }
 
@@ -150,11 +154,11 @@ class DefaultConnectorsRepository(
 
     override suspend fun storedConfig(id: ConnectorId): ConnectorConfig? = api.connectorConfig(id).getOrNull()
 
-    override suspend fun save(connector: ConnectorSummary, values: Map<String, String>): SaveConnectorOutcome {
+    override suspend fun save(connector: ConnectorSummary, values: FormValues): SaveConnectorOutcome {
         val manifest = connector.manifest ?: return SaveConnectorOutcome.Failed(ApiError.Malformed("no manifest"))
         val form = ConfigForms.parse(manifest.configSchema)
         val sealingKey = manifest.sealingKey
-        if (sealingKey == null && form.fields.any { it.secret && !values[it.key].isNullOrEmpty() }) {
+        if (sealingKey == null && form.hasTypedSecrets(values)) {
             return SaveConnectorOutcome.NoSealingKey
         }
         val json = try {

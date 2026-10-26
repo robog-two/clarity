@@ -26,6 +26,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -284,4 +286,51 @@ fun ClarityField(
         textStyle = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal),
         shape = MaterialTheme.shapes.extraSmall,
     )
+}
+
+/** Dropdown over a few fixed choices, styled like [ClarityField]. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+fun ClarityDropdown(
+    label: String,
+    selected: String,
+    options: List<Pair<String, String>>,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    supporting: String? = null,
+    error: String? = null,
+) {
+    var expanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.material3.ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = it },
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        OutlinedTextField(
+            value = options.firstOrNull { it.first == selected }?.second.orEmpty(),
+            onValueChange = {},
+            readOnly = true,
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable),
+            label = { Text(label) },
+            trailingIcon = { androidx.compose.material3.ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            isError = error != null,
+            supportingText = (error ?: supporting)?.let { { Text(it) } },
+            singleLine = true,
+            textStyle = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal),
+            shape = MaterialTheme.shapes.extraSmall,
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { (value, title) ->
+                androidx.compose.material3.DropdownMenuItem(
+                    text = { Text(title) },
+                    onClick = {
+                        expanded = false
+                        onSelect(value)
+                    },
+                )
+            }
+        }
+    }
 }

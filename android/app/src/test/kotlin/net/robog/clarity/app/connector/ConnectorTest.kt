@@ -41,7 +41,8 @@ private val MAIL_SCHEMA = schema(
         "use_tls": {"type": "boolean", "default": true},
         "timeout_s": {"type": "number", "minimum": 0.5},
         "nested": {"type": "object", "properties": {"a": {"type": "string"}}},
-        "tags": {"type": "array"}
+        "tags": {"type": "array"},
+        "mode": {"type": "string", "enum": ["a", "b"], "default": "a"}
       }
     }
     """,
@@ -52,7 +53,7 @@ class ConfigFormTest {
 
     @Test fun mapsSchemaPropertiesToFields() {
         val byKey = form.fields.associateBy { it.key }
-        assertEquals(listOf("host", "port", "username", "password", "token", "calendar_url", "use_tls", "timeout_s"), form.fields.map { it.key })
+        assertEquals(listOf("host", "port", "username", "password", "token", "calendar_url", "use_tls", "timeout_s", "mode"), form.fields.map { it.key })
         assertEquals("imap host", byKey["host"]!!.label)
         assertEquals(FieldKind.TEXT, byKey["host"]!!.kind)
         assertEquals(FieldKind.NUMBER, byKey["port"]!!.kind)
@@ -66,7 +67,7 @@ class ConfigFormTest {
         assertTrue(byKey["password"]!!.secret && !byKey["host"]!!.secret)
     }
 
-    @Test fun nestedAndArrayPropertiesAreSkipped() {
+    @Test fun nestedObjectsAndUntypedArraysAreSkipped() {
         assertTrue(form.fields.none { it.key == "nested" || it.key == "tags" })
     }
 
@@ -75,7 +76,7 @@ class ConfigFormTest {
     }
 
     @Test fun defaultsPrefillTheForm() {
-        assertEquals(mapOf("port" to "993", "use_tls" to "true"), form.initialValues())
+        assertEquals(mapOf("port" to "993", "use_tls" to "true", "mode" to "a"), form.initialValues().texts)
     }
 
     @Test fun validation() {
@@ -96,18 +97,20 @@ class ConfigFormTest {
     }
 
     @Test fun errorsListsOnlyBadFields() {
-        val errors = form.errors(mapOf("host" to "imap", "username" to "sam@x.y", "password" to ""))
+        val errors = form.errors(FormValues(texts = mapOf("host" to "imap", "username" to "sam@x.y", "password" to "")))
         assertEquals(setOf("password"), errors.keys)
     }
 
     @Test fun buildsTypedValuesAndSealsSecrets() {
-        val values = mapOf(
-            "host" to " imap.home.local ", "port" to "993", "username" to "sam@home.local",
-            "password" to "correct-horse", "use_tls" to "false", "timeout_s" to "2.5",
+        val values = FormValues(
+            texts = mapOf(
+                "host" to " imap.home.local ", "port" to "993", "username" to "sam@home.local",
+                "password" to "correct-horse", "use_tls" to "false", "timeout_s" to "2.5",
+            ),
         )
         val sealed = mutableListOf<Pair<String, String>>()
         val out = form.toConfigValues(values) { field, plaintext ->
-            sealed += field.key to plaintext
+            sealed += field to plaintext
             SealedValue(Sealing.ALGORITHM, "CIPHERTEXT")
         }
         assertEquals("imap.home.local", out["host"]!!.jsonPrimitive.content)
@@ -127,11 +130,13 @@ class ConfigFormTest {
         val stored = JsonObject(
             mapOf(
                 "host" to JsonPrimitive("imap.x"),
-                "password" to JsonObject(mapOf("ciphertext" to JsonPrimitive("zzz"))),
+                "password" to JsonObject(mapOf("type" to JsonPrimitive("sealed"), "ciphertext" to JsonPrimitive("zzz"))),
                 "port" to JsonPrimitive(143),
             ),
         )
-        assertEquals(mapOf("host" to "imap.x", "port" to "143"), storedFormValues(form, stored))
+        val v = form.valuesFromStored(stored)
+        assertEquals(mapOf("host" to "imap.x", "port" to "143"), v.texts)
+        assertEquals(setOf("password"), v.storedSecrets.keys)
     }
 }
 

@@ -23,8 +23,11 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import net.robog.clarity.app.connector.ConfigForms
+import net.robog.clarity.app.connector.FormValues
 import net.robog.clarity.app.connector.TinkConfigSealer
 import net.robog.clarity.app.nav.RootState
 import net.robog.clarity.app.nav.RootViewModel
@@ -120,7 +123,7 @@ class ConnectorsRepositoryTest {
             }
         }
         val repo = DefaultConnectorsRepository(rig.api, TinkConfigSealer())
-        val outcome = repo.save(connector(sealingKey), mapOf("host" to "imap.home.local", "password" to "hunter2"))
+        val outcome = repo.save(connector(sealingKey), FormValues(texts = mapOf("host" to "imap.home.local", "password" to "hunter2")))
         assertEquals(SaveConnectorOutcome.Saved, outcome)
 
         val put = rig.requests.indexOfFirst { it.method == HttpMethod.Put && it.url.encodedPath.endsWith("/config") }
@@ -136,16 +139,45 @@ class ConnectorsRepositoryTest {
         assertEquals("""{"grants":{"message":"granted"}}""", rig.body(grants))
     }
 
+    @Test fun accountsKeepTheirStoredSecretsAndSealNewOnesPerItem() = runTest {
+        val stored = """{"version":4,"values":{"accounts":[{"id":"k3j9x2p1","label":"Work","password":{"type":"sealed","algorithm":"A","ciphertext":"STORED"}}]}}"""
+        val rig = Rig { r -> if (r.method == HttpMethod.Get) HttpStatusCode.OK to stored else HttpStatusCode.NoContent to "" }
+        val summary = ConnectorSummary(
+            ConnectorId("mail"),
+            ConnectorManifest(
+                kind = "imap", displayName = "Mail", version = "1", produces = setOf(Noun.MESSAGE),
+                configSchema = net.robog.clarity.app.testutil.MAIL_ACCOUNTS_SCHEMA, sealingKey = sealingKey,
+            ),
+            grants = mapOf(Noun.MESSAGE to GrantState.PENDING), lastSeenAt = null,
+        )
+        val form = ConfigForms.parse(summary.manifest!!.configSchema)
+        var values = form.valuesFromStored(Json.parseToJsonElement(stored).jsonObject["values"]!!.jsonObject)
+        val itemForm = form.fields.single().collection!!.itemForm
+        val fresh = itemForm.initialValues().withText("label", "Home").withText("imapHost", "imap.x").withText("smtpHost", "smtp.x")
+            .withText("username", "sam").withText("password", "hunter2")
+        values = values.withItem("accounts", net.robog.clarity.app.connector.ItemValues("m4n8q7r2", fresh))
+
+        assertEquals(SaveConnectorOutcome.Saved, DefaultConnectorsRepository(rig.api, TinkConfigSealer()).save(summary, values))
+        val put = rig.requests.indexOfFirst { it.method == HttpMethod.Put && it.url.encodedPath.endsWith("/config") }
+        val body = rig.body(put)
+        assertTrue("hunter2" !in body)
+        val accounts = Json.parseToJsonElement(body).jsonObject["values"]!!.jsonObject["accounts"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("STORED", accounts[0]["password"]!!.jsonObject["ciphertext"]!!.jsonPrimitive.content, "kept unchanged")
+        assertEquals("A", accounts[0]["password"]!!.jsonObject["algorithm"]!!.jsonPrimitive.content)
+        assertEquals("sealed", accounts[1]["password"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        assertEquals("m4n8q7r2", accounts[1]["id"]!!.jsonPrimitive.content)
+    }
+
     @Test fun withoutASealingKeySecretsAreNotSent() = runTest {
         val rig = Rig { HttpStatusCode.NoContent to "" }
-        val outcome = DefaultConnectorsRepository(rig.api, TinkConfigSealer()).save(connector(null), mapOf("host" to "h", "password" to "pw"))
+        val outcome = DefaultConnectorsRepository(rig.api, TinkConfigSealer()).save(connector(null), FormValues(texts = mapOf("host" to "h", "password" to "pw")))
         assertEquals(SaveConnectorOutcome.NoSealingKey, outcome)
         assertTrue(rig.requests.none { it.method == HttpMethod.Put })
     }
 
     @Test fun serverErrorsAreReturned() = runTest {
         val rig = Rig { r -> if (r.method == HttpMethod.Put) HttpStatusCode.NotFound to "" else HttpStatusCode.NotFound to "" }
-        val outcome = DefaultConnectorsRepository(rig.api, TinkConfigSealer()).save(connector(sealingKey), mapOf("host" to "h", "password" to "pw"))
+        val outcome = DefaultConnectorsRepository(rig.api, TinkConfigSealer()).save(connector(sealingKey), FormValues(texts = mapOf("host" to "h", "password" to "pw")))
         assertIs<SaveConnectorOutcome.Failed>(outcome)
         assertIs<ApiError.NotFound>(outcome.error)
     }

@@ -20,4 +20,11 @@ object Sealing {
 
     /** The HPKE `info` string for a value of config [field] sealed for [connectorId]. */
     fun info(connectorId: String, field: String): String = "$INFO_PREFIX$connectorId:$field"
+
+    /**
+     * The field name of a secret [property] inside item [itemId] of the config collection
+     * [collection] (for example one mail account), passed as `field` to [info]:
+     * `"accounts/k3j9x2p1/password"`. See docs/workstreams/connector-accounts.md.
+     */
+    fun itemField(collection: String, itemId: String, property: String): String = "$collection/$itemId/$property"
 }

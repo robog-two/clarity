@@ -18,6 +18,8 @@ import net.robog.clarity.app.push.LocalFrontScreen
 import net.robog.clarity.app.push.placeFor
 import net.robog.clarity.app.ui.amend.AmendScreen
 import net.robog.clarity.app.ui.constitution.ConstitutionScreen
+import net.robog.clarity.app.ui.onboarding.ConnectorSetupScreen
+import net.robog.clarity.app.ui.onboarding.ConnectorSetupViewModel
 import net.robog.clarity.app.ui.held.DraftReviewScreen
 import net.robog.clarity.app.ui.main.MainScaffold
 import net.robog.clarity.app.ui.onboarding.OnboardingFlow
@@ -88,6 +90,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onReview = { push(DraftReview(it.value)) },
                     onOpenHeldItem = { push(Amend(it.value)) },
                     onOpenConstitution = { push(ConstitutionView) },
+                    onOpenConnector = { push(ConnectorView(it)) },
                 )
             }
             entry<DraftReview> { key ->
@@ -102,6 +105,17 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     heldId = key.heldId?.let(::HeldActionId),
                     backLabel = if (key.heldId != null) "← held" else "← constitution",
                     onBack = { backStack.removeLastOrNull() },
+                )
+            }
+            entry<ConnectorView> { key ->
+                val vm: ConnectorSetupViewModel = metroViewModel()
+                LaunchedEffect(key.connectorId) { vm.openById(key.connectorId) }
+                ConnectorSetupScreen(
+                    viewModel = vm,
+                    onSaved = { backStack.removeLastOrNull() },
+                    onBack = { backStack.removeLastOrNull() },
+                    step = null,
+                    backLabel = "← settings",
                 )
             }
             entry<ConstitutionView> {
