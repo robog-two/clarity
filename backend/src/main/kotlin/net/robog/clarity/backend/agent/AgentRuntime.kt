@@ -21,17 +21,38 @@ import net.robog.clarity.shared.governance.Constitution
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 
 /**
- * The model gateway shared by the lead and the helpers, built once from the configured API key.
- * Null (agents disabled) when there is no key.
+ * The model gateway shared by the lead and the helpers. Built from the configured API key (a Podman
+ * secret or environment), or later from the key the person enters in setup ([installKey]), so that
+ * agents start without a restart. Null (agents disabled) while there is no key; [awaitEnabled]
+ * suspends until there is one. A configured key always wins over one entered at runtime.
  */
 @Inject
 @SingleIn(AppScope::class)
-class AgentRuntime(val config: AgentConfig, factory: ModelGatewayFactory) {
-    val gateway: ModelGateway? = config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let(factory::create)
+class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFactory) {
+    private val configured: Boolean = !config.anthropicApiKey.isNullOrBlank()
+    private val current = MutableStateFlow<ModelGateway?>(config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let(factory::create))
+
+    val gateway: ModelGateway? get() = current.value
 
     val enabled: Boolean get() = gateway != null
+
+    /** True when the key comes from configuration; a key entered in setup is then stored but not used. */
+    val keyFromConfig: Boolean get() = configured
+
+    /** Uses [apiKey] from now on, unless a configured key takes precedence. Returns whether it is in use. */
+    fun installKey(apiKey: String): Boolean {
+        if (configured) return false
+        current.value = factory.create(apiKey)
+        return true
+    }
+
+    /** Suspends until a model key is available. */
+    suspend fun awaitEnabled(): ModelGateway = current.filterNotNull().first()
 
     fun harness(journal: RunJournal): Harness = Harness(requireNotNull(gateway) { "agents are disabled: no API key" }, journal)
 }

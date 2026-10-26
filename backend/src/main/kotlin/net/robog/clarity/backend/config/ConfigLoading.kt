@@ -171,6 +171,7 @@ private class Lookup(
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
+                anthropicBaseUrl = string("ANTHROPIC_BASE_URL", "agent.anthropicBaseUrl"),
             ),
         )
     }

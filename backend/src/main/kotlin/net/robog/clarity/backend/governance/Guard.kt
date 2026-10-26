@@ -8,7 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.Json
-import net.robog.clarity.backend.agent.ModelGatewayFactory
+import net.robog.clarity.backend.agent.AgentRuntime
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
@@ -125,16 +125,12 @@ class GatewayGuardModel(
     }
 }
 
-/** Wires [GatewayGuardModel] to the configured Anthropic key; without a key every check fails and so asks. */
+/** Wires [GatewayGuardModel] to the runtime's model key (configured or entered in setup); without a key every check fails and so asks. */
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
-class ConfiguredGuardModel(config: AgentConfig, factory: ModelGatewayFactory) : GuardModel {
-    private val delegate: GuardModel? = config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let { key ->
-        val gateway = factory.create(key)
-        GatewayGuardModel({ gateway }, config.model)
-    }
+class ConfiguredGuardModel(private val runtime: AgentRuntime, config: AgentConfig) : GuardModel {
+    private val delegate = GatewayGuardModel({ requireNotNull(runtime.gateway) { "no model key configured" } }, config.model)
 
-    override suspend fun review(question: GuardQuestion): GuardVerdict =
-        delegate?.review(question) ?: error("no model key configured")
+    override suspend fun review(question: GuardQuestion): GuardVerdict = delegate.review(question)
 }

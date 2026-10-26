@@ -1,8 +1,10 @@
 package net.robog.clarity.backend.agent
 
+import com.anthropic.client.okhttp.AnthropicOkHttpClient
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
+import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.harness.AnthropicModelGateway
 import net.robog.clarity.harness.ModelGateway
 
@@ -13,6 +15,10 @@ fun interface ModelGatewayFactory {
 
 @Inject
 @ContributesBinding(AppScope::class)
-class AnthropicGatewayFactory : ModelGatewayFactory {
-    override fun create(apiKey: String): ModelGateway = AnthropicModelGateway(apiKey)
+class AnthropicGatewayFactory(private val config: AgentConfig) : ModelGatewayFactory {
+    override fun create(apiKey: String): ModelGateway {
+        val builder = AnthropicOkHttpClient.builder().apiKey(apiKey)
+        config.anthropicBaseUrl?.let { builder.baseUrl(it) }
+        return AnthropicModelGateway(builder.build())
+    }
 }

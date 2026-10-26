@@ -19,11 +19,15 @@ sealed interface Schedule {
 
     /** Once a day at local [time]. */
     data class DailyAt(val time: LocalTime) : Schedule
+
+    /** A schedule derived from the person's settings (for example the call prep, which follows the call's time and days). */
+    class Computed(val next: (after: Instant, zone: TimeZone) -> Instant) : Schedule
 }
 
 /** The first run strictly after [after]. For [Schedule.Every] that is one interval later. */
 fun Schedule.nextAfter(after: Instant, zone: TimeZone): Instant = when (this) {
     is Schedule.Every -> after + interval
+    is Schedule.Computed -> next(after, zone)
     is Schedule.DailyAt -> {
         val today = after.toLocalDateTime(zone).date
         val candidate = today.atTime(time).toInstant(zone)

@@ -11,6 +11,8 @@ data class AgentConfig(
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
     val roles: AgentRoles = AgentRoles(),
+    /** Overrides the Anthropic API base URL (`ANTHROPIC_BASE_URL`): a gateway or proxy, or a fake endpoint in tests. */
+    val anthropicBaseUrl: String? = null,
 ) {
     /** The lead role's model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
