@@ -73,7 +73,7 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
                     viewModel = connectorsVm,
                     onOpen = { item ->
                         openConnector = item.row.key
-                        setupVm.open(item.row, (item.test as? TestState.Failed)?.reason)
+                        setupVm.open(item.row, (item.test as? TestState.Failed)?.reason, item.test)
                         flow.go(OnboardingStep.ConnectorSetup)
                     },
                     onContinue = flow::next,
@@ -120,11 +120,11 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
  */
 @Composable
 fun StepScaffold(
-    step: OnboardingStep,
+    step: OnboardingStep?,
     modifier: Modifier = Modifier,
     backLabel: String? = null,
     onBack: (() -> Unit)? = null,
-    kicker: String? = step.kicker,
+    kicker: String? = step?.kicker,
     title: String? = null,
     footer: @Composable ColumnScope.() -> Unit = {},
     body: @Composable ColumnScope.() -> Unit,
@@ -139,7 +139,7 @@ fun StepScaffold(
             .padding(top = 24.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        StepBar(step.segments)
+        if (step != null) StepBar(step.segments)
         if (backLabel != null && onBack != null) BackLink(backLabel, onBack)
         Column(
             Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),

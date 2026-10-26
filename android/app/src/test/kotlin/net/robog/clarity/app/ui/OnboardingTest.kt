@@ -20,6 +20,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import net.robog.clarity.app.AppConfig
+import net.robog.clarity.app.connector.FormValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
 import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.data.ApiError
@@ -148,11 +149,11 @@ private class FakeConnectors(var list: ApiResult<List<ConnectorSummary>>) : Conn
     val tests = mutableListOf<ConnectorId>()
     var testResults = mutableMapOf<String, ApiResult<ConnectorTestResult>>()
     var saveOutcome: SaveConnectorOutcome = SaveConnectorOutcome.Saved
-    var saved = mutableListOf<Pair<ConnectorId, Map<String, String>>>()
+    var saved = mutableListOf<Pair<ConnectorId, FormValues>>()
     var stored: ConnectorConfig? = null
     override suspend fun list() = list
     override suspend fun storedConfig(id: ConnectorId) = stored
-    override suspend fun save(connector: ConnectorSummary, values: Map<String, String>): SaveConnectorOutcome {
+    override suspend fun save(connector: ConnectorSummary, values: FormValues): SaveConnectorOutcome {
         saved += connector.id to values
         return saveOutcome
     }
@@ -609,7 +610,7 @@ class ConnectorSetupViewModelTest {
         assertEquals("Mail", s.title)
         assertEquals("I read your inbox.", s.blurb)
         assertEquals(listOf("host", "password", "port"), s.form.fields.map { it.key })
-        assertEquals(mapOf("port" to "993"), s.values)
+        assertEquals(mapOf("port" to "993"), s.values.texts)
         assertFalse(s.canSave, "required fields are empty")
         assertTrue(s.errors.isEmpty(), "errors only show after a save attempt")
         assertEquals("save", s.saveLabel)
@@ -632,7 +633,7 @@ class ConnectorSetupViewModelTest {
         vm.onValueChanged("password", "pw")
         assertTrue(vm.state.value.canSave)
         vm.save()
-        assertEquals(listOf(ConnectorId("mail") to mapOf("port" to "993", "host" to "imap.home.local", "password" to "pw")), repo.saved)
+        assertEquals(listOf(ConnectorId("mail") to mapOf("port" to "993", "host" to "imap.home.local", "password" to "pw")), repo.saved.map { it.first to it.second.texts })
         assertTrue(vm.state.value.saved)
         vm.consumeSaved()
         assertFalse(vm.state.value.saved)
@@ -669,8 +670,9 @@ class ConnectorSetupViewModelTest {
         repo.stored = ConnectorConfig(3, Json.parseToJsonElement("""{"host":"imap.x","password":{"type":"sealed"}}""").jsonObject)
         val vm = ConnectorSetupViewModel(repo, FakePhone())
         vm.open(row(true), null)
-        assertEquals("imap.x", vm.state.value.values["host"])
-        assertNull(vm.state.value.values["password"])
+        assertEquals("imap.x", vm.state.value.values.text("host"))
+        assertEquals("", vm.state.value.values.text("password"))
+        assertTrue("password" in vm.state.value.values.storedSecrets, "the stored secret is kept, not shown")
     }
 
     @Test fun phoneConnectorNeedsThePermission() = withMain {

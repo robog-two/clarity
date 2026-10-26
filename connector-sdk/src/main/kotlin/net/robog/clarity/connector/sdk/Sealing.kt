@@ -99,13 +99,29 @@ class SealingKeys private constructor(private val privateKey: ByteArray) {
  *
  * @throws SealingException if the value is not sealed or cannot be opened.
  */
-fun ConnectorConfig.secret(name: String, keys: SealingKeys, connectorId: String): String? {
-    val raw = values[name] ?: return null
+fun ConnectorConfig.secret(name: String, keys: SealingKeys, connectorId: String): String? =
+    values.sealedSecret(name, keys, connectorId, name)
+
+/**
+ * The plaintext of secret [property] of item [itemId] in the config collection [collection], or
+ * null when it is not set. The value is bound to `Sealing.itemField(collection, itemId, property)`,
+ * so a value sealed for one item does not open as another.
+ *
+ * @throws SealingException if the value is not sealed or cannot be opened.
+ */
+fun ConnectorConfig.itemSecret(collection: String, itemId: String, property: String, keys: SealingKeys, connectorId: String): String? {
+    val item = items(collection).firstOrNull { it.id == itemId && !it.legacy } ?: return null
+    return item.values.sealedSecret(property, keys, connectorId, Sealing.itemField(collection, itemId, property))
+}
+
+/** Opens `this[name]` as a sealed value bound to [field]; null when unset. */
+internal fun JsonObject.sealedSecret(name: String, keys: SealingKeys, connectorId: String, field: String): String? {
+    val raw = this[name] ?: return null
     if (raw is JsonPrimitive && raw.isString && raw.content.isEmpty()) return null
     val sealed = try {
         ClarityJson.decodeFromJsonElement(SealedValue.serializer(), JsonObject((raw as? JsonObject ?: throw SealingException("'$name' is not sealed")) - "type"))
     } catch (e: kotlinx.serialization.SerializationException) {
         throw SealingException("'$name' is not a sealed value", e)
     }
-    return keys.open(sealed, connectorId, name)
+    return keys.open(sealed, connectorId, field)
 }

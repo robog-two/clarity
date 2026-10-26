@@ -27,11 +27,19 @@ import net.robog.clarity.app.push.PushController
 import net.robog.clarity.app.ui.onboarding.toggleDay
 import net.robog.clarity.app.ui.onboarding.toggledMode
 import net.robog.clarity.app.ui.onboarding.withHeadsUp
+import net.robog.clarity.app.ui.onboarding.NOT_RUNNING
+import net.robog.clarity.app.ui.onboarding.isDeviceConnector
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.shared.session.Settings
 
 /** One line of "Sources": a name, where it comes from, and when it last synced. */
-data class SourceRow(val title: String, val sub: String, val sync: String)
+data class SourceRow(
+    val title: String,
+    val sub: String,
+    val sync: String,
+    /** The connector id; tapping the row opens its screen (accounts, passwords). */
+    val id: String = "",
+)
 
 data class SettingsUiState(
     val instanceUrl: String = "",
@@ -109,14 +117,28 @@ class SettingsViewModel(
         (constitution.current() as? ApiResult.Success)?.value?.let { c ->
             _state.update { it.copy(constitution = "v${c.version} · ${c.lines.size} lines") }
         }
-        (connectors.list() as? ApiResult.Success)?.value?.let { list ->
-            val now = clock.now()
-            _state.update {
-                it.copy(
-                    serverSources = list
-                        .filterNot { c -> c.id.value.startsWith("device-") }
-                        .map { c -> SourceRow(c.manifest?.displayName ?: c.id.value, c.manifest?.kind ?: "connector", relativeTime(c.lastSeenAt, now)) },
-                )
+        refreshSources()
+    }
+
+    /** Reloads the sources on the server (also when coming back from a connector screen). */
+    fun refreshSources() {
+        viewModelScope.launch {
+            (connectors.list() as? ApiResult.Success)?.value?.let { list ->
+                val now = clock.now()
+                _state.update {
+                    it.copy(
+                        serverSources = list
+                            .filterNot { c -> isDeviceConnector(c.id) }
+                            .map { c ->
+                                val m = c.manifest
+                                if (m == null) {
+                                    SourceRow(c.id.value, NOT_RUNNING, "not running", c.id.value)
+                                } else {
+                                    SourceRow(m.displayName, m.kind, relativeTime(c.lastSeenAt, now), c.id.value)
+                                }
+                            },
+                    )
+                }
             }
         }
     }

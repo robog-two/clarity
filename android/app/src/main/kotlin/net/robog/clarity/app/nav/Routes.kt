@@ -15,6 +15,9 @@ import net.robog.clarity.shared.governance.HeldActionId
 
 @Serializable data object ConstitutionView : NavKey
 
+/** The screen of one server connector (accounts, passwords), opened from settings. */
+@Serializable data class ConnectorView(val connectorId: String) : NavKey
+
 /** The four bottom tabs. */
 enum class MainTab(val label: String) {
     Today("today"),

@@ -30,9 +30,19 @@ private val log = KotlinLogging.logger {}
 /** Threading headers copied from the message being answered. */
 data class ReplyHeaders(val inReplyTo: String, val references: String)
 
-/** `SAVE_DRAFT` and `SEND_EMAIL`. Credentials come from the runtime's newest config on every action. */
-class MailActions(private val access: suspend () -> MailAccess) {
-    constructor(runtime: ConnectorRuntime) : this({ MailAccess(parseMailConfig(runtime.awaitConfig(), runtime)) })
+/**
+ * `SAVE_DRAFT` and `SEND_EMAIL`. The accounts come from the runtime's newest config on every
+ * action; [selectAccount] picks the one to use.
+ */
+class MailActions(private val accounts: suspend () -> List<MailAccess>) {
+    constructor(runtime: ConnectorRuntime) : this({ usableMailAccounts(runtime.awaitConfig(), runtime).map(::MailAccess) })
+
+    /** The account for [email]: by sender address, else by the message answered (see [selectAccount]), else the first. */
+    private suspend fun accessFor(email: EmailDraft, target: SourceId?): MailAccess {
+        val all = accounts()
+        val chosen = selectAccount(all.map { it.config }, email.from, target) ?: throw ConfigIncomplete("No mail account has been added yet")
+        return all.first { it.config.id == chosen.id }
+    }
 
     fun handlers(): ActionHandlers = actionHandlers {
         onTargeted<ProposedAction.SaveDraft> { action, target -> saveDraft(action, target) }
@@ -59,10 +69,10 @@ class MailActions(private val access: suspend () -> MailAccess) {
     suspend fun sendEmail(action: ProposedAction.SendEmail, target: SourceId?): ActionOutcome = guarded { doSendEmail(action, target) }
 
     private suspend fun doSaveDraft(action: ProposedAction.SaveDraft, target: SourceId?): ActionOutcome = withContext(Dispatchers.IO) {
-        val acc = access.invoke()
+        val acc = accessFor(action.email, target)
         val messageId = messageIdFor(action.idempotencyKey, acc.config.fromAddress)
         acc.imap().use { store ->
-            val reply = replyHeaders(store, target)
+            val reply = replyHeaders(store, acc.config, target)
             val message = buildMessage(acc.smtpSession(), acc.config, action.email, messageId, reply)
             val drafts = store.specialFolder("\\Drafts", "Drafts", "Draft", "INBOX.Drafts") ?: store.folder("Drafts").also { it.create(jakarta.mail.Folder.HOLDS_MESSAGES) }
             // A re-run of the same draft replaces the earlier copy instead of adding another.
@@ -76,13 +86,13 @@ class MailActions(private val access: suspend () -> MailAccess) {
             message.setFlag(Flags.Flag.DRAFT, true)
             message.setFlag(Flags.Flag.SEEN, true)
             val appended = drafts.appendUIDMessages(arrayOf(message))
-            val ref = appended?.firstOrNull()?.let { MailRef(drafts.fullName, it.uidvalidity, it.uid).sourceId } ?: messageId
+            val ref = appended?.firstOrNull()?.let { MailRef(drafts.fullName, it.uidvalidity, it.uid, acc.config.id).sourceId } ?: messageId
             ActionOutcome.Done(SourceId(ref))
         }
     }
 
     private suspend fun doSendEmail(action: ProposedAction.SendEmail, target: SourceId?): ActionOutcome = withContext(Dispatchers.IO) {
-        val acc = access.invoke()
+        val acc = accessFor(action.email, target)
         val messageId = messageIdFor(action.idempotencyKey, acc.config.fromAddress)
         acc.imap().use { store ->
             val sent = store.specialFolder("\\Sent", "Sent", "Sent Items", "Sent Messages", "INBOX.Sent")
@@ -90,7 +100,7 @@ class MailActions(private val access: suspend () -> MailAccess) {
                 log.info { "message $messageId is already in ${sent.fullName}; not sending again" }
                 return@use ActionOutcome.Done(SourceId(messageId))
             }
-            val reply = replyHeaders(store, target)
+            val reply = replyHeaders(store, acc.config, target)
             val session = acc.smtpSession()
             val message = buildMessage(session, acc.config, action.email, messageId, reply)
             val recipients = (action.email.to + action.email.cc).map { it.toAddress() }.toTypedArray()
@@ -113,9 +123,10 @@ class MailActions(private val access: suspend () -> MailAccess) {
     private fun IMAPFolder.contains(messageId: String): Boolean =
         openedUse(READ_ONLY) { f -> f.search(HeaderTerm("Message-ID", messageId)).isNotEmpty() }
 
-    /** `In-Reply-To`/`References` for a reply to the message at [target] (a `folder/uidvalidity/uid` source id). */
-    private fun replyHeaders(store: IMAPStore, target: SourceId?): ReplyHeaders? {
-        val ref = target?.value?.let(MailRef::parse) ?: return null
+    /** `In-Reply-To`/`References` for a reply to the message at [target], when it lives in [account]'s mailbox. */
+    private fun replyHeaders(store: IMAPStore, account: MailConfig, target: SourceId?): ReplyHeaders? {
+        val ref = target?.value?.let { MailRef.parse(it, listOf(account.id)) } ?: return null
+        if (ref.accountId != account.id) return null
         val folder = store.folder(ref.folder)
         if (!folder.exists()) return null
         return folder.openedUse(READ_ONLY) { f ->

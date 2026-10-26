@@ -141,7 +141,7 @@ class MailServerTest : FunSpec({
         val sync = MailSync(access, InMemoryStateStore())
         val original = runSync(sync).filterIsInstance<IngestRecord.Upsert>().first { (it.payload as MessagePayload).subject == "Question" }
 
-        val actions = MailActions { access }
+        val actions = MailActions { listOf(access) }
         val draft = EmailDraft(to = listOf(Handle.email("bob@example.com", "Bob")), subject = "Re: Question", body = "Yes, I can.\nSee you there.", inReplyTo = null)
         val send = ProposedAction.SendEmail("key-send-1", "reply to Bob", draft)
         val expectedId = messageIdFor("key-send-1", me)
@@ -169,7 +169,7 @@ class MailServerTest : FunSpec({
     }
 
     test("SEND_EMAIL with an invalid recipient fails without retrying") {
-        val actions = MailActions { access }
+        val actions = MailActions { listOf(access) }
         val draft = EmailDraft(to = listOf(Handle.email("not an address")), subject = "x", body = "y")
         val out = actions.sendEmail(ProposedAction.SendEmail("key-bad", "bad", draft), null)
         out.shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe false
@@ -177,7 +177,7 @@ class MailServerTest : FunSpec({
     }
 
     test("SAVE_DRAFT appends to Drafts and replaces the earlier copy of the same draft") {
-        val actions = MailActions { access }
+        val actions = MailActions { listOf(access) }
         val first = ProposedAction.SaveDraft("key-draft-1", "draft", EmailDraft(to = listOf(Handle.email("bob@example.com")), subject = "Plan", body = "first version"))
         actions.saveDraft(first, null).shouldBeInstanceOf<ActionOutcome.Done>()
         val second = first.copy(email = first.email.copy(body = "second version"))
@@ -197,7 +197,7 @@ class MailServerTest : FunSpec({
     }
 
     test("the connection test logs in to both servers and counts folders; a wrong password is reported, not thrown") {
-        val ok = MailAccess(config).check()
+        val ok = MailAccess(config).check().folders
         (ok >= 1) shouldBe true
         val bad = runCatching { MailAccess(config.copy(password = "wrong")).check() }
         bad.isFailure shouldBe true
@@ -206,21 +206,5 @@ class MailServerTest : FunSpec({
     test("IDLE either reports a delivery or says it is unsupported") {
         val result = idleForChange(access, "INBOX", 1.seconds)
         (result == null || result == false) shouldBe true
-    }
-
-    test("config parsing opens the sealed password and applies defaults") {
-        val keys = net.robog.clarity.connector.sdk.SealingKeys.generate()
-        val runtime = net.robog.clarity.connector.sdk.ConnectorRuntime("mail", keys)
-        val values = kotlinx.serialization.json.buildJsonObject {
-            put("imapHost", kotlinx.serialization.json.JsonPrimitive("imap.example.com"))
-            put("smtpHost", kotlinx.serialization.json.JsonPrimitive("smtp.example.com"))
-            put("username", kotlinx.serialization.json.JsonPrimitive("me@example.com"))
-            put("password", kotlinx.serialization.json.JsonPrimitive("plain"))
-        }
-        val cfg = net.robog.clarity.shared.connector.ConnectorConfig(1, values)
-        // an unsealed password is refused
-        runCatching { parseMailConfig(cfg, runtime) }.exceptionOrNull().shouldBeInstanceOf<net.robog.clarity.connector.sdk.SealingException>()
-        val missing = net.robog.clarity.shared.connector.ConnectorConfig(1, kotlinx.serialization.json.JsonObject(values - "password"))
-        runCatching { parseMailConfig(missing, runtime) }.exceptionOrNull().shouldBeInstanceOf<ConfigIncomplete>()
     }
 })

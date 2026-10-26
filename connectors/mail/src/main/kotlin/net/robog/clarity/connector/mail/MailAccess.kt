@@ -59,14 +59,20 @@ class MailAccess(val config: MailConfig) {
         return Session.getInstance(p)
     }
 
-    /** Authenticates against both servers and counts the folders; throws the server's error otherwise. */
-    fun check(): Int {
-        val folders = imap().use { store -> store.defaultFolder.list("*").size }
+    /** Authenticates against both servers; counts the folders and the messages in the configured ones. Throws the server's error otherwise. */
+    fun check(): MailCheck {
+        val check = imap().use { store ->
+            val messages = config.folders.sumOf { name -> store.folder(name).takeIf { it.exists() }?.messageCount?.coerceAtLeast(0) ?: 0 }
+            MailCheck(store.defaultFolder.list("*").size, messages)
+        }
         val session = smtpSession()
         session.getTransport().use { transport -> transport.connect(config.smtpHost, config.smtpPort, config.username, config.password) }
-        return folders
+        return check
     }
 }
+
+/** What [MailAccess.check] found. */
+data class MailCheck(val folders: Int, val messages: Int)
 
 inline fun <T> IMAPStore.use(block: (IMAPStore) -> T): T = try { block(this) } finally { runCatching { close() } }
 
