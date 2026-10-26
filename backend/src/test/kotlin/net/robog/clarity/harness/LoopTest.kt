@@ -37,12 +37,14 @@ class LoopTest : FunSpec({
         decide(response(StopReason.TOOL_USE, Block.Text("odd")), 1, 5) shouldBe Decision.Stop(FinishReason.OTHER)
     }
 
-    test("routing: unknown, hidden and approval-gated tools are never run") {
+    test("routing: unknown and hidden tools are never run, raw-script tools are hidden by the gated policy") {
         val read = fakeTool("read")
         val write = fakeTool("write", ToolEffect.WRITE)
         val tools = mapOf("read" to read, "write" to write)
         route(toolUse("1", "read"), tools, ToolPolicy.Default).shouldBeInstanceOf<Dispatch.Run>()
-        route(toolUse("2", "write"), tools, ToolPolicy.Default).shouldBeInstanceOf<Dispatch.NeedsApproval>()
+        route(toolUse("2", "write"), tools, ToolPolicy.Default).shouldBeInstanceOf<Dispatch.Run>()
+        route(toolUse("6", "browser__evaluate_script"), mapOf("browser__evaluate_script" to fakeTool("browser__evaluate_script")), ToolPolicy.Gated)
+            .shouldBeInstanceOf<Dispatch.Unknown>()
         route(toolUse("3", "nope"), tools, ToolPolicy.Default).shouldBeInstanceOf<Dispatch.Unknown>()
         route(toolUse("4", "read"), tools, ToolPolicy.only(setOf("write"))).shouldBeInstanceOf<Dispatch.Unknown>()
         route(toolUse("5", "write"), tools, ToolPolicy.AllowAll).shouldBeInstanceOf<Dispatch.Run>()

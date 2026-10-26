@@ -9,7 +9,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.serializer
 
-/** What running a tool can do to the world; drives [ToolPolicy]'s default approval rule. */
+/** What running a tool can do to the world. Informational: gating happens at each tool's own door, not in the harness. */
 enum class ToolEffect {
     /** Pure read of data we own. */
     READ,

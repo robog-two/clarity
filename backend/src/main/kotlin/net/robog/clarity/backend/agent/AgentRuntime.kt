@@ -71,8 +71,8 @@ fun roleRequest(
     system = system,
     messages = messages,
     tools = tools,
-    // Every tool is gated at its own door (the action gate, the scope's provenance), so the harness runs them all.
-    policy = ToolPolicy.AllowAll,
+    // Every tool is gated at its own door (the action gate, the browser wrapper), so the harness runs what is visible.
+    policy = ToolPolicy.Gated,
     maxTurns = maxTurns,
     maxTokens = role.maxTokens,
     effort = role.effort,

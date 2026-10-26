@@ -81,7 +81,6 @@ sealed interface HarnessEvent {
     data class AssistantText(val text: String) : HarnessEvent
     data class ToolCalled(val id: String, val name: String, val input: JsonObject) : HarnessEvent
     data class ToolCompleted(val id: String, val name: String, val content: String, val isError: Boolean) : HarnessEvent
-    data class ApprovalRequired(val id: String, val name: String, val input: JsonObject) : HarnessEvent
 
     /** A run continued from its journal. [rerunTools] is the number of unanswered tool calls executed again. */
     data class Resumed(val messages: Int, val rerunTools: Int) : HarnessEvent
@@ -335,7 +334,6 @@ class Harness(
     ): Block.Result {
         val call = when (dispatch) {
             is Dispatch.Run -> dispatch.call
-            is Dispatch.NeedsApproval -> dispatch.call
             is Dispatch.Unknown -> dispatch.call
         }
         val result: ToolResult = when (dispatch) {
@@ -348,10 +346,6 @@ class Harness(
                 } else {
                     withContext(ToolCallContext(runId, call.id)) { dispatch.tool.invokeSafely(call.input) }
                 }
-            }
-            is Dispatch.NeedsApproval -> {
-                send(HarnessEvent.ApprovalRequired(call.id, call.name, call.input))
-                ToolResult.Error("Approval is pending for ${call.name}; it was not executed. Continue without it or tell the user what you wanted to do.")
             }
             is Dispatch.Unknown -> ToolResult.Error("Unknown tool: ${call.name}")
         }
