@@ -163,8 +163,29 @@ class FeedSync(
 
     private class GapFailed(val state: SyncState) : Exception()
 
+    /** What one [catchUp] pass brought: the first-time arrivals, and whether every request got through. */
+    data class CatchUp(val arrived: List<Arrival>, val complete: Boolean)
+
+    /**
+     * One pass without the stream, for the background fallback: fills the gap and reloads the held
+     * list. The arrivals also go out on [arrivals] as usual; they are returned so that the caller
+     * sees every one even with nobody collecting. A failure part way keeps what already arrived.
+     */
+    suspend fun catchUp(): CatchUp {
+        val arrived = mutableListOf<Arrival>()
+        return try {
+            fillGap(arrived::add)
+            refreshHeld(arrived::add)
+            CatchUp(arrived, complete = true)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            CatchUp(arrived, complete = false)
+        }
+    }
+
     /** Pages through the feed after the last cached seq until the server says there is no more. */
-    suspend fun fillGap() {
+    suspend fun fillGap(onArrival: (Arrival) -> Unit = {}) {
         while (true) {
             val after = store.lastSeq()
             when (val result = backend.feed(after)) {
@@ -177,7 +198,7 @@ class FeedSync(
                 )
                 is ApiResult.Success -> {
                     val page = result.value
-                    page.items.sortedBy { it.seq }.forEach { storeItem(it, final = true) }
+                    page.items.sortedBy { it.seq }.forEach { storeItem(it, final = true, onArrival) }
                     // No progress means nothing new; stop even if the server claims more.
                     if (!page.hasMore || page.items.isEmpty() || store.lastSeq() <= after) return
                 }
@@ -185,20 +206,25 @@ class FeedSync(
         }
     }
 
-    private suspend fun storeItem(item: FeedItem, final: Boolean) {
+    private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: (Arrival) -> Unit = {}) {
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            if (existing == null) _arrivals.tryEmit(Arrival.Item(it))
+            if (existing == null) arrive(Arrival.Item(it), onArrival)
         }
     }
 
+    private fun arrive(arrival: Arrival, onArrival: (Arrival) -> Unit) {
+        _arrivals.tryEmit(arrival)
+        onArrival(arrival)
+    }
+
     /** Reloads the held list; actions that are waiting and new to this phone arrive once. */
-    private suspend fun refreshHeld() {
+    private suspend fun refreshHeld(onArrival: (Arrival) -> Unit = {}) {
         val fresh = (backend.held() as? ApiResult.Success)?.value ?: return
         val known = store.held.first().filter { it.status == HeldAction.Status.HELD }.map { it.id }.toSet()
         store.replaceHeld(fresh)
-        fresh.filter { it.status == HeldAction.Status.HELD && it.id !in known }.forEach { _arrivals.tryEmit(Arrival.Held(it)) }
+        fresh.filter { it.status == HeldAction.Status.HELD && it.id !in known }.forEach { arrive(Arrival.Held(it), onArrival) }
     }
 
     internal suspend fun apply(event: FeedEvent) {
