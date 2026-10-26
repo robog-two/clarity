@@ -95,7 +95,9 @@ class FeedPureTest : FunSpec({
         eventName(FeedEvent.ItemAppended(item(1))) shouldBe "item"
         isNewerThan(FeedEvent.ItemAppended(item(5)), 5) shouldBe false
         isNewerThan(FeedEvent.ItemAppended(item(6)), 5) shouldBe true
-        isNewerThan(FeedEvent.ItemFinal(item(4)), 5) shouldBe false
+        // A final version changes an item the client already has, so it is never filtered.
+        isNewerThan(FeedEvent.ItemFinal(item(4)), 5) shouldBe true
+        isNewerThan(FeedEvent.ItemFinal(item(5)), 5) shouldBe true
         isNewerThan(FeedEvent.Busy(false), 99) shouldBe true
     }
 })

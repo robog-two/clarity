@@ -57,11 +57,12 @@ fun eventName(event: FeedEvent): String = when (event) {
 
 /**
  * Pure: whether a live [event] should still be sent after the items up to [replayedSeq] were
- * replayed from the store. Item events at or below the replayed position are already known.
+ * replayed from the store. An appended item at or below the replayed position is already known. A
+ * finished item always goes out: it changes an item the client already has (usually one it was
+ * just sent), and clients apply it idempotently.
  */
 fun isNewerThan(event: FeedEvent, replayedSeq: Long): Boolean = when (event) {
     is FeedEvent.ItemAppended -> event.item.seq > replayedSeq
-    is FeedEvent.ItemFinal -> event.item.seq > replayedSeq
     else -> true
 }
 
