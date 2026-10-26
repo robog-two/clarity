@@ -2,6 +2,7 @@ package net.robog.clarity.backend.dedup
 
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Payload
@@ -75,9 +76,42 @@ fun CalendarEventPayload.normalized(): CalendarEventPayload = copy(
     attendees = attendees.normalizedSet(),
 )
 
+private val SLASHES = Regex("/{2,}")
+
+/** `a//b/` -> `/a/b`: one leading slash, no repeated or trailing slashes (the root is `/`). */
+fun normalizeDocumentPath(raw: String): String {
+    // Trailing whitespace and slashes are trimmed together, so "d /" and "/d" agree (idempotent).
+    val collapsed = raw.replace('\\', '/').replace(SLASHES, "/").trimStart().trimEnd { it == '/' || it.isWhitespace() }
+    return if (collapsed.startsWith('/')) collapsed else "/$collapsed"
+}
+
+/** Cuts [this] to at most [maxBytes] of UTF-8 without splitting a character. */
+fun String.truncateUtf8(maxBytes: Int): String {
+    if (maxBytes <= 0) return ""
+    var bytes = 0
+    var end = 0
+    while (end < length) {
+        val cp = codePointAt(end)
+        val size = when { cp < 0x80 -> 1; cp < 0x800 -> 2; cp < 0x10000 -> 3; else -> 4 }
+        if (bytes + size > maxBytes) break
+        bytes += size
+        end += Character.charCount(cp)
+    }
+    return substring(0, end)
+}
+
+fun DocumentPayload.normalized(): DocumentPayload = copy(
+    store = store.trimStart().trimEnd { it == '/' || it.isWhitespace() }.lowercase(),
+    path = normalizeDocumentPath(path),
+    title = title.collapseWhitespace(),
+    mimeType = mimeType.collapsedOrNull()?.lowercase(),
+    excerpt = excerpt.trim().truncateUtf8(DocumentPayload.MAX_EXCERPT_BYTES),
+)
+
 /** Exhaustive per-noun normalization. Idempotent: `p.normalized().normalized() == p.normalized()`. */
 fun Payload.normalized(): Payload = when (this) {
     is MessagePayload -> normalized()
     is ContactPayload -> normalized()
     is CalendarEventPayload -> normalized()
+    is DocumentPayload -> normalized()
 }

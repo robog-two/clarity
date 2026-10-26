@@ -1,0 +1,138 @@
+package net.robog.clarity.app.ui.main
+
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.PauseCircleOutline
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Today
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import dev.zacsweers.metrox.viewmodel.metroViewModel
+import net.robog.clarity.app.nav.MainTab
+import net.robog.clarity.app.ui.ask.AskScreen
+import net.robog.clarity.app.ui.held.HeldScreen
+import net.robog.clarity.app.ui.settings.SettingsTab
+import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.app.ui.today.TodayScreen
+import net.robog.clarity.shared.governance.HeldActionId
+
+private fun MainTab.icon(): ImageVector = when (this) {
+    MainTab.Today -> Icons.Outlined.Today
+    MainTab.Ask -> Icons.Outlined.ChatBubbleOutline
+    MainTab.Held -> Icons.Outlined.PauseCircleOutline
+    MainTab.Settings -> Icons.Outlined.Settings
+}
+
+/** The signed-in app: four bottom tabs from the prototype, with "held · N" and confirmation toasts. */
+@Composable
+fun MainScaffold(
+    tab: MainTab,
+    onTab: (MainTab) -> Unit,
+    onReview: (HeldActionId) -> Unit,
+    onOpenHeldItem: (HeldActionId) -> Unit,
+    onOpenConstitution: () -> Unit,
+    viewModel: MainViewModel = metroViewModel(),
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.keepInSync() }
+    }
+
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.messages.collect { message ->
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(message)
+        }
+    }
+
+    // Ask once for permission to notify: the heads-up, the call and urgent holds all need it.
+    val context = LocalContext.current
+    var asked by rememberSaveable { mutableStateOf(false) }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    LaunchedEffect(Unit) {
+        if (!asked && Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            asked = true
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.surface,
+        snackbarHost = {
+            SnackbarHost(snackbar) { data ->
+                Snackbar(
+                    data,
+                    shape = MaterialTheme.shapes.extraSmall,
+                    containerColor = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                )
+            }
+        },
+        bottomBar = { TabBar(tab, state.heldWaiting, onTab) },
+    ) { padding ->
+        val content = Modifier.padding(padding)
+        when (tab) {
+            MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content)
+            MainTab.Ask -> AskScreen(content, onReview = onReview)
+            MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
+            MainTab.Settings -> SettingsTab(onOpenConstitution, content)
+        }
+    }
+}
+
+@Composable
+fun TabBar(selected: MainTab, heldWaiting: Int, onSelect: (MainTab) -> Unit) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+        MainTab.entries.forEach { t ->
+            NavigationBarItem(
+                selected = t == selected,
+                onClick = { onSelect(t) },
+                icon = { Icon(t.icon(), contentDescription = null) },
+                label = {
+                    Text(if (t == MainTab.Held) heldTabLabel(heldWaiting) else t.label, style = MaterialTheme.typography.labelMedium)
+                },
+                colors = NavigationBarItemDefaults.colors(indicatorColor = MaterialTheme.colorScheme.secondaryContainer),
+            )
+        }
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390)
+@Composable
+private fun TabBarPreview() = ClarityTheme {
+    TabBar(MainTab.Held, 2) {}
+}

@@ -1,23 +1,81 @@
 package net.robog.clarity.app
 
+import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import net.robog.clarity.app.push.LocalFrontScreen
+import net.robog.clarity.app.ui.held.LocalHeldExtras
+import net.robog.clarity.app.vault.LocalVaultRepository
+import net.robog.clarity.app.vault.vaultExtras
 import dev.zacsweers.metrox.viewmodel.LocalMetroViewModelFactory
+import net.robog.clarity.app.call.CallActivity
 import net.robog.clarity.app.nav.ClarityNavHost
+import net.robog.clarity.app.nav.DeepLink
+import net.robog.clarity.app.nav.parseDeepLink
 import net.robog.clarity.app.ui.theme.ClarityTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+    /** The link that opened (or re-opened) the app, until the navigation has followed it. */
+    private val pendingLink = mutableStateOf<DeepLink?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val graph = (application as ClarityApp).graph
+        if (savedInstanceState == null) pendingLink.value = linkOf(intent)
         setContent {
-            CompositionLocalProvider(LocalMetroViewModelFactory provides graph.metroViewModelFactory) {
-                ClarityTheme { ClarityNavHost() }
+            CompositionLocalProvider(
+                LocalMetroViewModelFactory provides graph.metroViewModelFactory,
+                LocalVaultRepository provides graph.vaultRepository,
+                LocalHeldExtras provides vaultExtras,
+                LocalFrontScreen provides graph.frontScreen,
+            ) {
+                ClarityTheme {
+                    ClarityNavHost(deepLink = pendingLink.value, onDeepLinkHandled = { pendingLink.value = null })
+                }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val graph = (application as ClarityApp).graph
+        // The biometric prompt needs the activity in front.
+        graph.foregroundActivity.set(this)
+        graph.frontScreen.appVisible(true)
+        // Make sure the server knows this phone's vault key and approval key (a no-op when nothing is set up yet).
+        lifecycleScope.launch(Dispatchers.Default) {
+            if (graph.sessionStore.session.first() != null) graph.vaultRepository.register()
+        }
+    }
+
+    override fun onStop() {
+        (application as ClarityApp).graph.foregroundActivity.set(null)
+        (application as ClarityApp).graph.frontScreen.appVisible(false)
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingLink.value = linkOf(intent)
+    }
+
+    /** The call has its own activity: a call link that lands here is handed over. */
+    private fun linkOf(intent: Intent): DeepLink? {
+        val link = parseDeepLink(intent.dataString)
+        if (link is DeepLink.Call) {
+            startActivity(Intent(intent).setClass(this, CallActivity::class.java))
+            return null
+        }
+        return link
     }
 }

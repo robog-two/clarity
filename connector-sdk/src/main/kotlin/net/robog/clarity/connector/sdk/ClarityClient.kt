@@ -13,6 +13,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.get
+import io.ktor.client.request.parameter
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.put
@@ -34,10 +35,15 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.action.ActionId
+import net.robog.clarity.shared.action.ActionPoll
+import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.api.Problem
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.connector.ConnectorTestReport
+import net.robog.clarity.shared.connector.ConnectorTestRequest
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestResponse
 
@@ -113,14 +119,44 @@ class ClarityClient(
         }
     }
 
+    /**
+     * `GET /ingest/v1/actions?wait=`: long-polls up to [wait] (the backend caps it at 30 s) for
+     * actions addressed to this connector. Unlike other calls the request is cancellable, so a
+     * shutdown does not wait for the poll to time out; an action leased to a cancelled poll is
+     * simply re-delivered after its lease lapses.
+     */
+    suspend fun pollActions(wait: Duration): Either<ClientError, ActionPoll> =
+        execute("poll actions", { http.get(ApiPaths.ACTIONS) { parameter("wait", wait.inWholeSeconds) } }, shielded = false) {
+            decode<ActionPoll>(it)
+        }
+
+    /** `POST /ingest/v1/actions/{id}/result`. Idempotent on the backend: reporting twice is harmless. */
+    suspend fun postResult(id: ActionId, result: ActionResult): Either<ClientError, Unit> =
+        execute("post action result", { http.post("${ApiPaths.ACTIONS}/${id.value}/result") { contentType(ContentType.Application.Json); setBody(result) } }) {
+            Unit.right()
+        }
+
+    /** `GET /ingest/v1/test`: the connection test the app asked for, or null (HTTP 204) when none is pending. */
+    suspend fun pollTest(): Either<ClientError, ConnectorTestRequest?> =
+        execute("poll test", { http.get(ApiPaths.TEST) }) { response ->
+            if (response.status == HttpStatusCode.NoContent) null.right() else decode<ConnectorTestRequest>(response)
+        }
+
+    /** `POST /ingest/v1/test`. A 409 (the request was replaced meanwhile) comes back as a [ClientError.Rejected]. */
+    suspend fun postTestReport(report: ConnectorTestReport): Either<ClientError, Unit> =
+        execute("post test report", { http.post(ApiPaths.TEST) { contentType(ContentType.Application.Json); setBody(report) } }) {
+            Unit.right()
+        }
+
     private suspend fun <T> execute(
         op: String,
         request: suspend () -> HttpResponse,
+        shielded: Boolean = true,
         handle: suspend (HttpResponse) -> Either<ClientError, T>,
     ): Either<ClientError, T> {
         var lastFailure = "no attempt made"
         for (attempt in 1..retry.maxAttempts) {
-            val outcome = withContext(NonCancellable) { attemptOnce(request, handle) }
+            val outcome = if (shielded) withContext(NonCancellable) { attemptOnce(request, handle) } else attemptOnce(request, handle)
             when (outcome) {
                 is Either.Right -> return outcome.value
                 is Either.Left -> {

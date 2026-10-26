@@ -1,0 +1,4 @@
+<resources>
+    <!-- Prototype surface colour; avoids a white flash before Compose draws. -->
+    <color name="clarity_surface">#FBF8F4</color>
+</resources>

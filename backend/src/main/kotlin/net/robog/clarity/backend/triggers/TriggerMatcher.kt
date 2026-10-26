@@ -5,8 +5,8 @@ import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.coroutines.cancellation.CancellationException
-import net.robog.clarity.backend.agent.AgentDispatcher
-import net.robog.clarity.backend.agent.AgentTask
+import net.robog.clarity.backend.agent.InboxItem
+import net.robog.clarity.backend.agent.InboxStore
 import net.robog.clarity.backend.ingest.IngestEventBus
 import net.robog.clarity.backend.ingest.Ingested
 import net.robog.clarity.backend.lifecycle.BackgroundService
@@ -14,7 +14,7 @@ import net.robog.clarity.backend.lifecycle.BackgroundService
 private val log = KotlinLogging.logger {}
 
 /**
- * Subscribes to ingest events and fires the agent for every enabled trigger whose query matches.
+ * Subscribes to ingest events and puts a [InboxItem.TriggerFired] in the lead's inbox for every enabled trigger whose query matches.
  * Only *newly created* entities fire triggers: a second connector merging into an existing
  * entity is the same fact, not a new arrival.
  */
@@ -23,7 +23,7 @@ private val log = KotlinLogging.logger {}
 class TriggerMatcher(
     private val bus: IngestEventBus,
     private val triggers: TriggerStore,
-    private val dispatcher: AgentDispatcher,
+    private val inbox: InboxStore,
 ) : BackgroundService {
     override val name = "trigger-matcher"
 
@@ -47,7 +47,16 @@ class TriggerMatcher(
             .filter { it.spec.query.matches(json) }
             .forEach { trigger ->
                 log.info { "trigger '${trigger.spec.name}' matched ${event.entityId}" }
-                dispatcher.dispatch(AgentTask.TriggerFired(trigger.id, trigger.spec.instruction, event))
+                inbox.enqueue(
+                    InboxItem.TriggerFired(
+                        triggerId = trigger.id,
+                        triggerName = trigger.spec.name,
+                        instruction = trigger.spec.instruction,
+                        record = json.toString(),
+                        recordSource = "${event.payload.noun.name.lowercase()} from connector ${event.connectorId}",
+                    ),
+                    dedupKey = "trigger:${trigger.id}:${event.entityId}",
+                )
             }
     }
 }

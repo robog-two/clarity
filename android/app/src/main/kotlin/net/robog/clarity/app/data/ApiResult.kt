@@ -10,6 +10,8 @@ sealed interface ApiError {
     data class Unauthorized(val problem: Problem?) : ApiError
     /** 403: valid credentials but not allowed (e.g. enrollment closed). */
     data class Forbidden(val problem: Problem?) : ApiError
+    /** 404: the route does not exist on this server (yet). Shown as "not available on this server yet". */
+    data class NotFound(val problem: Problem?) : ApiError
     data class Http(val status: Int, val problem: Problem?) : ApiError
     /** Response body didn't match the wire contract. */
     data class Malformed(val cause: String?) : ApiError
@@ -21,6 +23,8 @@ sealed interface ApiResult<out T> {
     data class Success<T>(val value: T) : ApiResult<T>
     data class Failure(val error: ApiError) : ApiResult<Nothing>
 }
+
+fun <T> ApiResult<T>.getOrNull(): T? = (this as? ApiResult.Success)?.value
 
 inline fun <T, R> ApiResult<T>.map(f: (T) -> R): ApiResult<R> = when (this) {
     is ApiResult.Success -> ApiResult.Success(f(value))

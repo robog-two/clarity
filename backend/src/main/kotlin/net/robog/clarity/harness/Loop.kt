@@ -1,7 +1,7 @@
 package net.robog.clarity.harness
 
 /** Why a run ended. */
-enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER }
+enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER, COMPACTED }
 
 /** What the loop does after a model turn. */
 sealed interface Decision {
@@ -27,10 +27,11 @@ fun decide(response: ModelResponse, turn: Int, maxTurns: Int): Decision = when (
     StopReason.MAX_TOKENS -> Decision.Stop(FinishReason.MAX_TOKENS)
     StopReason.END_TURN -> Decision.Stop(FinishReason.END_TURN)
     StopReason.OTHER -> Decision.Stop(FinishReason.OTHER)
-    StopReason.TOOL_USE, StopReason.PAUSE_TURN -> when {
+    StopReason.TOOL_USE, StopReason.PAUSE_TURN, StopReason.COMPACTION -> when {
         turn >= maxTurns -> Decision.Stop(FinishReason.MAX_TURNS)
         response.toolUses.isNotEmpty() -> Decision.RunTools(response.toolUses)
-        response.stopReason == StopReason.PAUSE_TURN -> Decision.Resume
+        // Server-side pause, or paused right after a compaction block: call again as-is.
+        response.stopReason != StopReason.TOOL_USE -> Decision.Resume
         // tool_use stop with no tool_use block is a provider anomaly; treat as finished.
         else -> Decision.Stop(FinishReason.OTHER)
     }
@@ -39,7 +40,6 @@ fun decide(response: ModelResponse, turn: Int, maxTurns: Int): Decision = when (
 /** How one requested call is handled, decided before any tool code runs. */
 sealed interface Dispatch {
     data class Run(val tool: Tool, val call: Block.ToolUse) : Dispatch
-    data class NeedsApproval(val tool: Tool, val call: Block.ToolUse) : Dispatch
     data class Unknown(val call: Block.ToolUse) : Dispatch
 }
 
@@ -48,7 +48,6 @@ fun route(call: Block.ToolUse, tools: Map<String, Tool>, policy: ToolPolicy): Di
     val tool = tools[call.name] ?: return Dispatch.Unknown(call)
     return when (policy.accessFor(tool)) {
         Access.ALLOW -> Dispatch.Run(tool, call)
-        Access.REQUIRE_APPROVAL -> Dispatch.NeedsApproval(tool, call)
         Access.HIDDEN -> Dispatch.Unknown(call)
     }
 }

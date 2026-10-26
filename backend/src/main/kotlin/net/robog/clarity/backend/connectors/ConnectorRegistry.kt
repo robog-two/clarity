@@ -39,6 +39,7 @@ class ConnectorRegistry(
     private val database: Database,
     private val clock: Clock,
     config: AppConfig,
+    private val tests: ConnectorTests,
 ) {
     private val autoGrant = config.connectors.autoGrant
 
@@ -98,11 +99,14 @@ class ConnectorRegistry(
         currentConfig(id)
     }
 
-    suspend fun list(): List<ConnectorSummary> = database.tx {
-        Connectors.selectAll().map { row ->
-            val id = ConnectorId(row[Connectors.id])
-            ConnectorSummary(id, row[Connectors.manifest], grantsOf(id), row[Connectors.lastSeenAt])
-        }.sortedBy { it.id.value }
+    suspend fun list(): List<ConnectorSummary> {
+        val reports = tests.lastReports()
+        return database.tx {
+            Connectors.selectAll().map { row ->
+                val id = ConnectorId(row[Connectors.id])
+                ConnectorSummary(id, row[Connectors.manifest], grantsOf(id), row[Connectors.lastSeenAt], reports[id.value])
+            }.sortedBy { it.id.value }
+        }
     }
 
     suspend fun setGrants(id: ConnectorId, grants: Map<Noun, GrantState>): Either<ConnectorError, Map<Noun, GrantState>> =

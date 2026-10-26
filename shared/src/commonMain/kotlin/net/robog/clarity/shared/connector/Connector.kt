@@ -18,6 +18,8 @@ data class ConnectorManifest(
     val version: String,
     /** Nouns this connector wants to push. The user must grant each one before ingest is accepted. */
     val produces: Set<Noun>,
+    /** Action kinds this connector can execute (see `shared/action`). */
+    val handles: Set<net.robog.clarity.shared.governance.ActionKind> = emptySet(),
     val configSchema: JsonObject = JsonObject(emptyMap()),
     /**
      * Public key (X25519, base64url) the app uses to seal secret config values (passwords,
@@ -52,4 +54,39 @@ data class ConnectorSummary(
     val manifest: ConnectorManifest?,
     val grants: Map<Noun, GrantState>,
     val lastSeenAt: kotlin.time.Instant?,
+    /** Newest result of `POST /api/v1/connectors/{id}/test`, if the connector has reported one. */
+    val lastTest: ConnectorTestReport? = null,
+)
+
+/**
+ * A "test this connection" request (`POST /api/v1/connectors/{id}/test`). The connector sees it on
+ * its next poll of `GET /ingest/v1/test`, checks its upstream with
+ * the current config and answers with [ConnectorTestReport] (`POST /ingest/v1/test`).
+ */
+@Serializable
+data class ConnectorTestRequest(val requestId: String, val requestedAt: kotlin.time.Instant)
+
+@Serializable
+data class ConnectorTestReport(
+    val requestId: String,
+    val ok: Boolean,
+    /** Human readable: "Connected to imap.example.com, 3 folders" or what failed. */
+    val message: String,
+    /** E.g. `{"folders": 3, "calendars": 2}`. */
+    val counts: Map<String, Int> = emptyMap(),
+    val at: kotlin.time.Instant,
+)
+
+/** `PUT /api/v1/connectors/{id}/grants`: the desired state per noun. */
+@Serializable
+data class GrantsUpdate(val grants: Map<Noun, GrantState>)
+
+/** `POST /api/v1/connectors/{id}/test`: the connector tried its credentials and a first sync. */
+@Serializable
+data class ConnectorTestResult(
+    val ok: Boolean,
+    /** Failure reason for the person ("password rejected (401)"). */
+    val error: String? = null,
+    /** Short summary on success ("4,218 messages"). */
+    val summary: String? = null,
 )

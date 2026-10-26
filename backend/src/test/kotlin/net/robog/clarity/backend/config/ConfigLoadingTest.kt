@@ -33,6 +33,33 @@ class ConfigLoadingTest : FunSpec({
         c.agent.mcpServers shouldBe emptyList()
     }
 
+    test("agent roles default to opus lead, sonnet helper, haiku guard and triage") {
+        val roles = load().getOrNull()!!.agent.roles
+        roles[AgentRole.LEAD].model shouldBe "claude-opus-5-5"
+        roles[AgentRole.LEAD].compaction shouldBe true
+        roles[AgentRole.LEAD].cacheTtl shouldBe "1h"
+        roles[AgentRole.HELPER].model shouldBe "claude-sonnet-5-5"
+        roles[AgentRole.GUARD].model shouldBe "claude-haiku-5-5"
+        roles[AgentRole.TRIAGE].effort shouldBe "low"
+    }
+
+    test("role env overrides win, the legacy single model sets only the lead default") {
+        val roles = load(
+            mapOf(
+                "CLARITY_AGENT_MODEL" to "legacy", "CLARITY_AGENT_HELPER_MODEL" to "h", "CLARITY_AGENT_HELPER_EFFORT" to "high",
+                "CLARITY_AGENT_GUARD_CACHE_TTL" to "1h", "CLARITY_AGENT_TRIAGE_COMPACTION" to "true",
+            ),
+        ).getOrNull()!!.agent.roles
+        roles.lead.model shouldBe "legacy"
+        roles.helper.model shouldBe "h"
+        roles.helper.effort shouldBe "high"
+        roles.guard.model shouldBe "claude-haiku-5-5"
+        roles.guard.cacheTtl shouldBe "1h"
+        roles.triage.compaction shouldBe true
+        load(mapOf("CLARITY_AGENT_LEAD_MODEL" to "lead", "CLARITY_AGENT_MODEL" to "legacy")).getOrNull()!!.agent.model shouldBe "lead"
+        load(mapOf("CLARITY_AGENT_GUARD_CACHE_TTL" to "2h")).shouldBeInstanceOf<Either.Left<*>>()
+    }
+
     test("environment overrides yaml") {
         val c = load(mapOf(
             "CLARITY_HTTP_PORT" to "9090", "CLARITY_DB_URL" to "jdbc:postgresql://env/db",
@@ -86,6 +113,10 @@ class ConfigLoadingTest : FunSpec({
             McpServerConfig("other", "http://o/mcp?a=b"),
         )
         parseMcpServers("") shouldBe emptyList()
+        parseMcpServers("sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://b/mcp") shouldBe listOf(
+            McpServerConfig("sandbox", "http://sandbox:8940/mcp", "/run/secrets/sandbox_key"),
+            McpServerConfig("browser", "http://b/mcp"),
+        )
         load(mapOf("CLARITY_MCP_SERVERS" to "browser=http://b/mcp")).getOrNull()!!.agent.mcpServers shouldBe
             listOf(McpServerConfig("browser", "http://b/mcp"))
     }

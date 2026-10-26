@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Open the App</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,400..700&amp;family=Libre+Caslon+Text:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+.app{--surface:#FBF8F4;--scl:#F5F1EB;--sc:#EFEAE2;--sch:#E8E2D9;--on:#1F1D1A;--osv:#54514B;--ov:#D6D0C6;--outline:#7D7972;--primary:#466660;--onp:#FFFFFF;--pc:#CDE7DF;--opc:#0E2B26;--secc:#DDE6E2;--tc:#FFDDC4;--otc:#3B1F08;--inv:#33302C;--oninv:#F5F0E9}
+a{color:var(--primary)}a:hover{color:var(--opc)}
+.scr{flex:1;display:flex;flex-direction:column;gap:14px;padding:24px 16px 16px;min-height:0;overflow-y:auto}
+.k{font:500 12px/16px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.4px;color:var(--osv)}
+.h{margin:0;font:400 28px/36px 'Roboto Flex',Roboto,sans-serif;color:var(--on)}
+.rd{margin:0;font:400 16px/1.55 'Libre Caslon Text',serif}
+.sm{margin:0;font:400 14px/1.5 'Libre Caslon Text',serif;color:var(--osv)}
+.btn{font:500 14px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.1px;min-height:48px;border:1px solid var(--outline);border-radius:24px;background:transparent;color:var(--primary);padding:0 24px;cursor:pointer;transition:background-color 200ms ease-out,box-shadow 200ms ease-out}
+.btn:hover{background:rgba(70,102,96,.08)}
+.btn:disabled{opacity:.38;cursor:default;background:transparent}
+.pri{background:var(--primary);color:var(--onp);border-color:transparent}
+.pri:hover{background:var(--primary);box-shadow:0 1px 2px rgba(0,0,0,.3),0 1px 3px 1px rgba(0,0,0,.15)}
+.pri:disabled{background:rgba(31,29,26,.12);color:var(--on)}
+.row{display:flex;justify-content:space-between;align-items:center;gap:16px;min-height:56px;padding:8px 4px;background:transparent;border:0;border-top:1px solid var(--ov);color:var(--on);width:100%;text-align:left;font:inherit;box-sizing:border-box}
+button.row{cursor:pointer;transition:background-color 200ms ease-out}
+button.row:hover{background:rgba(31,29,26,.05)}
+.rt{font:400 16px/1.4 'Libre Caslon Text',serif}
+.rs{font:500 14px 'Roboto Flex',Roboto,sans-serif;white-space:nowrap;color:var(--primary)}
+.back{font:500 14px 'Roboto Flex',Roboto,sans-serif;background:transparent;border:0;color:var(--primary);min-height:40px;padding:0 12px;margin-left:-12px;border-radius:20px;text-align:left;cursor:pointer;align-self:flex-start}
+.back:hover{background:rgba(70,102,96,.08)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font:500 12px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.5px;min-height:64px;padding:0;background:transparent;border:0;color:var(--osv);cursor:pointer}
+.tab .ind{width:64px;height:32px;border-radius:16px;display:flex;align-items:center;justify-content:center;transition:background-color 200ms ease-out}
+.tab:hover .ind{background:rgba(31,29,26,.06)}
+.tab.sel{color:var(--on)}
+.tab.sel .ind{background:var(--secc)}
+.ag{margin:0;font:500 17px/1.4 'Roboto Flex',Roboto,sans-serif}
+.you{align-self:flex-end;max-width:280px;background:var(--pc);color:var(--opc);border-radius:20px 20px 4px 20px;padding:12px 16px;font:400 16px/1.5 'Libre Caslon Text',serif}
+.live{align-self:flex-end;max-width:280px;border:1px dashed var(--outline);border-radius:20px 20px 4px 20px;padding:12px 16px;font:400 16px/1.5 'Libre Caslon Text',serif}
+.ctx{align-self:flex-end;width:268px;box-sizing:border-box;display:flex;flex-direction:column;gap:4px;padding:10px 14px;background:var(--sc);border-radius:12px}
+.ci{display:flex;flex-direction:column;gap:1px;padding:6px 0;border-top:1px solid var(--ov)}
+.ct{font:500 11px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.5px;text-transform:uppercase;color:var(--osv)}
+.cb{font:500 14px/1.4 'Roboto Flex',Roboto,sans-serif;color:var(--on)}
+.chip{display:flex;justify-content:space-between;align-items:center;gap:8px;border:1px solid var(--ov);border-radius:8px;background:var(--surface);padding:10px 12px;font:400 15px/1.4 'Libre Caslon Text',serif}
+.sug{font:400 15px/1.4 'Libre Caslon Text',serif;text-align:left;min-height:48px;border:1px solid var(--ov);border-radius:12px;background:var(--scl);color:var(--on);padding:10px 14px;cursor:pointer}
+.sug:hover{background:var(--sc)}
+.bx{border:1px solid var(--ov);border-radius:12px;background:var(--scl);padding:16px;display:flex;flex-direction:column;gap:6px}
+.sec{font:500 14px 'Roboto Flex',Roboto,sans-serif;letter-spacing:.1px;color:var(--primary);margin-top:14px}
+.lis{font:500 12px 'Roboto Flex',Roboto,sans-serif;padding:6px 10px;border-radius:8px;background:var(--tc);color:var(--otc)}
+</style>
+</helmet>
+<div class="app" style="width:390px;height:844px;box-sizing:border-box;background:var(--surface);color:var(--on);display:flex;flex-direction:column;font-family:'Roboto Flex',Roboto,sans-serif;overflow:hidden">
+
+<sc-if value="{{on.today}}" hint-placeholder-val="{{true}}">
+<div class="scr">
+<span class="k">monday, october 26 · 10:04</span>
+<h1 class="h">Today</h1>
+<div style="background:var(--pc);color:var(--opc);border-radius:16px;padding:16px;display:flex;flex-direction:column;gap:6px">
+<span class="k">your plan</span>
+<p class="rd" style="font-size:15px">If it’s 9:30, then spec at my desk until 12.</p>
+<p class="rd" style="font-size:15px">If Dana emails, then it waits until 12.</p>
+</div>
+<span class="sec">I’m Doing</span>
+<div style="display:flex;flex-direction:column">
+<sc-if value="{{danaOpen}}" hint-placeholder-val="{{true}}">
+<div class="row"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">reply to Dana</span><span class="k">drafted · waits for you</span></span><button class="btn pri" style="min-height:44px" onClick="{{toDraft}}">review →</button></div>
+</sc-if>
+<sc-if value="{{danaSent}}" hint-placeholder-val="{{false}}">
+<div class="row"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">reply to Dana</span><span class="k">mail · 10:06</span></span><span class="rs">sent</span></div>
+</sc-if>
+<sc-for list="{{doing}}" as="d" hint-placeholder-count="4">
+<div class="row"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{d.t}}</span><span class="k">{{d.sub}}</span></span><span class="rs">{{d.status}}</span></div>
+</sc-for>
+</div>
+<button class="row" onClick="{{toHeld}}" style="border-bottom:1px solid var(--ov)"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">held for you</span><span class="k">{{heldLine}}</span></span><span class="rs">→</span></button>
+<span class="sec">Parked</span>
+<p class="sm">Feedback for Alex, expense report. Back in tomorrow’s call.</p>
+</div>
+</sc-if>
+
+<sc-if value="{{on.draft}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<button class="back" onClick="{{toToday}}">← today</button>
+<span class="k">needs your ok · reply to dana@…</span>
+<h2 class="h" style="font-size:24px">Re: Revised Terms</h2>
+<span class="k" style="margin-top:4px">what Dana asked</span>
+<div style="background:var(--sc);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:4px"><span class="ct">mail · yesterday 5:40</span><p class="sm">Attached the updated draft. Start date is still the 1st. Can you sign by end of week?</p></div>
+<span class="k" style="margin-top:4px">what I think</span>
+<p class="rd" style="font-size:15px">The only change from the last version is the payment schedule, and it now matches what you asked for on the 14th. The start date hasn’t moved. I’d say yes, and promise it before her Friday deadline.</p>
+<p class="sm">I’m asking because it touches money (line 3) and goes out as you.</p>
+<span class="k" style="margin-top:4px">draft</span>
+<div class="bx"><p class="rd" style="white-space:pre-line">{{draftText}}</p></div>
+<span class="k">checked against your lines · writing ✓</span>
+<sc-if value="{{draftAskLive}}" hint-placeholder-val="{{false}}"><div class="live">{{draftAsk}}</div></sc-if>
+<sc-if value="{{draftAskSaid}}" hint-placeholder-val="{{false}}"><div class="you">{{draftAsk}}</div></sc-if>
+<sc-if value="{{draftRedone}}" hint-placeholder-val="{{false}}"><p class="ag">Shorter, and Thursday. Anything else?</p></sc-if>
+<div style="flex:1"></div>
+<div style="display:flex;gap:8px">
+<button class="btn" style="flex:1" onClick="{{changeDraft}}" disabled="{{draftBusy}}">talk about it</button>
+<button class="btn pri" style="flex:1" onClick="{{sendDraft}}" disabled="{{draftBusy}}">send</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.ask}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;justify-content:space-between;align-items:center;padding:24px 20px 12px;border-bottom:1px solid var(--ov)">
+<span style="font:400 22px/28px 'Roboto Flex',Roboto,sans-serif">Ask</span>
+<sc-if value="{{listening}}" hint-placeholder-val="{{false}}"><span class="lis">● listening</span></sc-if>
+<sc-if value="{{notListening}}" hint-placeholder-val="{{true}}"><span class="k">replies in text</span></sc-if>
+</div>
+<div ref="{{feedRef}}" style="flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:16px 20px;min-height:0">
+<sc-if value="{{askEmpty}}" hint-placeholder-val="{{true}}"><p class="sm">Ask me anything about your day. I’ll check your sources and answer here.</p></sc-if>
+<sc-for list="{{askMsgs}}" as="m" hint-placeholder-count="2">
+<sc-if value="{{m.agent}}" hint-placeholder-val="{{true}}"><p class="ag">{{m.text}}</p></sc-if>
+<sc-if value="{{m.live}}" hint-placeholder-val="{{false}}"><div class="live">{{m.text}}</div></sc-if>
+<sc-if value="{{m.said}}" hint-placeholder-val="{{false}}"><div class="you">{{m.text}}</div></sc-if>
+<sc-if value="{{m.ctx}}" hint-placeholder-val="{{false}}">
+<div class="ctx"><span class="k">{{m.label}}</span>
+<sc-for list="{{m.items}}" as="c" hint-placeholder-count="1"><div class="ci"><span class="ct">{{c.tag}}</span><span class="cb">{{c.title}}</span></div></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{m.chips}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;flex-direction:column;gap:6px">
+<sc-for list="{{m.items}}" as="c" hint-placeholder-count="2"><div class="chip"><span>{{c.t}}</span><span class="k">{{c.sub}}</span></div></sc-for>
+</div>
+</sc-if>
+<sc-if value="{{m.proposal}}" hint-placeholder-val="{{false}}">
+<div class="bx" style="border-color:var(--primary)">
+<span class="k">needs your ok · sends Dana an update</span>
+<span style="font:600 16px 'Roboto Flex',Roboto,sans-serif">Move call with Dana</span>
+<span class="rd" style="font-size:15px"><span style="text-decoration:line-through;opacity:.6">today 2:00</span>  →  thursday 2:00</span>
+<span class="k" style="margin-top:6px">what I think</span>
+<p class="sm">Thursday 2:00 is clear for both of you, and Dana hasn’t confirmed today yet, so a move costs her little. I’m asking because it’s her invite, and moving other people’s events always needs your review.</p>
+<sc-if value="{{m.open}}" hint-placeholder-val="{{true}}">
+<div style="display:flex;gap:8px;margin-top:6px"><button class="btn" style="flex:1" onClick="{{m.dismiss}}">not now</button><button class="btn pri" style="flex:1" onClick="{{m.send}}">send update</button></div>
+</sc-if>
+<sc-if value="{{m.closed}}" hint-placeholder-val="{{false}}"><span class="rs">{{m.result}}</span></sc-if>
+</div>
+</sc-if>
+</sc-for>
+<sc-if value="{{showSugs}}" hint-placeholder-val="{{true}}">
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+<span class="k">try saying</span>
+<sc-for list="{{sugs}}" as="s" hint-placeholder-count="2"><button class="sug" onClick="{{s.go}}">“{{s.t}}”</button></sc-for>
+</div>
+</sc-if>
+</div>
+<div style="display:flex;gap:8px;padding:12px 20px;border-top:1px solid var(--ov)">
+<label for="askin" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">ask anything</label>
+<input id="askin" placeholder="type, or tap talk" readonly="readonly" style="flex:1;min-width:0;font:400 15px 'Libre Caslon Text',serif;min-height:48px;border-radius:24px;background:var(--sc);color:var(--on);border:0;padding:0 18px">
+<button class="btn" onClick="{{talk}}" disabled="{{askBusy}}">talk</button>
+</div>
+</sc-if>
+
+<sc-if value="{{on.held}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<span class="k">{{heldLine}} · 14 allowed</span>
+<h1 class="h">Held for You</h1>
+<p class="sm">Things I tried that hit one of your lines. Tap one to talk it through.</p>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{held}}" as="h" hint-placeholder-count="2">
+<button class="row" onClick="{{h.open}}"><span style="display:flex;flex-direction:column;gap:2px"><span class="k">{{h.when}}</span><span class="rt">{{h.t}}</span></span><span class="rs">{{h.status}}</span></button>
+</sc-for>
+</div>
+<span class="k" style="margin-top:8px">low-urgency holds wait for an evening batch</span>
+<button class="btn" onClick="{{toggleAllowed}}">{{allowedLabel}}</button>
+<sc-if value="{{showAllowed}}" hint-placeholder-val="{{false}}">
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{allowed}}" as="a" hint-placeholder-count="4"><div class="row" style="min-height:44px"><span class="rt" style="font-size:14px">{{a.t}}</span><span class="k">{{a.when}}</span></div></sc-for>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{on.amend}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<button class="back" onClick="{{amendBack}}">{{amendBackLabel}}</button>
+<span class="k">amend constitution</span>
+<sc-if value="{{amendHasBlock}}" hint-placeholder-val="{{true}}">
+<div class="bx"><span class="k">{{am.what}}</span><span class="rd" style="font-size:15px">{{am.detail}}</span></div>
+</sc-if>
+<p class="ag">{{am.ask}}</p>
+<sc-if value="{{amLive}}" hint-placeholder-val="{{false}}"><div class="live">{{amText}}</div></sc-if>
+<sc-if value="{{amSaid}}" hint-placeholder-val="{{false}}"><div class="you">{{amText}}</div></sc-if>
+<sc-if value="{{amProposed}}" hint-placeholder-val="{{false}}">
+<span class="k">proposed change</span>
+<div class="bx" style="border-color:var(--primary)"><span class="k">{{am.label}}</span><span class="rd" style="font-size:15px;text-decoration:line-through;opacity:.6">{{am.old}}</span><span class="rd" style="font-size:15px">{{am.next}}</span></div>
+</sc-if>
+<div style="flex:1"></div>
+<sc-if value="{{amListening}}" hint-placeholder-val="{{false}}"><span class="lis">● listening</span></sc-if>
+<div style="display:flex;gap:8px">
+<button class="btn" style="flex:1" onClick="{{amendKeep}}" disabled="{{amBusy}}">keep as is</button>
+<button class="btn pri" style="flex:1" onClick="{{amendSave}}" disabled="{{amNotReady}}">save rule</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{on.settings}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<h1 class="h">Settings</h1>
+<span class="sec">Morning Call</span>
+<div style="display:flex;flex-direction:column">
+<div class="row"><span class="rt">time</span><span class="rs">9:00 · weekdays</span></div>
+<sc-for list="{{toggles1}}" as="t" hint-placeholder-count="2"><button class="row" onClick="{{t.flip}}" aria-pressed="{{t.on}}"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{t.t}}</span><span class="k">{{t.sub}}</span></span><span class="rs">{{t.val}}</span></button></sc-for>
+</div>
+<span class="sec">Voice</span>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{toggles2}}" as="t" hint-placeholder-count="1"><button class="row" onClick="{{t.flip}}" aria-pressed="{{t.on}}"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{t.t}}</span><span class="k">{{t.sub}}</span></span><span class="rs">{{t.val}}</span></button></sc-for>
+<div class="row"><span class="rt">my replies</span><span class="rs">always text</span></div>
+</div>
+<span class="sec">Constitution</span>
+<button class="row" onClick="{{toDoc}}"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">How I Want to Work</span><span class="k">{{docVersion}} · 3 lines</span></span><span class="rs">→</span></button>
+<span class="sec">Held Actions</span>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{toggles3}}" as="t" hint-placeholder-count="2"><button class="row" onClick="{{t.flip}}" aria-pressed="{{t.on}}"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{t.t}}</span><span class="k">{{t.sub}}</span></span><span class="rs">{{t.val}}</span></button></sc-for>
+</div>
+<span class="sec">Sources · on your server</span>
+<div style="display:flex;flex-direction:column">
+<sc-for list="{{serverSrc}}" as="s" hint-placeholder-count="4"><div class="row"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{s.t}}</span><span class="k">{{s.sub}}</span></span><span class="k">{{s.sync}}</span></div></sc-for>
+</div>
+<span class="sec">Sources · on this phone</span>
+<div style="display:flex;flex-direction:column;border-bottom:1px solid var(--ov)">
+<sc-for list="{{phoneSrc}}" as="s" hint-placeholder-count="2"><div class="row"><span style="display:flex;flex-direction:column;gap:2px"><span class="rt">{{s.t}}</span><span class="k">{{s.sub}}</span></span><span class="k">{{s.sync}}</span></div></sc-for>
+</div>
+<a href="Onboarding.dc.html" style="font:500 14px 'Roboto Flex',Roboto,sans-serif;min-height:44px;display:flex;align-items:center">redo onboarding</a>
+</div>
+</sc-if>
+
+<sc-if value="{{on.doc}}" hint-placeholder-val="{{false}}">
+<div class="scr">
+<button class="back" onClick="{{toSettings}}">← settings</button>
+<span class="k">your constitution · {{docVersion}}</span>
+<h1 class="h">How I Want to Work</h1>
+<span class="k">lines</span>
+<sc-for list="{{rules}}" as="r" hint-placeholder-count="3">
+<div style="display:flex;gap:12px"><span style="font:500 14px 'Roboto Flex',Roboto,sans-serif;width:16px">{{r.n}}</span><p class="rd" style="flex:1">{{r.text}}</p></div>
+</sc-for>
+<span class="k" style="margin-top:6px">may do alone</span>
+<p class="rd">Block focus time. Set reminders. Look up contacts. Draft anything.</p>
+<span class="k" style="margin-top:6px">always after review</span>
+<p class="rd">Sending as me. Moving anyone else’s events.</p>
+<div style="flex:1"></div>
+<button class="btn" onClick="{{amendDoc}}">amend by talking</button>
+</div>
+</sc-if>
+
+<sc-if value="{{toast}}" hint-placeholder-val="{{false}}">
+<div style="margin:0 12px 12px;background:var(--inv);color:var(--oninv);border-radius:4px;padding:14px 16px;font:400 14px/20px 'Roboto Flex',Roboto,sans-serif;box-shadow:0 2px 6px 2px rgba(0,0,0,.15),0 1px 2px rgba(0,0,0,.3)">{{toastText}}</div>
+</sc-if>
+
+<sc-if value="{{showTabs}}" hint-placeholder-val="{{true}}">
+<nav style="display:flex;background:var(--sc);padding:12px 0 16px" aria-label="main">
+<sc-for list="{{tabs}}" as="t" hint-placeholder-count="4"><button class="tab {{t.cls}}" onClick="{{t.go}}" aria-current="{{t.cur}}"><span class="ind"><svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="{{t.d}}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path></svg></span><span>{{t.label}}</span></button></sc-for>
+</nav>
+</sc-if>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  state = {
+    screen: 'today', from: 'held',
+    dana: 'review', draftV: 0, draftAsk: '', draftAskLive: false, draftAskSaid: false, draftBusy: false, draftRedone: false,
+    askMsgs: [], askBusy: false, talking: false, used: [], proposal: 'open',
+    heldStatus: ['held', 'held'], amIdx: 0, amText: '', amPhase: 'idle', showAllowed: false,
+    rules: ['No AI-style formatting in anything sent as me.', 'Keep 9 to 12 free. No meetings, no pings.', 'Nothing about money, and no answering invites, without asking.'],
+    ver: 1,
+    tg: { heads: true, call: true, mic: true, batch: true, push: true },
+    toast: ''
+  };
+  componentWillUnmount() { (this.timers || []).forEach(clearTimeout); this.dead = true; }
+  componentDidUpdate() { try { if (this.feedEl) this.feedEl.scrollTop = this.feedEl.scrollHeight; } catch (e) {} }
+  later(fn, ms) { this.timers = this.timers || []; this.timers.push(setTimeout(() => { if (!this.dead) fn(); }, ms)); }
+  type(text, upd, done) {
+    const w = text.split(' ');
+    let n = 0;
+    this.setState({ talking: true });
+    const tick = () => {
+      n++;
+      const fin = n >= w.length;
+      upd(w.slice(0, n).join(' '), fin);
+      if (fin) { this.setState({ talking: false }); if (done) done(); } else this.later(tick, 110 + Math.random() * 150);
+    };
+    this.later(tick, 400);
+  }
+  flash(t) { this.setState({ toast: t }); this.later(() => this.setState({ toast: '' }), 2600); }
+  pushAsk(m) { this.setState(s => ({ askMsgs: s.askMsgs.concat([m]) })); }
+  runAsk(key) {
+    if (this.state.askBusy) return;
+    const scripts = {
+      move: { say: 'Can you move my call with Dana to Thursday afternoon?', beats: [
+        { ctx: true, label: '“Dana” · calendar', items: [{ tag: 'calendar · today', title: '2:00 · call with Dana' }, { tag: 'calendar · thursday', title: '2:00–4:00 free for both' }], wait: 600 },
+        { agent: true, text: 'Thursday at 2:00 is open for both of you. It’s Dana’s invite, so moving it needs your OK.' },
+        { proposal: true, wait: 600 }
+      ] },
+      left: { say: 'What’s left for me today?', beats: [
+        { agent: true, text: 'Two things, both after noon.', wait: 700 },
+        { chips: true, items: [{ t: 'call the dentist · 555-0142', sub: '12:15' }, { t: 'call with Dana', sub: this.state.proposal === 'sent' ? 'moved to thu' : '2:00' }] },
+        { agent: true, text: 'Everything else is handled or parked for tomorrow.' }
+      ] },
+      alex: { say: 'Did Alex send the deck yet?', beats: [
+        { ctx: true, label: '“Alex” · mail', items: [{ tag: 'mail · alex · fri 4:12', title: 'deck v3, no rush' }], wait: 700 },
+        { agent: true, text: 'Friday at 4:12. He said no rush, so it’s parked for tomorrow’s call.' }
+      ] }
+    };
+    const sc = scripts[key];
+    this.nid = (this.nid || 0) + 1;
+    const id = 'a' + this.nid;
+    this.setState(s => ({ askBusy: true, used: s.used.concat([key]) }));
+    this.pushAsk({ id: id, text: '', live: true });
+    this.type(sc.say, (t, fin) => this.setState(s => ({ askMsgs: s.askMsgs.map(m => m.id === id ? Object.assign({}, m, { text: t, live: !fin, said: fin }) : m) })), () => {
+      const run = (i) => {
+        if (i >= sc.beats.length) { this.setState({ askBusy: false }); return; }
+        const b = sc.beats[i];
+        this.later(() => { this.pushAsk(b); run(i + 1); }, b.wait || 900);
+      };
+      run(0);
+    });
+  }
+  amends() {
+    const r = this.state.rules;
+    return [
+      { what: '8:12 · mail send · to pat@…', detail: 'Sure — lunch Thursday works — see you at noon!', ask: 'This hit your writing line. Should it have?',
+        say: 'Fine for short scheduling replies. Still not for anything longer.', label: 'line 1 · writing', idx: 0,
+        next: 'No AI-style formatting in anything sent as me, except short replies that only confirm a time.' },
+      { what: '8:40 · calendar write · 1:1 with alex', detail: 'Moved from 2:00 into your 9 to 12 block.', ask: 'This hit your time line. Should it have?',
+        say: 'Only if Alex asks for it himself. Otherwise keep the morning clear.', label: 'line 2 · time', idx: 1,
+        next: 'Keep 9 to 12 free. No meetings, no pings, unless Alex asks to move our 1:1.' },
+      { what: '', detail: '', ask: 'What would you like to change?',
+        say: 'Let it accept invites from my team, as long as they’re outside nine to twelve.', label: 'line 3 · ask first', idx: 2,
+        next: 'Nothing about money without asking. Invites from my team outside 9 to 12 can be accepted.' }
+    ].map(a => Object.assign({}, a, { old: r[a.idx] }));
+  }
+  openAmend(i, from) {
+    this.setState({ screen: 'amend', amIdx: i, from: from, amText: '', amPhase: 'talking' });
+    const a = this.amends()[i];
+    this.later(() => this.type(a.say, (t, fin) => this.setState({ amText: t, amPhase: fin ? 'said' : 'talking' }),
+      () => this.later(() => this.setState({ amPhase: 'proposed' }), 700)), 900);
+  }
+  renderVals() {
+    const s = this.state;
+    const scr = s.screen;
+    const go = (x) => () => this.setState({ screen: x });
+    this._fr = this._fr || ((el) => { this.feedEl = el; });
+    const blank = { agent: false, live: false, said: false, ctx: false, chips: false, proposal: false, items: [], label: '', text: '' };
+    const heldCount = s.heldStatus.filter(x => x === 'held').length;
+    const am = this.amends()[s.amIdx];
+    const tgl = (k, t, sub, on, off) => ({ t: t, sub: sub, on: s.tg[k], val: s.tg[k] ? on : off,
+      flip: () => this.setState(st => ({ tg: Object.assign({}, st.tg, { [k]: !st.tg[k] }) })) });
+    const sugAll = [{ k: 'move', t: 'Move my call with Dana to Thursday' }, { k: 'left', t: 'What’s left for me today?' }, { k: 'alex', t: 'Did Alex send the deck yet?' }];
+    const sugs = sugAll.filter(x => s.used.indexOf(x.k) < 0).map(x => ({ t: x.t, go: () => this.runAsk(x.k) }));
+    const drafts = [
+      'Hi Dana,\n\nThanks for the revised draft. The terms work for me, and the 1st is fine as a start date. I’ll sign and send it back by Wednesday.\n\nSam',
+      'Hi Dana,\n\nThe revised terms work, and the 1st is fine. I’ll sign and return it Thursday.\n\nSam'
+    ];
+    return {
+      on: { today: scr === 'today', draft: scr === 'draft', ask: scr === 'ask', held: scr === 'held', amend: scr === 'amend', settings: scr === 'settings', doc: scr === 'doc' },
+      showTabs: ['today', 'ask', 'held', 'settings'].indexOf(scr) >= 0,
+      tabs: [['today', 'today'], ['ask', 'ask'], ['held', 'held · ' + heldCount], ['settings', 'settings']].map(t => ({
+        label: t[1], cls: scr === t[0] ? 'sel' : '', cur: scr === t[0] ? 'page' : 'false', go: go(t[0]),
+        d: { today: 'M5 5h14v15H5zM5 9.5h14M9 3v4M15 3v4', ask: 'M4 5h16v11H9.5L4 20z', held: 'M12 3l7 3v6c0 4.2-3 7.4-7 9-4-1.6-7-4.8-7-9V6z', settings: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 5v4M9 15v4' }[t[0]] })),
+      toToday: go('today'), toHeld: go('held'), toSettings: go('settings'), toDoc: go('doc'), toDraft: go('draft'),
+      danaOpen: s.dana === 'review', danaSent: s.dana === 'sent',
+      doing: [
+        { t: 'spec, 9:30–12', sub: 'calendar', status: 'held' },
+        { t: 'Slack', sub: 'do not disturb until 12', status: 'muted' },
+        { t: 'dentist · 555-0142', sub: 'reminder at 12:15', status: 'set' },
+        { t: 'wrap the spec', sub: 'nudge at 11:55', status: 'scheduled' }
+      ],
+      heldLine: heldCount === 0 ? 'nothing held today' : (heldCount + ' held today'),
+      draftText: drafts[s.draftV], draftBusy: s.draftBusy, draftAsk: s.draftAsk, draftAskLive: s.draftAskLive, draftAskSaid: s.draftAskSaid, draftRedone: s.draftRedone,
+      changeDraft: () => {
+        this.setState({ draftBusy: true, draftAsk: '', draftAskLive: true, draftAskSaid: false, draftRedone: false });
+        this.type('Make it shorter, and say Thursday instead.', (t, fin) => this.setState({ draftAsk: t, draftAskLive: !fin, draftAskSaid: fin }),
+          () => this.later(() => this.setState({ draftV: 1, draftBusy: false, draftRedone: true }), 800));
+      },
+      sendDraft: () => { this.setState({ dana: 'sent', screen: 'today' }); this.flash('Sent to Dana.'); },
+      listening: s.talking, notListening: !s.talking,
+      feedRef: this._fr,
+      askEmpty: s.askMsgs.length === 0,
+      askMsgs: s.askMsgs.map(m => {
+        const x = Object.assign({}, blank, m);
+        if (m.proposal) {
+          x.open = s.proposal === 'open'; x.closed = !x.open;
+          x.result = s.proposal === 'sent' ? 'sent · Dana has the update' : 'left as is';
+          x.send = () => { this.setState({ proposal: 'sent' }); this.flash('Call moved to Thursday 2:00.'); };
+          x.dismiss = () => this.setState({ proposal: 'dismissed' });
+        }
+        return x;
+      }),
+      showSugs: !s.askBusy && sugs.length > 0, sugs: sugs, askBusy: s.askBusy || sugs.length === 0,
+      talk: () => { if (sugs.length) this.runAsk(sugAll.filter(x => s.used.indexOf(x.k) < 0)[0].k); },
+      held: this.amends().slice(0, 2).map((a, i) => ({
+        when: a.what, t: i === 0 ? 'Reply to Pat, AI-style text' : 'Moved 1:1 with Alex into your quiet block',
+        status: s.heldStatus[i] === 'held' ? '→' : s.heldStatus[i], open: () => this.openAmend(i, 'held') })),
+      showAllowed: s.showAllowed, allowedLabel: s.showAllowed ? 'hide allowed actions' : 'see allowed actions',
+      toggleAllowed: () => this.setState({ showAllowed: !s.showAllowed }),
+      allowed: [{ t: 'held 9:30–12 for the spec', when: '9:08' }, { t: 'muted Slack until 12', when: '9:08' }, { t: 'drafted reply to Dana', when: '9:11' }, { t: 'set dentist reminder', when: '9:12' }],
+      am: am, amendHasBlock: am.what !== '',
+      amText: s.amText, amLive: s.amPhase === 'talking', amSaid: s.amPhase === 'said' || s.amPhase === 'proposed', amProposed: s.amPhase === 'proposed',
+      amListening: s.talking, amBusy: s.amPhase === 'talking', amNotReady: s.amPhase !== 'proposed',
+      amendBackLabel: s.from === 'doc' ? '← constitution' : '← held',
+      amendBack: go(s.from),
+      amendKeep: () => {
+        if (s.amIdx < 2) { const h = s.heldStatus.slice(); h[s.amIdx] = 'kept'; this.setState({ heldStatus: h }); }
+        this.setState({ screen: s.from });
+      },
+      amendSave: () => {
+        const r = s.rules.slice(); r[am.idx] = am.next;
+        const h = s.heldStatus.slice(); if (s.amIdx < 2) h[s.amIdx] = 'rule updated';
+        this.setState({ rules: r, heldStatus: h, ver: s.ver + 1, screen: s.from });
+        this.flash('Rule saved. Constitution v' + (s.ver + 1) + '.');
+      },
+      amendDoc: () => this.openAmend(2, 'doc'),
+      rules: s.rules.map((t, i) => ({ n: String(i + 1), text: t })),
+      docVersion: 'v' + s.ver,
+      toggles1: [tgl('heads', 'heads-up 10 min before', 'a notification, then the call', 'on', 'off'), tgl('call', 'how I reach you', 'tap to switch', 'call me', 'notify')],
+      toggles2: [tgl('mic', 'mic during calls', 'always on, so you can jump in', 'on', 'push to talk')],
+      toggles3: [tgl('batch', 'low-urgency holds', 'reviewed together in the evening', 'evening', 'right away'), tgl('push', 'urgent holds', 'a notification as it happens', 'on', 'off')],
+      serverSrc: [{ t: 'mail', sub: 'imap · home.local', sync: '2 min ago' }, { t: 'calendar', sub: 'caldav · home.local', sync: '2 min ago' }, { t: 'contacts', sub: 'carddav · home.local', sync: '1 hr ago' }, { t: 'files', sub: 'webdav · home.local', sync: '1 hr ago' }],
+      phoneSrc: [{ t: 'messages', sub: 'synced with your server', sync: 'live' }, { t: 'reminders', sub: 'stays on this phone', sync: 'live' }],
+      toast: s.toast !== '', toastText: s.toast
+    };
+  }
+}
+</script>
+</body>
+</html>

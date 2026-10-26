@@ -24,6 +24,15 @@ kotest = "6.2.6"
 junit4 = "4.13.2"
 testcontainers = "2.0.5"
 
+# Connectors
+angus-mail = "2.0.5"
+dav4jvm = "5.0.0"           # JitPack (com.github.bitfireAT only)
+ical4j = "4.4.0"
+ez-vcard = "0.12.2"
+pdfbox = "3.0.8"
+jsoup = "1.23.2"
+greenmail = "2.1.15"
+
 # Android
 agp = "9.4.1"
 android-compileSdk = "37"
@@ -32,9 +41,17 @@ android-minSdk = "31"
 compose-bom = "2026.09.00"
 androidx-core = "1.19.1"
 androidx-activity = "1.13.0"
+androidx-biometric = "1.1.0"
+androidx-fragment = "1.8.9"
 androidx-lifecycle = "2.11.0"
 androidx-navigation3 = "1.2.0"
 androidx-datastore = "1.3.0"
+androidx-work = "2.11.2"
+room = "2.8.5"
+ksp = "2.3.12"
+tink = "1.24.0"
+okhttp = "5.5.0"
+guava = "33.6.0-jre"
 
 [libraries]
 # Kotlin / kotlinx
@@ -94,6 +111,16 @@ mcp-kotlin-sdk = { module = "io.modelcontextprotocol:kotlin-sdk", version.ref = 
 logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
 kotlin-logging = { module = "io.github.oshai:kotlin-logging-jvm", version.ref = "kotlin-logging" }
 
+# Connectors
+angus-mail = { module = "org.eclipse.angus:angus-mail", version.ref = "angus-mail" }
+dav4jvm = { module = "com.github.bitfireAT:dav4jvm", version.ref = "dav4jvm" }
+ical4j = { module = "org.mnode.ical4j:ical4j", version.ref = "ical4j" }
+ez-vcard = { module = "com.googlecode.ez-vcard:ez-vcard", version.ref = "ez-vcard" }
+tink = { module = "com.google.crypto.tink:tink", version.ref = "tink" }
+pdfbox = { module = "org.apache.pdfbox:pdfbox", version.ref = "pdfbox" }
+jsoup = { module = "org.jsoup:jsoup", version.ref = "jsoup" }
+greenmail = { module = "com.icegreen:greenmail", version.ref = "greenmail" }
+
 # Testing
 kotest-runner-junit5 = { module = "io.kotest:kotest-runner-junit5", version.ref = "kotest" }
 kotest-assertions-core = { module = "io.kotest:kotest-assertions-core", version.ref = "kotest" }
@@ -103,12 +130,21 @@ testcontainers-postgresql = { module = "org.testcontainers:testcontainers-postgr
 # Android
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "androidx-activity" }
+androidx-biometric = { module = "androidx.biometric:biometric", version.ref = "androidx-biometric" }
+androidx-fragment = { module = "androidx.fragment:fragment", version.ref = "androidx-fragment" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "androidx-lifecycle" }
 androidx-lifecycle-viewmodel-navigation3 = { module = "androidx.lifecycle:lifecycle-viewmodel-navigation3", version.ref = "androidx-lifecycle" }
 androidx-navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "androidx-navigation3" }
 androidx-navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "androidx-navigation3" }
 androidx-datastore-preferences = { module = "androidx.datastore:datastore-preferences", version.ref = "androidx-datastore" }
+androidx-work-runtime = { module = "androidx.work:work-runtime", version.ref = "androidx-work" }
+androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
+androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
+androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
+tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }
 junit4 = { module = "junit:junit", version.ref = "junit4" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
@@ -141,6 +177,7 @@ kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", versi
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 android-application = { id = "com.android.application", version.ref = "agp" }
 metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 
 # Convention plugins (build-logic)
 clarity-kotlin-jvm = { id = "clarity.kotlin-jvm" }

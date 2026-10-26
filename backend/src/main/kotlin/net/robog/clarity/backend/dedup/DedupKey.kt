@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import net.robog.clarity.backend.crypto.sha256
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Payload
@@ -44,6 +45,7 @@ private fun Handle.canonical(): String = "${kind.name.lowercase()}:$value"
  * - message: `channel | account | sender | sorted(recipients) | sha256(normalized body)`
  * - contact: sorted normalized handles (display name only when there are none)
  * - calendar event: `icalUid` if present, else `calendar | title | start | end`
+ * - document: `store | normalized path`
  */
 fun Payload.dedupKey(): DedupKey = when (val p = normalized()) {
     is MessagePayload -> digestOf(
@@ -65,4 +67,5 @@ fun Payload.dedupKey(): DedupKey = when (val p = normalized()) {
         )
         else -> digestOf("calendar_event", "uid", uid)
     }
+    is DocumentPayload -> digestOf("document", p.store, p.path)
 }

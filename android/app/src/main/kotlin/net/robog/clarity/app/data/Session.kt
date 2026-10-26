@@ -2,6 +2,7 @@ package net.robog.clarity.app.data
 
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
@@ -38,5 +39,37 @@ class DataStoreSessionStore(private val store: DataStore<Preferences>) : Session
     private companion object {
         val URL = stringPreferencesKey("instance_url")
         val DEVICE_ID = stringPreferencesKey("device_id")
+    }
+}
+
+/** Whether the person finished the onboarding flow on this device (set on its last screen). */
+interface OnboardingFlagStore {
+    val done: Flow<Boolean>
+    suspend fun markDone()
+
+    /** "redo onboarding" in settings: show the onboarding flow again although setup is complete. */
+    val redo: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(false)
+    suspend fun startRedo() = Unit
+}
+
+class DataStoreOnboardingFlagStore(private val store: DataStore<Preferences>) : OnboardingFlagStore {
+    override val done: Flow<Boolean> = store.data.map { it[DONE] == true }
+
+    override val redo: Flow<Boolean> = store.data.map { it[REDO] == true }
+
+    override suspend fun markDone() {
+        store.edit {
+            it[DONE] = true
+            it[REDO] = false
+        }
+    }
+
+    override suspend fun startRedo() {
+        store.edit { it[REDO] = true }
+    }
+
+    private companion object {
+        val DONE = booleanPreferencesKey("onboarding_done")
+        val REDO = booleanPreferencesKey("onboarding_redo")
     }
 }

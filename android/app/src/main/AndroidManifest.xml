@@ -2,6 +2,40 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Speech to text on the phone: only the recognised text leaves the device. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- The "messages" connector (read only); the phone connector itself is a later workstream. -->
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- The heads-up and the call (Android 13+ asks at runtime). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- The call rings at the minute set, not "around" it. The person allows it in settings. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- The incoming call opens over the lock screen (Android 14+: allowed in settings). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Re-arm the call alarms and the phone connector after a restart. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- The phone connector turns do-not-disturb on and off when the agent asks. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
+    <!-- Push without Google services: a foreground service keeps the connection to the person's own
+         server open. Its type is remoteMessaging: it relays the agent's messages to this phone over a
+         long-lived connection (Android 14 asks for the matching permission below). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- Reconnect as soon as the network changes. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Asked once, with an explanation: without it the system may delay pushes while the screen is off. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+
+    <!-- Package visibility (Android 11+): find the speech recognition service. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
 
     <application
         android:name=".app.ClarityApp"
@@ -16,11 +50,54 @@
         android:theme="@style/Theme.Clarity">
         <activity
             android:name=".app.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Links from notifications: clarity://today, ask, held, held/<id>. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="clarity" />
+                <data android:host="today" />
+                <data android:host="ask" />
+                <data android:host="held" />
+            </intent-filter>
         </activity>
+
+        <!-- The morning call: its own task, shown over the lock screen. Notifications open it with an
+             explicit intent carrying clarity://call, so it needs no intent filter. -->
+        <activity
+            android:name=".app.call.CallActivity"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:taskAffinity="net.robog.clarity.call"
+            android:windowSoftInputMode="adjustResize">
+        </activity>
+
+        <service
+            android:name=".app.push.FeedService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+
+        <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
+        <receiver android:name=".app.call.CallActionReceiver" android:exported="false" />
+        <receiver android:name=".app.connector.DndEndReceiver" android:exported="false" />
+        <receiver android:name=".app.call.ScheduleReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

@@ -6,10 +6,12 @@ import net.robog.clarity.backend.dedup.DedupKey
 import net.robog.clarity.backend.persistence.CalendarEvents
 import net.robog.clarity.backend.persistence.CanonicalTable
 import net.robog.clarity.backend.persistence.Contacts
+import net.robog.clarity.backend.persistence.Documents
 import net.robog.clarity.backend.persistence.Messages
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.noun.Payload
@@ -28,6 +30,7 @@ val Noun.table: CanonicalTable
         Noun.MESSAGE -> Messages
         Noun.CONTACT -> Contacts
         Noun.CALENDAR_EVENT -> CalendarEvents
+        Noun.DOCUMENT -> Documents
     }
 
 /**
@@ -67,6 +70,15 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[CalendarEvents.location] = payload.location
         it[CalendarEvents.description] = payload.description
         it[CalendarEvents.attendees] = payload.attendees
+    }
+    is DocumentPayload -> upsert(Documents, key, now) {
+        it[Documents.store] = payload.store
+        it[Documents.path] = payload.path
+        it[Documents.title] = payload.title
+        it[Documents.mimeType] = payload.mimeType
+        it[Documents.size] = payload.size
+        it[Documents.modifiedAt] = payload.modifiedAt
+        it[Documents.excerpt] = payload.excerpt
     }
 }
 

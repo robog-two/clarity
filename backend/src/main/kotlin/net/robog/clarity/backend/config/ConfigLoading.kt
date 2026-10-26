@@ -96,6 +96,46 @@ private class Lookup(
         return value
     }
 
+    /**
+     * `CLARITY_AGENT_<ROLE>_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION` (yaml
+     * `agent.roles.<role>.model|effort|maxTokens|cacheTtl|compaction`). The legacy
+     * `CLARITY_AGENT_MODEL` / `CLARITY_AGENT_EFFORT` (yaml `agent.model` / `agent.effort`) are the
+     * lead's fallback.
+     */
+    context(_: Raise<ConfigError>)
+    fun agentRoles(): AgentRoles {
+        val defaults = AgentRoles()
+        fun role(role: AgentRole, base: RoleConfig, legacy: Boolean): RoleConfig {
+            val name = role.name
+            val yamlKey = name.lowercase()
+            // Precedence: role env, legacy env, role yaml, legacy yaml, built-in default.
+            fun pick(setting: String, legacyEnv: String, legacyPath: String): String? {
+                val roleEnv = env["CLARITY_AGENT_${name}_$setting"]?.takeIf(String::isNotBlank)
+                val oldEnv = if (legacy) env[legacyEnv]?.takeIf(String::isNotBlank) else null
+                val roleYaml = yaml.propertyOrNull("clarity.agent.roles.$yamlKey.${setting.lowercase()}")?.getString()?.takeIf(String::isNotBlank)
+                val oldYaml = if (legacy) yaml.propertyOrNull("clarity.$legacyPath")?.getString()?.takeIf(String::isNotBlank) else null
+                return roleEnv ?: oldEnv ?: roleYaml ?: oldYaml
+            }
+            val model = pick("MODEL", "CLARITY_AGENT_MODEL", "agent.model") ?: base.model
+            val effort = pick("EFFORT", "CLARITY_AGENT_EFFORT", "agent.effort") ?: base.effort
+            val ttl = string("CLARITY_AGENT_${name}_CACHE_TTL", "agent.roles.$yamlKey.cacheTtl") ?: base.cacheTtl
+            if (ttl != "5m" && ttl != "1h") raise(ConfigError.Invalid("CLARITY_AGENT_${name}_CACHE_TTL", ttl, "expected 5m or 1h"))
+            return RoleConfig(
+                model = model,
+                effort = effort,
+                maxTokens = int("CLARITY_AGENT_${name}_MAX_TOKENS", "agent.roles.$yamlKey.maxTokens", base.maxTokens.toInt()).toLong(),
+                cacheTtl = ttl,
+                compaction = bool("CLARITY_AGENT_${name}_COMPACTION", "agent.roles.$yamlKey.compaction", base.compaction),
+            )
+        }
+        return AgentRoles(
+            lead = role(AgentRole.LEAD, defaults.lead, legacy = true),
+            helper = role(AgentRole.HELPER, defaults.helper, legacy = false),
+            guard = role(AgentRole.GUARD, defaults.guard, legacy = false),
+            triage = role(AgentRole.TRIAGE, defaults.triage, legacy = false),
+        )
+    }
+
     context(_: Raise<ConfigError>)
     fun appConfig(): AppConfig {
         val mode = string("CLARITY_ENROLLMENT_MODE", "enrollment.mode").let { raw ->
@@ -126,25 +166,32 @@ private class Lookup(
             ),
             agent = AgentConfig(
                 anthropicApiKey = secret("ANTHROPIC_API_KEY", "agent.anthropicApiKey"),
-                model = string("CLARITY_AGENT_MODEL", "agent.model") ?: "claude-opus-5-5",
-                effort = string("CLARITY_AGENT_EFFORT", "agent.effort") ?: "medium",
+                roles = agentRoles(),
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
+                anthropicBaseUrl = string("ANTHROPIC_BASE_URL", "agent.anthropicBaseUrl"),
             ),
         )
     }
 }
 
 /**
- * Parses `name=url,name2=url2` (the `CLARITY_MCP_SERVERS` format). Entries without a name or URL
- * are ignored; the URL may itself contain `=` (query strings), only the first one splits.
+ * Parses `name=url[;keyFile=/path],name2=url2` (the `CLARITY_MCP_SERVERS` format). Entries without
+ * a name or URL are ignored; the URL may itself contain `=` (query strings), only the first one
+ * splits. Options follow the URL after `;` as `key=value` (currently only `keyFile`).
  */
 fun parseMcpServers(raw: String): List<McpServerConfig> =
     raw.split(',')
         .mapNotNull { entry ->
-            val name = entry.substringBefore('=', "").trim()
-            val url = entry.substringAfter('=', "").trim()
-            if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url)
+            val parts = entry.split(';')
+            val head = parts.first()
+            val name = head.substringBefore('=', "").trim()
+            val url = head.substringAfter('=', "").trim()
+            val keyFile = parts.drop(1)
+                .map { it.trim() }
+                .firstOrNull { it.startsWith("keyFile=") }
+                ?.substringAfter('=')?.trim()?.takeIf { it.isNotEmpty() }
+            if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url, keyFile)
         }

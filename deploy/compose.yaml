@@ -1,9 +1,10 @@
 # Clarity: single-tenant stack for Podman (rootless works).
 #
 #   ./deploy/init-secrets.sh
-#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + caddy (TLS)
+#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
-#   podman compose -f deploy/compose.yaml --profile browser up -d    # + Playwright MCP browser
+#   podman compose -f deploy/compose.yaml --profile mail --profile dav up -d   # + email (IMAP/SMTP), calendar/contacts/files (DAV)
+#   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
 #
 # Settings come from deploy/.env (copy .env.example; pass --env-file deploy/.env).
 name: clarity
@@ -69,10 +70,13 @@ services:
       CLARITY_ENROLLMENT_MODE: ${CLARITY_ENROLLMENT_MODE:-tofu}
       CLARITY_CONNECTORS_AUTO_GRANT: ${CLARITY_CONNECTORS_AUTO_GRANT:-false}
       ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+      # The model API is reached only through the egress proxy (api.anthropic.com is all it allows).
+      CLARITY_HTTPS_PROXY: http://egress:3128
       CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-claude-opus-5-5}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
-      # e.g. browser=http://browser:8931/mcp  (when running the `browser` profile)
+      # With the `computers` profile:
+      #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}
     # The backend registers every /run/secrets/connector_<id>_key as a provisioned connector,
     # so each connector's key secret is mounted here AND into that connector.
@@ -80,10 +84,16 @@ services:
       - postgres_password
       - anthropic_api_key
       - connector_example_key
+      - connector_mail_key
+      - connector_dav_key
+      - sandbox_key      # bearer keys for the `computers` profile (CLARITY_MCP_SERVERS keyFile=...)
+      - browser_key
     volumes:
       - backend-data:/data
     depends_on:
       postgres:
+        condition: service_healthy
+      egress:
         condition: service_healthy
     healthcheck:
       # busybox wget ships with the alpine JRE image
@@ -92,7 +102,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    networks: [db, ingest, tools, proxy, backend-egress]
+    networks: [db, ingest, tools, proxy, backend-proxy]
     mem_limit: 1g
     cpus: 2.0
 
@@ -124,6 +134,33 @@ services:
     mem_limit: 256m
     cpus: 0.5
 
+  egress:
+    <<: *hardened
+    # Squid, the single door to the internet for the browser and the backend (computers/egress).
+    # Public hosts only for the browser; api.anthropic.com only for the backend. Each client
+    # network gets its own listener, bound to this container's address on it (hence the aliases).
+    image: ghcr.io/robog-two/clarity-egress:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/egress.Containerfile
+    user: "10001:10001"
+    environment:
+      # Extra hosts the backend may reach (comma separated), e.g. a self-hosted model gateway.
+      CLARITY_BACKEND_EGRESS_ALLOW: ${CLARITY_BACKEND_EGRESS_ALLOW:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "3130"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      browser-proxy: { aliases: [egress-browser] }
+      backend-proxy: { aliases: [egress-backend] }
+      egress: {}
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+
   connector-example:
     <<: *hardened
     profiles: [example]
@@ -153,25 +190,130 @@ services:
     mem_limit: 256m
     cpus: 0.5
 
+  connector-mail:
+    <<: *hardened
+    profiles: [mail]
+    image: ghcr.io/robog-two/clarity-connector-mail:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/jvm-app.Containerfile
+      args:
+        MODULE: connectors:mail
+        APP_NAME: clarity-connector-mail
+        MODULE_DIR: connectors/mail
+    user: "10001:10001"
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_mail_key
+      CLARITY_CONNECTOR_ID: mail
+      CLARITY_SYNC_INTERVAL: ${CLARITY_MAIL_SYNC_INTERVAL:-30s}
+      CLARITY_STATE_DIR: /data
+    secrets:
+      - connector_mail_key
+    volumes:
+      - connector-mail-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    # ingest = reach the backend only; its own egress network = reach the mail servers.
+    networks: [ingest, connector-mail-egress]
+    mem_limit: 384m
+    cpus: 0.5
+
+  connector-dav:
+    <<: *hardened
+    profiles: [dav]
+    image: ghcr.io/robog-two/clarity-connector-dav:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/jvm-app.Containerfile
+      args:
+        MODULE: connectors:dav
+        APP_NAME: clarity-connector-dav
+        MODULE_DIR: connectors/dav
+    user: "10001:10001"
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_dav_key
+      CLARITY_CONNECTOR_ID: dav
+      CLARITY_SYNC_INTERVAL: ${CLARITY_DAV_SYNC_INTERVAL:-5m}
+      CLARITY_STATE_DIR: /data
+    secrets:
+      - connector_dav_key
+    volumes:
+      - connector-dav-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    # ingest = reach the backend only; its own egress network = reach the calendar, contacts and file server.
+    networks: [ingest, connector-dav-egress]
+    mem_limit: 512m
+    cpus: 0.5
+
+  sandbox:
+    <<: *hardened
+    profiles: [computers]
+    # sandboxd: the agent's Linux workspace as an MCP server (computers/sandbox). Only on the
+    # internal `tools` network: no route to the internet, to Postgres or to the connectors.
+    image: ghcr.io/robog-two/clarity-sandbox:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/sandbox.Containerfile
+    user: "10001:10001"
+    environment:
+      SANDBOX_PORT: "8940"
+      SANDBOX_WORKSPACE: /workspace
+      SANDBOX_KEY_FILE: /run/secrets/sandbox_key
+    secrets:
+      - sandbox_key
+    volumes:
+      - sandbox-workspace:/workspace   # the only thing that persists; the container is disposable
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8940 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ok <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    networks: [tools]
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 512
+
   browser:
     <<: *hardened
-    profiles: [browser]
-    # Playwright MCP, headless Chromium, streamable HTTP on :8931 (see microsoft/playwright-mcp README).
-    image: mcr.microsoft.com/playwright/mcp:${CLARITY_BROWSER_TAG:-latest}
-    entrypoint: ["node"]
-    command:
-      - /app/cli.js
-      - --headless
-      - --browser=chromium
-      - --isolated            # profile in memory only
-      - --no-sandbox          # no user namespaces inside the (already unprivileged) container
-      - --host=0.0.0.0
-      - --port=8931
-      - --allowed-hosts=browser:8931   # the Host header the backend sends
+    profiles: [computers]
+    # Headless Firefox ESR + uBlock Origin + Privacy Badger, driven by Mozilla's Firefox DevTools
+    # MCP server, served as streamable HTTP on :8931/mcp (computers/browser). It reaches the public
+    # internet only through the `egress` proxy (never the LAN) and the backend through `tools`.
+    image: ghcr.io/robog-two/clarity-browser:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/browser.Containerfile
+    user: "10001:10001"
+    # Firefox's own content sandbox chroots; this one capability (inside the container's user
+    # namespace) keeps it enabled instead of disabling the sandbox.
+    cap_add: [SYS_CHROOT]
+    environment:
+      BROWSER_PORT: "8931"
+      BROWSER_KEY_FILE: /run/secrets/browser_key
+      # Uncomment (and add a volume) to keep cookies and logins between restarts:
+      # BROWSER_PROFILE_DIR: /profile
+    secrets:
+      - browser_key
+    # Profile, HOME and downloads live on tmpfs, so every start is a clean browser.
+    tmpfs:
+      - /tmp:rw,nosuid,size=768m
     shm_size: 512m
-    networks: [tools, browser-egress]
-    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8931/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 15s
+    networks: [tools, browser-proxy]
+    mem_limit: 1536m
     cpus: 2.0
+    pids_limit: 1024
 
 networks:
   # Internal networks have no route off the host, which is the point:
@@ -179,11 +321,17 @@ networks:
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
   proxy:    { internal: true }   # caddy <-> backend
-  # One egress network per service that needs the internet, so connectors cannot reach each other.
-  backend-egress: {}             # model API
+  # The proxy's two client networks: browser <-> egress, backend <-> egress.
+  browser-proxy: { internal: true }
+  backend-proxy: { internal: true }
+  # The only route out for the browser and the backend, and only `egress` is on it.
+  egress: { enable_ipv6: true }
+  # One egress network per remaining service that needs the internet (connectors usually talk to
+  # servers on your LAN), so connectors cannot reach each other.
   caddy-egress: { enable_ipv6: true }   # ACME (certificate issuance/renewal), v4 or v6
   connector-example-egress: {}
-  browser-egress: {}
+  connector-mail-egress: {}
+  connector-dav-egress: {}
 
 secrets:
   # Created by deploy/init-secrets.sh (`podman secret create <name>`; podman-compose mounts them at /run/secrets/<name>).
@@ -193,6 +341,14 @@ secrets:
     external: true
   connector_example_key:
     external: true
+  connector_mail_key:
+    external: true
+  connector_dav_key:
+    external: true
+  sandbox_key:
+    external: true
+  browser_key:
+    external: true
 
 volumes:
   pgdata:
@@ -200,3 +356,6 @@ volumes:
   caddy-data:
   caddy-config:
   connector-example-data:
+  connector-mail-data:
+  connector-dav-data:
+  sandbox-workspace:

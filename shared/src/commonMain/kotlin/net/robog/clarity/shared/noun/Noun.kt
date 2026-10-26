@@ -12,4 +12,5 @@ enum class Noun {
     @SerialName("message") MESSAGE,
     @SerialName("contact") CONTACT,
     @SerialName("calendar_event") CALENDAR_EVENT,
+    @SerialName("document") DOCUMENT,
 }

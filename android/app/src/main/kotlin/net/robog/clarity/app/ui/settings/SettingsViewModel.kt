@@ -6,25 +6,195 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
-import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.datetime.LocalTime
+import net.robog.clarity.app.call.CallScheduler
+import net.robog.clarity.app.connector.PhoneConnector
+import net.robog.clarity.app.data.ApiError
+import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.data.AppClock
+import net.robog.clarity.app.data.ConnectorsRepository
+import net.robog.clarity.app.data.ConstitutionRepository
+import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SessionRepository
+import net.robog.clarity.app.data.SettingsRepository
+import net.robog.clarity.app.device.DeviceCapabilities
+import net.robog.clarity.app.push.PushController
+import net.robog.clarity.app.ui.onboarding.toggleDay
+import net.robog.clarity.app.ui.onboarding.toggledMode
+import net.robog.clarity.app.ui.onboarding.withHeadsUp
+import net.robog.clarity.app.ui.sentence
+import net.robog.clarity.shared.session.Settings
 
-data class SettingsUiState(val instanceUrl: String = "", val deviceId: String = "")
+/** One line of "Sources": a name, where it comes from, and when it last synced. */
+data class SourceRow(val title: String, val sub: String, val sync: String)
 
+data class SettingsUiState(
+    val instanceUrl: String = "",
+    val deviceId: String = "",
+    val loading: Boolean = true,
+    val settings: Settings? = null,
+    /** The server has no settings route yet: changes are kept on this phone only. */
+    val localOnly: Boolean = false,
+    val message: String? = null,
+    val constitution: String? = null,
+    val serverSources: List<SourceRow> = emptyList(),
+    val smsGranted: Boolean = false,
+    val smsLastSync: String = "never",
+    val dndGranted: Boolean = false,
+    val notificationsOn: Boolean = true,
+    val fullScreenOk: Boolean = true,
+    /** The call is on but exact alarms are not allowed: it may ring a few minutes late. */
+    val needsExactAlarms: Boolean = false,
+    /** Keep the connection to the server open so pushes arrive at once (the foreground service). */
+    val pushOn: Boolean = true,
+    /** The system does not restrict background work, so pushes are not delayed. */
+    val batteryUnrestricted: Boolean = true,
+)
+
+/**
+ * Settings: the morning call, voice, the constitution, held actions, sources on the server and on
+ * this phone, forget this server, redo onboarding. Every change is saved at once and re-arms the
+ * call alarms.
+ */
 @Inject
 @ViewModelKey(SettingsViewModel::class)
 @ContributesIntoMap(AppScope::class)
-class SettingsViewModel(private val sessions: SessionRepository) : ViewModel() {
-    val state: StateFlow<SettingsUiState> = sessions.session
-        .map { s -> s?.let { SettingsUiState(it.instanceUrl, it.deviceId.value) } ?: SettingsUiState() }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
+class SettingsViewModel(
+    private val sessions: SessionRepository,
+    private val settingsRepository: SettingsRepository,
+    private val connectors: ConnectorsRepository,
+    private val constitution: ConstitutionRepository,
+    private val scheduler: CallScheduler,
+    private val device: DeviceCapabilities,
+    private val phone: PhoneConnector,
+    private val flag: OnboardingFlagStore,
+    private val clock: AppClock,
+    private val push: PushController,
+) : ViewModel() {
+    private val _state = MutableStateFlow(SettingsUiState())
+    val state: StateFlow<SettingsUiState> = _state.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            sessions.session.collect { s ->
+                _state.update { it.copy(instanceUrl = s?.instanceUrl.orEmpty(), deviceId = s?.deviceId?.value.orEmpty()) }
+            }
+        }
+        viewModelScope.launch {
+            phone.lastSyncAt.collect { at -> _state.update { it.copy(smsLastSync = relativeTime(at, clock.now())) } }
+        }
+        viewModelScope.launch { push.enabled.collect { on -> _state.update { it.copy(pushOn = on) } } }
+        viewModelScope.launch { load() }
+        refreshDevice()
+    }
+
+    private suspend fun load() {
+        when (val r = settingsRepository.load()) {
+            is ApiResult.Success -> _state.update { it.copy(loading = false, settings = r.value, localOnly = false) }
+            is ApiResult.Failure -> _state.update {
+                it.copy(
+                    loading = false,
+                    settings = it.settings ?: Settings(timeZone = java.util.TimeZone.getDefault().id),
+                    localOnly = r.error is ApiError.NotFound,
+                    message = r.error.takeUnless { e -> e is ApiError.NotFound }?.sentence(),
+                )
+            }
+        }
+        refreshDevice()
+        (constitution.current() as? ApiResult.Success)?.value?.let { c ->
+            _state.update { it.copy(constitution = "v${c.version} · ${c.lines.size} lines") }
+        }
+        (connectors.list() as? ApiResult.Success)?.value?.let { list ->
+            val now = clock.now()
+            _state.update {
+                it.copy(
+                    serverSources = list
+                        .filterNot { c -> c.id.value.startsWith("device-") }
+                        .map { c -> SourceRow(c.manifest?.displayName ?: c.id.value, c.manifest?.kind ?: "connector", relativeTime(c.lastSeenAt, now)) },
+                )
+            }
+        }
+    }
+
+    /** Re-reads what the phone allows; call it when the screen comes back from a system dialog. */
+    fun refreshDevice() {
+        _state.update {
+            it.copy(
+                smsGranted = device.smsGranted(),
+                dndGranted = device.dndAccessGranted(),
+                notificationsOn = device.notificationsEnabled(),
+                fullScreenOk = device.canUseFullScreenIntent(),
+                batteryUnrestricted = device.batteryUnrestricted(),
+                needsExactAlarms = it.settings?.let { s -> scheduler.needsExactAlarmPermission(s) } ?: false,
+            )
+        }
+    }
+
+    /** SMS permission was just granted: start syncing. */
+    fun onSmsGranted() {
+        refreshDevice()
+        viewModelScope.launch { phone.syncOnce() }
+    }
+
+    // --- edits ---
+
+    private fun edit(change: (Settings) -> Settings) {
+        val current = _state.value.settings ?: return
+        val updated = change(current)
+        if (updated == current) return
+        _state.update { it.copy(settings = updated, message = null) }
+        viewModelScope.launch { persist(updated) }
+    }
+
+    private suspend fun persist(updated: Settings) {
+        when (val r = settingsRepository.save(updated)) {
+            is ApiResult.Success -> _state.update { it.copy(localOnly = false) }
+            is ApiResult.Failure -> _state.update {
+                if (r.error is ApiError.NotFound) it.copy(localOnly = true) else it.copy(message = r.error.sentence())
+            }
+        }
+        // The alarms follow the settings even when the server could not store them.
+        scheduler.apply(updated)
+        refreshDevice()
+    }
+
+    fun setCallTime(time: LocalTime) = edit { it.copy(morningCall = it.morningCall.copy(at = time)) }
+    fun toggleDay(isoDay: Int) = edit { it.copy(morningCall = it.morningCall.toggleDay(isoDay)) }
+    fun toggleHeadsUp() = edit { it.copy(morningCall = it.morningCall.withHeadsUp(it.morningCall.headsUpMinutes == null)) }
+    fun toggleMode() = edit { it.copy(morningCall = it.morningCall.toggledMode()) }
+    fun toggleMic() = edit { it.copy(micAlwaysOn = !it.micAlwaysOn) }
+    fun toggleBatch() = edit { it.copy(batchLowUrgency = !it.batchLowUrgency) }
+    fun togglePushUrgent() = edit { it.copy(pushUrgent = !it.pushUrgent) }
+
+    /** "live connection": starts or stops the foreground service that keeps pushes instant. */
+    fun togglePushService() {
+        val next = !_state.value.pushOn
+        _state.update { it.copy(pushOn = next) }
+        viewModelScope.launch { push.setEnabled(next) }
+    }
+
+    /** The battery explanation is being shown to the person (they are about to see the system dialog). */
+    fun batteryAsked() {
+        viewModelScope.launch { push.markBatteryAsked() }
+    }
+
+    fun setEveningAt(time: LocalTime) = edit { it.copy(eveningSummaryAt = time) }
 
     /** Clears the session and device key; the root navigation returns to onboarding. */
     fun forgetInstance() {
-        viewModelScope.launch { sessions.forget() }
+        viewModelScope.launch {
+            sessions.forget()
+            push.reconcile() // nothing to keep open any more
+        }
+    }
+
+    /** "redo onboarding": the root navigation shows the flow again, from the server step. */
+    fun redoOnboarding() {
+        viewModelScope.launch { flag.startRedo() }
     }
 }

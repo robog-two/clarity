@@ -1,22 +1,86 @@
-name: Android release
+name: Release
 
-# Every push to main publishes a signed APK as a GitHub Release (v0.1.<run number>),
-# alongside the container images from publish.yml.
+# Every push to main publishes, in two jobs:
+#  - the container images to ghcr.io (latest, main, sha-<short>; linux/amd64 and arm64), with
+#    build provenance attested;
+#  - a signed APK as a GitHub Release (v0.1.<run number>).
+# (The file keeps its old name so the run number, and with it the APK versionCode, keeps counting.)
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write # create releases and tags
+  contents: read
 
 concurrency:
-  group: android-release
+  group: release
   cancel-in-progress: false
 
 jobs:
-  release:
+  images:
+    name: Container images
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      # The runtime stages have no RUN steps and the build stage runs on the native platform, so
+      # arm64 images do not actually need emulation; QEMU is kept for future RUN steps.
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push every image
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"   # registry names must be lowercase
+          short="${GITHUB_SHA::7}"
+          : > "$RUNNER_TEMP/subjects.txt"
+          # service | Containerfile | gradle module | app name | module dir (the last three only for JVM apps)
+          while IFS='|' read -r service file module app dir; do
+            image="ghcr.io/$owner/clarity-$service"
+            echo "::group::$service"
+            docker buildx build . --file "$file" --platform linux/amd64,linux/arm64 --push \
+              --tag "$image:latest" --tag "$image:main" --tag "$image:sha-$short" \
+              --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+              --build-arg MODULE="$module" --build-arg APP_NAME="$app" --build-arg MODULE_DIR="$dir" \
+              --build-arg VERSION=latest --build-arg REVISION="$GITHUB_SHA" \
+              --cache-from "type=registry,ref=$image:buildcache" \
+              --cache-to "type=registry,ref=$image:buildcache,mode=max" \
+              --metadata-file "$RUNNER_TEMP/meta.json"
+            digest="$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/meta.json")"
+            echo "${digest#sha256:}  $image" >> "$RUNNER_TEMP/subjects.txt"
+            echo "::endgroup::"
+          done <<'LIST'
+          backend|deploy/container/jvm-app.Containerfile|backend|clarity-backend|backend
+          connector-example|deploy/container/jvm-app.Containerfile|connectors:example|clarity-connector-example|connectors/example
+          connector-mail|deploy/container/jvm-app.Containerfile|connectors:mail|clarity-connector-mail|connectors/mail
+          connector-dav|deploy/container/jvm-app.Containerfile|connectors:dav|clarity-connector-dav|connectors/dav
+          sandbox|deploy/container/sandbox.Containerfile|||
+          browser|deploy/container/browser.Containerfile|||
+          egress|deploy/container/egress.Containerfile|||
+          LIST
+          cat "$RUNNER_TEMP/subjects.txt"
+      # One attestation covering all images, stored with GitHub; verify with
+      # `gh attestation verify oci://ghcr.io/<owner>/clarity-<service>:main --repo <owner>/clarity`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: ${{ runner.temp }}/subjects.txt
+
+  android:
+    name: Signed APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create releases and tags
     timeout-minutes: 45
     env:
       VERSION_CODE: ${{ github.run_number }}

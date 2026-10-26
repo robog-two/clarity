@@ -93,11 +93,11 @@ object AgentRuns : Table("agent_run") {
     val error = text("error").nullable()
     val startedAt = timestamp("started_at")
     val finishedAt = timestamp("finished_at").nullable()
-    override val primaryKey = PrimaryKey(id)
-}
 
-object JobRuns : Table("job_run") {
-    val name = text("name")
-    val lastRunAt = timestamp("last_run_at")
-    override val primaryKey = PrimaryKey(name)
+    // V4: helpers
+    val parentRunId = uuid("parent_run_id").nullable()
+    val role = text("role")
+    val result = text("result").nullable()
+    val tools = jsonb<JsonElement>("tools", ClarityJson).nullable()
+    override val primaryKey = PrimaryKey(id)
 }

@@ -37,12 +37,15 @@ sealed interface SettingsError {
  * @property connectorKey bearer credential for `/ingest/v1`.
  * @property syncInterval pause between two sync runs.
  * @property stateDir directory of the connector's durable volume (`/data`).
+ * @property connectorId the id this connector is provisioned under (`CLARITY_CONNECTOR_ID`, else taken
+ *   from a key file named `connector_<id>_key`); sealed config values are bound to it.
  */
 data class ConnectorSettings(
     val baseUrl: String,
     val connectorKey: String,
     val syncInterval: Duration,
     val stateDir: Path,
+    val connectorId: String = "",
 ) {
     override fun toString(): String =
         "ConnectorSettings(baseUrl=$baseUrl, connectorKey=<redacted>, syncInterval=$syncInterval, stateDir=$stateDir)"
@@ -77,6 +80,9 @@ data class ConnectorSettings(
                     connectorKey = key,
                     syncInterval = interval,
                     stateDir = Paths.get(env["CLARITY_STATE_DIR"]?.takeIf(String::isNotBlank) ?: DEFAULT_STATE_DIR),
+                    connectorId = env["CLARITY_CONNECTOR_ID"]?.trim()?.takeIf(String::isNotEmpty)
+                        ?: Regex("""connector_(.+)_key""").matchEntire(keyFile.substringAfterLast('/'))?.groupValues?.get(1)
+                        ?: "",
                 )
             }
 

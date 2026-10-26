@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Start Here</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Flex:opsz,wght@8..144,400..700&amp;family=Libre+Caslon+Text:ital@0;1&amp;display=swap">
+<style>
+body{margin:0}
+a{color:#1F1D1A;text-decoration:none}
+.part{display:flex;align-items:center;gap:24px;padding:24px 28px;border-radius:16px;background:#F5F1EB;border:1px solid #D6D0C6;transition:background-color 200ms ease-out}
+.part:hover{background:#EFEAE2}
+.part:hover .ar{background:#466660;color:#FFFFFF}
+.ar{width:48px;height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;background:#CDE7DF;color:#0E2B26;font:500 22px 'Roboto Flex',Roboto,sans-serif;transition:background-color 200ms ease-out,color 200ms ease-out;flex:none}
+</style>
+</helmet>
+<div style="width:880px;height:844px;box-sizing:border-box;padding:64px 72px;background:#FBF8F4;color:#1F1D1A;display:flex;flex-direction:column;gap:40px;font-family:'Roboto Flex',Roboto,sans-serif">
+<div style="display:flex;flex-direction:column;gap:16px">
+<span style="font:500 14px 'Roboto Flex',Roboto,sans-serif;color:#54514B">prototype · press play on any phone</span>
+<h1 style="margin:0;font:400 57px/64px 'Roboto Flex',Roboto,sans-serif">Personal Agent</h1>
+<p style="margin:0;font:400 18px/1.55 'Libre Caslon Text',serif;color:#54514B;max-width:580px">You set the priorities. The agent takes small, scoped tasks and stays out of the way. Everything behind the screens is filled in, and your voice types itself out word by word.</p>
+</div>
+<nav style="display:flex;flex-direction:column;gap:12px">
+<a class="part" href="Onboarding.dc.html"><span style="font:500 14px 'Roboto Flex',Roboto,sans-serif;color:#466660;width:28px">01</span><span style="flex:1;display:flex;flex-direction:column;gap:6px"><span style="font:400 24px/32px 'Roboto Flex',Roboto,sans-serif">Onboarding</span><span style="font:400 15px/1.5 'Libre Caslon Text',serif;color:#54514B">Server, API key, connectors, a values interview, and the morning call.</span></span><span class="ar" aria-hidden="true">→</span></a>
+<a class="part" href="Call.dc.html"><span style="font:500 14px 'Roboto Flex',Roboto,sans-serif;color:#466660;width:28px">02</span><span style="flex:1;display:flex;flex-direction:column;gap:6px"><span style="font:400 24px/32px 'Roboto Flex',Roboto,sans-serif">Morning Call</span><span style="font:400 15px/1.5 'Libre Caslon Text',serif;color:#54514B">The heads-up, the call, and clear, choose, commit, hand off.</span></span><span class="ar" aria-hidden="true">→</span></a>
+<a class="part" href="App.dc.html"><span style="font:500 14px 'Roboto Flex',Roboto,sans-serif;color:#466660;width:28px">03</span><span style="flex:1;display:flex;flex-direction:column;gap:6px"><span style="font:400 24px/32px 'Roboto Flex',Roboto,sans-serif">Open the App</span><span style="font:400 15px/1.5 'Libre Caslon Text',serif;color:#54514B">Today, asking it something, what it held back, and settings.</span></span><span class="ar" aria-hidden="true">→</span></a>
+</nav>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":880,"height":844}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
