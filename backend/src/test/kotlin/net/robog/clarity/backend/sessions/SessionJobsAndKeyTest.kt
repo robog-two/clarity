@@ -82,7 +82,8 @@ class SessionJobsAndKeyTest : FunSpec({
         postgres.stop()
     }
 
-    suspend fun rig(apiKey: String? = "sk-test") = LeadRig(database, Clock.System, apiKey).also { it.reset() }
+    suspend fun rig(apiKey: String? = "sk-test", roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles()) =
+        LeadRig(database, Clock.System, apiKey, roles).also { it.reset() }
 
     fun appConfig(dir: java.nio.file.Path, agent: AgentConfig) = AppConfig(
         instance = InstanceConfig("t"),
@@ -218,5 +219,21 @@ class SessionJobsAndKeyTest : FunSpec({
         keys.read() shouldBe "sk-good"
         StoredModelKeyLoader(keys, configured.runtime).run()
         configured.runtime.installKey("sk-x") shouldBe false
+    }
+    test("setup status is valid only while every provider some role uses has a key, and names the one missing") {
+        val defaults = net.robog.clarity.backend.config.AgentRoles()
+        val r = rig(roles = defaults.copy(triage = defaults.triage.copy(provider = net.robog.clarity.backend.config.ModelProvider.OPENROUTER, model = "x/y")))
+        val config = appConfig(Files.createTempDirectory("clarity-key"), r.config)
+        val setup = SetupService(r.runtime, ModelKeyStore(config), { KeyCheck.Valid }, SettingsStore(database, Clock.System), r.constitutions, ConnectorRegistry(database, Clock.System, config, net.robog.clarity.backend.connectors.ConnectorTests(database, Clock.System, net.robog.clarity.backend.governance.OutboxSignals())))
+        setup.status().let {
+            it.modelKey shouldBe SetupStatus.KeyState.MISSING
+            it.missingKeys shouldBe listOf("openrouter")
+        }
+        // Triage back on Anthropic, which has a key: valid again, without a restart.
+        r.modelSettings.set(net.robog.clarity.backend.config.AgentRole.TRIAGE, net.robog.clarity.backend.agent.RoleOverride(provider = net.robog.clarity.backend.config.ModelProvider.ANTHROPIC, model = "claude-haiku-5-5"))
+        setup.status().let {
+            it.modelKey shouldBe SetupStatus.KeyState.VALID
+            it.missingKeys shouldBe emptyList()
+        }
     }
 })

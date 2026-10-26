@@ -46,6 +46,8 @@ import net.robog.clarity.app.device.AndroidDeviceCapabilities
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.net.IngestApi
 import net.robog.clarity.app.net.VaultApi
+import net.robog.clarity.app.data.DefaultModelsRepository
+import net.robog.clarity.app.data.ModelsRepository
 import net.robog.clarity.app.vault.AndroidVaultKeys
 import net.robog.clarity.app.vault.BiometricPhoneAuth
 import net.robog.clarity.app.vault.DefaultVaultRepository
@@ -214,6 +216,8 @@ interface AppGraph : ViewModelGraph {
     // --- the credential vault and phone approvals ---
 
     @Provides fun vaultApi(api: KtorClarityApi): VaultApi = api
+
+    @Provides fun modelsRepository(api: KtorClarityApi): ModelsRepository = DefaultModelsRepository(api)
 
     @Provides @SingleIn(AppScope::class)
     fun vaultKeys(): VaultKeys = AndroidVaultKeys()

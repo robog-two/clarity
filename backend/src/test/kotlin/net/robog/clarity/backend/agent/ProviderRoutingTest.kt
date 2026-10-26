@@ -39,14 +39,20 @@ class ProviderRoutingTest : FunSpec({
         val openRouter = FakeModel()
         val created = mutableListOf<Pair<ModelProvider, String>>()
         val recorded = mutableListOf<Pair<String, Usage>>()
+        val recordedRoles = mutableListOf<AgentRole?>()
         val config = AgentConfig(anthropicApiKey = anthropicKey, reviewInterval = 2.hours, roles = roles, openRouterApiKey = openRouterKey)
+        val settings = ModelSettings(config, InMemoryRoleOverrideStore())
         val runtime = AgentRuntime(
             config,
+            settings,
             ModelGatewayFactory { provider, key ->
                 created += provider to key
                 if (provider == ModelProvider.OPENROUTER) openRouter else anthropic
             },
-            UsageRecorder { model, usage -> recorded += model to usage },
+            UsageRecorder { model, usage, role ->
+                recorded += model to usage
+                recordedRoles += role
+            },
         )
     }
 
@@ -58,7 +64,7 @@ class ProviderRoutingTest : FunSpec({
         rig.openRouter.handler = {
             ModelResponse(listOf(Block.Text("""{"decision":"allow","lines":[],"rationale":"fine"}""")), StopReason.END_TURN, Usage(50, 5, reportedCostMicros = 12))
         }
-        val verdict = ConfiguredGuardModel(rig.runtime, rig.config).review(
+        val verdict = ConfiguredGuardModel(rig.runtime).review(
             GuardQuestion(sample(ActionKind.SEND_EMAIL), constitution(), "because", GuardVerdict(Decision.ALLOW, emptyList(), "ok")),
         )
         verdict.decision shouldBe Decision.ALLOW
@@ -67,6 +73,7 @@ class ProviderRoutingTest : FunSpec({
         // Recorded with the provider's own cost.
         rig.recorded.single() shouldBe ("anthropic/claude-haiku-5.5" to Usage(50, 5, reportedCostMicros = 12))
         costMicros(rig.recorded.single().first, rig.recorded.single().second) shouldBe 12L
+        rig.recordedRoles.single() shouldBe AgentRole.GUARD
 
         rig.openRouter.handler = { end("""{"verdict":"ok","reason":"fine"}""") }
         ConfiguredBrowserTriage(rig.runtime).review(TriageStep("click Next", "https://example.com", untrusted = false)).ok shouldBe true
@@ -76,8 +83,8 @@ class ProviderRoutingTest : FunSpec({
             lead!!.generate(net.robog.clarity.harness.ModelRequest(LEAD_MODEL, "s", listOf(net.robog.clarity.harness.Message.user("hi")), emptyList(), 10, null))
         }
         rig.anthropic.requests.single().model shouldBe LEAD_MODEL
-        rig.runtime.gatewayFor(AgentRole.HELPER) shouldBe rig.runtime.gatewayFor(AgentRole.LEAD)
-        (rig.runtime.gatewayFor(AgentRole.TRIAGE) === rig.runtime.gatewayFor(AgentRole.GUARD)) shouldBe true
+        rig.runtime.bind(AgentRole.HELPER)!!.config.provider shouldBe ModelProvider.ANTHROPIC
+        rig.runtime.bind(AgentRole.TRIAGE)!!.config.provider shouldBe ModelProvider.OPENROUTER
     }
 
     test("agents wait for every provider in use: an Anthropic key entered in setup completes the set") {

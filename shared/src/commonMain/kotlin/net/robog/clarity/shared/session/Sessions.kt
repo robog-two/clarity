@@ -161,6 +161,11 @@ data class SetupStatus(
     val connectorsReady: Int,
     val constitutionVersion: Int?,
     val settings: Settings,
+    /**
+     * Providers some role uses that have no key yet (`anthropic`, `openrouter`). [modelKey] is valid
+     * only when this is empty; an OpenRouter key is set on the server, not in the app.
+     */
+    val missingKeys: List<String> = emptyList(),
 ) {
     @Serializable
     enum class KeyState {

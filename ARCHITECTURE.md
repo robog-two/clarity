@@ -272,8 +272,13 @@ for what our loop already has: an append-only transcript. So:
   workspace and the tool returns a path + summary.
 - **Model roles** (config, per role): `lead` (default `claude-opus-5-5`; effort `low` during a
   live call for latency, `medium` otherwise), `helper` (`claude-sonnet-5-5`), `guard` and
-  `triage` (`claude-haiku-5-5`). Roles never switch models inside a thread (cache is per model);
-  a different model means a helper.
+  `triage` (`claude-haiku-5-5`). Env/yaml set the deploy-time defaults; the app can override a
+  role's provider, model and effort at runtime (`model_role_override`, `/api/v1/settings/models`).
+  A run never switches model halfway: the lead picks up a change at its next turn, a helper keeps
+  the settings it started with, guard and triage read them per call. A switch costs one cold
+  prompt cache (the cache is per model). Thinking blocks from the earlier model stay in the journal
+  and are replayed unchanged; the API leaves out, unbilled, what the new model can't read (stripping
+  them would be a history edit). The lead stays on Anthropic until compaction runs client-side.
 - Refusals: server-side fallback (`fallbacks: "default"`) on supported models; a refusal is
   surfaced as a card, never retried silently.
 

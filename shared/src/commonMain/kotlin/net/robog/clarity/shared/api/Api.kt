@@ -18,6 +18,8 @@ object ApiPaths {
     const val SETUP_MODEL_KEY = "$APP/setup/model-key"
     const val CONNECTORS = "$APP/connectors"
     const val SETTINGS = "$APP/settings"
+    /** `GET` every role's model settings; `PUT {role}` sets its overrides, `DELETE {role}` clears them. */
+    const val SETTINGS_MODELS = "$SETTINGS/models"
     const val FEED = "$APP/feed"
     const val EVENTS = "$APP/events"
     const val INPUT = "$APP/input"
@@ -74,7 +76,13 @@ data class Problem(
     val title: String,
     val status: Int,
     val detail: String? = null,
+    /** For a refused input: what is wrong with each field. */
+    val errors: List<FieldError>? = null,
 )
+
+/** One field of a refused input, and why (plain words, shown to the person). */
+@Serializable
+data class FieldError(val field: String, val message: String)
 
 /** Constants for device-signed JWTs. */
 object DeviceJwt {
