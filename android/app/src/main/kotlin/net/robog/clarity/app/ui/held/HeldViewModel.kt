@@ -21,7 +21,15 @@ import net.robog.clarity.shared.governance.ActivityEntry
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 
-data class HeldRow(val id: HeldActionId, val whenText: String, val title: String, val status: String, val waiting: Boolean)
+data class HeldRow(
+    val id: HeldActionId,
+    val whenText: String,
+    val title: String,
+    val status: String,
+    val waiting: Boolean,
+    /** Only a yes signed on this phone approves it (opens the review screen, not the talk-through). */
+    val phone: Boolean = false,
+)
 
 data class AllowedRow(val title: String, val whenText: String, val ok: Boolean)
 
@@ -38,7 +46,7 @@ data class HeldUiState(
 }
 
 fun heldRows(held: List<HeldAction>, zone: TimeZone): List<HeldRow> =
-    orderedHeld(held).map { HeldRow(it.id, heldWhen(it, zone), it.action.summary, heldRowStatus(it.status), it.waiting) }
+    orderedHeld(held).map { HeldRow(it.id, heldWhen(it, zone), it.action.summary, heldRowStatus(it.status), it.waiting, it.waiting && it.needsPhoneApproval) }
 
 fun allowedRows(entries: List<ActivityEntry>, zone: TimeZone): List<AllowedRow> =
     entries.sortedByDescending { it.at }.map { AllowedRow(it.summary, formatClock(it.at, zone), it.ok) }

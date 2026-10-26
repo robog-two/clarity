@@ -27,13 +27,24 @@ import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.shared.governance.HeldActionId
 
 @Composable
-fun HeldScreen(onOpen: (HeldActionId) -> Unit, modifier: Modifier = Modifier, viewModel: HeldViewModel = metroViewModel()) {
+fun HeldScreen(
+    onOpen: (HeldActionId) -> Unit,
+    modifier: Modifier = Modifier,
+    onReview: (HeldActionId) -> Unit = onOpen,
+    viewModel: HeldViewModel = metroViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    HeldContent(state, onOpen, viewModel::toggleAllowed, modifier)
+    HeldContent(state, onOpen, viewModel::toggleAllowed, modifier, onReview)
 }
 
 @Composable
-fun HeldContent(state: HeldUiState, onOpen: (HeldActionId) -> Unit, onToggleAllowed: () -> Unit, modifier: Modifier = Modifier) {
+fun HeldContent(
+    state: HeldUiState,
+    onOpen: (HeldActionId) -> Unit,
+    onToggleAllowed: () -> Unit,
+    modifier: Modifier = Modifier,
+    onReview: (HeldActionId) -> Unit = onOpen,
+) {
     Column(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -46,7 +57,7 @@ fun HeldContent(state: HeldUiState, onOpen: (HeldActionId) -> Unit, onToggleAllo
             state.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { onOpen(row.id) }.padding(vertical = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { if (row.phone) onReview(row.id) else onOpen(row.id) }.padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

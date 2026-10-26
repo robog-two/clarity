@@ -107,8 +107,8 @@ fun MainScaffold(
         val content = Modifier.padding(padding)
         when (tab) {
             MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content)
-            MainTab.Ask -> AskScreen(content)
-            MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content)
+            MainTab.Ask -> AskScreen(content, onReview = onReview)
+            MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
             MainTab.Settings -> SettingsTab(onOpenConstitution, content)
         }
     }

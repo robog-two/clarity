@@ -50,6 +50,7 @@ import net.robog.clarity.app.ui.onboarding.dayInitial
 import net.robog.clarity.app.ui.onboarding.dayName
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.today.SectionTitle
+import net.robog.clarity.app.vault.VaultSection
 import net.robog.clarity.shared.session.Settings.MorningCall
 
 /** Callbacks of the settings screen, grouped so previews and tests can pass no-ops. */
@@ -111,6 +112,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, modifier: Modifier = Modifier, v
             onForget = viewModel::forgetInstance,
         ),
         modifier = modifier,
+        vault = { VaultSection() },
     )
 }
 
@@ -123,7 +125,13 @@ private fun Context.openSystem(action: String, withPackage: Boolean = false, ext
 }
 
 @Composable
-fun SettingsContent(state: SettingsUiState, actions: SettingsActions, modifier: Modifier = Modifier) {
+fun SettingsContent(
+    state: SettingsUiState,
+    actions: SettingsActions,
+    modifier: Modifier = Modifier,
+    /** A section between the held-action settings and the sources (the credential vault). */
+    vault: @Composable () -> Unit = {},
+) {
     var confirming by rememberSaveable { mutableStateOf(false) }
     var pickingTime by rememberSaveable { mutableStateOf<String?>(null) }
     val settings = state.settings
@@ -189,6 +197,8 @@ fun SettingsContent(state: SettingsUiState, actions: SettingsActions, modifier: 
                 )
             }
         }
+
+        vault()
 
         SectionTitle("Sources · on your server")
         Column {

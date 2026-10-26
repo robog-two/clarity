@@ -48,6 +48,8 @@ data class DraftReviewState(
     /** Approved or declined: the screen can close. */
     val finished: Boolean = false,
     val message: String? = null,
+    /** The two-factor code the person typed (only for a code request); never persisted. */
+    val code: String = "",
 ) {
     val email get() = held?.action?.let(::emailOf)
     val decided: Boolean get() = held != null && !held.waiting
@@ -137,6 +139,8 @@ class DraftReviewViewModel(
 
     fun edit(text: String) = _state.update { it.copy(body = text) }
 
+    fun editCode(text: String) = _state.update { it.copy(code = text.take(32)) }
+
     /** "talk about it": opens (once) an AMEND session on this action and listens for one utterance. */
     fun talk() {
         val held = _state.value.held ?: return
@@ -162,11 +166,14 @@ class DraftReviewViewModel(
         if (s.busy || s.decided) return
         _state.update { it.copy(requesting = true, message = null) }
         viewModelScope.launch {
-            if (!gate.authorize(held)) {
-                _state.update { it.copy(requesting = false, message = "Not approved.") }
-                return@launch
+            when (val r = gate.authorize(held, ApprovalInput(code = _state.value.code))) {
+                ApprovalResult.Proceed -> finish(held.id, approvalFor(held, _state.value.body))
+                ApprovalResult.Done -> {
+                    endTalk()
+                    _state.update { it.copy(requesting = false, finished = true, code = "") }
+                }
+                is ApprovalResult.Denied -> _state.update { it.copy(requesting = false, message = r.message) }
             }
-            finish(held.id, approvalFor(held, _state.value.body))
         }
     }
 

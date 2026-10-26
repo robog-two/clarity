@@ -45,8 +45,16 @@ import net.robog.clarity.app.data.TodayRepository
 import net.robog.clarity.app.device.AndroidDeviceCapabilities
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.net.IngestApi
+import net.robog.clarity.app.net.VaultApi
+import net.robog.clarity.app.vault.AndroidVaultKeys
+import net.robog.clarity.app.vault.BiometricPhoneAuth
+import net.robog.clarity.app.vault.DefaultVaultRepository
+import net.robog.clarity.app.vault.ForegroundActivity
+import net.robog.clarity.app.vault.PhoneApprover
+import net.robog.clarity.app.vault.PhoneAuth
+import net.robog.clarity.app.vault.VaultKeys
+import net.robog.clarity.app.vault.VaultRepository
 import net.robog.clarity.app.ui.Toasts
-import net.robog.clarity.app.ui.held.AlwaysApprove
 import net.robog.clarity.app.ui.held.ApprovalGate
 import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.connector.TinkConfigSealer
@@ -181,8 +189,23 @@ interface AppGraph : ViewModelGraph {
     @Provides @SingleIn(AppScope::class)
     fun toasts(): Toasts = Toasts()
 
-    /** Replaced by the vault workstream with a biometric gate for credential approvals. */
-    @Provides fun approvalGate(): ApprovalGate = AlwaysApprove
+    // --- the credential vault and phone approvals ---
+
+    @Provides fun vaultApi(api: KtorClarityApi): VaultApi = api
+
+    @Provides @SingleIn(AppScope::class)
+    fun vaultKeys(): VaultKeys = AndroidVaultKeys()
+
+    @Provides @SingleIn(AppScope::class)
+    fun foregroundActivity(): ForegroundActivity = ForegroundActivity()
+
+    @Provides fun phoneAuth(foreground: ForegroundActivity): PhoneAuth = BiometricPhoneAuth(foreground)
+
+    @Provides fun vaultRepository(api: VaultApi, keys: VaultKeys): VaultRepository = DefaultVaultRepository(api, keys)
+
+    /** Never-alone actions and vault releases are approved with a biometric yes signed on this phone. */
+    @Provides fun approvalGate(api: VaultApi, keys: VaultKeys, auth: PhoneAuth, vault: VaultRepository): ApprovalGate =
+        PhoneApprover(api, keys, auth, vault)
 
     // --- device and morning call ---
 
@@ -244,6 +267,8 @@ interface AppGraph : ViewModelGraph {
     val phoneConnector: PhoneConnector
     val dndActions: DndActionHandler
     val sessionStore: SessionStore
+    val vaultRepository: VaultRepository
+    val foregroundActivity: ForegroundActivity
 
     @DependencyGraph.Factory
     fun interface Factory {

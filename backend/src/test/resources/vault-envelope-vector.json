@@ -1,0 +1,16 @@
+{
+    "devicePrivateKeyPkcs8": "MEECAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEJzAlAgEBBCAum1NNtqyQD_X14FRfEfzhW0J7wacBpicIqybDX0ZlsQ",
+    "devicePublicKeySpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEJZJYN8gMP4lOQ4p-Acr_TURcbqRlEwdJRXChlJcVuQNu1YYxAM2P5JtCwbuL0fcRQz51Ntm6sDZLTqD0CxL3dw",
+    "fields": {
+        "username": "dana.vault@example.com",
+        "password": "hunter2!-Zebra"
+    },
+    "envelope": {
+        "deviceId": "11111111-1111-1111-1111-111111111111",
+        "alg": "ECDH-ES-P256-HKDF-SHA256-A256GCM",
+        "epk": "BKnh_3W-Jm38hnmaTLXKgSeIqbzKH0E73PZ_EDEnCmp8Ddd0taAuOmdnRK6Ggu-SDVa87s74UcEIWz6WeKs3bAw",
+        "iv": "CHgrALs49WT2wQs1",
+        "ciphertext": "HLZFBCNQFO_kQIuZGJEksPR9NYKjC0zqC_CAlQDmwkYpt2xmnbskWZUWaFfHE8v4Zo56smePto7RhgWEI6uVYLfmrajSMtJu7d67ctzRcGhvXStXyqgf1zRcpVc",
+        "context": "req-vector-1"
+    }
+}
