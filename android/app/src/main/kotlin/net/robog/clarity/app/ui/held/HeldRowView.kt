@@ -33,7 +33,7 @@ fun HeldRowView(row: HeldRow, onClick: () -> Unit, modifier: Modifier = Modifier
                 tint = if (row.waiting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        overlineContent = { Text(sentenceCase(if (row.waiting) "needs your ok · ${row.whenText}" else row.whenText)) },
+        overlineContent = { Text(sentenceCase(if (row.waiting) "needs your OK · ${row.whenText}" else row.whenText)) },
         headlineContent = { Text(row.title, style = MaterialTheme.clarityText.chat, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
             if (row.waiting) {

@@ -103,7 +103,7 @@ fun DraftReviewContent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val email = state.email
-            Kicker(outcome ?: "needs your ok · ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
+            Kicker(outcome ?: "needs your OK · ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
             Text(email?.subject ?: held.action.summary, style = MaterialTheme.typography.headlineSmall)
 
             if (email != null) {

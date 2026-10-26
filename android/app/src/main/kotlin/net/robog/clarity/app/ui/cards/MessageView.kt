@@ -170,7 +170,7 @@ fun NoteBubble(text: String, modifier: Modifier = Modifier) {
 private fun ApprovalRow(card: Card.Proposal, env: CardEnv) {
     val held = env.held[card.heldActionId]
     if (held == null) {
-        ActionRow(Icons.Outlined.Description, "needs your ok", "Loading the details…", { env.onReview(card.heldActionId) })
+        ActionRow(Icons.Outlined.Description, "needs your OK", "Loading the details…", { env.onReview(card.heldActionId) })
         return
     }
     val row = remember(held) { heldRows(listOf(held), TimeZone.currentSystemDefault()).single() }

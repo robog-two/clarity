@@ -192,7 +192,7 @@ fun ProposalBox(
 ) {
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         if (held == null) {
-            Kicker("needs your ok")
+            Kicker("needs your OK")
             Hint("Loading the details…")
             return@InfoBox
         }
