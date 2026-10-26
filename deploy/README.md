@@ -7,16 +7,46 @@ wired with least-privilege networks and Podman secrets. Rootless Podman is the r
 
 ```sh
 ./deploy/init-secrets.sh                          # generates deploy/secrets/* and loads them as Podman secrets (idempotent)
-echo -n 'sk-ant-...' > deploy/secrets/anthropic_api_key   # optional: without it the agent is disabled
+echo -n 'sk-ant-...' > deploy/secrets/anthropic_api_key   # optional: or paste the key in the app (see "Secrets")
 ./deploy/init-secrets.sh                          # re-run to load the key
 cp deploy/.env.example deploy/.env                # optional overrides
 
 podman compose --env-file deploy/.env -f deploy/compose.yaml up -d
-curl http://127.0.0.1:8080/healthz
+curl http://127.0.0.1:8080/healthz                # process is up
+curl http://127.0.0.1:8080/readyz                 # database reachable
 ```
 
 Images are pulled from `ghcr.io/robog-two/clarity-*:${CLARITY_TAG:-latest}`; to build locally instead
 use `up -d --build` (the `build:` sections use `deploy/container/jvm-app.Containerfile`).
+
+## First run with the app
+
+1. Start the stack (above) and make the backend reachable from the phone through Caddy (see "TLS").
+2. Open the app and enter the server address. If the instance is in the default `tofu` mode the first device
+   enrolls without a code; otherwise enter the enrollment token (see "Enrolling the phone").
+3. Paste the Anthropic API key, unless you put it in `deploy/secrets/anthropic_api_key`. The app validates it
+   against the API, stores it in the backend's data volume (mode 0600) and starts the agents without a restart.
+   A key from the secret file wins: the app then refuses to replace it. With no key the stack runs and the agent
+   says it cannot work yet.
+4. Connect sources: the connectors you started (`--profile mail`, `dav`) show up in the app with a settings form;
+   approve the nouns they may push. Calendar, reminders and messages on the phone itself are a connector inside the app.
+5. Do the values interview (it becomes constitution v1) and set the morning call time.
+
+## Secrets
+
+`./deploy/init-secrets.sh [connector-id ...]` writes the values to `deploy/secrets/` (mode 0600, gitignored; the
+source of truth for backups) and loads each into Podman's secret store under the same name. Compose declares them
+`external` and mounts them read-only at `/run/secrets/<name>`.
+
+| Secret | Used by | Notes |
+|---|---|---|
+| `postgres_password` | postgres, backend | generated |
+| `anthropic_api_key` | backend | yours; empty = no key yet (can be set in the app instead) |
+| `connector_<id>_key` | backend and that connector | generated; the backend registers every one it finds. `example`, `mail`, `dav` always |
+| `sandbox_key`, `browser_key` | backend and the matching computer | bearer keys for the `computers` profile |
+
+The script is idempotent and only replaces a Podman secret when its file changed; containers pick the new value up
+the next time they start.
 
 | Profile | Adds | Enable |
 |---|---|---|
@@ -147,8 +177,8 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 
 1. Build the connector (see `connectors/README.md`) and publish or build its image.
 2. `./deploy/init-secrets.sh <id>` creates `secrets/connector_<id>_key`.
-3. In `compose.yaml` copy `connector-example`: its own volume, its own `connector-<id>-egress`
-   network, the secret mounted as `connector_key`, networks `[ingest, connector-<id>-egress]`.
+3. In `compose.yaml` copy `connector-mail` (or `connector-example`): its own volume, its own `connector-<id>-egress`
+   network, the secret `connector_<id>_key` mounted and `CLARITY_CONNECTOR_KEY_FILE` pointing at it, networks `[ingest, connector-<id>-egress]`.
 4. Mount the **same secret** into `backend` as `connector_<id>_key`: the backend registers every
    `/run/secrets/connector_<id>_key` at boot.
 5. Approve the connector's nouns in the app (or set `CLARITY_CONNECTORS_AUTO_GRANT=true` for dev).
@@ -175,6 +205,18 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 - The backend is only on internal networks (its outbound traffic goes through `egress`). Publishing
   `127.0.0.1:8080` works for it on rootless Podman 5 (pasta); if your engine cannot forward ports to a container
   that is only on internal networks, reach the backend through Caddy instead.
+
+## Checking that it works
+
+- `podman compose -f deploy/compose.yaml ps` shows `healthy` for postgres, backend and egress.
+- With `CLARITY_MCP_SERVERS` set, the backend log lists each tool server's tools at boot
+  (`MCP server 'sandbox': N tools (...)`) or warns that it is unreachable.
+- `e2e/run.sh` does all of this for you on a throwaway copy of the stack: its own compose project (`clarity-e2e`),
+  throwaway `e2e_*` secrets, loopback port 18080 and no Anthropic key. It enrolls a device, reads the setup status,
+  registers and grants the example connector and checks the record arrives, reads the feed over SSE, checks the
+  sandbox and browser tool listings and that the egress proxy refuses LAN addresses from the browser's network,
+  then removes everything. It does not touch a running `clarity` stack, and does not start Caddy. It is the `e2e`
+  job in CI. `E2E_SKIP_BROWSER=1` leaves out the browser (about 1.5 GB of RAM).
 
 ## Teardown
 
