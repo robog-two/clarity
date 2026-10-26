@@ -16,6 +16,8 @@ import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.shared.governance.Amendment
 import net.robog.clarity.shared.governance.AmendmentId
+import net.robog.clarity.shared.governance.AutonomyChange
+import net.robog.clarity.shared.governance.AutonomyTier
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
@@ -44,9 +46,27 @@ fun validateConstitution(c: Constitution): Either<GovernanceError, Constitution>
 
 /**
  * Pure: the constitution with [amendment] applied. A null `lineId` adds the proposed line; otherwise
- * the proposed line replaces that line and keeps its id.
+ * the proposed line replaces that line and keeps its id. An autonomy change sets that kind's tier.
  */
 fun applyAmendment(constitution: Constitution, amendment: Amendment): Either<GovernanceError, Constitution> = either {
+    amendment.autonomy?.let { change -> autonomyProblem(change, constitution)?.let { raise(GovernanceError.InvalidConstitution(it)) } }
+    val withLines = applyLine(constitution, amendment).fold({ raise(it) }, { it })
+    amendment.autonomy?.let { withLines.copy(autonomy = withLines.autonomy + (it.kind to it.tier)) } ?: withLines
+}
+
+/**
+ * Pure: why [change] cannot be made by talking, or null. Vault kinds always need the phone, and a
+ * "never" is a hard line (changed only in the constitution screen).
+ */
+fun autonomyProblem(change: AutonomyChange, constitution: Constitution): String? = when {
+    change.kind in Constitution.ALWAYS_NEVER_ALONE && change.tier != AutonomyTier.NEVER_ALONE && change.tier != AutonomyTier.NEVER ->
+        "\"${change.kind.label()}\" always needs the person on their phone; that cannot be loosened"
+    constitution.autonomy[change.kind] == AutonomyTier.NEVER && change.tier != AutonomyTier.NEVER ->
+        "\"${change.kind.label()}\" is set to never, a hard line that is not changed by talking"
+    else -> null
+}
+
+private fun applyLine(constitution: Constitution, amendment: Amendment): Either<GovernanceError, Constitution> = either {
     val target = amendment.lineId
     if (target == null) {
         ensure(constitution.lines.none { it.id == amendment.proposed.id }) {
@@ -103,6 +123,7 @@ class ConstitutionStore(
         val old = request.lineId?.let { id ->
             ensureNotNull(current.lines.firstOrNull { it.id == id }) { GovernanceError.LineNotFound(id.value) }
         }
+        request.autonomy?.let { change -> autonomyProblem(change, current)?.let { raise(GovernanceError.InvalidConstitution(it)) } }
         val id = Uuid.random()
         database.tx {
             Amendments.insert {
@@ -114,11 +135,12 @@ class ConstitutionStore(
                 it[fromHeld] = request.fromHeld?.let { h -> parseHeldId(h.value) }
                 it[status] = Amendment.Status.PROPOSED.wire()
                 it[createdAt] = clock.now()
+                it[autonomy] = request.autonomy
             }
         }
         Amendment(
             AmendmentId(id.toString()), request.lineId, old?.text, request.proposed, request.reason,
-            request.fromHeld, Amendment.Status.PROPOSED,
+            request.fromHeld, Amendment.Status.PROPOSED, request.autonomy,
         )
     }
 
@@ -200,4 +222,5 @@ private fun ResultRow.toAmendment() = Amendment(
     reason = this[Amendments.reason],
     fromHeld = this[Amendments.fromHeld]?.let { HeldActionId(it.toString()) },
     status = parseWire<Amendment.Status>(this[Amendments.status]) ?: Amendment.Status.PROPOSED,
+    autonomy = this[Amendments.autonomy],
 )

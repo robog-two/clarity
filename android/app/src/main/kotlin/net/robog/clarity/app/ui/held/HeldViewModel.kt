@@ -29,7 +29,7 @@ data class HeldRow(
     val waiting: Boolean,
     /** Only a yes signed on this phone approves it (opens the review screen, not the talk-through). */
     val phone: Boolean = false,
-    /** Tapping it opens the review screen (an email draft, or anything only the phone can approve). */
+    /** Tapping it opens the review screen (approve, not now, amend a rule); a settled one opens the talk-through. */
     val review: Boolean = phone,
 )
 
@@ -48,7 +48,7 @@ data class HeldUiState(
 }
 
 fun heldRows(held: List<HeldAction>, zone: TimeZone): List<HeldRow> =
-    orderedHeld(held).map { HeldRow(it.id, heldWhen(it, zone), it.action.summary, heldRowStatus(it.status), it.waiting, it.waiting && it.needsPhoneApproval, it.waiting && (it.needsPhoneApproval || emailOf(it.action) != null)) }
+    orderedHeld(held).map { HeldRow(it.id, heldWhen(it, zone), it.action.summary, heldRowStatus(it.status), it.waiting, it.waiting && it.needsPhoneApproval, it.waiting) }
 
 fun allowedRows(entries: List<ActivityEntry>, zone: TimeZone): List<AllowedRow> =
     entries.sortedByDescending { it.at }.map { AllowedRow(it.summary, formatClock(it.at, zone), it.ok) }

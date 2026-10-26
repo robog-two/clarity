@@ -3,6 +3,7 @@ package net.robog.clarity.backend.governance
 import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.HttpClient
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.header
@@ -242,6 +243,36 @@ class PhoneApprovalFlowTest : FunSpec({
         ids.distinct().size shouldBe 1
         heldStore.list(setOf(HeldAction.Status.HELD), limit = 200)
             .count { (it.action as? ProposedAction.UseCredential)?.credentialId == login.id } shouldBe 1
+    }
+
+    test("a yes to a browser step is used by the same click after a fresh snapshot, once") {
+        val gate = ActionGate(
+            Guard(GuardModel { GuardVerdict(Decision.ALLOW, emptyList(), "fine") }),
+            constitutions, heldStore, ActionOutbox(database, Clock.System, heldStore, OutboxSignals(), GovernanceEvents(), ActionResults()),
+            ConnectorRouter(database, NoConnectorPreferences()), GovernanceEvents(), UtcPersonZone(), Clock.System,
+        )
+        val holds = GovernedVaultHolds(gate, heldStore, Clock.System)
+        val page = Provenance("run", untrustedInput = true)
+        fun click(uid: String) = ProposedAction.ExternalTool(
+            "browser:pending", "Click button \"Book now\" on shop.example.com/visit", "browser", "click_by_uid",
+            kotlinx.serialization.json.buildJsonObject { put("uid", kotlinx.serialization.json.JsonPrimitive(uid)) },
+        )
+        val first = holds.browserStep(click("e260"), page, "book", emptyList()).shouldBeInstanceOf<net.robog.clarity.backend.vault.Hold.Wait>()
+        heldStore.transition(first.heldId!!, PENDING_STATUSES, HeldAction.Status.APPROVED) shouldBe true
+
+        holds.browserStep(click("e370"), page, "book", emptyList()) shouldBe net.robog.clarity.backend.vault.Hold.Proceed
+        heldStore.get(first.heldId!!)!!.status shouldBe HeldAction.Status.EXECUTED
+        // one yes is one click
+        holds.browserStep(click("e371"), page, "book", emptyList()).shouldBeInstanceOf<net.robog.clarity.backend.vault.Hold.Wait>()
+    }
+
+    test("browser steps match without uids, but a different label or typed value is a different step") {
+        fun step(summary: String, input: String) =
+            ProposedAction.ExternalTool("k", summary, "browser", "fill_by_uid", ClarityJson.parseToJsonElement(input) as kotlinx.serialization.json.JsonObject)
+        val a = step("Type into \"Email\" on x.com", """{"uid":"e1","value":"a"}""")
+        net.robog.clarity.backend.vault.sameBrowserStep(a, step("Type into \"Email\" on x.com", """{"uid":"e9","value":"a"}""")) shouldBe true
+        net.robog.clarity.backend.vault.sameBrowserStep(a, step("Type into \"Email\" on x.com", """{"uid":"e1","value":"b"}""")) shouldBe false
+        net.robog.clarity.backend.vault.sameBrowserStep(a, step("Type into \"Name\" on x.com", """{"uid":"e1","value":"a"}""")) shouldBe false
     }
 
     test("the action hash is stable and the payload has the documented shape") {

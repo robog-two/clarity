@@ -115,13 +115,13 @@ class HeldRulesTest {
         assertEquals("9:00 · send email", rows.single().whenText)
     }
 
-    @Test fun emailDraftsOpenTheReviewScreenAndOtherRowsTheTalkThrough() {
+    @Test fun everyWaitingRowOpensTheReviewScreenWithApprove() {
         val draft = heldAction("d", action = sendEmail())
         val event = heldAction("e", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
         val done = heldAction("f", action = sendEmail(), status = HeldAction.Status.KEPT)
         val rows = heldRows(listOf(draft, event, done), TimeZone.UTC).associateBy { it.id.value }
         assertTrue(rows.getValue("d").review, "a draft opens the review (with approve); amend is one tap away from there")
-        assertFalse(rows.getValue("e").review)
+        assertTrue(rows.getValue("e").review, "a held calendar event gets approve / not now too, not only the talk-through")
         assertFalse(rows.getValue("f").review, "a settled row has nothing to approve")
     }
 
@@ -146,6 +146,12 @@ class HeldRulesTest {
     @Test fun proposalAndToastText() {
         assertEquals("change to a line · values", proposalLabel(amendment()))
         assertEquals("new line · values", proposalLabel(amendment().copy(lineId = null)))
+        assertEquals(
+            "create event: do it, then tell me",
+            net.robog.clarity.app.ui.amend.autonomyChangeLine(
+                net.robog.clarity.shared.governance.AutonomyChange(ActionKind.CREATE_EVENT, net.robog.clarity.shared.governance.AutonomyTier.DO_THEN_TELL),
+            ),
+        )
         assertEquals("Rule saved. Constitution v2.", ruleSavedToast(2))
         assertEquals("What would you like to change?", fallbackQuestion(heldPresent = false))
     }

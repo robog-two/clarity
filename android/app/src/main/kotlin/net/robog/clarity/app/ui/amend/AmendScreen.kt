@@ -103,6 +103,7 @@ fun AmendContent(
                     }
                     ReadingText(p.proposed.text)
                     p.proposed.because?.let { Hint("because $it") }
+                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = 4.dp)) }
                 }
             }
             state.message?.let { ErrorBox(it) }

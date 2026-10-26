@@ -3,6 +3,7 @@ package net.robog.clarity.backend.governance
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.shared.governance.AutonomyChange
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.Line
@@ -45,6 +46,7 @@ object Amendments : Table("amendment") {
     val fromHeld = uuid("from_held").nullable()
     val status = text("status")
     val createdAt = timestamp("created_at")
+    val autonomy = jsonb<AutonomyChange>("autonomy", ClarityJson).nullable()
     override val primaryKey = PrimaryKey(id)
 }
 

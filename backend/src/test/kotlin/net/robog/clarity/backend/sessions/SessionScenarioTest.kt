@@ -460,6 +460,32 @@ class SessionScenarioTest : FunSpec({
         r.sessionService.control(another, SessionControl.End).shouldBeInstanceOf<Either.Left<SessionError>>()
     }
 
+    test("an amendment that lets the agent add events changes the tier the pre-check reads") {
+        val r = rig()
+        val script = Script(r)
+        r.lead.start()
+        r.constitutions.create(Constitution(1, listOf(Line(LineId("l1"), Section.VALUES, "A rule.", "because")), updatedAt = Instant.parse("2026-10-26T08:00:00Z"))).ok()
+        r.sessionService.start(StartSession(SessionKind.AMEND)).ok()
+        script.add(
+            callTool(
+                "a", "propose_amendment",
+                input(
+                    SessionTools.ProposeAmendmentInput(
+                        null, "Creating calendar events is okay: add them, then tell me.", "it's fine", "so I add events myself", Section.AUTONOMY,
+                        SessionTools.AutonomyInput(ActionKind.CREATE_EVENT, AutonomyTier.DO_THEN_TELL),
+                    ),
+                ),
+            ),
+            end("proposed"),
+        )
+        r.lead.step() shouldBe true
+        val amendment = r.constitutions.amendments(Amendment.Status.PROPOSED).single()
+        amendment.autonomy shouldBe net.robog.clarity.shared.governance.AutonomyChange(ActionKind.CREATE_EVENT, AutonomyTier.DO_THEN_TELL)
+        val saved = r.constitutions.saveAmendment(amendment.id).ok()
+        saved.autonomy[ActionKind.CREATE_EVENT] shouldBe AutonomyTier.DO_THEN_TELL
+        r.constitutions.current()!!.autonomy[ActionKind.CREATE_EVENT] shouldBe AutonomyTier.DO_THEN_TELL
+    }
+
     test("a snoozed call rings again when its time comes") {
         val r = rig()
         val clock = net.robog.clarity.backend.agent.MovableClock()

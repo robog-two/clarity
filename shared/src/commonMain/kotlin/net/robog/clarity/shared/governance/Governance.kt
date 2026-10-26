@@ -340,6 +340,8 @@ data class Amendment(
     val reason: String,
     val fromHeld: HeldActionId? = null,
     val status: Status,
+    /** How much the agent may do alone for one kind of action, changed along with the line. */
+    val autonomy: AutonomyChange? = null,
 ) {
     @Serializable
     enum class Status {
@@ -348,6 +350,10 @@ data class Amendment(
         @SerialName("discarded") DISCARDED,
     }
 }
+
+/** One kind of action moved to another autonomy tier ("add calendar events, then tell me"). */
+@Serializable
+data class AutonomyChange(val kind: ActionKind, val tier: AutonomyTier)
 
 /** An action taken alone ("see allowed actions"). */
 @Serializable

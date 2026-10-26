@@ -47,6 +47,7 @@ import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.IfThen
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.ActionKind
+import net.robog.clarity.shared.governance.AutonomyChange
 import net.robog.clarity.shared.governance.AutonomyTier
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.Line
@@ -448,11 +449,15 @@ class SessionTools(
         @Description("Their reason, in their words.") val because: String,
         @Description("One sentence for the person: why this change.") val reason: String,
         @Description("The section for a NEW line (default values); ignored when replacing a line.") val section: Section? = null,
+        @Description(
+            "Set when the change is about how much you may do alone for one kind of action (\"add calendar events, then tell me\" = create_event, do_then_tell). " +
+                "The check before every action reads these tiers, not the line text, so without this the line changes nothing.",
+        ) val autonomy: AutonomyInput? = null,
     )
 
     private fun proposeAmendment(): Tool = tool<ProposeAmendmentInput>(
         name = "propose_amendment",
-        description = "Amend session: propose changing one rule (or adding one). It does nothing until the person saves it; the session ends when they save or discard it. Hard lines cannot be changed this way.",
+        description = "Amend session: propose changing one rule (or adding one), and with `autonomy` the tier of one kind of action. It does nothing until the person saves it; the session ends when they save or discard it. Hard lines cannot be changed this way.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
@@ -476,7 +481,8 @@ class SessionTools(
         )
         // A newer proposal replaces an older one that was never decided.
         session.session.amendmentId?.let { old -> constitutions.discardAmendment(old) }
-        constitutions.propose(ProposeAmendment(target?.id, proposed, input.reason.trim(), session.session.heldActionId)).fold(
+        val autonomy = input.autonomy?.let { AutonomyChange(it.kind, it.tier) }
+        constitutions.propose(ProposeAmendment(target?.id, proposed, input.reason.trim(), session.session.heldActionId, autonomy)).fold(
             { ToolResult.Error("The amendment was not proposed: ${it.title}. ${it.detail.orEmpty()}") },
             { amendment ->
                 sessions.mutate(session.id, quiet = true) { it.amendmentProposed(amendment.id) }
