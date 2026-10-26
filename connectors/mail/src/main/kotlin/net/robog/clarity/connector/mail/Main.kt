@@ -6,15 +6,18 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.robog.clarity.connector.sdk.ConnectorRuntime
 import net.robog.clarity.connector.sdk.ConnectorSettings
-import net.robog.clarity.connector.sdk.ConnectorTestResult
+import net.robog.clarity.connector.sdk.scoped
 import net.robog.clarity.connector.sdk.runConnector
 import net.robog.clarity.shared.governance.ActionKind
-import net.robog.clarity.shared.connector.ConnectorConfig
+import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.noun.Noun
 import org.eclipse.angus.mail.imap.IMAPFolder
@@ -36,21 +39,6 @@ fun mailManifest(runtime: ConnectorRuntime) = ConnectorManifest(
     configSchema = mailConfigSchema,
     sealingKey = runtime.sealingKey,
 )
-
-/** What the app's "test connection" button runs: log in to IMAP and SMTP and count the folders. */
-suspend fun testMailConnection(runtime: ConnectorRuntime, config: ConnectorConfig): ConnectorTestResult {
-    val cfg = try { parseMailConfig(config, runtime) } catch (e: ConfigIncomplete) {
-        return ConnectorTestResult(false, e.message ?: "The mail settings are incomplete.")
-    }
-    return withContext(Dispatchers.IO) {
-        try {
-            val folders = MailAccess(cfg).check()
-            ConnectorTestResult(true, "Signed in to ${cfg.imapHost} and ${cfg.smtpHost} as ${cfg.username}; $folders folders.", mapOf("folders" to folders))
-        } catch (e: Exception) {
-            ConnectorTestResult(false, "Could not connect: ${e.message ?: e::class.simpleName}")
-        }
-    }
-}
 
 /**
  * Blocks (up to [timeout]) until the server reports a change in [folderName] via IMAP IDLE.
@@ -92,26 +80,41 @@ suspend fun main() {
         settings = settings,
         actions = actions,
         runtime = runtime,
-        test = { config -> testMailConnection(runtime, config) },
+        test = { config -> testMailAccounts(runtime, config) },
     ) { config ->
-        val cfg = try { parseMailConfig(config, runtime) } catch (e: ConfigIncomplete) {
-            log.info { "mail is not configured yet: ${e.message}" }
+        val entries = parseMailAccounts(config, runtime)
+        if (entries.isEmpty()) {
+            log.info { "mail is not configured yet: no account has been added" }
             return@runConnector
         }
-        val access = MailAccess(cfg)
-        val sync = MailSync(access, state)
-        suspend fun runOnce() { sync.syncAll { push(it) } }
+        syncAccounts(entries, state, { push(it) }).forEach { report ->
+            report.result.onFailure { log.warn { "mail account '${report.label}' was not synced: ${it.message}" } }
+        }
+        // Between polls, wait on each server (IDLE) instead of sleeping; an account without IDLE waits for the SDK's interval.
+        coroutineScope {
+            for (cfg in entries.mapNotNull { it.result.getOrNull() }) launch {
+                watchAccount(cfg, MailSync(MailAccess(cfg), state.scoped(cfg.id))) { push(it) }
+            }
+        }
+    }
+}
 
-        runOnce()
-        // Between polls, wait on the server (IDLE) instead of sleeping; fall back to the SDK's interval without it.
-        val started = TimeSource.Monotonic.markNow()
+/** Keeps one account in step with its server for up to [RUN_WINDOW]; stops early on a server without IDLE or on an error. */
+private suspend fun watchAccount(cfg: MailConfig, sync: MailSync, push: suspend (List<IngestRecord>) -> Unit) {
+    val access = MailAccess(cfg)
+    val started = TimeSource.Monotonic.markNow()
+    try {
         while (started.elapsedNow() < RUN_WINDOW - IDLE_SLICE) {
-            val changed = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.first(), IDLE_SLICE) }.getOrElse { log.warn { "IDLE failed: ${it.message}" }; null } }
+            val changed = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.first(), IDLE_SLICE) }.getOrElse { log.warn { "IDLE failed for '${cfg.label}': ${it.message}" }; null } }
             when (changed) {
-                null -> return@runConnector // server without IDLE (or a connection problem): the SDK interval takes over
-                true -> runOnce()
+                null -> return
+                true -> sync.syncAll(push)
                 false -> delay(1.seconds)
             }
         }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn(e) { "watching mail account '${cfg.label}' failed; the next sync run retries" }
     }
 }

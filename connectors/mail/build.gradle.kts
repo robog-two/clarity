@@ -12,5 +12,6 @@ dependencies {
     implementation(libs.angus.mail)
     implementation(libs.jsoup)
 
+    testImplementation(testFixtures(projects.connectorSdk))
     testImplementation(libs.greenmail)
 }

@@ -17,5 +17,6 @@ dependencies {
     implementation(libs.pdfbox)
     implementation(libs.jsoup)
 
+    testImplementation(testFixtures(projects.connectorSdk))
     testImplementation(libs.ktor.client.mock)
 }

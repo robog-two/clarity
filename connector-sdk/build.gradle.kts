@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.clarity.kotlin.jvm)
     `java-library`
+    `java-test-fixtures`
 }
 
 dependencies {
@@ -11,6 +12,8 @@ dependencies {
     api(libs.kotlin.logging)
     api(libs.arrow.core)
     implementation(libs.tink)
+    testFixturesApi(projects.shared)
+    testFixturesImplementation(libs.tink)
 
     testImplementation(libs.ktor.client.mock)
 }

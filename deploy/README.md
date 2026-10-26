@@ -56,6 +56,20 @@ the next time they start.
 | `dav` | `connector-dav` (CalDAV events and reminders, CardDAV contacts, WebDAV files) | `--profile dav` |
 | `computers` | `sandbox` (Linux workspace) and `browser` (Firefox), the agent's tools | `--profile computers`, and set `CLARITY_MCP_SERVERS` (see below) |
 
+### Mail and calendar accounts
+
+One `mail` container and one `dav` container serve every account you add: in the app, open the source and add
+accounts (a name, the servers, your login). Presets fill in the servers for iCloud, Fastmail and Gmail (mail) and for
+iCloud, Fastmail and Nextcloud (calendar and contacts). iCloud, Fastmail and Gmail need an app-specific password, not
+your account password (Gmail only offers them with 2-step verification on). Each account syncs on its own, so a
+wrong password on one does not stop the others, and "test connection" reports every account by name.
+A new email is sent from the account whose address is the sender, else from the account that received the message
+it answers, else from the first account. A new event goes to `<account name>/<calendar>`, to the first account that
+has `<calendar>`, or to the first account's default calendar.
+
+A configuration saved before accounts existed (flat fields such as `imapHost` and `password`) keeps working as one
+account named `default`.
+
 ## The agent's computers (`--profile computers`)
 
 Two MCP servers on the internal `tools` network that the backend connects to:

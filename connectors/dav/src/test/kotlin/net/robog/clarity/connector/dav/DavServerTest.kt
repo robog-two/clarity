@@ -100,7 +100,7 @@ class DavServerTest : FunSpec({
             val events = upserts.filter { it.payload is CalendarEventPayload }
             events.count { (it.payload as CalendarEventPayload).title == "Standup" } shouldBe 20
             events.map { it.sourceId.value }.toSet() shouldHaveSize 22 // 20 occurrences + Planning + Dentist
-            events.first { (it.payload as CalendarEventPayload).title == "Planning" }.sourceId shouldBe SourceId("/dav/cal/me/work/plan.ics")
+            events.first { (it.payload as CalendarEventPayload).title == "Planning" }.sourceId shouldBe SourceId("default:/dav/cal/me/work/plan.ics")
             (events.first { (it.payload as CalendarEventPayload).title == "Dentist" }.payload as CalendarEventPayload).calendar shouldBe "Personal"
             events.filter { (it.payload as CalendarEventPayload).title == "Standup" }.map { (it.payload as CalendarEventPayload).icalUid }.toSet() shouldHaveSize 20
 
@@ -144,19 +144,19 @@ class DavServerTest : FunSpec({
 
             upserts.map { it.payload }.filterIsInstance<CalendarEventPayload>().map { it.title } shouldBe listOf("Planning (moved)")
             upserts.map { it.payload }.filterIsInstance<DocumentPayload>().map { it.title } shouldBe listOf("new.txt")
-            tombstones.count { it.sourceId.value.startsWith("/dav/cal/me/work/standup.ics#") } shouldBe 20
-            tombstones.map { it.sourceId.value } shouldContain "/dav/cal/me/personal/dentist.ics"
-            tombstones.map { it.sourceId.value } shouldContain "/dav/files/me/Notes/page.html"
+            tombstones.count { it.sourceId.value.startsWith("default:/dav/cal/me/work/standup.ics#") } shouldBe 20
+            tombstones.map { it.sourceId.value } shouldContain "default:/dav/cal/me/personal/dentist.ics"
+            tombstones.map { it.sourceId.value } shouldContain "default:/dav/files/me/Notes/page.html"
             (dav.syncReportTokens.filterNotNull().isNotEmpty()) shouldBe true // the second run presented the stored token
         }
     }
 
     test("CREATE_EVENT and CREATE_REMINDER are idempotent by key and create the derived resource") {
         val dav = fakeWithData()
-        val actions = DavActions { config() to DavServer(config(), dav.engine) }
+        val actions = DavActions({ listOf(config()) }) { DavServer(it, dav.engine) }
         val create = ProposedAction.CreateEvent("hold-1", "hold", "Work", "Deep work", Instant.parse("2026-03-11T09:00:00Z"), Instant.parse("2026-03-11T11:00:00Z"))
         val first = actions.createEvent(create).shouldBeInstanceOf<ActionOutcome.Done>()
-        val path = first.ref!!.value
+        val path = DavRef.parse(first.ref!!.value).path
         path shouldBe "/dav/cal/me/work/${uidFor("hold-1")}.ics"
         dav.text(path) shouldContain "TRANSP:OPAQUE"
         dav.text(path) shouldContain "CLASS:PRIVATE"
@@ -166,13 +166,13 @@ class DavServerTest : FunSpec({
 
         val reminder = ProposedAction.CreateReminder("rem-1", "remind", "Call mum", Instant.parse("2026-03-11T17:00:00Z"))
         val r = actions.createReminder(reminder).shouldBeInstanceOf<ActionOutcome.Done>()
-        dav.text(r.ref!!.value) shouldContain "BEGIN:VALARM"
-        dav.text(r.ref!!.value) shouldContain "ACTION:DISPLAY"
+        dav.text(DavRef.parse(r.ref!!.value).path) shouldContain "BEGIN:VALARM"
+        dav.text(DavRef.parse(r.ref!!.value).path) shouldContain "ACTION:DISPLAY"
     }
 
     test("CREATE_EVENT with attendees needs scheduling support") {
         val dav = fakeWithData(autoSchedule = false)
-        val actions = DavActions { config() to DavServer(config(), dav.engine) }
+        val actions = DavActions({ listOf(config()) }) { DavServer(it, dav.engine) }
         val invite = ProposedAction.CreateEvent(
             "inv-1", "invite", null, "Sync", Instant.parse("2026-03-11T09:00:00Z"), Instant.parse("2026-03-11T10:00:00Z"),
             attendees = listOf(Handle.email("bob@example.com")), hold = false,
@@ -184,7 +184,7 @@ class DavServerTest : FunSpec({
 
     test("MOVE_EVENT uses If-Match, refuses to notify without the flag, and refuses when you are not the organizer") {
         val dav = fakeWithData()
-        val actions = DavActions { config() to DavServer(config(), dav.engine) }
+        val actions = DavActions({ listOf(config()) }) { DavServer(it, dav.engine) }
         val start = Instant.parse("2026-03-13T09:00:00Z")
         val end = Instant.parse("2026-03-13T10:00:00Z")
 
@@ -218,7 +218,7 @@ class DavServerTest : FunSpec({
             "/dav/cal/me/work/invite.ics", "text/calendar",
             vevent("inv", "20260316T090000Z", "20260316T100000Z", "Invite", "ORGANIZER:mailto:boss@example.com", "ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:me@example.com"),
         )
-        val actions = DavActions { config() to DavServer(config(), dav.engine) }
+        val actions = DavActions({ listOf(config()) }) { DavServer(it, dav.engine) }
         val answer = ProposedAction.RespondToInvite("rsvp-1", "accept", EntityId("e"), InviteResponse.ACCEPT)
         actions.respond(answer, SourceId("/dav/cal/me/work/invite.ics")).shouldBeInstanceOf<ActionOutcome.Done>()
         dav.text("/dav/cal/me/work/invite.ics") shouldContain "PARTSTAT=ACCEPTED"
@@ -226,14 +226,14 @@ class DavServerTest : FunSpec({
         actions.respond(answer, SourceId("/dav/cal/me/work/plan.ics")).shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "not listed"
         // a server without scheduling cannot deliver the reply
         val plain = fakeWithData(autoSchedule = false)
-        val noSchedule = DavActions { config() to DavServer(config(), plain.engine) }
+        val noSchedule = DavActions({ listOf(config()) }) { DavServer(it, plain.engine) }
         noSchedule.respond(answer, SourceId("/dav/cal/me/work/plan.ics")).shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "scheduling"
     }
 
     test("READ_DOCUMENT returns extracted text, capped; unknown or unreadable files fail clearly") {
         val dav = fakeWithData()
         dav.put("/dav/files/me/Notes/big.txt", "text/plain", "x".repeat(300_000))
-        val actions = DavActions { config() to DavServer(config(), dav.engine) }
+        val actions = DavActions({ listOf(config()) }) { DavServer(it, dav.engine) }
         suspend fun read(path: String?) = actions.readDocument(ProposedAction.ReadDocument("rd", "read", EntityId("d")), path?.let(::SourceId))
 
         read("/dav/files/me/Notes/sub/report.pdf").shouldBeInstanceOf<ActionOutcome.Done>().content!! shouldContain "Annual revenue grew"

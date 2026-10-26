@@ -69,7 +69,7 @@ class MailSync(
         val previous = cursor
         if (previous != null && previous.uidValidity != validity) {
             log.info { "UIDVALIDITY of ${folder.fullName} changed (${previous.uidValidity} -> $validity); resetting" }
-            val stale = UidSet.decode(previous.known).toSet().map { tombstone(MailRef(folder.fullName, previous.uidValidity, it), now) }
+            val stale = UidSet.decode(previous.known).toSet().map { tombstone(MailRef(folder.fullName, previous.uidValidity, it, config.id), now) }
             stale.chunked(CHUNK).forEach { push(it); pushed += it.size }
             cursor = null
             state.remove(key)
@@ -98,7 +98,7 @@ class MailSync(
             folder.fetch(toFetch, FetchProfile().apply { add(FetchProfile.Item.ENVELOPE); add(FetchProfile.Item.CONTENT_INFO) })
             val records = batch.mapNotNull { message ->
                 val uid = uidOf.getValue(message)
-                val ref = MailRef(folder.fullName, validity, uid)
+                val ref = MailRef(folder.fullName, validity, uid, config.id)
                 try {
                     val payload = MimeMessage(message as MimeMessage).toPayload(config.fromAddress, now)
                     if (payload == null) {
@@ -125,7 +125,7 @@ class MailSync(
 
         val gone = known.filter { it !in present }
         if (gone.isNotEmpty()) {
-            gone.map { tombstone(MailRef(folder.fullName, validity, it), now) }.chunked(CHUNK).forEach { push(it); pushed += it.size }
+            gone.map { tombstone(MailRef(folder.fullName, validity, it, config.id), now) }.chunked(CHUNK).forEach { push(it); pushed += it.size }
             known.removeAll(gone.toSet())
         }
         // Messages older than the window stay unreported; moving the cursor past them keeps later runs incremental.

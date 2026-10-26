@@ -96,17 +96,27 @@ fun messageIdFor(idempotencyKey: String, fromAddress: String): String {
     return "<$local@$domain>"
 }
 
-/** Source id of a mail record: `folder/uidvalidity/uid` (the folder may itself contain slashes). */
-data class MailRef(val folder: String, val uidValidity: Long, val uid: Long) {
-    val sourceId: String get() = "$folder/$uidValidity/$uid"
+/**
+ * Source id of a mail record: `account/folder/uidvalidity/uid` (the folder may itself contain
+ * slashes). The old form `folder/uidvalidity/uid` belongs to account [DEFAULT_ACCOUNT].
+ */
+data class MailRef(val folder: String, val uidValidity: Long, val uid: Long, val accountId: String = DEFAULT_ACCOUNT) {
+    val sourceId: String get() = "$accountId/$folder/$uidValidity/$uid"
 
     companion object {
-        fun parse(sourceId: String): MailRef? {
+        /**
+         * Parses [sourceId]. With four or more parts the first is the account; a legacy folder
+         * that contains a slash looks the same, so pass the configured [accountIds] to tell them
+         * apart (a first part that is not one of them makes it a legacy id).
+         */
+        fun parse(sourceId: String, accountIds: Collection<String>? = null): MailRef? {
             val parts = sourceId.split('/')
             if (parts.size < 3) return null
             val uid = parts.last().toLongOrNull() ?: return null
             val validity = parts[parts.size - 2].toLongOrNull() ?: return null
-            return MailRef(parts.dropLast(2).joinToString("/"), validity, uid)
+            val prefixed = parts.size >= 4 && (accountIds == null || parts.first() in accountIds)
+            return if (prefixed) MailRef(parts.subList(1, parts.size - 2).joinToString("/"), validity, uid, parts.first())
+            else MailRef(parts.dropLast(2).joinToString("/"), validity, uid)
         }
     }
 }
