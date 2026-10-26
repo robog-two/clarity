@@ -103,6 +103,12 @@ class LeadPureTest : FunSpec({
         test("no constitution yet") {
             renderConstitution(null) shouldContain "none yet"
         }
+        test("protected time is stored in UTC and shown to the agent on the person's home clock") {
+            val evening = sample.copy(protectedTimes = listOf(net.robog.clarity.shared.governance.TimeBlock("figure drawing", setOf(2), kotlinx.datetime.LocalTime(23, 30), kotlinx.datetime.LocalTime(1, 30))))
+            val home = HomeClock(kotlinx.datetime.TimeZone.of("America/New_York"), kotlin.time.Instant.parse("2026-10-26T12:00:00Z"))
+            renderConstitution(evening, home) shouldContain "Protected time (the person's local time, America/New_York):\n- figure drawing: days 2 18:30-20:30"
+            renderConstitution(evening) shouldContain "Protected time (UTC):\n- figure drawing: days 2 23:30-01:30"
+        }
         test("lead system: static block first with a breakpoint, constitution second") {
             val blocks = leadSystemBlocks(sample)
             blocks.size shouldBe 2

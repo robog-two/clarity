@@ -44,20 +44,22 @@ class NotifyPolicyTest : FunSpec({
         notifyDecision(Urgency.URGENT, listOf(dana), expired, utc, at("2026-03-04T10:30:00Z")) shouldBe NotifyDecision.HoldUntil(at("2026-03-04T12:00:00Z"))
     }
 
-    test("protected blocks run on the person's time zone") {
-        val berlin = utc.copy(timeZone = "Europe/Berlin") // UTC+1 in early March
-        // 10:30 Berlin = 09:30 UTC: inside 09:00-12:00 local
-        notifyDecision(Urgency.URGENT, listOf(stranger), weekdayMorning, berlin, at("2026-03-04T09:30:00Z")) shouldBe
-            NotifyDecision.HoldUntil(at("2026-03-04T11:00:00Z"))
-        // 11:30 UTC is 12:30 Berlin: outside
-        notifyDecision(Urgency.URGENT, listOf(stranger), weekdayMorning, berlin, at("2026-03-04T11:30:00Z")) shouldBe NotifyDecision.PushNow
-        // 08:30 UTC is 09:30 Berlin: inside, though UTC-wise it is before the block
-        notifyDecision(Urgency.URGENT, listOf(stranger), weekdayMorning, berlin, at("2026-03-04T08:30:00Z")) shouldBe
-            NotifyDecision.HoldUntil(at("2026-03-04T11:00:00Z"))
+    test("stored protected blocks stay on the home clock through daylight saving") {
+        // Stored 14:00-17:00 = 09:00-12:00 in New York; daylight saving starts 2026-03-08.
+        val morning = base(listOf(block("deep work", setOf(1, 2, 3, 4, 5), "14:00", "17:00")))
+        val newYork = utc.copy(homeZone = "America/New_York")
+        // Wednesday 2026-03-04, EST: 14:30 UTC is 09:30
+        notifyDecision(Urgency.URGENT, listOf(stranger), morning, newYork, at("2026-03-04T14:30:00Z")) shouldBe
+            NotifyDecision.HoldUntil(at("2026-03-04T17:00:00Z"))
+        // Wednesday 2026-03-11, EDT: 13:30 UTC is 09:30, inside though UTC-wise it is before the stored block
+        notifyDecision(Urgency.URGENT, listOf(stranger), morning, newYork, at("2026-03-11T13:30:00Z")) shouldBe
+            NotifyDecision.HoldUntil(at("2026-03-11T16:00:00Z"))
+        // 16:30 UTC is 12:30 EDT: outside
+        notifyDecision(Urgency.URGENT, listOf(stranger), morning, newYork, at("2026-03-11T16:30:00Z")) shouldBe NotifyDecision.PushNow
     }
 
     test("an unknown zone id falls back to UTC") {
-        notifyDecision(Urgency.URGENT, listOf(stranger), weekdayMorning, utc.copy(timeZone = "Mars/Olympus"), at("2026-03-04T10:30:00Z")) shouldBe
+        notifyDecision(Urgency.URGENT, listOf(stranger), weekdayMorning, utc.copy(homeZone = "Mars/Olympus"), at("2026-03-04T10:30:00Z")) shouldBe
             NotifyDecision.HoldUntil(at("2026-03-04T12:00:00Z"))
     }
 
@@ -93,8 +95,9 @@ class NotifyPolicyTest : FunSpec({
         notifyDecision(Urgency.NORMAL, listOf(stranger), weekdayMorning, utc, at("2026-03-04T10:30:00Z")) shouldBe NotifyDecision.ShowInApp
     }
 
-    test("batch waits for the evening summary in the person's zone, rolling to tomorrow once it has passed") {
-        val settings = utc.copy(eveningSummaryAt = LocalTime(18, 0), timeZone = "America/New_York")
+    test("batch waits for the evening summary, rolling to tomorrow once it has passed") {
+        // Stored 23:00 = 18:00 in New York
+        val settings = utc.copy(eveningSummaryAt = LocalTime(23, 0), homeZone = "America/New_York")
         // 2026-03-04 15:00 UTC = 10:00 EST: summary at 18:00 EST = 23:00 UTC
         notifyDecision(Urgency.BATCH, emptyList(), base(), settings, at("2026-03-04T15:00:00Z")) shouldBe NotifyDecision.EveningBatch(at("2026-03-04T23:00:00Z"))
         // 2026-03-05 00:30 UTC = 19:30 EST on the 4th: next summary is the 5th at 18:00 EST
@@ -102,10 +105,10 @@ class NotifyPolicyTest : FunSpec({
     }
 
     test("the evening summary follows daylight saving") {
-        val settings = utc.copy(eveningSummaryAt = LocalTime(18, 0), timeZone = "America/New_York")
+        val settings = utc.copy(eveningSummaryAt = LocalTime(23, 0), homeZone = "America/New_York")
         // DST starts 2026-03-08: on the 9th, 18:00 is EDT (UTC-4) = 22:00 UTC
         nextEveningSummary(at("2026-03-09T12:00:00Z"), settings) shouldBe at("2026-03-09T22:00:00Z")
-        nextEveningSummary(at("2026-03-09T12:00:00Z") + 0.days, settings.copy(timeZone = "UTC")) shouldBe at("2026-03-09T18:00:00Z")
+        nextEveningSummary(at("2026-03-09T12:00:00Z") + 0.days, settings.copy(homeZone = "UTC", eveningSummaryAt = LocalTime(18, 0))) shouldBe at("2026-03-09T18:00:00Z")
     }
 
     test("batch with batching off is shown in the app") {

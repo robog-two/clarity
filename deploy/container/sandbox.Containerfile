@@ -30,6 +30,7 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         bash coreutils findutils util-linux procps ripgrep jq git python3 pandoc poppler-utils sqlite3 \
         ca-certificates file less unzip zip xz-utils diffutils patch sed gawk grep tar gzip \
+        curl wget python3-pip python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /workspace && chown 10001:10001 /workspace
 

@@ -310,7 +310,12 @@ class DefaultFeedRepository(
 }
 
 /** Wall clock, injectable. */
-fun interface AppClock { fun now(): kotlin.time.Instant }
+fun interface AppClock {
+    fun now(): kotlin.time.Instant
+
+    /** The phone's zone: what times are shown and set in. */
+    fun zone(): kotlinx.datetime.TimeZone = kotlinx.datetime.TimeZone.currentSystemDefault()
+}
 
 class SystemAppClock : AppClock { override fun now() = Clock.System.now() }
 

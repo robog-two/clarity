@@ -10,6 +10,8 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -141,9 +143,18 @@ class BrowserState {
     @Volatile private var fillHost: String? = null
     @Volatile private var actionsSinceFill: Int = Int.MAX_VALUE
 
+    /** Elements a secret was typed into on this page; their values are hidden in every result. */
+    @Volatile var secretUids: Set<String> = emptySet()
+        private set
+
     fun noteSecretTyped(host: String?) {
         fillHost = host
         actionsSinceFill = 0
+    }
+
+    /** Called before a secret is typed, so a fill that fails half-way is hidden too. */
+    fun noteSecretTargets(uids: Collection<String>) {
+        secretUids = secretUids + uids
     }
 
     fun noteAction() {
@@ -154,6 +165,7 @@ class BrowserState {
         val old = url
         url = newUrl
         elements = emptyMap()
+        secretUids = emptySet()
         if (Sites.host(old.orEmpty()) != Sites.host(newUrl.orEmpty())) actionsSinceFill = Int.MAX_VALUE
     }
 
@@ -195,6 +207,12 @@ class BrowserGate(
     private val clock: Clock,
 ) {
     private val state = BrowserState()
+
+    /**
+     * There is one browser, shared by every run. Calls go to it one at a time: two fills sent in
+     * parallel type into whichever field has focus, mixing their keystrokes.
+     */
+    private val browser = Mutex()
     private val triageCache = ConcurrentHashMap<String, Pair<TriageVerdict, Instant>>()
 
     /** [tools] with every `browser__*` tool wrapped or hidden; other tools untouched. */
@@ -221,21 +239,25 @@ class BrowserGate(
         override val name get() = inner.name
         override val inputSchema get() = inner.inputSchema
         override val effect get() = inner.effect
-        override val description: String =
-            if (remote in TEXT_ENTRY_TOOLS) inner.description + " " + PLACEHOLDER_HINT else inner.description
+        override val description: String = when (remote) {
+            in TEXT_ENTRY_TOOLS -> inner.description + " " + PLACEHOLDER_HINT
+            in DOWNLOAD_TOOLS -> inner.description + " " + DOWNLOAD_HINT
+            else -> inner.description
+        }
 
         override suspend fun invoke(input: JsonObject): ToolResult {
             val result = try {
-                run(input)
+                browser.withLock { run(input) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 log.warn { "browser tool $remote failed: ${e::class.simpleName}" }
                 ToolResult.Error("Browser tool $remote failed: ${e.message ?: e::class.simpleName}")
             }
+            val hidden = state.secretUids
             return when (result) {
-                is ToolResult.Ok -> ToolResult.Ok(grants.scrub(result.content))
-                is ToolResult.Error -> ToolResult.Error(grants.scrub(result.message))
+                is ToolResult.Ok -> ToolResult.Ok(hideFilledValues(grants.scrub(result.content), hidden))
+                is ToolResult.Error -> ToolResult.Error(hideFilledValues(grants.scrub(result.message), hidden))
             }
         }
 
@@ -262,6 +284,7 @@ class BrowserGate(
                 gate(input, url)?.let { return it }
             }
 
+            if (substituted) state.noteSecretTargets(secretTargets(input))
             val result = inner.invoke(send)
             if (result is ToolResult.Ok) afterSuccess(input, result.content, url, substituted)
             return result
@@ -390,6 +413,10 @@ class BrowserGate(
     companion object {
         const val PREFIX = "browser__"
         private val TRIAGE_CACHE = 5.minutes
+        /** Tools that can start a download. */
+        val DOWNLOAD_TOOLS = setOf("click_by_uid", "navigate_page", "new_page")
+        const val DOWNLOAD_HINT =
+            "A file this downloads (a PDF, CSV, ZIP...) is saved without asking and shows up in the sandbox at /workspace/downloads, read-only, for the shell to work on."
         const val PLACEHOLDER_HINT =
             "To enter a saved secret write a placeholder such as [secret:bank_login_password] (see list_credentials); the real value is filled in for you after the person approves, and you never see it."
     }

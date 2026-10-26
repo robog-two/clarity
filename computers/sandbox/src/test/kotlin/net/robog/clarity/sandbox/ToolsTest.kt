@@ -98,6 +98,20 @@ class ToolsTest : FunSpec({
         env shouldNotContain "SANDBOX_"
     }
 
+    test("with a proxy, commands get it for every tool and the description says the internet is reachable") {
+        val ws = newWorkspace()
+        val offline = tools(ws).getValue("shell")
+        offline.description shouldContain "no internet"
+        offline.invoke(args("command" to "env")) shouldNotContain "proxy"
+        val online = tools(ws, ShellRunner(ws, proxy = "http://egress-sandbox:3128")).getValue("shell")
+        online.description shouldContain "through a proxy"
+        online.description shouldContain "/workspace/downloads"
+        val env = online.invoke(args("command" to "env"))
+        env shouldContain "https_proxy=http://egress-sandbox:3128"
+        env shouldContain "HTTP_PROXY=http://egress-sandbox:3128"
+        env shouldContain "no_proxy="
+    }
+
     test("shell kills the whole process group on timeout") {
         val ws = newWorkspace()
         val sh = tools(ws).getValue("shell")

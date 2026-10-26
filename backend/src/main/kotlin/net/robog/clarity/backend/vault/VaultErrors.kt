@@ -31,7 +31,7 @@ sealed interface VaultError : HttpProblem {
     data class NameTaken(val name: String) : VaultError {
         override val status = HttpStatusCode.Conflict
         override val title = "Credential name taken"
-        override val detail = "there is already a credential called '$name'"
+        override val detail = "there is already a credential called '$name' (pass replace=true to have the person enter it again)"
     }
 
     data class CredentialNotFound(val id: String) : VaultError {

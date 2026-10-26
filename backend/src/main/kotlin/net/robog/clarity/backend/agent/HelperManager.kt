@@ -96,7 +96,7 @@ class HelperManager(
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
-        return "Helper $id started ($roleName). Its result will arrive in your inbox.".right()
+        return delegatedText(id, roleName, tools, granted.tools.loaded.map { it.name } + granted.tools.deferred.map { it.name }).right()
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
@@ -169,5 +169,14 @@ class HelperManager(
                 inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text), dedupKey = "helper:${run.id}")
             }
         }
+    }
+}
+
+/** Pure: what `delegate` tells the lead, naming the tools when it picked them, so a missing browser is plain. */
+fun delegatedText(id: String, role: String, requested: List<String>?, granted: List<String>): String = buildString {
+    append("Helper ").append(id).append(" started (").append(role).append("). Its result will arrive in your inbox.")
+    if (requested != null) {
+        append(" It has only: ").append(granted.sorted().joinToString().ifEmpty { "no tools" }).append('.')
+        if (granted.none { it.startsWith(BrowserGate.PREFIX) }) append(" It has no browser; omit `tools` to give it the defaults.")
     }
 }

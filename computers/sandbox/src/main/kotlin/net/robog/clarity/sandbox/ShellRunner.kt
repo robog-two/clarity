@@ -47,6 +47,8 @@ class ShellRunner(
     private val outputCap: Int = 32 * 1024,
     private val maxLogBytes: Long = 64L * 1024 * 1024,
     private val shell: List<String> = listOf("bash", "-lc"),
+    /** The egress proxy (http://host:port) commands reach the internet through; null for no internet. */
+    val proxy: String? = null,
 ) {
     private val slots = Semaphore(maxConcurrent)
     private val counter = AtomicLong()
@@ -88,6 +90,7 @@ class ShellRunner(
             put("TERM", "dumb")
             put("PYTHONDONTWRITEBYTECODE", "1")
             put("PWD", cwd.toString())
+            proxy?.let { putAll(proxyEnvironment(it)) }
         }
         val started = System.nanoTime()
         val process = try {
@@ -174,3 +177,10 @@ internal fun findOnPath(name: String): String? =
         .map { Path.of(it).resolve(name) }
         .firstOrNull { Files.isExecutable(it) }
         ?.toString()
+
+/** Pure: the variables that send curl, wget, pip, git and friends through [proxy]; nothing bypasses it. */
+fun proxyEnvironment(proxy: String): Map<String, String> = buildMap {
+    for (name in listOf("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY")) put(name, proxy)
+    put("no_proxy", "")
+    put("NO_PROXY", "")
+}

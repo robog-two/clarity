@@ -12,7 +12,8 @@ private val log = KotlinLogging.logger {}
 /**
  * sandboxd: the agent's Linux workspace as an MCP server.
  *
- * SANDBOX_PORT (8940), SANDBOX_WORKSPACE (/workspace), SANDBOX_KEY_FILE (/run/secrets/sandbox_key).
+ * SANDBOX_PORT (8940), SANDBOX_WORKSPACE (/workspace), SANDBOX_KEY_FILE (/run/secrets/sandbox_key),
+ * SANDBOX_HTTP_PROXY (optional, e.g. http://egress-sandbox:3128: commands reach the public internet through it).
  * Without a key the server refuses to start unless SANDBOX_ALLOW_NO_AUTH=true.
  */
 fun main() {
@@ -26,8 +27,9 @@ fun main() {
     }
     Files.createDirectories(workspacePath)
     val workspace = Workspace(workspacePath)
-    log.info { "sandboxd on :$port, workspace ${workspace.root}, auth ${if (key == null) "OFF" else "bearer key"}" }
+    val proxy = System.getenv("SANDBOX_HTTP_PROXY")?.trim()?.ifEmpty { null }
+    log.info { "sandboxd on :$port, workspace ${workspace.root}, auth ${if (key == null) "OFF" else "bearer key"}, internet ${proxy ?: "none"}" }
     embeddedServer(Netty, port = port, host = "0.0.0.0") {
-        sandboxModule(sandboxTools(workspace), key)
+        sandboxModule(sandboxTools(workspace, ShellRunner(workspace, proxy = proxy)), key)
     }.start(wait = true)
 }

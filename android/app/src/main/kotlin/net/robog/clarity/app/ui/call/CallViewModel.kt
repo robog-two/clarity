@@ -19,7 +19,7 @@ import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.call.CallNotifier
 import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.call.SNOOZE_MINUTES
-import net.robog.clarity.app.call.zoneOf
+import net.robog.clarity.app.data.seenSettings
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.FeedRepository
@@ -95,7 +95,7 @@ class CallViewModel(
     private val _state = MutableStateFlow(CallUiState())
     val state: StateFlow<CallUiState> = _state.asStateFlow()
 
-    private var zone: TimeZone = TimeZone.currentSystemDefault()
+    private val zone: TimeZone get() = clock.zone()
     private var micAlwaysOn = true
     private var foreground = true
 
@@ -134,9 +134,9 @@ class CallViewModel(
 
     private suspend fun load() {
         (settings.load() as? ApiResult.Success)?.value?.let { s ->
-            zone = zoneOf(s)
             micAlwaysOn = s.micAlwaysOn
-            _state.update { it.copy(callTime = formatTime(s.morningCall.at), pushToTalk = !s.micAlwaysOn) }
+            val seen = seenSettings(s, zone, clock.now())
+            _state.update { it.copy(callTime = formatTime(seen.morningCall.at), pushToTalk = !s.micAlwaysOn) }
         }
         val active = (sessions.active(SessionKind.MORNING_CALL) as? ApiResult.Success)?.value
         when (active?.state) {

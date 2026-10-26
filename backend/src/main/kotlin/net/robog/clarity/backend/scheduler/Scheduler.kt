@@ -95,7 +95,7 @@ class Scheduler(
     suspend fun ensureRows() {
         val current = settings.current()
         val now = clock.now()
-        val zone = zoneOrUtc(current.timeZone)
+        val zone = zoneOrUtc(current.homeZone)
         database.tx {
             ScheduledJobs.deleteWhere { name notInList byName.keys.toList() }
             jobs.forEach { job ->
@@ -114,7 +114,7 @@ class Scheduler(
     suspend fun resetSchedules() {
         val current = settings.current()
         val now = clock.now()
-        val zone = zoneOrUtc(current.timeZone)
+        val zone = zoneOrUtc(current.homeZone)
         database.tx {
             jobs.forEach { job ->
                 val schedule = job.schedule(current)
@@ -129,7 +129,7 @@ class Scheduler(
     suspend fun tickOnce(): Boolean {
         val current = settings.current()
         val now = clock.now()
-        val zone = zoneOrUtc(current.timeZone)
+        val zone = zoneOrUtc(current.homeZone)
         return database.tx {
             val row = ScheduledJobs.selectAll().where { ScheduledJobs.nextRunAt lessEq now }
                 .orderBy(ScheduledJobs.nextRunAt).limit(1)

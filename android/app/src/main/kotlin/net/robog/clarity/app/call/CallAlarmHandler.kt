@@ -2,6 +2,7 @@ package net.robog.clarity.app.call
 
 import kotlinx.coroutines.flow.first
 import net.robog.clarity.app.data.AppClock
+import net.robog.clarity.app.data.seenSettings
 import net.robog.clarity.app.data.feed.FeedStore
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.ui.onboarding.formatTime
@@ -29,13 +30,15 @@ class CallAlarmHandler(
     suspend fun onAlarm(slot: AlarmSlot) {
         val settings = cache.load() ?: Settings()
         val call = settings.morningCall
+        // What the person reads: the call time on the phone's clock.
+        val seenAt = seenSettings(settings, clock.zone(), clock.now()).morningCall.at
         when (slot) {
             AlarmSlot.HeadsUp -> {
                 if (capabilities.notificationsEnabled()) {
                     val items = feed.items.first()
                     notifier.headsUp(
                         headsUpTitle(call.headsUpMinutes ?: 10),
-                        headsUpBody(call.at, items, clock.now()),
+                        headsUpBody(seenAt, items, clock.now()),
                     )
                 }
             }
@@ -43,7 +46,7 @@ class CallAlarmHandler(
                 val presentation = incomingPresentation(
                     call.mode, capabilities.canUseFullScreenIntent(), capabilities.notificationsEnabled(),
                 )
-                if (presentation != IncomingPresentation.None) notifier.incoming(presentation, formatTime(call.at))
+                if (presentation != IncomingPresentation.None) notifier.incoming(presentation, formatTime(seenAt))
                 notifier.cancelHeadsUp()
             }
         }

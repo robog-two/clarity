@@ -45,6 +45,7 @@ import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.testutil.FakeSessionStore
+import net.robog.clarity.app.testutil.FixedClock
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.app.testutil.signedIn
@@ -841,7 +842,7 @@ class ConstitutionStepViewModelTest {
 class ScheduleStepViewModelTest {
     @Test fun editsThePillsAndSavesTheSettings() = withMain {
         val settings = FakeSettings()
-        val vm = ScheduleStepViewModel(settings)
+        val vm = ScheduleStepViewModel(settings, FixedClock())
         assertFalse(vm.state.value.loading)
         vm.pickTime(LocalTime(8, 30))
         vm.toggleDay(7)
@@ -859,22 +860,33 @@ class ScheduleStepViewModelTest {
         assertEquals(10, vm.state.value.call.headsUpMinutes)
     }
 
-    @Test fun loadsExistingSettingsAndTheirTimeZone() = withMain {
-        val existing = Settings(morningCall = Settings.MorningCall(at = LocalTime(9, 30)), timeZone = "Europe/Berlin")
-        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Success(existing)))
+    @Test fun showsStoredSettingsOnThePhonesClock() = withMain {
+        // Stored 08:30 UTC = 09:30 Berlin (CET on T0)
+        val existing = Settings(morningCall = Settings.MorningCall(at = LocalTime(8, 30)), homeZone = "Europe/Berlin")
+        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Success(existing)), FixedClock(zone = kotlinx.datetime.TimeZone.of("Europe/Berlin")))
         assertEquals(LocalTime(9, 30), vm.state.value.call.at)
-        assertEquals("Europe/Berlin", vm.state.value.settings.timeZone)
+        assertEquals("Europe/Berlin", vm.state.value.settings.homeZone)
+    }
+
+    @Test fun aTimePickedInNewYorkIsSavedInUtcWithNewYorkAsHome() = withMain {
+        val settings = FakeSettings(ApiResult.Failure(ApiError.NotFound(null)))
+        val vm = ScheduleStepViewModel(settings, FixedClock(zone = kotlinx.datetime.TimeZone.of("America/New_York")))
+        vm.pickTime(LocalTime(8, 30))
+        vm.finish()
+        val saved = settings.saved.single()
+        assertEquals(LocalTime(13, 30), saved.morningCall.at) // EST offset; daylight saving moves the moment, not this
+        assertEquals("America/New_York", saved.homeZone)
     }
 
     @Test fun aServerWithoutTheRouteLetsSetupFinish() = withMain {
-        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Failure(ApiError.NotFound(null)), ApiResult.Failure(ApiError.NotFound(null))))
+        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Failure(ApiError.NotFound(null)), ApiResult.Failure(ApiError.NotFound(null))), FixedClock())
         vm.finish()
         assertTrue(vm.state.value.saved && vm.state.value.notStored)
         assertNull(vm.state.value.error)
     }
 
     @Test fun otherSaveFailuresStayOnTheScreen() = withMain {
-        val vm = ScheduleStepViewModel(FakeSettings(saveResult = ApiResult.Failure(ApiError.Unreachable("x"))))
+        val vm = ScheduleStepViewModel(FakeSettings(saveResult = ApiResult.Failure(ApiError.Unreachable("x"))), FixedClock())
         vm.finish()
         assertFalse(vm.state.value.saved)
         assertIs<ApiError.Unreachable>(vm.state.value.error)

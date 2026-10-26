@@ -92,7 +92,10 @@ COPY computers/browser/prewarm.sh /tmp/prewarm.sh
 # Run Firefox once so the add-ons are installed and past their first-run logic (see prewarm.sh).
 RUN sh /tmp/prewarm.sh /opt/profile-template && rm /tmp/prewarm.sh
 
-# Numeric unprivileged user; everything mutable (profile, HOME, downloads) lives on /tmp (tmpfs).
+# Downloads: a volume shared read-only with the sandbox (compose mounts browser-downloads here).
+RUN mkdir -p /downloads && chown 10001:10001 /downloads
+
+# Numeric unprivileged user; everything mutable lives on /tmp (tmpfs), except /downloads (a volume).
 ENV HOME=/tmp/home \
     MOZ_DISABLE_UPDATE_PROCESSING=1 \
     MOZ_CRASHREPORTER_DISABLE=1 \

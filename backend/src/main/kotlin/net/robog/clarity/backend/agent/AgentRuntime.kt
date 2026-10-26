@@ -65,9 +65,9 @@ private const val COMPACTION_INSTRUCTIONS =
  * Pure: the system prompt blocks of the lead. The static persona block carries a cache breakpoint,
  * the constitution block (which changes only on amendment) another.
  */
-fun leadSystemBlocks(constitution: Constitution?): List<SystemBlock> = listOf(
+fun leadSystemBlocks(constitution: Constitution?, home: HomeClock? = null): List<SystemBlock> = listOf(
     SystemBlock(AgentPrompts.LEAD_SYSTEM, cacheBreakpoint = true),
-    SystemBlock(AgentPrompts.constitutionBlock(constitution), cacheBreakpoint = true),
+    SystemBlock(AgentPrompts.constitutionBlock(constitution, home), cacheBreakpoint = true),
 )
 
 /** Pure: the system blocks of a helper. */

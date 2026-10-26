@@ -6,6 +6,7 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -76,6 +77,7 @@ import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.vault.CredentialKind
 import net.robog.clarity.shared.vault.CredentialMeta
 import net.robog.clarity.shared.vault.CredentialRequest
+import net.robog.clarity.shared.vault.CredentialRequestId
 import net.robog.clarity.shared.vault.DeviceVaultKey
 import net.robog.clarity.shared.vault.FieldSpec
 import net.robog.clarity.shared.vault.FieldType
@@ -218,15 +220,17 @@ class VaultFlowTest : FunSpec({
         }
     }
 
-    test("request_credential puts a form card in the feed; the phone completes it with sealed envelopes; only the owner can fetch its copy") {
+    test("request_credential makes a form for the agent to post; the phone completes it with sealed envelopes; only the owner can fetch its copy") {
         val tool = VaultTools(rig.vaultService, rig.vaultHolds).all(RunScope("r", isLead = true)).first { it.name == "request_credential" }
         val reply = tool.invoke(toolInput("bank_login")).shouldBeInstanceOf<ToolResult.Ok>().content
         reply shouldContain "[secret:bank_login_password]"
-
-        val card = rig.feedStore.page(0, 50).items.flatMap { it.cards }.filterIsInstance<Card.CredentialRequest>().single()
+        reply shouldContain "send_to_user"
+        // Only send_to_user puts it in the chat.
+        rig.feedStore.page(0, 50).items.flatMap { it.cards }.filterIsInstance<Card.CredentialRequest>() shouldBe emptyList()
+        val requestId = Regex("""request ([0-9a-f-]{36})""").find(reply)!!.groupValues[1]
         testApplication {
             val client = setup()
-            val request: CredentialRequest = client.getAs(phone, "/api/v1/vault/requests/${card.requestId}").body()
+            val request: CredentialRequest = client.getAs(phone, "/api/v1/vault/requests/$requestId").body()
             request.name shouldBe "bank_login"
             request.fields shouldBe loginFields
 
@@ -402,6 +406,34 @@ class VaultFlowTest : FunSpec({
             rig.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.HELD
             client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE, signature = sign(approvalKey, ApprovalPayload.payloadFor(held, SignedDecision.APPROVE)))).status shouldBe HttpStatusCode.OK
             rig.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.APPROVED
+        }
+    }
+
+    test("a saved login can be entered again: the new entry replaces it once saved, and its old values stop working") {
+        val tools = VaultTools(rig.vaultService, rig.vaultHolds).all(RunScope("r", isLead = true)).associateBy { it.name }
+        val first = tools.getValue("request_credential").invoke(toolInput("shop_login")).shouldBeInstanceOf<ToolResult.Ok>().content
+        val firstId = Regex("""request ([0-9a-f-]{36})""").find(first)!!.groupValues[1]
+        tools.getValue("request_credential").invoke(toolInput("shop_login")).shouldBeInstanceOf<ToolResult.Ok>() // not saved yet: no clash
+        testApplication {
+            val client = setup()
+            val seal = { id: String -> VaultCryptoReference.seal(DeviceId(phone), VaultCryptoReference.publicKeyWire(phoneKey), id, mapOf("username" to USERNAME, "password" to PASSWORD)) }
+            client.postAs(phone, "/api/v1/vault/credentials", NewCredential(CredentialRequestId(firstId), envelopes = listOf(seal(firstId)))).status shouldBe HttpStatusCode.Created
+            tools.getValue("request_credential").invoke(toolInput("shop_login")).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "replace=true"
+
+            val again = tools.getValue("request_credential").invoke(
+                JsonObject(toolInput("shop_login") + ("replace" to kotlinx.serialization.json.JsonPrimitive(true))),
+            ).shouldBeInstanceOf<ToolResult.Ok>().content
+            again shouldContain "replaces the saved shop_login"
+            val againId = Regex("""request ([0-9a-f-]{36})""").find(again)!!.groupValues[1]
+            val before: List<CredentialMeta> = client.getAs(phone, "/api/v1/vault/credentials").body()
+            val old = before.single { it.name == "shop_login" }
+            rig.grants.put("shop_login", "example.com", mapOf("password" to "old-value"), 5.minutes)
+
+            client.postAs(phone, "/api/v1/vault/credentials", NewCredential(CredentialRequestId(againId), envelopes = listOf(seal(againId)))).status shouldBe HttpStatusCode.Created
+            val after: List<CredentialMeta> = client.getAs(phone, "/api/v1/vault/credentials").body()
+            val now = after.single { it.name == "shop_login" }
+            now.id shouldNotBe old.id
+            rig.grants.find("shop_login", "example.com") shouldBe null
         }
     }
 

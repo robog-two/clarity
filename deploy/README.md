@@ -76,8 +76,8 @@ Two MCP servers on the internal `tools` network that the backend connects to:
 
 | Service | What it is | Reaches | Persists |
 |---|---|---|---|
-| `sandbox` | `sandboxd` (Kotlin): `shell`, `read_file`, `write_file`, `edit_file`, `search_files`, `list_files` in a Linux workspace (bash, coreutils, ripgrep, jq, git, python3, pandoc, poppler-utils, sqlite3) | nothing: `tools` only, no internet | the `sandbox-workspace` volume (`/workspace`) |
-| `browser` | Headless Firefox ESR with uBlock Origin and Privacy Badger, driven by Mozilla's Firefox DevTools MCP server (snapshots with element uids, clicks, typing, screenshots) | the public internet through the `egress` proxy (never your LAN), and the backend through `tools`; no database, connectors or sandbox | nothing: the profile is rebuilt on tmpfs at every start |
+| `sandbox` | `sandboxd` (Kotlin): `shell`, `read_file`, `write_file`, `edit_file`, `search_files`, `list_files` in a Linux workspace (bash, coreutils, ripgrep, jq, git, python3 with pip/venv, pandoc, poppler-utils, sqlite3, curl, wget) | the public internet through the `egress` proxy (never your LAN), and `tools` | the `sandbox-workspace` volume (`/workspace`); reads the browser's downloads at `/workspace/downloads` |
+| `browser` | Headless Firefox ESR with uBlock Origin and Privacy Badger, driven by Mozilla's Firefox DevTools MCP server (snapshots with element uids, clicks, typing, screenshots) | the public internet through the `egress` proxy (never your LAN), and the backend through `tools`; no database, connectors or sandbox | downloads only (the `browser-downloads` volume, kept 7 days); the profile is rebuilt on tmpfs at every start |
 
 Setup:
 
@@ -94,8 +94,12 @@ into the one server that owns them.
 
 Things worth knowing:
 
-- **The sandbox has no network at all.** Anything it needs from the internet has to come through the browser or
-  web-fetch tools and be written to `/workspace` by the agent. Commands run in their own process group (killed on
+- **The sandbox reaches public websites through `egress`**, under the browser's policy (ports 80/443, never your
+  LAN, the host or other containers), via `http(s)_proxy` in each command's environment (`curl`, `wget`, `pip`,
+  `git`). To take it offline, remove `SANDBOX_HTTP_PROXY` and the `sandbox-proxy` network from its service.
+- **Browser downloads reach the sandbox.** Firefox saves every download without asking to the `browser-downloads`
+  volume, which the sandbox mounts read-only at `/workspace/downloads` (so files needing a browser login can be
+  processed in the shell). Files older than `BROWSER_DOWNLOADS_DAYS` (7) are deleted when the browser starts. Commands run in their own process group (killed on
   timeout, default 60 s, max 600 s), at most 4 at a time, with a scrubbed environment (no secrets). The full output
   of long commands is kept in `/workspace/.logs/`. Limits: 1 GB RAM, 1 CPU, 512 pids.
 - **What the browser can reach**: any public website on port 80/443, since that is its job, and nothing else:
@@ -115,14 +119,14 @@ Things worth knowing:
 ## Outbound traffic (`egress`)
 
 Compose networks cannot filter destinations, and host firewall rules need root and differ per engine, so the
-browser and the backend have **no route to the internet at all**. Their only way out is `egress`, a small Squid
+browser, the sandbox and the backend have **no route to the internet at all**. Their only way out is `egress`, a small Squid
 proxy (Alpine, pinned; non-root, read-only rootfs, 128 MB) that enforces the policy itself:
 
 | From | Can reach | Everything else |
 |---|---|---|
 | `browser` (network `browser-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
 | `backend` (network `backend-proxy`) | `api.anthropic.com` and hosts in `CLARITY_BACKEND_EGRESS_ALLOW` (443) | refused with 403 |
-| `sandbox` | nothing | no network |
+| `sandbox` (network `sandbox-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
 | connectors, `caddy` | their own egress networks (connectors usually talk to servers on your LAN) | |
 
 Refused for both: loopback, RFC 1918, CGNAT, link-local (including the 169.254.169.254 metadata address),
@@ -222,7 +226,7 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 - Networks: `db`, `ingest`, `tools`, `proxy`, `browser-proxy`, `backend-proxy` are `internal` (no route off the
   host). The browser and the backend reach the internet only through the `egress` proxy; the other services that
   need it (caddy, connectors) get their own egress network. Postgres is only on `db`; connectors only on `ingest` plus
-  their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` only.
+  their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` and `sandbox-proxy` (its door to `egress`).
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and
   their data volume), `cap_drop: ALL` and `no-new-privileges`.
 - Secrets are Podman secrets (`podman secret ls`), mounted read-only at `/run/secrets/<name>`;

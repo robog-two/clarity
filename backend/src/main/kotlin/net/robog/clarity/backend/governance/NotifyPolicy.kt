@@ -10,6 +10,8 @@ import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.Urgency
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.session.Settings
+import net.robog.clarity.shared.time.ScheduleClock
+import net.robog.clarity.shared.time.WeeklyTime
 
 /** What to do about telling the person. Delivery (push) is a later workstream; this is the decision. */
 sealed interface NotifyDecision {
@@ -38,13 +40,10 @@ fun getsThrough(people: List<Handle>, constitution: Constitution, now: Instant):
     return people.any { it.normalized() in allowed }
 }
 
-/** The next evening-summary time strictly after [now] in the person's zone. */
-fun nextEveningSummary(now: Instant, settings: Settings): Instant {
-    val zone = zoneOrUtc(settings.timeZone)
-    val today = now.toLocalDateTime(zone).date
-    val tonight = today.atTime(settings.eveningSummaryAt).toInstant(zone)
-    return if (tonight > now) tonight else today.plus(1, DateTimeUnit.DAY).atTime(settings.eveningSummaryAt).toInstant(zone)
-}
+/** The next evening-summary time strictly after [now]. */
+fun nextEveningSummary(now: Instant, settings: Settings): Instant = checkNotNull(
+    ScheduleClock.nextOccurrence(WeeklyTime(settings.eveningSummaryAt, ScheduleClock.EVERY_DAY), zoneOrUtc(settings.homeZone), now),
+)
 
 /**
  * Pure notification policy.
@@ -64,7 +63,7 @@ fun notifyDecision(
     Urgency.URGENT -> when {
         !settings.pushUrgent -> NotifyDecision.ShowInApp
         getsThrough(people, constitution, now) -> NotifyDecision.PushNow
-        else -> protectedUntil(constitution.protectedTimes, now, zoneOrUtc(settings.timeZone))
+        else -> protectedUntil(constitution.protectedTimes, now, zoneOrUtc(settings.homeZone))
             ?.let { NotifyDecision.HoldUntil(it) }
             ?: NotifyDecision.PushNow
     }

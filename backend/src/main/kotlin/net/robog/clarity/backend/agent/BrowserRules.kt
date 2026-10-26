@@ -98,6 +98,35 @@ fun targetUids(input: JsonObject): List<String> = buildList {
     (input["elements"] as? JsonArray)?.forEach { e -> ((e as? JsonObject)?.get("uid") as? JsonPrimitive)?.contentOrNull?.let(::add) }
 }
 
+/**
+ * Pure: the uids a text-entry call types a secret placeholder into (`fill_by_uid`'s uid, the
+ * `fill_form_by_uid` elements whose value has one).
+ */
+fun secretTargets(input: JsonObject): List<String> = buildList {
+    val value = input["value"] as? JsonPrimitive
+    if (value != null && value.isString && Placeholders.tokens(value.content).isNotEmpty()) (input["uid"] as? JsonPrimitive)?.contentOrNull?.let(::add)
+    (input["elements"] as? JsonArray)?.forEach { e ->
+        val o = e as? JsonObject ?: return@forEach
+        val v = o["value"] as? JsonPrimitive
+        if (v != null && v.isString && Placeholders.tokens(v.content).isNotEmpty()) (o["uid"] as? JsonPrimitive)?.contentOrNull?.let(::add)
+    }
+}
+
+private val VALUE_ATTR = Regex("""(\svalue=)"(?:[^"\\]|\\.)*"""")
+
+/**
+ * Pure: [text] (a snapshot) with the `value="…"` of each element in [uids] replaced by a marker.
+ * Scrubbing removes released values only when they appear whole; a field that was typed into
+ * wrongly (or holds part of one) would otherwise show what is in it.
+ */
+fun hideFilledValues(text: String, uids: Set<String>): String {
+    if (uids.isEmpty() || "uid=" !in text) return text
+    return text.lineSequence().joinToString("\n") { line ->
+        val uid = SNAPSHOT_LINE.find(line)?.groupValues?.get(1)
+        if (uid != null && uid in uids) VALUE_ATTR.replace(line) { "${it.groupValues[1]}\"[secret, hidden]\"" } else line
+    }
+}
+
 /** Pure: every string the call types (fill value, typed text, form values). */
 fun typedStrings(input: JsonObject): List<String> = buildList {
     for (key in listOf("value", "text")) (input[key] as? JsonPrimitive)?.takeIf { it.isString }?.content?.let(::add)

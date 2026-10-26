@@ -67,7 +67,7 @@ class OwnStateTools(
 ) {
     @Serializable
     class SendToUserInput(
-        @Description("What to show, in order. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}.")
+        @Description("What to show, in order. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}. Held items and credential forms are not in the chat until you post their card; post each once.")
         val cards: List<Card>,
         @Description("urgent = interrupt now (respects protected time), normal = shows in the app, batch = evening summary. Default normal.")
         val urgency: Urgency = Urgency.NORMAL,
@@ -265,7 +265,7 @@ class OwnStateTools(
         if (task == null) ToolResult.Error("No task with id ${input.id}.") else ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
 
-    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().timeZone)).date
+    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().homeZone)).date
 
     private companion object { const val MAX_FACT_CHARS = 240 }
 }

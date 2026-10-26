@@ -107,7 +107,7 @@ private fun connector(id: String, kind: String, seen: Instant?) = ConnectorSumma
 )
 
 private class SettingsRig(
-    loaded: ApiResult<Settings> = ApiResult.Success(Settings(timeZone = "UTC")),
+    loaded: ApiResult<Settings> = ApiResult.Success(Settings(homeZone = "UTC")),
     connectors: ApiResult<List<ConnectorSummary>> = ApiResult.Success(emptyList()),
 ) {
     val clock = FixedClock(T0 + 1.hours)
@@ -134,7 +134,7 @@ class SettingsViewModelTest {
     @Test fun loadsSettingsAndShowsTheServer() = withMain {
         val r = SettingsRig()
         assertFalse(r.state.loading)
-        assertEquals(Settings(timeZone = "UTC"), r.state.settings)
+        assertEquals(Settings(homeZone = "UTC"), r.state.settings)
         assertEquals("https://clarity.example", r.state.instanceUrl)
     }
 

@@ -49,8 +49,9 @@ inline fun withMain(block: () -> Unit) {
     try { block() } finally { Dispatchers.resetMain() }
 }
 
-class FixedClock(var now: Instant = T0) : AppClock {
+class FixedClock(var now: Instant = T0, var zone: kotlinx.datetime.TimeZone = kotlinx.datetime.TimeZone.UTC) : AppClock {
     override fun now(): Instant = now
+    override fun zone(): kotlinx.datetime.TimeZone = zone
 }
 
 /** A feed with mutable flows; records what the screens send and decide. */

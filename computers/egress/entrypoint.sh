@@ -4,6 +4,8 @@
 #   EGRESS_BROWSER_HOST         name that resolves to this container's address on the browser network
 #                               (default egress-browser). Squid listens for the browser ONLY there.
 #   EGRESS_BACKEND_HOST         same for the backend network (default egress-backend).
+#   EGRESS_SANDBOX_HOST         same for the sandbox network (default egress-sandbox); the sandbox
+#                               gets the browser's policy (public internet, ports 80/443).
 #   CLARITY_BACKEND_EGRESS_ALLOW  extra hosts the backend may reach, comma/space separated
 #                               (api.anthropic.com is always allowed). A leading dot allows subdomains.
 #
@@ -13,6 +15,7 @@ set -eu
 
 browser_host="${EGRESS_BROWSER_HOST:-egress-browser}"
 backend_host="${EGRESS_BACKEND_HOST:-egress-backend}"
+sandbox_host="${EGRESS_SANDBOX_HOST:-egress-sandbox}"
 conf=/tmp/squid.conf
 
 resolve() { # resolve <name>: first IPv4 address, retrying while DNS comes up
@@ -27,7 +30,9 @@ resolve() { # resolve <name>: first IPv4 address, retrying while DNS comes up
 
 browser_ip="$(resolve "$browser_host")"
 backend_ip="$(resolve "$backend_host")"
-[ "$browser_ip" != "$backend_ip" ] || { echo "egress: browser and backend resolve to the same address" >&2; exit 1; }
+sandbox_ip="$(resolve "$sandbox_host")"
+[ "$(printf '%s\n' "$browser_ip" "$backend_ip" "$sandbox_ip" | sort -u | wc -l)" -eq 3 ] \
+  || { echo "egress: browser, backend and sandbox must resolve to different addresses" >&2; exit 1; }
 
 allow=""
 for h in $(printf '%s' "${CLARITY_BACKEND_EGRESS_ALLOW:-}" | tr ',' ' '); do
@@ -39,8 +44,9 @@ done
 
 sed -e "s|@BROWSER_IP@|$browser_ip|g" \
     -e "s|@BACKEND_IP@|$backend_ip|g" \
+    -e "s|@SANDBOX_IP@|$sandbox_ip|g" \
     -e "s|@BACKEND_ALLOW@|api.anthropic.com$allow|g" \
     /usr/local/share/egress/squid.conf.tmpl >"$conf"
 
-echo "egress: browser listener $browser_ip:3128, backend listener $backend_ip:3128, backend allows: api.anthropic.com$allow" >&2
+echo "egress: browser listener $browser_ip:3128, backend listener $backend_ip:3128, sandbox listener $sandbox_ip:3128, backend allows: api.anthropic.com$allow" >&2
 exec squid -N -f "$conf"

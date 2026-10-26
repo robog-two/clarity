@@ -19,6 +19,8 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.plus
 import kotlinx.datetime.DatePeriod
+import net.robog.clarity.app.data.seenSettings
+import net.robog.clarity.app.data.storedSettings
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
@@ -100,18 +102,19 @@ data class ScheduleState(
 @Inject
 @ViewModelKey(ScheduleStepViewModel::class)
 @ContributesIntoMap(AppScope::class)
-class ScheduleStepViewModel(private val settings: SettingsRepository) : ViewModel() {
+class ScheduleStepViewModel(private val settings: SettingsRepository, private val clock: AppClock) : ViewModel() {
     private val _state = MutableStateFlow(ScheduleState())
     val state: StateFlow<ScheduleState> = _state.asStateFlow()
+
+    /** What the server stored, if anything; the screen shows [seenSettings] of it, or the defaults as times on this phone. */
+    private var stored: Settings? = null
 
     init {
         viewModelScope.launch {
             val loaded = (settings.load() as? ApiResult.Success)?.value
+            stored = loaded
             _state.update { s ->
-                s.copy(
-                    loading = false,
-                    settings = (loaded ?: s.settings).let { it.copy(timeZone = if (loaded == null) java.util.TimeZone.getDefault().id else it.timeZone) },
-                )
+                s.copy(loading = false, settings = loaded?.let { seenSettings(it, clock.zone(), clock.now()) } ?: s.settings)
             }
         }
     }
@@ -130,7 +133,7 @@ class ScheduleStepViewModel(private val settings: SettingsRepository) : ViewMode
         if (s.saving || s.loading) return
         _state.update { it.copy(saving = true, error = null) }
         viewModelScope.launch {
-            when (val r = settings.save(s.settings)) {
+            when (val r = settings.save(storedSettings(s.settings, stored, clock.zone(), clock.now()))) {
                 is ApiResult.Success -> _state.update { it.copy(saving = false, saved = true) }
                 is ApiResult.Failure ->
                     if (r.error is ApiError.NotFound) {
@@ -170,9 +173,9 @@ class DoneStepViewModel(
     private val _state = MutableStateFlow(DoneState())
     val state: StateFlow<DoneState> = _state.asStateFlow()
 
-    fun load(zone: TimeZone = TimeZone.currentSystemDefault()) {
+    fun load(zone: TimeZone = clock.zone()) {
         viewModelScope.launch {
-            val call = (settings.load() as? ApiResult.Success)?.value?.morningCall ?: MorningCall()
+            val call = (settings.load() as? ApiResult.Success)?.value?.let { seenSettings(it, zone, clock.now()).morningCall } ?: MorningCall()
             val status = setup.status()
             val today = clock.now().toLocalDateTime(zone).date
             val ask = shouldAskBattery(device.batteryUnrestricted(), push.batteryAsked.first())

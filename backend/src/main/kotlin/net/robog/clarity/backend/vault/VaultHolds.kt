@@ -9,14 +9,10 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import net.robog.clarity.backend.feed.FeedDraft
-import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ActionGate
 import net.robog.clarity.backend.governance.HeldActionStore
 import net.robog.clarity.backend.governance.LocalOutcome
-import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ContextItem
-import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
@@ -60,7 +56,6 @@ private val RECENT_DECLINE = 10.minutes
 class GovernedVaultHolds(
     private val gate: ActionGate,
     private val held: HeldActionStore,
-    private val feed: FeedService,
     private val clock: Clock,
 ) : VaultGovernance {
     /**
@@ -144,14 +139,10 @@ class GovernedVaultHolds(
             is LocalOutcome.Cleared ->
                 // Vault kinds can never be cleared alone (they are never-alone kinds); a browser step the guard allows alone just goes ahead.
                 if (action is ProposedAction.ExternalTool) Hold.Proceed else Hold.Wait("Needs the person: ${action.summary}.")
-            is LocalOutcome.Held -> {
-                announce(outcome.heldId, notify)
-                Hold.Wait(waitingText(action, outcome.text), outcome.heldId)
-            }
-            is LocalOutcome.Blocked -> {
-                announce(outcome.heldId, notify)
-                Hold.Wait("${outcome.text} Do not retry; tell the person what you could not do.", outcome.heldId)
-            }
+            // Held items wait in the person's Held list (an urgent one also notifies). They reach the
+            // chat only when the agent posts a proposal card with send_to_user.
+            is LocalOutcome.Held -> Hold.Wait(waitingText(action, outcome.text) + IN_HELD_LIST, outcome.heldId)
+            is LocalOutcome.Blocked -> Hold.Wait("${outcome.text} Do not retry; tell the person what you could not do.", outcome.heldId)
         }
     }
 
@@ -162,15 +153,8 @@ class GovernedVaultHolds(
         else ->
             "$base Do not retry now; if you are told it was approved, repeat exactly the same call."
     }
-
-    private suspend fun announce(heldId: HeldActionId, notify: String) {
-        feed.append(
-            FeedDraft(
-                author = FeedItem.Author.AGENT,
-                cards = listOf(Card.Proposal(heldId)),
-                clientInputId = net.robog.clarity.shared.feed.ClientInputId("vault:held:${heldId.value}"),
-                notify = notify,
-            ),
-        )
-    }
 }
+
+/** Where a held item waits, and how to bring it into the chat. */
+private const val IN_HELD_LIST =
+    " It waits in the person's Held list; it is not in the chat. Post a proposal card (heldActionId) with send_to_user only if they should see it there now."

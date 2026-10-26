@@ -9,12 +9,17 @@
 #   BROWSER_VIEWPORT            window size (default 1280x800)
 #   BROWSER_TOOL_PRESET         firefox-devtools-mcp --tool-preset (default: the server's own default)
 #   BROWSER_IDLE_TIMEOUT        passed to --idle-timeout when set (e.g. 10m)
+#   BROWSER_DOWNLOADS_DAYS      downloads older than this are deleted at start (default 7)
+#
+# Downloads go to /downloads, a volume the sandbox also mounts (read-only), so the agent can work on
+# downloaded files in its shell.
 set -eu
 
 port="${BROWSER_PORT:-8931}"
 key_file="${BROWSER_KEY_FILE:-/run/secrets/browser_key}"
 
-mkdir -p "$HOME" /tmp/downloads
+mkdir -p "$HOME" /downloads
+find /downloads -mindepth 1 -mtime +"${BROWSER_DOWNLOADS_DAYS:-7}" -delete 2>/dev/null || true
 
 # Profile: seed from the template (user.js + signed add-ons). The MCP server insists on a profile
 # directory carrying its marker file; otherwise it nests a new profile below the one given.

@@ -1,5 +1,7 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.backend.governance.zoneOrUtc
+import net.robog.clarity.shared.time.ScheduleClock
 import arrow.core.Either
 import arrow.core.getOrElse
 import arrow.core.left
@@ -152,7 +154,7 @@ class SessionTools(
 
     private suspend fun live() = sessions.live()
 
-    private suspend fun today(): LocalDate = localDate(clock.now(), settings.current().timeZone)
+    private suspend fun today(): LocalDate = localDate(clock.now(), settings.current().homeZone)
 
     /** Keyed by the tool call, so a call re-run after a crash does not post its card twice. */
     private suspend fun callKey(): String? =
@@ -372,9 +374,9 @@ class SessionTools(
     @Serializable
     class TimeBlockInput(
         @Description("e.g. \"deep work\", \"family\".") val label: String,
-        @Description("ISO weekdays, 1 = Monday.") val days: List<Int>,
-        @Description("Local start, HH:MM.") val start: String,
-        @Description("Local end, HH:MM.") val end: String,
+        @Description("ISO weekdays, 1 = Monday, as the person said them.") val days: List<Int>,
+        @Description("Start on the person's clock, HH:MM, as they said it.") val start: String,
+        @Description("End on the person's clock, HH:MM, as they said it.") val end: String,
     )
 
     @Serializable
@@ -406,11 +408,14 @@ class SessionTools(
         if (!session.finalizing) {
             return@tool ToolResult.Error("The interview is not finished: the person is on question ${(session.session.question ?: 0) + 1} of ${session.session.questionCount}. Wait until they keep the last line.")
         }
+        // Said on the person's home clock; stored in UTC.
+        val home = zoneOrUtc(settings.current().homeZone)
+        val now = clock.now()
         val blocks = input.protectedTimes.map { b ->
             val start = parseClock(b.start) ?: return@tool ToolResult.Error("`start` of \"${b.label}\" must be HH:MM.")
             val end = parseClock(b.end) ?: return@tool ToolResult.Error("`end` of \"${b.label}\" must be HH:MM.")
             if (b.days.isEmpty() || b.days.any { it !in 1..7 }) return@tool ToolResult.Error("`days` of \"${b.label}\" are ISO weekdays 1 (Monday) to 7.")
-            TimeBlock(b.label, b.days.toSet(), start, end)
+            ScheduleClock.blockToStored(TimeBlock(b.label, b.days.toSet(), start, end), home, home, now)
         }
         val fixed = input.lines.filter { it.text.isNotBlank() }.mapIndexed { i, l ->
             Line(LineId("fixed-${i + 1}"), l.section, l.text.trim(), because = null, hard = l.hard || l.section == Section.HARD_LINES)
