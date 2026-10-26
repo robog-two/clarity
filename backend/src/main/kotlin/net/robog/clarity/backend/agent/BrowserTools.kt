@@ -138,12 +138,12 @@ class GatewayBrowserTriage(
     }
 }
 
-/** Wires [GatewayBrowserTriage] to the runtime's gateway and the triage role's model. */
+/** Wires [GatewayBrowserTriage] to the triage role's gateway and model. */
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ConfiguredBrowserTriage(private val runtime: AgentRuntime) : BrowserTriage {
-    private val delegate = GatewayBrowserTriage({ runtime.gateway }, runtime.config.roles.triage.model, runtime.config.roles.triage.effort)
+    private val delegate = GatewayBrowserTriage({ runtime.gatewayFor(net.robog.clarity.backend.config.AgentRole.TRIAGE) }, runtime.config.roles.triage.model, runtime.config.roles.triage.effort)
 
     override suspend fun review(step: TriageStep): TriageVerdict = delegate.review(step)
 }

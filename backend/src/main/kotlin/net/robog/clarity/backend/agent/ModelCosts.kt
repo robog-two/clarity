@@ -39,8 +39,12 @@ fun cacheWrites(u: Usage): Pair<Long, Long> {
     return (u.cacheCreation5mTokens + unsplit) to u.cacheCreation1hTokens
 }
 
-/** Pure: what one call cost, in millionths of a dollar, or null for an unknown model. */
+/**
+ * Pure: what one call cost, in millionths of a dollar: the provider's own figure when it reports one
+ * (OpenRouter), else from [priceOf]; null for an unknown model without a reported cost.
+ */
 fun costMicros(model: String, u: Usage): Long? {
+    u.reportedCostMicros?.let { return it }
     val (w5, w1) = cacheWrites(u)
     val prompt = u.inputTokens + u.cacheReadInputTokens + w5 + w1
     val p = priceOf(model, prompt) ?: return null

@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import net.robog.clarity.backend.agent.AgentRuntime
 import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
@@ -93,7 +94,7 @@ class GatewayRuleDrafter(
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ConfiguredRuleDrafter(private val runtime: AgentRuntime, config: AgentConfig) : RuleDrafter {
-    private val delegate = GatewayRuleDrafter({ requireNotNull(runtime.gateway) { "no model key configured" } }, config.roles.guard.model)
+    private val delegate = GatewayRuleDrafter({ requireNotNull(runtime.gatewayFor(AgentRole.GUARD)) { "no model key configured" } }, config.roles.guard.model)
 
     override suspend fun draft(held: HeldAction, constitution: Constitution?): RuleDraft = delegate.draft(held, constitution)
 }

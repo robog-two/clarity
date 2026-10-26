@@ -74,6 +74,14 @@ services:
       CLARITY_HTTPS_PROXY: http://egress:3128
       CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-claude-opus-5-5}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
+      # OpenRouter for the one-shot roles (empty = unused). The egress proxy must allow it:
+      # CLARITY_BACKEND_EGRESS_ALLOW=openrouter.ai. The key can also be a file (OPENROUTER_API_KEY_FILE).
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_API_KEY_FILE: ${OPENROUTER_API_KEY_FILE:-}
+      CLARITY_AGENT_GUARD_PROVIDER: ${CLARITY_AGENT_GUARD_PROVIDER:-}
+      CLARITY_AGENT_GUARD_MODEL: ${CLARITY_AGENT_GUARD_MODEL:-}
+      CLARITY_AGENT_TRIAGE_PROVIDER: ${CLARITY_AGENT_TRIAGE_PROVIDER:-}
+      CLARITY_AGENT_TRIAGE_MODEL: ${CLARITY_AGENT_TRIAGE_MODEL:-}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key

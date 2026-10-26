@@ -8,7 +8,8 @@ import io.kotest.matchers.shouldBe
 import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
-import net.robog.clarity.backend.agent.AnthropicGatewayFactory
+import net.robog.clarity.backend.agent.ProviderGatewayFactory
+import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.LeadRig
 import net.robog.clarity.backend.agent.args
@@ -65,7 +66,7 @@ private class MeteredGateway(private val inner: ModelGateway) : ModelGateway {
 class LiveEvalTest : FunSpec({
     val apiKey = System.getenv("ANTHROPIC_API_KEY").orEmpty()
     val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours)
-    val real = MeteredGateway(AnthropicGatewayFactory(config).create(apiKey))
+    val real = MeteredGateway(ProviderGatewayFactory(config).create(ModelProvider.ANTHROPIC, apiKey))
     val grand = mutableListOf<Usage>()
 
     afterSpec {
