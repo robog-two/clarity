@@ -115,9 +115,29 @@ class FeedEventDecodingTest {
  * engine against a local MockWebServer.
  */
 class KtorFeedEventSourceTest {
-    private fun source(url: String): KtorFeedEventSource {
+    private fun source(url: String, silence: kotlin.time.Duration = FEED_STREAM_SILENCE): KtorFeedEventSource {
         val store = FakeSessionStore(Session(url, DeviceId("dev-1")))
-        return KtorFeedEventSource(createHttpClient(DeviceJwtSigner(FakeDeviceKey()), store), store)
+        return KtorFeedEventSource(createHttpClient(DeviceJwtSigner(FakeDeviceKey()), store), store, silence)
+    }
+
+    // FeedSync reconnects whether the stream ends or throws; what matters is that it does not hang.
+    @Test fun aSilentStreamEndsSoItCanReconnect() = runBlocking {
+        MockWebServer().use { server ->
+            // Headers arrive, then nothing: what a stream dropped by a proxy looks like from the phone.
+            server.enqueue(
+                MockResponse.Builder().code(200).addHeader("Content-Type", "text/event-stream")
+                    .body(": heartbeat\n\n").bodyDelay(10, java.util.concurrent.TimeUnit.SECONDS).build(),
+            )
+            server.start()
+            var opened = false
+            val started = System.nanoTime()
+            runCatching {
+                source(server.url("/").toString().trimEnd('/'), silence = kotlin.time.Duration.parse("500ms"))
+                    .connect(0, onOpen = { opened = true }) {}
+            }
+            assertTrue(opened)
+            assertTrue(System.nanoTime() - started < 5_000_000_000L, "a silent stream must not hang")
+        }
     }
 
     @Test fun streamsDecodedEventsAndReportsOpen() = runBlocking {

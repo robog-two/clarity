@@ -33,9 +33,12 @@ private class FakeReader : NounReader {
     var lastParticipant: String? = null
     var lastLimit: Int? = null
     var lastFolder: String? = "unset"
+    var noMessages = false
+    override suspend fun emailFolders() = listOf("INBOX", "[Gmail]/Sent Mail", "[Gmail]/Spam")
 
     override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?): List<Stored<MessagePayload>> {
         lastRange = range; lastParticipant = participant; lastLimit = limit; lastFolder = folder
+        if (noMessages) return emptyList()
         return listOf(
             Stored(
                 EntityId("m1"),
@@ -72,7 +75,9 @@ private fun obj(json: String): JsonObject = Json.parseToJsonElement(json).jsonOb
 class DomainToolsTest : FunSpec({
     val reader = FakeReader()
     val triggers = FakeTriggers()
-    val tools = DomainTools(reader, triggers, DocumentTools(reader) { DocumentFetch.Unavailable("none") }).all.associateBy { it.name }
+    val home = net.robog.clarity.shared.session.Settings(homeZone = "America/New_York")
+    val tools = DomainTools(reader, triggers, DocumentTools(reader) { DocumentFetch.Unavailable("none") }, SettingsProvider { home })
+        .all.associateBy { it.name }
 
     test("exposes the eight tools, sorted, with the right effects") {
         tools.keys.toList() shouldContainExactly
@@ -130,6 +135,31 @@ class DomainToolsTest : FunSpec({
         reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-23T22:00:00Z"), Instant.parse("2026-10-24T22:00:00Z"))
         tools.getValue("list_calendar_events").invoke(obj("""{}""")).shouldBeInstanceOf<ToolResult.Error>()
         tools.getValue("list_calendar_events").invoke(obj("""{"date":"nope"}""")).shouldBeInstanceOf<ToolResult.Error>()
+    }
+
+    test("an empty folder and a folder that does not exist get different answers") {
+        val window = """"from":"2026-10-24T00:00:00Z","until":"2026-10-25T00:00:00Z""""
+        reader.noMessages = true
+        try {
+            tools.getValue("list_messages").invoke(obj("""{$window,"folder":"spam"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+                .content shouldContain "exists but has no messages"
+            tools.getValue("list_messages").invoke(obj("""{$window,"folder":"Junk"}""")).shouldBeInstanceOf<ToolResult.Error>()
+                .message shouldContain "INBOX, [Gmail]/Sent Mail, [Gmail]/Spam"
+            tools.getValue("list_messages").invoke(obj("""{$window,"folder":"*"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+                .content shouldBe "[]"
+        } finally {
+            reader.noMessages = false
+        }
+    }
+
+    test("emptyFolderAnswer says nothing extra before any email has synced") {
+        emptyFolderAnswer("Junk", emptyList()) shouldBe ToolResult.Ok("[]")
+        emptyFolderAnswer("sent mail", listOf("[Gmail]/Sent Mail")).shouldBeInstanceOf<ToolResult.Ok>()
+    }
+
+    test("list_calendar_events reads a date in the person's home zone unless told otherwise") {
+        tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-24"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+        reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-24T04:00:00Z"), Instant.parse("2026-10-25T04:00:00Z"))
     }
 
     test("search_contacts returns handles") {

@@ -8,6 +8,8 @@ import io.ktor.client.plugins.sse.SSEClientException
 import io.ktor.client.plugins.sse.sse
 import io.ktor.client.request.parameter
 import io.ktor.client.request.url
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.JsonObject
@@ -52,9 +54,16 @@ fun decodeFeedEvent(name: String?, data: String?): FeedEvent? {
     }
 }
 
+/**
+ * The server sends a heartbeat every 20 s. A stream silent for three of them is dead (a proxy or the
+ * network dropped it without closing our side), so the read times out and FeedSync reconnects.
+ */
+val FEED_STREAM_SILENCE: Duration = 60.seconds
+
 class KtorFeedEventSource(
     private val client: HttpClient,
     private val sessions: SessionStore,
+    private val silence: Duration = FEED_STREAM_SILENCE,
 ) : FeedEventSource {
 
     override suspend fun connect(after: Long, onOpen: () -> Unit, onEvent: suspend (FeedEvent) -> Unit) {
@@ -65,8 +74,8 @@ class KtorFeedEventSource(
                 request = {
                     url(session.instanceUrl + ApiPaths.EVENTS)
                     parameter("after", after)
-                    // The stream is open indefinitely: no overall request or socket timeout.
-                    infiniteTimeouts()
+                    // Open indefinitely, but never silent for longer than [silence].
+                    streamTimeouts()
                 },
             ) {
                 onOpen()
@@ -77,10 +86,10 @@ class KtorFeedEventSource(
         }
     }
 
-    private fun io.ktor.client.request.HttpRequestBuilder.infiniteTimeouts() {
+    private fun io.ktor.client.request.HttpRequestBuilder.streamTimeouts() {
         timeout {
             requestTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
-            socketTimeoutMillis = HttpTimeoutConfig.INFINITE_TIMEOUT_MS
+            socketTimeoutMillis = silence.inWholeMilliseconds
         }
     }
 

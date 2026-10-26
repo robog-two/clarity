@@ -248,6 +248,7 @@ class ClarityIntegrationTest : FunSpec({
             reader.messages(range, folder = "INBOX") shouldBe emptyList()
             reader.messages(range, folder = "Gmail]/Spam(") shouldBe emptyList() // regex characters are literal
             reader.messageFolders(listOf(EntityId(created.entityId.value))) shouldBe mapOf(EntityId(created.entityId.value) to listOf("[Gmail]/Spam"))
+            reader.emailFolders() shouldBe listOf("[Gmail]/Spam")
             push(keyA, IngestRecord.Tombstone(SourceId("acct1/[Gmail]/Spam/7/42"), "2", Clock.System.now(), Noun.MESSAGE))
             reader.messages(range, folder = "spam") shouldBe emptyList()
 

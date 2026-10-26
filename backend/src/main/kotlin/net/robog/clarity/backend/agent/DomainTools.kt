@@ -1,5 +1,7 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.backend.persistence.emailFolderPattern
+import net.robog.clarity.shared.session.Settings
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -47,6 +49,7 @@ class DomainTools(
     private val reader: NounReader,
     private val triggers: TriggerStore,
     private val documents: DocumentTools,
+    private val settings: SettingsProvider = SettingsProvider { Settings() },
 ) {
 
     val all: List<Tool> by lazy {
@@ -74,6 +77,7 @@ class DomainTools(
         withRange(input.from, input.until) { range ->
             val folder = input.folder.trim().takeUnless { it.isEmpty() || it == "*" }
             val found = reader.messages(range, input.participant?.takeIf { it.isNotBlank() }, input.limit.clampLimit(), folder)
+            if (found.isEmpty() && folder != null) return@withRange emptyFolderAnswer(folder, reader.emailFolders())
             val folders = reader.messageFolders(found.map { it.id })
             ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty()) }.asJsonArray().toString())
         }
@@ -84,7 +88,7 @@ class DomainTools(
         @Description("A single day, YYYY-MM-DD (interpreted in `timezone`). Use this OR from/until.") val date: String? = null,
         @Description("Range start, ISO-8601 instant. Requires `until`.") val from: String? = null,
         @Description("Range end (exclusive), ISO-8601 instant") val until: String? = null,
-        @Description("IANA time zone used for `date`, default UTC, e.g. Europe/Berlin") val timezone: String? = null,
+        @Description("IANA time zone used for `date`, e.g. Europe/Berlin; default the person's home zone") val timezone: String? = null,
         @Description("Maximum events to return (1-$MAX_LIMIT, default 100)") val limit: Int = 100,
     )
 
@@ -93,7 +97,7 @@ class DomainTools(
         description = "List calendar events overlapping a day or a time range, soonest first.",
         json = ClarityJson,
     ) { input ->
-        val range = dayOrRange(input)
+        val range = dayOrRange(input, input.timezone ?: settings.current().homeZone)
         when (range) {
             is Parsed.Bad -> ToolResult.Error(range.message)
             is Parsed.Ok -> ToolResult.Ok(
@@ -179,10 +183,24 @@ private inline fun withRange(from: String, until: String, block: (TimeRange) -> 
     }
 }
 
-private fun dayOrRange(input: DomainTools.ListCalendarEventsInput): Parsed<TimeRange> {
+/**
+ * Pure: what an empty `list_messages` answer for [folder] means, given the email folders seen so far.
+ * A misspelt or missing folder gets the real names; a real folder that is empty says so.
+ */
+internal fun emptyFolderAnswer(folder: String, known: List<String>): ToolResult {
+    if (known.isEmpty()) return ToolResult.Ok("[]")
+    val pattern = Regex(emailFolderPattern(folder).removePrefix("^").removeSuffix("/[0-9]+/[0-9]+$") + "$", RegexOption.IGNORE_CASE)
+    return if (known.any { pattern.matches(it) }) {
+        ToolResult.Ok("[]\nThe folder \"$folder\" exists but has no messages in this window.")
+    } else {
+        ToolResult.Error("No email folder is called \"$folder\". Folders: ${known.joinToString(", ")}. Use one of these, or \"*\" for all.")
+    }
+}
+
+private fun dayOrRange(input: DomainTools.ListCalendarEventsInput, zoneId: String): Parsed<TimeRange> {
     if (input.date != null) {
         return try {
-            val zone = input.timezone?.let(ZoneId::of) ?: ZoneId.of("UTC")
+            val zone = ZoneId.of(zoneId)
             val day = LocalDate.parse(input.date)
             val start = day.atStartOfDay(zone).toInstant()
             val end = day.plusDays(1).atStartOfDay(zone).toInstant()

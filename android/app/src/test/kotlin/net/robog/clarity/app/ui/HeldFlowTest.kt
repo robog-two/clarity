@@ -19,12 +19,14 @@ import net.robog.clarity.app.testutil.ScreenSpeech
 import net.robog.clarity.app.testutil.ScriptedSessions
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.agentItem
+import net.robog.clarity.app.testutil.callSession
 import net.robog.clarity.app.testutil.amendment
 import net.robog.clarity.app.testutil.emailDraft
 import net.robog.clarity.app.testutil.heldAction
 import net.robog.clarity.app.testutil.sendEmail
 import net.robog.clarity.app.testutil.withMain
 import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.amend.AmendViewModel
 import net.robog.clarity.app.ui.amend.fallbackQuestion
 import net.robog.clarity.app.ui.amend.proposalLabel
@@ -305,9 +307,8 @@ class DraftReviewViewModelTest {
     }
 }
 
-private class AmendRig(heldFor: HeldAction? = heldAction()) {
+private class AmendRig(heldFor: HeldAction? = heldAction(), val sessions: ScriptedSessions = ScriptedSessions()) {
     val feed = ScreenFeed().also { f -> heldFor?.let { f.heldFlow.value = listOf(it) } }
-    val sessions = ScriptedSessions()
     val amendments = FakeAmendments()
     val toasts = Toasts()
     val speech = ScreenSpeech()
@@ -421,6 +422,32 @@ class AmendViewModelTest {
         r.vm.keep()
         assertTrue(r.feed.decisions.isEmpty())
         assertTrue(r.state.finished)
+    }
+
+    @Test fun reopeningPicksUpTheTalkAlreadyGoingWithItsProposal() = withMain {
+        val a = amendment()
+        val ongoing = callSession(kind = SessionKind.AMEND).copy(heldActionId = HeldActionId("h1"), amendmentId = a.id)
+        val r = AmendRig(sessions = ScriptedSessions(active = ongoing)).also { it.amendments.proposed = a }
+        r.vm.load(r.heldId) // no-op: already loading; the rig's own load adopted the session
+        assertTrue(r.sessions.started.isEmpty(), "no new session replaces the one holding the proposal")
+        assertEquals(ongoing.id, r.state.session?.id)
+    }
+
+    @Test fun aTalkAboutAnotherHeldActionIsNotPickedUp() = withMain {
+        val other = callSession(kind = SessionKind.AMEND).copy(heldActionId = HeldActionId("other"))
+        val r = AmendRig(sessions = ScriptedSessions(active = other))
+        assertEquals(started(SessionKind.AMEND to HeldActionId("h1")), r.sessions.started)
+    }
+
+    @Test fun aProposalMissedWhileTheStreamWasDownShowsAfterReconnecting() = withMain {
+        val r = AmendRig()
+        val a = amendment()
+        r.amendments.proposed = a
+        r.sessions.current = r.sessions.current!!.copy(amendmentId = a.id) // its SessionChanged never arrived
+        assertFalse(r.state.canSave)
+        r.feed.syncFlow.value = SyncState.Offline
+        r.feed.syncFlow.value = SyncState.Live
+        assertTrue(r.state.canSave)
     }
 
     @Test fun aBusySessionDisablesBothButtons() = withMain {
