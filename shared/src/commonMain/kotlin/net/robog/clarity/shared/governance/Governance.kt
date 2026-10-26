@@ -258,6 +258,11 @@ data class GuardVerdict(
     val lines: List<LineId> = emptyList(),
     /** One sentence: "I’m asking because it touches money (line 3) and goes out as you." */
     val rationale: String,
+    /**
+     * True when the person's own settings put this kind at "never alone": only a yes signed on the
+     * phone (`POST /api/v1/held/{id}/signed-decision`) approves it; the generic decision route refuses.
+     */
+    val phoneApproval: Boolean = false,
 )
 
 @Serializable @JvmInline

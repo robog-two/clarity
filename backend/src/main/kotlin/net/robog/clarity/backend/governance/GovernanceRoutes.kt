@@ -7,7 +7,10 @@ import dev.zacsweers.metro.Inject
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.auth.authenticate
+import io.ktor.server.auth.principal
 import io.ktor.server.request.receive
+import net.robog.clarity.backend.auth.DevicePrincipal
+import net.robog.clarity.shared.governance.SignedDecision
 import io.ktor.server.response.respond
 import io.ktor.server.routing.RoutingCall
 import io.ktor.server.routing.get
@@ -78,6 +81,11 @@ class GovernanceRoutes(
                     }
                     get("{id}") { call.respondEither(held.get(call.heldId())) }
                     post("{id}/decision") { call.respondEither(held.decide(call.heldId(), call.receive<HeldDecision>())) }
+                    post("{id}/signed-decision") {
+                        val device = call.principal<DevicePrincipal>()?.deviceId
+                        if (device == null) call.respondProblem(EdgeProblem.Unauthorized())
+                        else call.respondEither(held.decideSigned(call.heldId(), device, call.receive<SignedDecision>()))
+                    }
                 }
 
                 get(ApiPaths.ACTIVITY) {

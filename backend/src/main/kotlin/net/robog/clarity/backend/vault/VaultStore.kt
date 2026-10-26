@@ -29,6 +29,7 @@ import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.json.jsonb
@@ -40,7 +41,16 @@ object VaultDeviceKeys : Table("vault_device_key") {
     val publicKey = text("public_key")
     val alg = text("alg")
     val createdAt = timestamp("created_at")
+    val approvalKey = text("approval_key").nullable()
     override val primaryKey = PrimaryKey(deviceId)
+}
+
+object ApprovalSignaturesUsed : Table("approval_signature_used") {
+    val signatureHash = text("signature_hash")
+    val heldId = uuid("held_id")
+    val deviceId = uuid("device_id")
+    val usedAt = timestamp("used_at")
+    override val primaryKey = PrimaryKey(signatureHash)
 }
 
 object Credentials : Table("credential") {
@@ -86,9 +96,16 @@ sealed interface CreateOutcome {
 
 /** Persistence of the vault: ciphertext and metadata only. */
 interface VaultStore {
-    suspend fun upsertDeviceKey(key: DeviceVaultKey): DeviceVaultKey
+    /** Registers or replaces the device's keys; [approvalKey] (SPKI, base64url) replaces any earlier approval key, null clears it. */
+    suspend fun upsertDeviceKey(key: DeviceVaultKey, approvalKey: String? = null): DeviceVaultKey
     suspend fun deviceKeys(): List<DeviceVaultKey>
     suspend fun deviceKey(device: DeviceId): DeviceVaultKey?
+
+    /** The device's registered approval verification key, if any. */
+    suspend fun approvalKey(device: DeviceId): String?
+
+    /** Records an accepted signature (by hash); false when it was already used. */
+    suspend fun markSignatureUsed(signatureHash: String, heldId: String, device: DeviceId): Boolean
 
     suspend fun createRequest(name: String, kind: CredentialKind, fields: List<FieldSpec>, site: String, purpose: String): CredentialRequest
     suspend fun request(id: CredentialRequestId): CredentialRequest?
@@ -114,13 +131,14 @@ private fun uuidOrNull(raw: String): Uuid? = runCatching { Uuid.parse(raw) }.get
 @ContributesBinding(AppScope::class)
 class ExposedVaultStore(private val database: Database, private val clock: Clock) : VaultStore {
 
-    override suspend fun upsertDeviceKey(key: DeviceVaultKey): DeviceVaultKey = database.tx {
+    override suspend fun upsertDeviceKey(key: DeviceVaultKey, approvalKey: String?): DeviceVaultKey = database.tx {
         val device = Uuid.parse(key.deviceId.value)
         val now = clock.now()
         val updated = VaultDeviceKeys.update({ VaultDeviceKeys.deviceId eq device }) {
             it[publicKey] = key.publicKey
             it[alg] = key.alg
             it[createdAt] = now
+            it[VaultDeviceKeys.approvalKey] = approvalKey
         }
         if (updated == 0) {
             VaultDeviceKeys.insert {
@@ -128,9 +146,29 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
                 it[publicKey] = key.publicKey
                 it[alg] = key.alg
                 it[createdAt] = now
+                it[VaultDeviceKeys.approvalKey] = approvalKey
             }
         }
-        key.copy(createdAt = now)
+        key.copy(createdAt = now, hasApprovalKey = approvalKey != null)
+    }
+
+    override suspend fun approvalKey(device: DeviceId): String? {
+        val id = uuidOrNull(device.value) ?: return null
+        return database.tx { VaultDeviceKeys.selectAll().where { VaultDeviceKeys.deviceId eq id }.singleOrNull()?.get(VaultDeviceKeys.approvalKey) }
+    }
+
+    override suspend fun markSignatureUsed(signatureHash: String, heldId: String, device: DeviceId): Boolean {
+        val held = uuidOrNull(heldId) ?: return false
+        val dev = uuidOrNull(device.value) ?: return false
+        val now = clock.now()
+        return database.tx {
+            ApprovalSignaturesUsed.insertIgnore {
+                it[ApprovalSignaturesUsed.signatureHash] = signatureHash
+                it[ApprovalSignaturesUsed.heldId] = held
+                it[ApprovalSignaturesUsed.deviceId] = dev
+                it[usedAt] = now
+            }.insertedCount > 0
+        }
     }
 
     override suspend fun deviceKeys(): List<DeviceVaultKey> = database.tx {
@@ -256,6 +294,7 @@ private fun ResultRow.toKey() = DeviceVaultKey(
     publicKey = this[VaultDeviceKeys.publicKey],
     alg = this[VaultDeviceKeys.alg],
     createdAt = this[VaultDeviceKeys.createdAt],
+    hasApprovalKey = this[VaultDeviceKeys.approvalKey] != null,
 )
 
 private fun ResultRow.toMeta() = CredentialMeta(

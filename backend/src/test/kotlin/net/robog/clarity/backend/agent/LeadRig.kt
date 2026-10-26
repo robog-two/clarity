@@ -122,7 +122,7 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val vaultStore = ExposedVaultStore(database, clock)
     val grants = GrantStore(clock)
     val vaultHolds = GovernedVaultHolds(gate, heldStore, feed, clock)
-    val vaultService = VaultService(vaultStore, grants, heldStore, events, feed)
+    val vaultService = VaultService(vaultStore, grants, heldStore, events, feed, inbox)
     var triageVerdict = TriageVerdict(true, "ordinary")
     val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock)
 

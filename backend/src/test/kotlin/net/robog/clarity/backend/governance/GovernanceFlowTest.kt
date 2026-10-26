@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.governance
 
+import net.robog.clarity.backend.vault.ExposedVaultStore
 import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
@@ -146,7 +147,7 @@ class GovernanceFlowTest : FunSpec({
         val router = ConnectorRouter(database, NoConnectorPreferences())
         val guard = Guard(GuardModel { q -> modelCalls += q; modelVerdict })
         gate = ActionGate(guard, constitutions, heldStore, outbox, router, events, UtcPersonZone(), clock)
-        held = HeldActionService(database, clock, heldStore, constitutions, outbox, router, events)
+        held = HeldActionService(database, clock, heldStore, constitutions, outbox, router, events, ExposedVaultStore(database, clock))
         activity = ActivityStore(database)
     }
     afterSpec { postgres.stop() }

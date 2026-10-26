@@ -68,6 +68,17 @@ sealed interface GovernanceError : HttpProblem {
         override val title = "Cannot be approved here"
     }
 
+    data class BadSignature(override val detail: String) : GovernanceError {
+        override val status = HttpStatusCode.Forbidden
+        override val title = "Approval not verified"
+    }
+
+    data class SignatureReplayed(val id: String) : GovernanceError {
+        override val status = HttpStatusCode.Conflict
+        override val title = "Signature already used"
+        override val detail = "that signature was already used for '$id'"
+    }
+
     data class NoHandler(val kind: String) : GovernanceError {
         override val status = HttpStatusCode.UnprocessableEntity
         override val title = "No connector can do this"

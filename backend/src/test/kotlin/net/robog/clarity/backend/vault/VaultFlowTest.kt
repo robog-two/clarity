@@ -67,7 +67,10 @@ import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.DeviceId
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.governance.ApprovalPayload
 import net.robog.clarity.shared.governance.HeldAction
+import net.robog.clarity.shared.governance.SignedDecision
+import net.robog.clarity.shared.governance.payloadFor
 import net.robog.clarity.shared.governance.HeldDecision
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.vault.CredentialKind
@@ -139,7 +142,7 @@ class VaultFlowTest : FunSpec({
         }
         rig = LeadRig(database)
         rig.reset()
-        heldService = HeldActionService(database, Clock.System, rig.heldStore, rig.constitutions, rig.outbox, ConnectorRouter(database, NoConnectorPreferences()), rig.events)
+        heldService = HeldActionService(database, Clock.System, rig.heldStore, rig.constitutions, rig.outbox, ConnectorRouter(database, NoConnectorPreferences()), rig.events, rig.vaultStore)
         browserTools = rig.browserGate.wrap(RunScope("lead", isLead = true), browser.tools).associateBy { it.name }
     }
     afterSpec { postgres.stop() }
@@ -361,6 +364,35 @@ class VaultFlowTest : FunSpec({
         }
         rig.grants.find("bank_login", "example.com") shouldBe null
         runTurn("run-e", "browser__fill_by_uid" to args("uid" to "1_2", "value" to "[secret:bank_login_password]")).single() shouldContain "Unknown placeholder"
+    }
+
+    test("saving a credential tells the lead through the inbox, with metadata only") {
+        val pending = rig.inbox.pending().map { it.item.summary }
+        pending.single { it.contains("bank_login") && it.contains("is ready") } shouldNotContain PASSWORD
+    }
+
+    test("a device with an approval key must sign the release; the signature covers the action and works once") {
+        val approvalKey = java.security.KeyPairGenerator.getInstance("EC").apply { initialize(java.security.spec.ECGenParameterSpec("secp256r1")) }.generateKeyPair()
+        val wire = java.util.Base64.getUrlEncoder().withoutPadding()
+        val tool = VaultTools(rig.vaultService, rig.vaultHolds).all(RunScope("r2", isLead = true)).first { it.name == "ask_code" }
+        tool.invoke(buildJsonObject { put("site", "shop.example.org"); put("purpose", "Log in to the shop") }).shouldBeInstanceOf<ToolResult.Ok>()
+        val held = heldOf(ProposedAction.AskCode::class.java).single { it.status == HeldAction.Status.HELD }
+        fun sign(key: KeyPair, payload: String) = wire.encodeToString(
+            java.security.Signature.getInstance("SHA256withECDSA").apply { initSign(key.private); update(payload.toByteArray()) }.sign(),
+        )
+        testApplication {
+            val client = setup()
+            client.postAs(tablet, "/api/v1/vault/devices", RegisterVaultKey(VaultCryptoReference.publicKeyWire(tabletKey), approvalKey = wire.encodeToString(approvalKey.public.encoded))).status shouldBe HttpStatusCode.Created
+            client.postAs(tablet, "/api/v1/vault/devices", RegisterVaultKey(VaultCryptoReference.publicKeyWire(tabletKey), approvalKey = "garbage")).status shouldBe HttpStatusCode.BadRequest
+            // unsigned, signed by another key, or signed for another decision: refused
+            client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE)).status shouldBe HttpStatusCode.Forbidden
+            val other = VaultCryptoReference.newDeviceKey()
+            client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE, signature = sign(other, ApprovalPayload.payloadFor(held, SignedDecision.APPROVE)))).status shouldBe HttpStatusCode.Forbidden
+            client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE, signature = sign(approvalKey, ApprovalPayload.payloadFor(held, SignedDecision.DECLINE)))).status shouldBe HttpStatusCode.Forbidden
+            rig.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.HELD
+            client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE, signature = sign(approvalKey, ApprovalPayload.payloadFor(held, SignedDecision.APPROVE)))).status shouldBe HttpStatusCode.OK
+            rig.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.APPROVED
+        }
     }
 
     test("no released value is in any database row") {

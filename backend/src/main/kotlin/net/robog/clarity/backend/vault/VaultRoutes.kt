@@ -69,7 +69,9 @@ class VaultRoutes(private val vault: VaultService) : HttpModule {
                     else call.respondEither(vault.release(call.heldId(), device, call.receive<ReleaseGrant>()))
                 }
                 post("${ApiPaths.VAULT_CODES}/{heldId}") {
-                    call.respondEither(vault.releaseCode(call.heldId(), call.receive<ReleaseCode>()))
+                    val device = call.principal<DevicePrincipal>()?.deviceId
+                    if (device == null) call.respondProblem(EdgeProblem.Unauthorized())
+                    else call.respondEither(vault.releaseCode(call.heldId(), device, call.receive<ReleaseCode>()))
                 }
             }
         }

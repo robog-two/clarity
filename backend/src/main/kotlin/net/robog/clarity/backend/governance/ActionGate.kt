@@ -11,7 +11,12 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
 import kotlinx.datetime.TimeZone
+import arrow.core.raise.Raise
 import net.robog.clarity.backend.persistence.tx
+import net.robog.clarity.shared.DeviceId
+import net.robog.clarity.shared.governance.ApprovalPayload
+import net.robog.clarity.shared.governance.SignedDecision
+import net.robog.clarity.shared.governance.payloadFor
 import net.robog.clarity.shared.action.ActionId
 import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.governance.ActivityEntry
@@ -182,6 +187,7 @@ class HeldActionService(
     private val outbox: ActionOutbox,
     private val router: ConnectorRouter,
     private val events: GovernanceEvents,
+    private val vault: net.robog.clarity.backend.vault.VaultStore,
 ) {
     suspend fun list(statuses: Set<HeldAction.Status>? = null): List<HeldAction> = store.list(statuses)
 
@@ -192,7 +198,8 @@ class HeldActionService(
     /**
      * Decline and keep mark the status. Approve (with an optionally edited action of the same kind)
      * is re-checked against hard lines only, then queued for the connector that handles it; if
-     * none does, the held action fails with that message and nothing is queued.
+     * none does, the held action fails with that message and nothing is queued. Actions the person
+     * set to "never alone" (and vault actions) are refused here: they need [decideSigned].
      */
     suspend fun decide(id: HeldActionId, decision: HeldDecision): Either<GovernanceError, HeldAction> = either {
         val current = ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
@@ -205,37 +212,74 @@ class HeldActionService(
                 ensure(action.kind == current.action.kind) { GovernanceError.InvalidEdit("an edit cannot change the kind of action") }
                 // Vault actions are approved only on the phone, with the secret (see vault/VaultService).
                 ensure(action.kind !in VAULT_KINDS) { GovernanceError.ApproveElsewhere("this one is approved on your phone's vault screen, with your fingerprint or face") }
-                // Browser actions are done by the backend itself when the agent repeats the call: approving only records the yes.
-                if (isLocalAction(action)) {
-                    ensure(decision.edited == null) { GovernanceError.InvalidEdit("a browser action cannot be edited") }
-                    val constitution = constitutions.current() ?: emptyConstitution(clock.now())
-                    hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
-                    ensure(store.transition(id, PENDING_STATUSES, HeldAction.Status.APPROVED)) { GovernanceError.HeldNotPending(id.value, "decided") }
-                    publish(id)
-                    return@either ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
-                }
+                // Anything the person set to "never alone" needs their yes signed on the phone.
                 val constitution = constitutions.current() ?: emptyConstitution(clock.now())
-                hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
-                val connector = router.select(action.kind)
-                if (connector == null) {
-                    store.transition(id, PENDING_STATUSES, HeldAction.Status.FAILED, "No connector can do \"${action.kind.label()}\" yet.")
-                    publish(id)
-                    raise(GovernanceError.NoHandler(action.kind.label()))
+                ensure(!current.verdict.phoneApproval && !requiresPhoneApproval(action, constitution)) {
+                    GovernanceError.ApproveElsewhere("you set this to \"never alone\": approve it on your phone with your fingerprint or face")
                 }
-                val now = clock.now()
-                val changed = database.tx {
-                    val moved = with(store) {
-                        transitionTx(id, PENDING_STATUSES, HeldAction.Status.APPROVED, now, edited = decision.edited)
-                    }
-                    if (moved) with(outbox) { enqueueTx(connector, action, current.action.idempotencyKey, id, alone = false) }
-                    moved
-                }
-                ensure(changed) { GovernanceError.HeldNotPending(id.value, "decided") }
-                outbox.wake()
-                publish(id)
+                approve(current, decision.edited)
             }
         }
         ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
+    }
+
+    /**
+     * A decision signed on the phone (`POST /held/{id}/signed-decision`). The signature must verify
+     * against the calling device's registered approval key over the held action's exact content, and
+     * works once. Vault actions are not approved here: they are approved by their release.
+     */
+    suspend fun decideSigned(id: HeldActionId, device: DeviceId, request: SignedDecision): Either<GovernanceError, HeldAction> = either {
+        val current = ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
+        ensure(current.status in PENDING_STATUSES) { GovernanceError.HeldNotPending(id.value, current.status.name.lowercase()) }
+        ensure(request.decision == SignedDecision.APPROVE || request.decision == SignedDecision.DECLINE) {
+            GovernanceError.BadSignature("decision must be 'approve' or 'decline'")
+        }
+        val key = ensureNotNull(vault.approvalKey(device)) { GovernanceError.BadSignature("this device has no approval key registered") }
+        ensure(PhoneApprovals.verify(key, ApprovalPayload.payloadFor(current, request.decision), request.signature)) {
+            GovernanceError.BadSignature("the signature does not match this action")
+        }
+        ensure(vault.markSignatureUsed(PhoneApprovals.signatureHash(request.signature), id.value, device)) { GovernanceError.SignatureReplayed(id.value) }
+        if (request.decision == SignedDecision.DECLINE) {
+            ensure(finish(current, HeldAction.Status.DECLINED)) { GovernanceError.HeldNotPending(id.value, "decided") }
+        } else {
+            ensure(current.action.kind !in VAULT_KINDS) { GovernanceError.ApproveElsewhere("this one is approved by releasing the secret, from the vault screen") }
+            approve(current, null)
+        }
+        ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
+    }
+
+    context(_: Raise<GovernanceError>)
+    private suspend fun approve(current: HeldAction, edited: ProposedAction?) {
+        val id = current.id
+        val action = edited ?: current.action
+        // Browser actions are done by the backend itself when the agent repeats the call: approving only records the yes.
+        if (isLocalAction(action)) {
+            ensure(edited == null) { GovernanceError.InvalidEdit("a browser action cannot be edited") }
+            val constitution = constitutions.current() ?: emptyConstitution(clock.now())
+            hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
+            ensure(store.transition(id, PENDING_STATUSES, HeldAction.Status.APPROVED)) { GovernanceError.HeldNotPending(id.value, "decided") }
+            publish(id)
+            return
+        }
+        val constitution = constitutions.current() ?: emptyConstitution(clock.now())
+        hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
+        val connector = router.select(action.kind)
+        if (connector == null) {
+            store.transition(id, PENDING_STATUSES, HeldAction.Status.FAILED, "No connector can do \"${action.kind.label()}\" yet.")
+            publish(id)
+            raise(GovernanceError.NoHandler(action.kind.label()))
+        }
+        val now = clock.now()
+        val changed = database.tx {
+            val moved = with(store) {
+                transitionTx(id, PENDING_STATUSES, HeldAction.Status.APPROVED, now, edited = edited)
+            }
+            if (moved) with(outbox) { enqueueTx(connector, action, current.action.idempotencyKey, id, alone = false) }
+            moved
+        }
+        ensure(changed) { GovernanceError.HeldNotPending(id.value, "decided") }
+        outbox.wake()
+        publish(id)
     }
 
     private suspend fun finish(current: HeldAction, to: HeldAction.Status): Boolean =

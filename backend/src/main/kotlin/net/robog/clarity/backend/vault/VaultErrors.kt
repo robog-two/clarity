@@ -64,4 +64,9 @@ sealed interface VaultError : HttpProblem {
         override val title = "Already decided"
         override val detail = "held action '$id' is already $current"
     }
+
+    data class ApprovalRequired(override val detail: String) : VaultError {
+        override val status = HttpStatusCode.Forbidden
+        override val title = "Approval not verified"
+    }
 }
