@@ -511,10 +511,10 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 ## CI/CD and branches
 
 - `dev` is the integration branch (checked out locally); `main` is release.
-- `ci.yml`: two jobs, on pushes to `dev` and PRs from other branches (a PR from `dev` is skipped,
-  its commits were tested on the push): JVM + Android build, lint and tests; and one container job
-  that builds the sandbox, browser and egress images once, runs their smoke tests and then the
-  end-to-end stack test (`e2e/run.sh`). Docs-only changes don't run CI.
+- `ci.yml`: one job, on pushes to `dev` and PRs from other branches (a PR from `dev` is skipped,
+  its commits were tested on the push): JVM + Android build, lint and tests. Docs-only changes
+  don't run CI. The container smoke tests (`computers/*/smoke.sh`) and the end-to-end stack test
+  (`e2e/run.sh`) are too slow for CI and are run locally before a release.
 - `android-release.yml` ("Release"): on push to `main`, two jobs: multi-arch (amd64/arm64) images
   to `ghcr.io/robog-two/clarity-<service>` with provenance attestations, and the signed APK as a
   GitHub Release.

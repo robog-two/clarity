@@ -1,7 +1,8 @@
 name: CI
 
-# Two jobs per run. Pushes to dev and PRs from other branches (Dependabot, feature branches) are
-# tested; a PR from dev is skipped because the same commits were already tested on the push to
+# One job per run: the JVM and Android build, lint and unit tests. The container smoke tests and
+# the end-to-end stack test are not run in CI; run them locally (computers/*/smoke.sh, e2e/run.sh).
+# Pushes to dev and PRs from other branches (Dependabot, feature branches) are tested; a PR from dev is skipped because the same commits were already tested on the push to
 # dev, and main is not re-tested (it only receives tested dev commits; see android-release.yml).
 on:
   pull_request:
@@ -52,39 +53,3 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # One job for everything that runs containers, so each image is built once:
-  #  - sandbox and browser smoke tests: Firefox starts headless, both add-ons are active, MCP
-  #    tools/list works, a snapshot of a local page returns element uids;
-  #  - egress smoke test: public HTTPS works; private, loopback, link-local, ULA and DNS-to-private
-  #    destinations and non-443 CONNECT are refused; the backend listener allows only the model API;
-  #    Firefox works through the proxy;
-  #  - the whole compose stack (e2e/run.sh, reusing the images above): enrolls a device, drives the
-  #    app API, ingests through the example connector, reads the feed over SSE, checks the sandbox
-  #    and browser MCP tool listings and that the egress proxy refuses LAN addresses.
-  stack:
-    name: Containers, smoke and end-to-end tests
-    if: github.event_name == 'push' || github.head_ref != 'dev'
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build sandbox, browser and egress images
-        run: |
-          podman build -f deploy/container/sandbox.Containerfile -t ghcr.io/robog-two/clarity-sandbox:local .
-          podman build -f deploy/container/browser.Containerfile -t ghcr.io/robog-two/clarity-browser:local .
-          podman build -f deploy/container/egress.Containerfile -t ghcr.io/robog-two/clarity-egress:local .
-      - name: Sandbox smoke test
-        run: computers/sandbox/smoke.sh ghcr.io/robog-two/clarity-sandbox:local
-      - name: Browser smoke test
-        run: computers/browser/smoke.sh ghcr.io/robog-two/clarity-browser:local
-      - name: Egress smoke test (with the browser through the proxy)
-        run: SMOKE_BROWSER_IMAGE=ghcr.io/robog-two/clarity-browser:local computers/egress/smoke.sh ghcr.io/robog-two/clarity-egress:local
-      - uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: "25"
-      - uses: gradle/actions/setup-gradle@v6
-      - name: Podman compose provider
-        run: pipx install podman-compose==1.6.0
-      - name: End-to-end stack test
-        run: e2e/run.sh
