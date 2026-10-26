@@ -13,6 +13,13 @@ import java.security.interfaces.ECPublicKey
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
 import kotlin.time.Duration.Companion.seconds
+import arrow.core.raise.Raise
+import net.robog.clarity.backend.agent.InboxItem
+import net.robog.clarity.backend.agent.InboxStore
+import net.robog.clarity.backend.governance.PhoneApprovals
+import net.robog.clarity.shared.governance.ApprovalPayload
+import net.robog.clarity.shared.governance.SignedDecision
+import net.robog.clarity.shared.governance.payloadFor
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.GovernanceEvent
@@ -118,10 +125,14 @@ class VaultService(
     private val held: HeldActionStore,
     private val events: GovernanceEvents,
     private val feed: FeedService,
+    private val inbox: InboxStore,
 ) {
     suspend fun registerKey(device: DeviceId, request: RegisterVaultKey): Either<VaultError, DeviceVaultKey> = either {
         vaultKeyProblem(request)?.let { raise(VaultError.Invalid(it)) }
-        store.upsertDeviceKey(DeviceVaultKey(device, request.publicKey, request.alg))
+        request.approvalKey?.let { approval ->
+            vaultKeyProblem(RegisterVaultKey(approval, VaultSealing.ALGORITHM))?.let { raise(VaultError.Invalid("approvalKey: $it")) }
+        }
+        store.upsertDeviceKey(DeviceVaultKey(device, request.publicKey, request.alg), request.approvalKey)
     }
 
     suspend fun deviceKeys(): List<DeviceVaultKey> = store.deviceKeys()
@@ -164,7 +175,13 @@ class VaultService(
             ensureNotNull(store.deviceKey(env.deviceId)) { VaultError.NoDeviceKey(env.deviceId.value) }
         }
         when (val outcome = store.createCredential(new.requestId, new.hints, new.envelopes)) {
-            is CreateOutcome.Created -> outcome.meta
+            is CreateOutcome.Created -> outcome.meta.also {
+                // Metadata only: the lead learns it can continue, never a value.
+                inbox.enqueue(
+                    InboxItem.System("Credential \"${it.name}\" for ${it.site} is ready (use it with [secret:${it.name}_<field>] placeholders; fields: ${it.fields.joinToString { f -> f.name }})."),
+                    dedupKey = "credential-saved:${it.id.value}",
+                )
+            }
             CreateOutcome.NameTaken -> raise(VaultError.NameTaken(request.name))
             CreateOutcome.RequestNotOpen -> raise(VaultError.RequestNotOpen(request.id.value))
             CreateOutcome.UnknownRequest -> raise(VaultError.RequestNotFound(request.id.value))
@@ -201,6 +218,7 @@ class VaultService(
             ?.let { raise(VaultError.Invalid("field '${it.name}' is required")) }
         release.fields.values.firstOrNull { it.length > MAX_VALUE }?.let { raise(VaultError.Invalid("a value is too long")) }
         ensure(release.ttlSeconds > 0) { VaultError.Invalid("ttlSeconds must be positive") }
+        requireSignature(current, device, release.signature)
         ensure(held.transition(heldId, PENDING_STATUSES, HeldAction.Status.APPROVED)) { VaultError.NotPending(heldId.value, "decided") }
         publish(heldId)
         val grant = grants.put(meta.name, action.site, release.fields, release.ttlSeconds.coerceAtMost(VaultNames.MAX_GRANT_SECONDS).seconds)
@@ -208,18 +226,35 @@ class VaultService(
     }
 
     /** `POST /vault/codes/{heldId}`: the person typed the two-factor code a held [ProposedAction.AskCode] asked for. */
-    suspend fun releaseCode(heldId: HeldActionId, release: ReleaseCode): Either<VaultError, GrantReceipt> = either {
+    suspend fun releaseCode(heldId: HeldActionId, device: DeviceId, release: ReleaseCode): Either<VaultError, GrantReceipt> = either {
         val current = ensureNotNull(held.get(heldId)) { VaultError.HeldNotFound(heldId.value) }
         val action = current.action as? ProposedAction.AskCode ?: raise(VaultError.WrongKind(heldId.value, "two-factor code"))
         ensure(current.status in PENDING_STATUSES) { VaultError.NotPending(heldId.value, current.status.name.lowercase()) }
         val code = release.code.trim()
         ensure(code.length in 3..32) { VaultError.Invalid("that code does not look right") }
         ensure(release.ttlSeconds > 0) { VaultError.Invalid("ttlSeconds must be positive") }
+        requireSignature(current, device, release.signature)
         ensure(held.transition(heldId, PENDING_STATUSES, HeldAction.Status.APPROVED)) { VaultError.NotPending(heldId.value, "decided") }
         publish(heldId)
         val domain = Sites.registrableDomain(action.site) ?: action.site
         val grant = grants.put("code", domain, mapOf(heldId.value to code), release.ttlSeconds.coerceAtMost(VaultNames.MAX_GRANT_SECONDS).seconds)
         GrantReceipt(grant.expiresAt, domain)
+    }
+
+    /**
+     * A device that registered an approval key must sign the release (its biometric yes): the
+     * signature covers this exact held action and works once. Devices without one are not checked.
+     */
+    context(_: Raise<VaultError>)
+    private suspend fun requireSignature(current: HeldAction, device: DeviceId, signature: String?) {
+        val key = store.approvalKey(device) ?: return
+        ensureNotNull(signature) { VaultError.ApprovalRequired("this release must be signed with your approval key") }
+        ensure(PhoneApprovals.verify(key, ApprovalPayload.payloadFor(current, SignedDecision.APPROVE), signature)) {
+            VaultError.ApprovalRequired("the signature does not match this action")
+        }
+        ensure(store.markSignatureUsed(PhoneApprovals.signatureHash(signature), current.id.value, device)) {
+            VaultError.ApprovalRequired("that signature was already used")
+        }
     }
 
     private suspend fun publish(id: HeldActionId) {

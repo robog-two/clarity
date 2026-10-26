@@ -56,6 +56,10 @@ class Guard(private val model: GuardModel) {
     ): GuardVerdict {
         val deterministic = deterministicVerdict(action, constitution, provenance, zone)
         if (deterministic.decision == Decision.DENY) return deterministic // nothing stricter exists
+        return withPhoneApproval(modelCheck(action, constitution, agentReason, deterministic), action, constitution)
+    }
+
+    private suspend fun modelCheck(action: ProposedAction, constitution: Constitution, agentReason: String, deterministic: GuardVerdict): GuardVerdict {
         val review = try {
             model.review(GuardQuestion(action, constitution, agentReason, deterministic))
                 .let { v -> v.copy(lines = v.lines.filter { id -> constitution.lines.any { it.id == id } }) }
@@ -134,3 +138,11 @@ class ConfiguredGuardModel(private val runtime: AgentRuntime, config: AgentConfi
 
     override suspend fun review(question: GuardQuestion): GuardVerdict = delegate.review(question)
 }
+
+/** Marks a verdict whose action the person's own settings put at "never alone": only a yes signed on the phone approves it. */
+fun withPhoneApproval(verdict: GuardVerdict, action: ProposedAction, constitution: Constitution): GuardVerdict =
+    if (requiresPhoneApproval(action, constitution)) verdict.copy(phoneApproval = true) else verdict
+
+/** True when [action]'s kind is at "never alone" for this person (a "never" kind cannot be approved at all). */
+fun requiresPhoneApproval(action: ProposedAction, constitution: Constitution): Boolean =
+    tierOf(effectiveKind(action), constitution) == net.robog.clarity.shared.governance.AutonomyTier.NEVER_ALONE

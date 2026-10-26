@@ -50,7 +50,7 @@ import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
 
 @Composable
-fun AskScreen(modifier: Modifier = Modifier, viewModel: AskViewModel = metroViewModel()) {
+fun AskScreen(modifier: Modifier = Modifier, onReview: (HeldActionId) -> Unit = {}, viewModel: AskViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val mic = rememberMicAccess(viewModel::onMicPermission)
     AskContent(
@@ -61,6 +61,7 @@ fun AskScreen(modifier: Modifier = Modifier, viewModel: AskViewModel = metroView
         onTalk = { if (mic.granted) viewModel.talk() else mic.request() },
         onSuggest = viewModel::suggest,
         onDecision = viewModel::decide,
+        onReview = onReview,
         modifier = modifier,
     )
 }
@@ -75,8 +76,9 @@ fun AskContent(
     onSuggest: (String) -> Unit,
     onDecision: (HeldActionId, HeldDecision) -> Unit,
     modifier: Modifier = Modifier,
+    onReview: (HeldActionId) -> Unit = {},
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision)
+    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview)
     val listState = rememberLazyListState()
     LaunchedEffect(state.items.size, state.items.lastOrNull()?.cards?.size, state.live) {
         val count = listState.layoutInfo.totalItemsCount

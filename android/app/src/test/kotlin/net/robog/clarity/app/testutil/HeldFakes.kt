@@ -6,6 +6,8 @@ import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.HeldRepository
 import net.robog.clarity.app.data.TodayRepository
 import net.robog.clarity.app.ui.held.ApprovalGate
+import net.robog.clarity.app.ui.held.ApprovalInput
+import net.robog.clarity.app.ui.held.ApprovalResult
 import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.governance.ActivityEntry
 import net.robog.clarity.shared.governance.Amendment
@@ -89,7 +91,12 @@ fun amendment(id: String = "a1", old: String? = "No AI-style formatting in anyth
     status = Amendment.Status.PROPOSED,
 )
 
-class RecordingGate(var allow: Boolean = true) : ApprovalGate {
+class RecordingGate(var allow: Boolean = true, var result: ApprovalResult? = null) : ApprovalGate {
     val asked = mutableListOf<HeldActionId>()
-    override suspend fun authorize(held: HeldAction): Boolean { asked += held.id; return allow }
+    val inputs = mutableListOf<ApprovalInput>()
+    override suspend fun authorize(held: HeldAction, input: ApprovalInput): ApprovalResult {
+        asked += held.id
+        inputs += input
+        return result ?: if (allow) ApprovalResult.Proceed else ApprovalResult.Denied("Not approved.")
+    }
 }

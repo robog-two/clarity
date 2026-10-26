@@ -16,6 +16,8 @@ import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.held.ApprovalGate
+import net.robog.clarity.app.ui.held.ApprovalInput
+import net.robog.clarity.app.ui.held.ApprovalResult
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.SpeechError
@@ -118,9 +120,12 @@ class AskViewModel(
     fun decide(id: HeldActionId, decision: HeldDecision) {
         viewModelScope.launch {
             val held = _state.value.held[id]
-            if (decision is HeldDecision.Approve && held != null && !gate.authorize(held)) {
-                _state.update { it.copy(message = "Not approved.") }
-                return@launch
+            if (decision is HeldDecision.Approve && held != null) {
+                when (val r = gate.authorize(held, ApprovalInput())) {
+                    ApprovalResult.Proceed -> Unit
+                    ApprovalResult.Done -> { _state.update { it.copy(message = null) }; return@launch }
+                    is ApprovalResult.Denied -> { _state.update { it.copy(message = r.message) }; return@launch }
+                }
             }
             when (val r = feed.decideHeld(id, decision)) {
                 is ApiResult.Success -> _state.update { it.copy(message = null) }

@@ -29,6 +29,8 @@ import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.theme.BubbleShape
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
+import net.robog.clarity.app.ui.held.needsCode
+import net.robog.clarity.app.vault.CredentialFormCard
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
@@ -54,6 +56,8 @@ data class CardEnv(
     val held: Map<HeldActionId, HeldAction> = emptyMap(),
     val tasks: Map<TaskId, AgentTask> = emptyMap(),
     val onDecision: (HeldActionId, HeldDecision) -> Unit = { _, _ -> },
+    /** Opens the full review screen (a two-factor code is typed there). */
+    val onReview: (HeldActionId) -> Unit = {},
 )
 
 private const val CURSOR = "▍"
@@ -68,10 +72,9 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Chips -> ChipList(card, modifier)
         is Card.Plan -> PlanBox(card, modifier)
         is Card.Note -> NoteBox(card.text, modifier)
-        is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier)
+        is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier, env.onReview)
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
-        // Rendered as a form by the vault-app workstream; until then, a plain note.
-        is Card.CredentialRequest -> NoteBox("I need a login or card from you. Open the vault to add it.", modifier)
+        is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
     }
 }
 
@@ -214,7 +217,12 @@ fun NoteBox(text: String, modifier: Modifier = Modifier) {
 
 /** The proposal box: the action, what the agent thinks, and the buttons while it still waits for an OK. */
 @Composable
-fun ProposalBox(held: HeldAction?, onDecision: (HeldActionId, HeldDecision) -> Unit, modifier: Modifier = Modifier) {
+fun ProposalBox(
+    held: HeldAction?,
+    onDecision: (HeldActionId, HeldDecision) -> Unit,
+    modifier: Modifier = Modifier,
+    onReview: (HeldActionId) -> Unit = {},
+) {
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         if (held == null) {
             Kicker("needs your ok")
@@ -230,7 +238,8 @@ fun ProposalBox(held: HeldAction?, onDecision: (HeldActionId, HeldDecision) -> U
         if (done == null) {
             Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SecondaryButton("not now", { onDecision(held.id, HeldDecision.Decline) }, Modifier.weight(1f))
-                PrimaryButton(approveLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.weight(1f))
+                if (held.needsCode) PrimaryButton("enter the code", { onReview(held.id) }, Modifier.weight(1f))
+                else PrimaryButton(approveLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.weight(1f))
             }
         } else {
             Text(done, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)

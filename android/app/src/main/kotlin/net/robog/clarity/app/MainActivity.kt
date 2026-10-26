@@ -2,11 +2,18 @@ package net.robog.clarity.app
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import net.robog.clarity.app.ui.held.LocalHeldExtras
+import net.robog.clarity.app.vault.LocalVaultRepository
+import net.robog.clarity.app.vault.vaultExtras
 import dev.zacsweers.metrox.viewmodel.LocalMetroViewModelFactory
 import net.robog.clarity.app.call.CallActivity
 import net.robog.clarity.app.nav.ClarityNavHost
@@ -14,7 +21,7 @@ import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.parseDeepLink
 import net.robog.clarity.app.ui.theme.ClarityTheme
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     /** The link that opened (or re-opened) the app, until the navigation has followed it. */
     private val pendingLink = mutableStateOf<DeepLink?>(null)
 
@@ -24,12 +31,32 @@ class MainActivity : ComponentActivity() {
         val graph = (application as ClarityApp).graph
         if (savedInstanceState == null) pendingLink.value = linkOf(intent)
         setContent {
-            CompositionLocalProvider(LocalMetroViewModelFactory provides graph.metroViewModelFactory) {
+            CompositionLocalProvider(
+                LocalMetroViewModelFactory provides graph.metroViewModelFactory,
+                LocalVaultRepository provides graph.vaultRepository,
+                LocalHeldExtras provides vaultExtras,
+            ) {
                 ClarityTheme {
                     ClarityNavHost(deepLink = pendingLink.value, onDeepLinkHandled = { pendingLink.value = null })
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val graph = (application as ClarityApp).graph
+        // The biometric prompt needs the activity in front.
+        graph.foregroundActivity.set(this)
+        // Make sure the server knows this phone's vault key and approval key (a no-op when nothing is set up yet).
+        lifecycleScope.launch(Dispatchers.Default) {
+            if (graph.sessionStore.session.first() != null) graph.vaultRepository.register()
+        }
+    }
+
+    override fun onStop() {
+        (application as ClarityApp).graph.foregroundActivity.set(null)
+        super.onStop()
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -20,6 +20,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
+import net.robog.clarity.app.vault.DisableAutofill
+import net.robog.clarity.app.vault.PrivateKeyboard
+import net.robog.clarity.app.vault.secretKeyboard
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
@@ -58,6 +62,7 @@ fun DraftReviewScreen(heldId: HeldActionId, onBack: () -> Unit, viewModel: Draft
         onTalk = { if (mic.granted) viewModel.talk() else mic.request() },
         onApprove = viewModel::approve,
         onDecline = viewModel::decline,
+        onCode = viewModel::editCode,
     )
 }
 
@@ -70,6 +75,7 @@ fun DraftReviewContent(
     onTalk: () -> Unit,
     onApprove: () -> Unit,
     onDecline: () -> Unit,
+    onCode: (String) -> Unit = {},
     extras: HeldExtras = LocalHeldExtras.current,
 ) {
     val held = state.held
@@ -126,6 +132,7 @@ fun DraftReviewContent(
                 )
             } else {
                 InfoBox { Text(held.action.summary, style = MaterialTheme.typography.titleMedium) }
+                if (held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
             }
             Kicker(checkedLine(held))
             extras(held)
@@ -151,9 +158,33 @@ fun DraftReviewContent(
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SecondaryButton("talk about it", onTalk, Modifier.weight(1f), enabled = !state.busy)
-                PrimaryButton(approveLabel(held.action.kind), onApprove, Modifier.weight(1f), enabled = !state.busy)
+                PrimaryButton(
+                    approveLabel(held.action.kind),
+                    onApprove,
+                    Modifier.weight(1f),
+                    enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
+                )
             }
             SecondaryButton("not now", onDecline, Modifier.fillMaxWidth(), enabled = !state.busy)
         }
+    }
+}
+
+/** The one-field form for a two-factor code: digits keyboard, no autofill, no learning, never saved. */
+@Composable
+fun CodeField(value: String, onChange: (String) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    DisableAutofill()
+    PrivateKeyboard {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        modifier = modifier.fillMaxWidth(),
+        enabled = enabled,
+        label = { Text("code") },
+        singleLine = true,
+        shape = MaterialTheme.shapes.medium,
+        keyboardOptions = secretKeyboard(KeyboardType.Password),
+        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+    )
     }
 }

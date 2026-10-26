@@ -53,7 +53,9 @@ class MemoryVault(val credentials: List<CredentialMeta>) : VaultStore {
     override suspend fun get(id: CredentialId) = credentials.firstOrNull { it.id == id }
     override suspend fun byName(name: String) = credentials.firstOrNull { it.name == name }
     override suspend fun touch(id: CredentialId) { touched += id.value }
-    override suspend fun upsertDeviceKey(key: DeviceVaultKey) = key
+    override suspend fun upsertDeviceKey(key: DeviceVaultKey, approvalKey: String?) = key
+    override suspend fun approvalKey(device: DeviceId): String? = null
+    override suspend fun markSignatureUsed(signatureHash: String, heldId: String, device: DeviceId) = true
     override suspend fun deviceKeys() = emptyList<DeviceVaultKey>()
     override suspend fun deviceKey(device: DeviceId): DeviceVaultKey? = null
     override suspend fun createRequest(name: String, kind: CredentialKind, fields: List<FieldSpec>, site: String, purpose: String): CredentialRequest = error("unused")

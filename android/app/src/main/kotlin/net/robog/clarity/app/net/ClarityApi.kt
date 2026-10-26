@@ -11,6 +11,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
@@ -60,6 +61,18 @@ import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
+import net.robog.clarity.shared.governance.SignedDecision
+import net.robog.clarity.shared.vault.CredentialId
+import net.robog.clarity.shared.vault.CredentialMeta
+import net.robog.clarity.shared.vault.CredentialRequest
+import net.robog.clarity.shared.vault.CredentialRequestId
+import net.robog.clarity.shared.vault.DeviceVaultKey
+import net.robog.clarity.shared.vault.GrantReceipt
+import net.robog.clarity.shared.vault.NewCredential
+import net.robog.clarity.shared.vault.RegisterVaultKey
+import net.robog.clarity.shared.vault.ReleaseCode
+import net.robog.clarity.shared.vault.ReleaseGrant
+import net.robog.clarity.shared.vault.VaultEnvelope
 import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
@@ -138,6 +151,24 @@ interface IngestApi {
     suspend fun reportResult(id: ActionId, result: ActionResult): ApiResult<Unit>
 }
 
+/** The credential vault's routes and phone-signed decisions. */
+interface VaultApi {
+    /** Registers this phone's vault key and approval key (replacing earlier ones). */
+    suspend fun registerVaultKeys(request: RegisterVaultKey): ApiResult<DeviceVaultKey>
+    /** Every enrolled device's vault public key: credentials are sealed to each of them. */
+    suspend fun vaultDevices(): ApiResult<List<DeviceVaultKey>>
+    suspend fun credentials(): ApiResult<List<CredentialMeta>>
+    suspend fun deleteCredential(id: CredentialId): ApiResult<Unit>
+    suspend fun credentialRequest(id: CredentialRequestId): ApiResult<CredentialRequest>
+    suspend fun saveCredential(new: NewCredential): ApiResult<CredentialMeta>
+    /** This phone's own sealed copy of a credential. */
+    suspend fun envelope(id: CredentialId): ApiResult<VaultEnvelope>
+    suspend fun releaseGrant(heldId: HeldActionId, release: ReleaseGrant): ApiResult<GrantReceipt>
+    suspend fun releaseCode(heldId: HeldActionId, release: ReleaseCode): ApiResult<GrantReceipt>
+    suspend fun signedDecision(heldId: HeldActionId, decision: SignedDecision): ApiResult<Unit>
+    suspend fun heldAction(id: HeldActionId): ApiResult<HeldAction>
+}
+
 internal val SkipAuth = AttributeKey<Boolean>("clarity.skipAuth")
 
 /** Attaches `Authorization: Bearer <device JWT>` (freshly signed) to every request not marked [SkipAuth]. */
@@ -168,7 +199,7 @@ fun createHttpClient(
 class KtorClarityApi(
     private val client: HttpClient,
     private val sessions: SessionStore,
-) : ClarityApi, IngestApi {
+) : ClarityApi, IngestApi, VaultApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -286,6 +317,66 @@ class KtorClarityApi(
 
     override suspend fun discardAmendment(id: AmendmentId): ApiResult<Amendment> =
         authed { base -> client.post { url(base + "${ApiPaths.CONSTITUTION}/amendments/$id/discard") } }
+
+    // --- vault ---
+
+    override suspend fun registerVaultKeys(request: RegisterVaultKey): ApiResult<DeviceVaultKey> =
+        authed { base ->
+            client.post {
+                url(base + ApiPaths.VAULT_DEVICES)
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+        }
+
+    override suspend fun vaultDevices(): ApiResult<List<DeviceVaultKey>> = get(ApiPaths.VAULT_DEVICES)
+
+    override suspend fun credentials(): ApiResult<List<CredentialMeta>> = get(ApiPaths.VAULT_CREDENTIALS)
+
+    override suspend fun deleteCredential(id: CredentialId): ApiResult<Unit> =
+        authedUnit { base -> client.delete { url(base + "${ApiPaths.VAULT_CREDENTIALS}/$id") } }
+
+    override suspend fun credentialRequest(id: CredentialRequestId): ApiResult<CredentialRequest> =
+        get("${ApiPaths.VAULT_REQUESTS}/$id")
+
+    override suspend fun saveCredential(new: NewCredential): ApiResult<CredentialMeta> =
+        authed { base ->
+            client.post {
+                url(base + ApiPaths.VAULT_CREDENTIALS)
+                contentType(ContentType.Application.Json)
+                setBody(new)
+            }
+        }
+
+    override suspend fun envelope(id: CredentialId): ApiResult<VaultEnvelope> =
+        get("${ApiPaths.VAULT_CREDENTIALS}/$id/envelope")
+
+    override suspend fun releaseGrant(heldId: HeldActionId, release: ReleaseGrant): ApiResult<GrantReceipt> =
+        authed { base ->
+            client.post {
+                url(base + "${ApiPaths.VAULT_GRANTS}/$heldId")
+                contentType(ContentType.Application.Json)
+                setBody(release)
+            }
+        }
+
+    override suspend fun releaseCode(heldId: HeldActionId, release: ReleaseCode): ApiResult<GrantReceipt> =
+        authed { base ->
+            client.post {
+                url(base + "${ApiPaths.VAULT_CODES}/$heldId")
+                contentType(ContentType.Application.Json)
+                setBody(release)
+            }
+        }
+
+    override suspend fun signedDecision(heldId: HeldActionId, decision: SignedDecision): ApiResult<Unit> =
+        authedUnit { base ->
+            client.post {
+                url(base + "${ApiPaths.HELD}/$heldId/signed-decision")
+                contentType(ContentType.Application.Json)
+                setBody(decision)
+            }
+        }
 
     // --- ingest (phone connector) ---
 

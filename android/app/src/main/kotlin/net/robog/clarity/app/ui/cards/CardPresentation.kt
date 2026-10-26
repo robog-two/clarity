@@ -24,6 +24,8 @@ fun approveLabel(kind: ActionKind): String = when (kind) {
     ActionKind.CREATE_REMINDER -> "set reminder"
     ActionKind.SAVE_DRAFT -> "save draft"
     ActionKind.PAYMENT -> "review"
+    ActionKind.USE_CREDENTIAL -> "approve"
+    ActionKind.TWO_FACTOR_CODE -> "send code"
     else -> "ok"
 }
 

@@ -113,11 +113,22 @@ data class DeviceVaultKey(
     val publicKey: String,
     val alg: String = VaultSealing.ALGORITHM,
     val createdAt: Instant? = null,
+    /** Whether this device has registered an approval signing key (the key itself is never listed). */
+    val hasApprovalKey: Boolean = false,
 )
 
 /** `POST /api/v1/vault/devices`: the calling device registers (or replaces) its vault public key. */
 @Serializable
-data class RegisterVaultKey(val publicKey: String, val alg: String = VaultSealing.ALGORITHM)
+data class RegisterVaultKey(
+    val publicKey: String,
+    val alg: String = VaultSealing.ALGORITHM,
+    /**
+     * The device's separate approval signing key (P-256, SubjectPublicKeyInfo DER, base64url, no
+     * padding; ES256 / `SHA256withECDSA`). The backend verifies phone approvals against it
+     * (see [net.robog.clarity.shared.governance.SignedDecision]).
+     */
+    val approvalKey: String? = null,
+)
 
 @Serializable
 enum class CredentialRequestStatus {
@@ -164,11 +175,21 @@ data class ReleaseGrant(
     val fields: Map<String, String>,
     /** Requested lifetime; the backend caps it at [VaultNames.MAX_GRANT_SECONDS]. */
     val ttlSeconds: Int = VaultNames.MAX_GRANT_SECONDS,
+    /**
+     * Base64url ES256 signature of the approval payload ([net.robog.clarity.shared.governance.ApprovalPayload])
+     * for `approve`. Required when the device has registered an approval key.
+     */
+    val signature: String? = null,
 )
 
 /** `POST /api/v1/vault/codes/{heldId}`: the person typed the two-factor code the agent asked for. */
 @Serializable
-data class ReleaseCode(val code: String, val ttlSeconds: Int = VaultNames.MAX_GRANT_SECONDS)
+data class ReleaseCode(
+    val code: String,
+    val ttlSeconds: Int = VaultNames.MAX_GRANT_SECONDS,
+    /** As [ReleaseGrant.signature]. */
+    val signature: String? = null,
+)
 
 @Serializable
 data class GrantReceipt(val expiresAt: Instant, val site: String)
