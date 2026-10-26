@@ -122,9 +122,10 @@ private class SettingsRig(
     val caps = FakeCapabilities()
     val phone = FakePhoneConnector()
     val flag = RecordingFlag()
+    val push = net.robog.clarity.app.testutil.FakePushController()
     val vm = SettingsViewModel(
         sessions, repo, ListedConnectors(connectors), FakeConstitutionRepo(ApiResult.Failure(ApiError.NotFound(null))),
-        scheduler, caps, phone, flag, clock,
+        scheduler, caps, phone, flag, clock, push,
     )
     val state get() = vm.state.value
 }
@@ -229,10 +230,29 @@ class SettingsViewModelTest {
         assertFalse(r.state.fullScreenOk)
     }
 
-    @Test fun forgetClearsTheSession() = withMain {
+    @Test fun forgetClearsTheSessionAndStopsPush() = withMain {
         val r = SettingsRig()
         r.vm.forgetInstance()
         assertNull(r.sessionStore.state.value)
+        assertEquals(1, r.push.reconciles, "the push service is told to follow the forgotten server")
+    }
+
+    @Test fun pushConnectionSwitchAndBatteryStateShowInSettings() = withMain {
+        val r = SettingsRig()
+        assertTrue(r.state.pushOn)
+        assertTrue(r.state.batteryUnrestricted)
+        r.vm.togglePushService()
+        assertFalse(r.state.pushOn)
+        assertFalse(r.push.enabledState.value)
+        assertEquals(1, r.push.reconciles)
+        r.vm.togglePushService()
+        assertTrue(r.push.enabledState.value)
+
+        r.caps.battery = false
+        r.vm.refreshDevice()
+        assertFalse(r.state.batteryUnrestricted)
+        r.vm.batteryAsked()
+        assertTrue(r.push.askedState.value)
     }
 
     @Test fun redoOnboardingSetsTheFlag() = withMain {

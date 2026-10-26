@@ -57,7 +57,7 @@ fun HeldContent(
             state.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { if (row.phone) onReview(row.id) else onOpen(row.id) }.padding(vertical = 8.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 64.dp).clickable { if (row.review) onReview(row.id) else onOpen(row.id) }.padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {

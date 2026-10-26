@@ -21,6 +21,9 @@ value class FeedItemId(val value: String) { override fun toString(): String = va
 @Serializable @JvmInline
 value class ClientInputId(val value: String) { override fun toString(): String = value }
 
+/** The default [FeedItem.notify]: visible in the app, no interruption. */
+const val NOTIFY_IN_APP: String = "in_app"
+
 @Serializable
 data class FeedItem(
     val id: FeedItemId,
@@ -32,6 +35,12 @@ data class FeedItem(
     val cards: List<Card>,
     /** True while the agent is still streaming text into this item (see [FeedEvent.TextDelta]). */
     val streaming: Boolean = false,
+    /**
+     * The notification decision recorded for this item: `push_now`, `in_app`, `hold_until:<iso>` or
+     * `evening_batch:<iso>`. Optional on the wire; absent means "show in the app", so old stored JSON
+     * and old servers still decode. Clients post a notification only for `push_now`.
+     */
+    val notify: String = NOTIFY_IN_APP,
 ) {
     @Serializable
     enum class Author {

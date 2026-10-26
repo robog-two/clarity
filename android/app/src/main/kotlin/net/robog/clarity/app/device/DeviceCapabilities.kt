@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import androidx.core.content.ContextCompat
 
 /** What the phone currently allows the app to do; each is a runtime permission or special access. */
@@ -16,6 +17,8 @@ interface DeviceCapabilities {
     fun smsGranted(): Boolean
     /** "Do not disturb access" (notification policy access). */
     fun dndAccessGranted(): Boolean
+    /** The system does not restrict the app's background work (battery optimization exemption). */
+    fun batteryUnrestricted(): Boolean
 }
 
 class AndroidDeviceCapabilities(private val context: Context) : DeviceCapabilities {
@@ -34,4 +37,7 @@ class AndroidDeviceCapabilities(private val context: Context) : DeviceCapabiliti
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
 
     override fun dndAccessGranted(): Boolean = notifications.isNotificationPolicyAccessGranted
+
+    override fun batteryUnrestricted(): Boolean =
+        context.getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(context.packageName)
 }

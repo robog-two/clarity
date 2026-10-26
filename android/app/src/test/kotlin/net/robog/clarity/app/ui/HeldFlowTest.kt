@@ -113,6 +113,16 @@ class HeldRulesTest {
         assertEquals("9:00 · send email", rows.single().whenText)
     }
 
+    @Test fun emailDraftsOpenTheReviewScreenAndOtherRowsTheTalkThrough() {
+        val draft = heldAction("d", action = sendEmail())
+        val event = heldAction("e", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
+        val done = heldAction("f", action = sendEmail(), status = HeldAction.Status.KEPT)
+        val rows = heldRows(listOf(draft, event, done), TimeZone.UTC).associateBy { it.id.value }
+        assertTrue(rows.getValue("d").review, "a draft opens the review (with approve); amend is one tap away from there")
+        assertFalse(rows.getValue("e").review)
+        assertFalse(rows.getValue("f").review, "a settled row has nothing to approve")
+    }
+
     @Test fun checkedLineCountsTheLinesThatApply() {
         assertEquals("checked against your lines · 1 apply", checkedLine(heldAction()))
         assertEquals("checked against your lines · none apply", checkedLine(heldAction(lines = emptyList())))

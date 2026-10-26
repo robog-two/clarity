@@ -101,6 +101,18 @@ import net.robog.clarity.app.net.ClarityApi
 import net.robog.clarity.app.net.DeviceJwtSigner
 import net.robog.clarity.app.net.KtorClarityApi
 import net.robog.clarity.app.net.createHttpClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import net.robog.clarity.app.push.AndroidPushController
+import net.robog.clarity.app.push.AndroidPushNotifier
+import net.robog.clarity.app.push.ConnectionHolder
+import net.robog.clarity.app.push.DataStorePushPrefs
+import net.robog.clarity.app.push.FrontScreen
+import net.robog.clarity.app.push.PushController
+import net.robog.clarity.app.push.PushListener
+import net.robog.clarity.app.push.PushNotifier
+import net.robog.clarity.app.push.PushPrefs
 
 /**
  * The application graph. ViewModels are contributed with `@ContributesIntoMap(AppScope::class)`
@@ -260,6 +272,35 @@ interface AppGraph : ViewModelGraph {
         work: ConnectorWork,
     ): PhoneConnector = DefaultPhoneConnector(ingest, sms, cursor, capabilities, sessions, dnd, clock, work)
 
+    // --- push: the foreground service that keeps the feed open ---
+
+    @Provides @SingleIn(AppScope::class)
+    fun pushPrefs(store: DataStore<Preferences>): PushPrefs = DataStorePushPrefs(store)
+
+    @Provides @SingleIn(AppScope::class)
+    fun frontScreen(): FrontScreen = FrontScreen()
+
+    @Provides @SingleIn(AppScope::class)
+    fun pushController(context: Context, sessions: SessionStore, flag: OnboardingFlagStore, prefs: PushPrefs): PushController =
+        AndroidPushController(context, sessions, flag, prefs)
+
+    /** The app in front and the push service share one feed connection and one action loop. */
+    @Provides @SingleIn(AppScope::class)
+    fun connectionHolder(sync: FeedSync, phone: PhoneConnector): ConnectionHolder =
+        ConnectionHolder(CoroutineScope(SupervisorJob() + Dispatchers.Default), sync::run, phone::runActionLoop)
+
+    @Provides @SingleIn(AppScope::class)
+    fun pushNotifier(context: Context): PushNotifier = AndroidPushNotifier(context)
+
+    @Provides @SingleIn(AppScope::class)
+    fun pushListener(
+        sync: FeedSync,
+        front: FrontScreen,
+        capabilities: DeviceCapabilities,
+        clock: AppClock,
+        notifier: PushNotifier,
+    ): PushListener = PushListener(sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier)
+
     // Entry points for receivers and workers, which are not created by the graph.
     val callAlarmHandler: CallAlarmHandler
     val callService: CallService
@@ -269,6 +310,13 @@ interface AppGraph : ViewModelGraph {
     val sessionStore: SessionStore
     val vaultRepository: VaultRepository
     val foregroundActivity: ForegroundActivity
+    val feedSync: FeedSync
+    val onboardingFlag: OnboardingFlagStore
+    val pushPrefs: PushPrefs
+    val pushController: PushController
+    val frontScreen: FrontScreen
+    val connection: ConnectionHolder
+    val pushListener: PushListener
 
     @DependencyGraph.Factory
     fun interface Factory {
