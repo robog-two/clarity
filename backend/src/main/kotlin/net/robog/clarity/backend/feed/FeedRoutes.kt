@@ -123,6 +123,9 @@ class FeedRoutes(
     }
 
     private suspend fun ServerSSESession.stream(after: Long) = coroutineScope {
+        // Ktor sends the response headers with the first event. Without this, a client that is caught
+        // up waits for the first heartbeat, and the reverse proxy in front drops the upstream request.
+        send(ServerSentEvent(comments = "open"))
         // Subscribe before replaying so nothing published during the replay is lost.
         val live = Channel<FeedEvent>(Channel.UNLIMITED)
         launch(start = CoroutineStart.UNDISPATCHED) { hub.events.collect { live.send(it) } }

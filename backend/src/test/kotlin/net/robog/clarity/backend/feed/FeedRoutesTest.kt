@@ -32,6 +32,7 @@ import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -250,11 +251,27 @@ class FeedRoutesTest : FunSpec({
                     header(HttpHeaders.Accept, "text/event-stream")
                 }.execute { response ->
                     val body = response.bodyAsChannel()
-                    do { line = body.readUTF8Line() } while (line?.startsWith(":") == false)
+                    do { line = body.readUTF8Line() } while (line != null && line != ": heartbeat")
                 }
             }
         }
         line shouldBe ": heartbeat"
+    }
+
+    test("a caught-up client gets the headers and an open comment at once, not at the first heartbeat") {
+        var first: String? = null
+        withServer(heartbeat = 1.hours) { client ->
+            withTimeout(5.seconds) {
+                client.prepareGet("/api/v1/events?after=999999") {
+                    header(HttpHeaders.Authorization, TOKEN)
+                    header(HttpHeaders.Accept, "text/event-stream")
+                }.execute { response ->
+                    response.status shouldBe HttpStatusCode.OK
+                    first = response.bodyAsChannel().readUTF8Line()
+                }
+            }
+        }
+        first shouldBe ": open"
     }
 
     test("the stream is closed by the server when the device JWT expires") {

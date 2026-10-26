@@ -11,6 +11,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -156,8 +161,15 @@ class ValuesStepViewModel(
                 }
             }
             launch {
-                feed.signals.filterIsInstance<SyncSignal.SessionChanged>().collect { sig ->
-                    if (sig.sessionId == id) (sessions.get(id) as? ApiResult.Success)?.let { applySession(it.value) }
+                // The change signal only travels on the live stream and is lost while it reconnects,
+                // so a new item in this session (also filled in after a gap) reloads the session too.
+                val newItem = feed.items
+                    .map { items -> items.filter { it.sessionId == id }.maxOfOrNull { it.seq } }
+                    .distinctUntilChanged()
+                    .drop(1)
+                val changed = feed.signals.filterIsInstance<SyncSignal.SessionChanged>().filter { it.sessionId == id }
+                merge(newItem, changed).collect {
+                    (sessions.get(id) as? ApiResult.Success)?.let { applySession(it.value) }
                 }
             }
             launch {
