@@ -203,6 +203,20 @@ class MailServerTest : FunSpec({
         bad.isFailure shouldBe true
     }
 
+    test("with no folders configured every folder is synced, Junk included") {
+        deliver("Hello", "In the inbox")
+        imapStore().use { store ->
+            val junk = store.folder("Junk")
+            if (!junk.exists()) junk.create(jakarta.mail.Folder.HOLDS_MESSAGES)
+            junk.appendMessages(arrayOf(mime("prize@example.com", me, "You won", "Claim your prize", null)))
+        }
+        val all = MailSync(MailAccess(config.copy(folders = emptyList())), InMemoryStateStore())
+        val folders = runSync(all).map { MailRef.parse(it.sourceId.value)!!.folder }.toSet()
+        (("INBOX" in folders) && ("Junk" in folders)) shouldBe true
+        // a configured list still limits the sync
+        runSync(MailSync(access, InMemoryStateStore())).map { MailRef.parse(it.sourceId.value)!!.folder }.toSet() shouldBe setOf("INBOX")
+    }
+
     test("IDLE either reports a delivery or says it is unsupported") {
         val result = idleForChange(access, "INBOX", 1.seconds)
         (result == null || result == false) shouldBe true

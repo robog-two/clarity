@@ -89,6 +89,7 @@
 
         <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
         <receiver android:name=".app.call.CallActionReceiver" android:exported="false" />
+        <receiver android:name=".app.push.NotificationReplyReceiver" android:exported="false" />
         <receiver android:name=".app.connector.DndEndReceiver" android:exported="false" />
         <receiver android:name=".app.call.ScheduleReceiver" android:exported="false">
             <intent-filter>

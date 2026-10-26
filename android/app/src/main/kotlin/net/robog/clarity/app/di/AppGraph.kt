@@ -317,6 +317,8 @@ interface AppGraph : ViewModelGraph {
     val frontScreen: FrontScreen
     val connection: ConnectionHolder
     val pushListener: PushListener
+    val pushNotifier: PushNotifier
+    val feedRepository: net.robog.clarity.app.data.FeedRepository
 
     @DependencyGraph.Factory
     fun interface Factory {

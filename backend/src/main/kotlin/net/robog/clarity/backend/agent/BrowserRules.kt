@@ -52,23 +52,35 @@ fun classifyBrowserTool(remoteName: String): BrowserKind = when (remoteName) {
     else -> BrowserKind.HIDDEN
 }
 
-/** An element as the last snapshot described it. */
-data class Element(val role: String?, val name: String?) {
+/** An element as the last snapshot described it; [href] is where a link goes (the snapshot may shorten it). */
+data class Element(val role: String?, val name: String?, val href: String? = null) {
     fun describe(uid: String): String = listOfNotNull(role, name?.let { "\"$it\"" }).joinToString(" ").ifEmpty { "element $uid" }
+
+    /** [describe] plus where a link goes, for the triage. */
+    fun detail(uid: String): String = describe(uid) + (href?.let { " linking to $it" } ?: "")
 }
 
 private val SNAPSHOT_LINE = Regex("""uid=(\S+)\s+(\S+)(?:\s+"((?:[^"\\]|\\.)*)")?""")
+private val HREF = Regex("""\shref="((?:[^"\\]|\\.)*)"""")
 
-/** Pure: uid to role/name from `take_snapshot` output (lines like `uid=1_4 button "Send"`). */
+/** Pure: uid to role, name and href from `take_snapshot` output (lines like `uid=1_4 button "Send"`). */
 fun parseSnapshot(text: String): Map<String, Element> {
     val out = LinkedHashMap<String, Element>()
     text.lineSequence().forEach { line ->
         SNAPSHOT_LINE.find(line)?.let { m ->
-            out[m.groupValues[1]] = Element(m.groupValues[2], m.groups[3]?.value?.replace("\\\"", "\""))
+            val href = HREF.find(line, m.range.last)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
+            out[m.groupValues[1]] = Element(m.groupValues[2], m.groups[3]?.value?.replace("\\\"", "\""), href)
         }
     }
     return out
 }
+
+/** Pure: a link that runs a script or stays on the page ("#", "javascript:") rather than opening another address. */
+fun isScriptHref(href: String): Boolean = href.trim().let { it.startsWith("#") || it.startsWith("javascript:", ignoreCase = true) }
+
+/** Pure: a link element that opens an http(s) address (an ordinary navigation, a GET). */
+fun isNavigatingLink(element: Element?): Boolean =
+    element != null && element.role?.lowercase() in LINK_ROLES && element.href?.let { h -> !isScriptHref(h) && (h.startsWith("http") || h.startsWith("/")) } == true
 
 private val PAGE_LINE = Regex("""^>\s*\[(\d+)]\s+(.*)$""")
 
@@ -130,7 +142,8 @@ private val PAYMENT_ACTION = Regex("\\b(pay|payment|place|complete|confirm|submi
 
 private val BUTTON_ROLES = setOf("button", "menuitem", "checkbox", "switch", "submit", "image", "imagebutton", "reset", "menuitemcheckbox")
 private val TEXT_ROLES = setOf("textbox", "searchbox", "textarea", "combobox", "input", "spinbutton", "text")
-private val PLAIN_ROLES = setOf("link", "tab", "option", "radio", "treeitem", "listitem", "row", "cell", "gridcell", "heading")
+private val LINK_ROLES = setOf("link", "a")
+private val PLAIN_ROLES = LINK_ROLES + setOf("tab", "option", "radio", "treeitem", "listitem", "row", "cell", "gridcell", "heading")
 
 /** What the rules say about one acting call. */
 sealed interface StepVerdict {
@@ -181,6 +194,9 @@ fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageU
         }
         "click_by_uid" -> {
             val strong = STRONG_RISK.find(names)?.value
+            // A link only opens another address ("Book now" -> the page with times): the triage weighs it with the task, unless it moves money.
+            val navigating = elements.isNotEmpty() && elements.all { isNavigatingLink(it) }
+            if (strong != null && navigating && !payment && !isMoney(strong)) return StepVerdict.Triage
             if (strong != null) return StepVerdict.Ask("clicking \"$names\" ($strong)", neverAlone = isMoney(strong) || payment)
             val buttonLike = roles.isEmpty() || roles.any { it in BUTTON_ROLES }
             if (buttonLike) {
@@ -189,6 +205,7 @@ fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageU
                 if (payment && PAYMENT_ACTION.containsMatchIn(names)) return StepVerdict.Ask("clicking \"$names\" on a payment page", neverAlone = true)
             }
             return when {
+                elements.any { e -> e?.href?.let(::isScriptHref) == true } -> StepVerdict.Triage
                 roles.isNotEmpty() && roles.all { it in PLAIN_ROLES } -> StepVerdict.Pass
                 else -> StepVerdict.Triage
             }

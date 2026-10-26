@@ -140,7 +140,7 @@ class HelperManager(
         var terminal: HarnessEvent.Terminal? = null
         try {
             runs.markRunning(run.id)
-            val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true)
+            val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task)
             val set = toolbox.value.helperTools(runScope, run.tools).tools
             val request = roleRequest(
                 role = roleConfig,

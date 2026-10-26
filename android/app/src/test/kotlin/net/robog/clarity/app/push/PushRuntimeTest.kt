@@ -102,17 +102,18 @@ class PushListenerTest {
         val listener = PushListener(arrivals, { front }, { canPost }, FixedClock(T0), notifier)
         val job = launch(Dispatchers.Unconfined) { listener.run() }
 
-        arrivals.emit(Arrival.Item(agentItem(1, "quiet one")))
-        arrivals.emit(Arrival.Item(agentItem(2, "loud one").copy(notify = "push_now")))
+        arrivals.emit(Arrival.Item(agentItem(1, "held for later").copy(notify = "hold_until:2026-10-26T12:00:00Z")))
+        arrivals.emit(Arrival.Item(agentItem(2, "quiet one, but the app is closed")))
+        arrivals.emit(Arrival.Item(agentItem(3, "loud one").copy(notify = "push_now")))
         arrivals.emit(Arrival.Held(heldAction("h1").copy(urgency = Urgency.URGENT)))
-        assertEquals(listOf(PushChannel.Agent, PushChannel.Urgent), notifier.posted.map { it.channel })
+        assertEquals(listOf(PushChannel.Agent, PushChannel.Agent, PushChannel.Urgent), notifier.posted.map { it.channel })
 
         front = Front.Showing(Place.Tab(net.robog.clarity.app.nav.MainTab.Today))
         arrivals.emit(Arrival.Item(agentItem(3, "seen already").copy(notify = "push_now")))
         canPost = false
         front = Front.Background
         arrivals.emit(Arrival.Held(heldAction("h2").copy(urgency = Urgency.URGENT)))
-        assertEquals(2, notifier.posted.size)
+        assertEquals(3, notifier.posted.size)
         job.cancel()
     }
 }

@@ -143,8 +143,8 @@ class PhoneApproverTest {
         val auth = ScriptedAuth()
         val result = approver(auth).authorize(h, ApprovalInput())
         assertEquals(ApprovalResult.Done, result)
-        // two prompts: the per-use signature, and the vault key's
-        assertEquals(listOf(true, false), auth.boundToSignature)
+        // one prompt: the fingerprint that authorizes the signature also opens the vault key
+        assertEquals(listOf(true), auth.boundToSignature)
         val (id, release) = api.grants.single()
         assertEquals(HeldActionId("h2"), id)
         assertEquals(mapOf("username" to "dana@example.com", "password" to "hunter2!-Zebra"), release.fields)
@@ -153,8 +153,19 @@ class PhoneApproverTest {
         assertTrue(api.signed.isEmpty())
     }
 
+    @Test fun whenTheUnlockWindowHasPassedASecondPromptOpensTheVaultKey() = runTest {
+        val h = held(useCredential, phone = false, id = "h2")
+        api.envelopes["c1"] = VaultCrypto.seal(DeviceId("me"), spki(keys.vault), "req-1", mapOf("username" to "a", "password" to "b"))
+        keys.staleAgreements = 1
+        val auth = ScriptedAuth()
+        assertEquals(ApprovalResult.Done, approver(auth).authorize(h, ApprovalInput()))
+        assertEquals(listOf(true, false), auth.boundToSignature)
+        assertEquals(mapOf("username" to "a", "password" to "b"), api.grants.single().second.fields)
+    }
+
     @Test fun cancellingTheSecondPromptReleasesNothing() = runTest {
         val h = held(useCredential, phone = false, id = "h2")
+        keys.staleAgreements = 1
         api.envelopes["c1"] = VaultCrypto.seal(DeviceId("me"), spki(keys.vault), "req-1", mapOf("username" to "a", "password" to "b"))
         val result = approver(ScriptedAuth(null, AuthResult.Cancelled)).authorize(h, ApprovalInput())
         assertEquals(ApprovalResult.Denied("Not approved."), result)

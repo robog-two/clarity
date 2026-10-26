@@ -43,30 +43,74 @@ class AndroidSpeechInput(private val context: Context) : SpeechInput {
 
     private var recognizer: SpeechRecognizer? = null
 
+    /**
+     * The recogniser ends a segment at the first short pause. A segment is held for [PAUSE_GRACE_MS]
+     * while it listens on; more speech joins it, and only silence for that long sends it.
+     */
+    private val joiner = PauseJoiner()
+    private val graceOver = Runnable { finishUtterance() }
+
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) = Unit
-        override fun onBeginningOfSpeech() = emit(SpeechEvent.Hearing(true))
+        override fun onBeginningOfSpeech() {
+            main.removeCallbacks(graceOver) // still talking: wait for this segment too
+            emit(SpeechEvent.Hearing(true))
+        }
         override fun onRmsChanged(rmsdB: Float) = Unit
         override fun onBufferReceived(buffer: ByteArray?) = Unit
         override fun onEndOfSpeech() = emit(SpeechEvent.Hearing(false))
-        override fun onError(error: Int) = emit(SpeechEvent.Error(speechErrorOf(error)))
+        override fun onError(error: Int) {
+            val kind = speechErrorOf(error)
+            // While holding a segment, "heard nothing" just means the pause went on: the timer sends it.
+            if (joiner.holding && (kind == SpeechError.NoMatch || kind == SpeechError.Timeout)) {
+                if (!main.hasCallbacks(graceOver)) finishUtterance()
+                return
+            }
+            if (joiner.holding) finishUtterance()
+            emit(SpeechEvent.Error(kind))
+        }
         override fun onResults(results: Bundle?) {
             val text = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-            emit(SpeechEvent.Final(text))
+            if (_mic.value.mode != MicMode.Listening) return
+            if (text.isBlank() && joiner.holding) {
+                // Nothing new: listen on, and let the running pause timer decide.
+                if (main.hasCallbacks(graceOver)) startRecognizer() else finishUtterance()
+                return
+            }
+            joiner.segment(text)
+            if (!joiner.holding) return emit(SpeechEvent.Final(text)) // nothing heard: as before
+            _events.tryEmit(SpeechEvent.Partial(joiner.shown("")))
+            main.removeCallbacks(graceOver)
+            main.postDelayed(graceOver, PAUSE_GRACE_MS)
+            startRecognizer() // keep listening through the pause
         }
         override fun onPartialResults(partialResults: Bundle?) {
             val text = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
-            if (text.isNotBlank()) emit(SpeechEvent.Partial(text))
+            if (text.isNotBlank()) {
+                main.removeCallbacks(graceOver)
+                emit(SpeechEvent.Partial(joiner.shown(text)))
+            }
         }
         override fun onEvent(eventType: Int, params: Bundle?) = Unit
     }
 
+    /** The pause lasted: send everything held as one final segment. */
+    private fun finishUtterance() {
+        main.removeCallbacks(graceOver)
+        val text = joiner.flush() ?: return
+        emit(SpeechEvent.Final(text))
+        // Without "mic stays on" the mic is now off, but the recogniser was listening through the pause.
+        if (_mic.value.mode != MicMode.Listening) recognizer?.cancel()
+    }
+
     override fun start(keepOn: Boolean) = onMain { dispatch(MicInput.Start(keepOn)) }
-    override fun stop() = onMain { dispatch(MicInput.Stop) }
-    override fun mute() = onMain { dispatch(MicInput.Mute) }
+    override fun stop() = onMain { finishUtterance(); dispatch(MicInput.Stop) }
+    override fun mute() = onMain { finishUtterance(); dispatch(MicInput.Mute) }
     override fun unmute() = onMain { dispatch(MicInput.Unmute) }
 
     override fun release() = onMain {
+        main.removeCallbacks(graceOver)
+        joiner.flush()
         dispatch(MicInput.Stop)
         recognizer?.destroy()
         recognizer = null
@@ -116,6 +160,9 @@ class AndroidSpeechInput(private val context: Context) : SpeechInput {
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        // Hints only (many recognisers ignore them); the pause grace above is what makes pauses safe.
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
+        putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
     }
 
     private fun onMain(block: () -> Unit) {
@@ -124,5 +171,6 @@ class AndroidSpeechInput(private val context: Context) : SpeechInput {
 
     private companion object {
         const val RESTART_DELAY_MS = 150L
+        const val PAUSE_GRACE_MS = 3_000L
     }
 }

@@ -110,3 +110,29 @@ fun Flow<SpeechEvent>.toUserInputs(
 ): Flow<UserInput> = filterIsInstance<SpeechEvent.Final>()
     .filter { it.text.isNotBlank() }
     .map { UserInput(ClientInputId(newId()), it.text.trim(), InputSource.VOICE, sessionId()) }
+
+/** Pure: two pieces of speech as one, separated by a space. */
+fun joinSpeech(first: String, second: String): String =
+    listOf(first.trim(), second.trim()).filter { it.isNotEmpty() }.joinToString(" ")
+
+/**
+ * Holds the segments the recogniser ends at each short pause, so a sentence, a pause to think and
+ * the next sentence become one message. The caller runs the timer and calls [flush] when the pause lasts.
+ */
+class PauseJoiner {
+    private var pending = ""
+
+    /** A segment is held, waiting to see if more follows. */
+    val holding: Boolean get() = pending.isNotEmpty()
+
+    /** The recogniser ended a segment. Blank ones change nothing. */
+    fun segment(text: String) {
+        pending = joinSpeech(pending, text)
+    }
+
+    /** What to show while [partial] is being heard: the held text followed by it. */
+    fun shown(partial: String): String = joinSpeech(pending, partial)
+
+    /** Everything held, now cleared; null when nothing was held. */
+    fun flush(): String? = pending.takeIf { it.isNotEmpty() }.also { pending = "" }
+}

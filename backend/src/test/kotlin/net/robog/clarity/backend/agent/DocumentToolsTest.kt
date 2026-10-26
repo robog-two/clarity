@@ -29,7 +29,7 @@ private val plan = Stored(
 
 private class DocReader : NounReader {
     var lastQuery: String? = null
-    override suspend fun messages(range: TimeRange, participant: String?, limit: Int) = emptyList<Stored<MessagePayload>>()
+    override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?) = emptyList<Stored<MessagePayload>>()
     override suspend fun calendarEvents(range: TimeRange, limit: Int) = emptyList<Stored<CalendarEventPayload>>()
     override suspend fun searchContacts(query: String, limit: Int) = emptyList<Stored<ContactPayload>>()
     override suspend fun changedSince(since: Instant, limit: Int) = emptyList<Stored<Payload>>()

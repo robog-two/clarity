@@ -103,7 +103,7 @@ fun parseMailAccount(item: ConfigItem, config: ConnectorConfig, runtime: Connect
         password = password,
         fromAddress = fromAddress,
         fromName = item.text("fromName"),
-        folders = item.list("folders").ifEmpty { listOf("INBOX") },
+        folders = item.list("folders"), // empty: every folder
         initialWindowDays = (item.int("initialWindowDays") ?: 30).coerceIn(1, 3650),
         id = item.id,
         label = item.label,
@@ -154,8 +154,9 @@ private val mailAccountItem = buildJsonObject {
         putJsonObject("fromName") { put("type", "string"); put("title", "Your name on outgoing mail") }
         putJsonObject("folders") {
             put("type", "array"); put("title", "Folders to sync")
+            put("description", "Leave empty to sync every folder, including Sent and Junk.")
             putJsonObject("items") { put("type", "string") }
-            put("default", example("INBOX"))
+            put("examples", example("INBOX"))
         }
         putJsonObject("initialWindowDays") { put("type", "integer"); put("title", "Days of history on first sync"); put("default", 30); put("minimum", 1); put("maximum", 3650) }
     }

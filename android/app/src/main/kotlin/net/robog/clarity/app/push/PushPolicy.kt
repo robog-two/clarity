@@ -16,6 +16,7 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Urgency
+import net.robog.clarity.shared.session.SessionId
 
 // All of the push decisions live here as pure functions; the Android glue only carries them out.
 
@@ -149,6 +150,9 @@ fun placeFor(top: NavKey?, tab: MainTab): Place = when (top) {
     else -> Place.Other
 }
 
+/** How a notification looks: a chat message with a reply box, or a line that opens the app. */
+enum class PlanStyle { Message, OpenApp }
+
 data class NotificationPlan(
     /** Stable per thing, so the same arrival never stacks two notifications. */
     val id: Int,
@@ -156,16 +160,21 @@ data class NotificationPlan(
     val title: String,
     val text: String,
     val link: DeepLink,
+    val style: PlanStyle = PlanStyle.OpenApp,
+    /** For a [PlanStyle.Message]: the session a reply belongs to. */
+    val sessionId: SessionId? = null,
 )
 
 /** Anything older than this when it reaches the phone (a long offline spell) is not worth a buzz. */
 val MAX_PUSH_AGE: Duration = 2.hours
 
 /**
- * Whether [arrival] earns a notification, and which. A notification is posted only for push-now
- * agent items, the evening summary, and urgent held actions that wait for the person; never when
- * notifications are off, when the item is stale, or when the person is looking at the very place
- * it shows up (the feed on Today or Ask, the Held list, or that held action).
+ * Whether [arrival] earns a notification, and which. Push-now agent items, the evening summary and
+ * urgent held actions always do; any other agent message does while the app is not on screen
+ * (only "hold until" waits). Never when notifications are off, when the item is stale, or when the
+ * person is looking at the very place it shows up (the feed on Today or Ask, the Held list, or that
+ * held action). Messages become one conversation with a reply box; something to approve or a login
+ * to enter only offers to open the app.
  */
 fun decideNotification(
     arrival: Arrival,
@@ -187,21 +196,46 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
     val channel = when (parseNotify(item.notify)) {
         NotifyKind.PushNow -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
-        NotifyKind.InApp, NotifyKind.Hold -> return null
+        NotifyKind.InApp -> if (front == Front.Background) PushChannel.Agent else return null
+        NotifyKind.Hold -> return null
     }
     // The feed shows it right now.
     if (front is Front.Showing) {
         val where = front.where
         if (where is Place.Tab && (where.tab == MainTab.Today || where.tab == MainTab.Ask)) return null
     }
+    if (channel == PushChannel.Evening) {
+        return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.Today)
+    }
+    item.cards.firstNotNullOfOrNull { it as? Card.Proposal }?.let { proposal ->
+        // The same id as the held action's own notification, so the two never stack.
+        return NotificationPlan(
+            heldNotificationId(proposal.heldActionId), channel, "Needs your ok",
+            itemText(item, fallback = "Open Clarity to review it."), DeepLink.HeldItem(proposal.heldActionId),
+        )
+    }
+    if (item.cards.any { it is Card.CredentialRequest }) {
+        return NotificationPlan(
+            ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Clarity needs a login",
+            itemText(item, fallback = "Open Clarity to enter it."), DeepLink.Today,
+        )
+    }
     return NotificationPlan(
-        id = ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(),
+        id = MESSAGE_ID,
         channel = channel,
-        title = if (channel == PushChannel.Evening) "Your evening summary" else "Clarity",
+        title = "Clarity",
         text = itemText(item),
         link = if (item.sessionId != null) DeepLink.Ask else DeepLink.Today,
+        style = PlanStyle.Message,
+        sessionId = item.sessionId,
     )
 }
+
+/** The notification id of a held action, shared by its own notification and the feed item that proposes it. */
+fun heldNotificationId(id: HeldActionId): Int = HELD_ID_BASE + (id.value.hashCode() and Int.MAX_VALUE) % ID_SPAN
+
+/** The one conversation notification that the agent's messages and the person's replies share. */
+const val MESSAGE_ID = 9_000
 
 private fun heldPlan(held: HeldAction, front: Front, now: Instant, maxAge: Duration): NotificationPlan? {
     if (held.status != HeldAction.Status.HELD || held.urgency != Urgency.URGENT) return null
@@ -211,7 +245,7 @@ private fun heldPlan(held: HeldAction, front: Front, now: Instant, maxAge: Durat
         if (where == Place.Tab(MainTab.Held) || where == Place.HeldItem(held.id)) return null
     }
     return NotificationPlan(
-        id = HELD_ID_BASE + (held.id.value.hashCode() and Int.MAX_VALUE) % ID_SPAN,
+        id = heldNotificationId(held.id),
         channel = PushChannel.Urgent,
         title = "Needs your ok",
         text = held.action.summary,
@@ -220,7 +254,7 @@ private fun heldPlan(held: HeldAction, front: Front, now: Instant, maxAge: Durat
 }
 
 /** The first line of the item's own words, else a plain fallback. */
-fun itemText(item: FeedItem, limit: Int = 140): String {
+fun itemText(item: FeedItem, limit: Int = 140, fallback: String = "New from Clarity"): String {
     val words = item.cards.firstNotNullOfOrNull { card ->
         when (card) {
             is Card.Text -> card.text
@@ -230,7 +264,7 @@ fun itemText(item: FeedItem, limit: Int = 140): String {
     }
     val line = words?.lineSequence()?.map { it.trim() }?.firstOrNull { it.isNotEmpty() }
     return when {
-        line == null -> "New from Clarity"
+        line == null -> fallback
         line.length <= limit -> line
         else -> line.take(limit - 1).trimEnd() + "…"
     }

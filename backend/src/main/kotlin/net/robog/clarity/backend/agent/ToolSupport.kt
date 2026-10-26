@@ -30,7 +30,8 @@ class DefaultSettingsProvider : SettingsProvider {
  * untrusted content is in its current context, and whether the person asked for what it is doing.
  * The lead resets both at the start of every turn; a helper starts tainted if its parent was.
  */
-class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = false) {
+/** [purpose] is what the run was asked to do (a helper's task), shown to the browser triage. */
+class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = false, val purpose: String? = null) {
     private val untrustedFlag = AtomicBoolean(untrusted)
     private val requestedFlag = AtomicBoolean(false)
 

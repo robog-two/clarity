@@ -89,7 +89,7 @@ class FakeGovernance : VaultGovernance {
 class FakeBrowser {
     var url = "https://bank.example.com/login"
     val received = CopyOnWriteArrayList<Pair<String, JsonObject>>()
-    val snapshot = """
+    var snapshot = """
         uid=1_0 document "Sign in"
           uid=1_1 textbox "Username"
           uid=1_2 textbox "Password"

@@ -74,6 +74,9 @@ import net.robog.clarity.shared.ingest.IngestResponse
 import net.robog.clarity.shared.ingest.RecordOutcome
 import net.robog.clarity.shared.connector.ConnectorTestReport
 import net.robog.clarity.shared.connector.ConnectorTestRequest
+import net.robog.clarity.shared.connector.ConnectorTestResult
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import net.robog.clarity.shared.noun.ContactPayload
 import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.Handle
@@ -238,6 +241,16 @@ class ClarityIntegrationTest : FunSpec({
             reader.messages(range, participant = "zed@example.com") shouldBe emptyList()
             reader.changedSince(Instant.fromEpochSeconds(0)).size shouldBe 1
 
+            // --- email folders: the same message also seen in Gmail's spam folder, matched by full name or last part
+            push(keyA, upsert("acct1/[Gmail]/Spam/7/42", "1", message("Lunch tomorrow?"))).single().shouldBeInstanceOf<RecordOutcome.Merged>()
+            reader.messages(range, folder = "spam").size shouldBe 1
+            reader.messages(range, folder = "[Gmail]/Spam").size shouldBe 1
+            reader.messages(range, folder = "INBOX") shouldBe emptyList()
+            reader.messages(range, folder = "Gmail]/Spam(") shouldBe emptyList() // regex characters are literal
+            reader.messageFolders(listOf(EntityId(created.entityId.value))) shouldBe mapOf(EntityId(created.entityId.value) to listOf("[Gmail]/Spam"))
+            push(keyA, IngestRecord.Tombstone(SourceId("acct1/[Gmail]/Spam/7/42"), "2", Clock.System.now(), Noun.MESSAGE))
+            reader.messages(range, folder = "spam") shouldBe emptyList()
+
             // --- trigger store round trip
             val triggers = ExposedTriggerStore(db, Clock.System)
             val spec = TriggerSpec("lunch", Noun.MESSAGE, RecordQuery.Contains("body", "lunch"), "reply yes")
@@ -399,10 +412,13 @@ class ClarityIntegrationTest : FunSpec({
             suspend fun pending(): HttpResponse = client.get("/ingest/v1/test") { header(HttpHeaders.Authorization, "Bearer $keyA") }
             pending().status shouldBe HttpStatusCode.NoContent
             client.post("/api/v1/connectors/nope/test") { header(HttpHeaders.Authorization, appAuth) }.status shouldBe HttpStatusCode.NotFound
-            val asked = client.post("/api/v1/connectors/a/test") { header(HttpHeaders.Authorization, appAuth) }
-            asked.status shouldBe HttpStatusCode.Accepted
-            val request = asked.body<ConnectorTestRequest>()
-            pending().body<ConnectorTestRequest>().requestId shouldBe request.requestId
+            // the app's request waits for the connector's report and answers with the result itself
+            val asked = async { client.post("/api/v1/connectors/a/test") { header(HttpHeaders.Authorization, appAuth) } }
+            var request: ConnectorTestRequest? = null
+            while (request == null) {
+                val p = pending()
+                if (p.status == HttpStatusCode.OK) request = p.body<ConnectorTestRequest>() else delay(50)
+            }
             // a stale report is refused, the right one is accepted and clears the request
             client.post("/ingest/v1/test") {
                 header(HttpHeaders.Authorization, "Bearer $keyA")
@@ -414,6 +430,10 @@ class ClarityIntegrationTest : FunSpec({
                 contentType(ContentType.Application.Json)
                 setBody(ConnectorTestReport(request.requestId, true, "Connected, 2 calendars", mapOf("calendars" to 2), Clock.System.now()))
             }.status shouldBe HttpStatusCode.NoContent
+            asked.await().run {
+                status shouldBe HttpStatusCode.OK
+                body<ConnectorTestResult>() shouldBe ConnectorTestResult(ok = true, summary = "Connected, 2 calendars", requestId = request.requestId)
+            }
             pending().status shouldBe HttpStatusCode.NoContent
             val listed = client.get("/api/v1/connectors") { header(HttpHeaders.Authorization, appAuth) }.body<List<ConnectorSummary>>()
             listed.first { it.id.value == "a" }.lastTest!!.run {

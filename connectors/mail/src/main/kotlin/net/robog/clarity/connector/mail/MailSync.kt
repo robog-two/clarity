@@ -47,12 +47,7 @@ class MailSync(
     suspend fun syncAll(push: suspend (List<IngestRecord>) -> Unit): Int = withContext(Dispatchers.IO) {
         var total = 0
         access.imap().use { store ->
-            for (name in config.folders) {
-                val folder = store.folder(name)
-                if (!folder.exists()) {
-                    log.warn { "folder '$name' does not exist; skipping" }
-                    continue
-                }
+            for (folder in store.syncFolders(config.folders)) {
                 total += folder.openedUse(READ_ONLY) { syncFolder(it, push) }
             }
         }

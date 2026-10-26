@@ -115,4 +115,22 @@ class SpeechInputMappingTest {
         val input = flowOf<SpeechEvent>(SpeechEvent.Final("hello")).toUserInputs({ null }, { "x" }).toList().single()
         assertEquals(null, input.sessionId)
     }
+
+    @Test fun segmentsSeparatedByShortPausesBecomeOneMessage() {
+        val j = PauseJoiner()
+        assertEquals(false, j.holding)
+        j.segment("I want to see a movie")
+        j.segment("  ")
+        assertEquals("I want to see a movie maybe", j.shown("maybe"))
+        j.segment(" maybe Thursday ")
+        assertEquals("I want to see a movie maybe Thursday", j.flush())
+        assertEquals(null, j.flush())
+        assertEquals(false, j.holding)
+    }
+
+    @Test fun joiningSpeechTrimsAndSkipsEmptyPieces() {
+        assertEquals("a b", joinSpeech(" a ", "b "))
+        assertEquals("b", joinSpeech("", "b"))
+        assertEquals("", joinSpeech(" ", ""))
+    }
 }

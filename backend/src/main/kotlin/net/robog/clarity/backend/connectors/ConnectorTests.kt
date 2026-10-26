@@ -1,6 +1,7 @@
 package net.robog.clarity.backend.connectors
 
 import arrow.core.Either
+import arrow.core.getOrElse
 import arrow.core.left
 import arrow.core.right
 import dev.zacsweers.metro.AppScope
@@ -17,6 +18,11 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.uuid.Uuid
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.ConnectorPrincipal
@@ -24,7 +30,7 @@ import net.robog.clarity.backend.governance.OutboxSignals
 import net.robog.clarity.backend.http.EdgeProblem
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.ProblemException
-import net.robog.clarity.backend.http.respondEither
+import net.robog.clarity.backend.http.respondProblem
 import net.robog.clarity.backend.persistence.Connectors
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.shared.ClarityJson
@@ -32,6 +38,7 @@ import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.connector.ConnectorTestReport
 import net.robog.clarity.shared.connector.ConnectorTestRequest
+import net.robog.clarity.shared.connector.ConnectorTestResult
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.datetime.timestamp
@@ -101,11 +108,35 @@ class ConnectorTests(
         }
     }
 
+    /** Waits up to [timeout] for the connector to answer [requestId]; null if it has not by then. */
+    suspend fun awaitReport(id: ConnectorId, requestId: String, timeout: Duration): ConnectorTestReport? =
+        withTimeoutOrNull(timeout) {
+            var report: ConnectorTestReport? = null
+            while (report == null) {
+                report = database.tx {
+                    ConnectorTestTable.selectAll().where { ConnectorTestTable.connectorId eq id.value }.singleOrNull()
+                        ?.get(ConnectorTestTable.report)
+                }?.takeIf { it.requestId == requestId }
+                if (report == null) delay(REPORT_POLL)
+            }
+            report
+        }
+
     /** The newest report per connector, for the connector list. */
     suspend fun lastReports(): Map<String, ConnectorTestReport> = database.tx {
         ConnectorTestTable.selectAll().mapNotNull { row -> row[ConnectorTestTable.report]?.let { row[ConnectorTestTable.connectorId] to it } }.toMap()
     }
 }
+
+/** How long `POST /api/v1/connectors/{id}/test` waits for the connector's report (the app's request timeout is 30 s). */
+val TEST_WAIT: Duration = 20.seconds
+
+private val REPORT_POLL: Duration = 250.milliseconds
+
+/** Pure: a connector's report as the app's test result. */
+fun ConnectorTestReport.toResult(): ConnectorTestResult =
+    if (ok) ConnectorTestResult(ok = true, summary = message, requestId = requestId)
+    else ConnectorTestResult(ok = false, error = message, requestId = requestId)
 
 /** `POST /api/v1/connectors/{id}/test` (app) and `GET`/`POST /ingest/v1/test` (connector). */
 @Inject
@@ -116,9 +147,20 @@ class ConnectorTestRoutes(private val tests: ConnectorTests) : HttpModule {
             authenticate(AuthProviders.DEVICE) {
                 post("${ApiPaths.APP}/connectors/{id}/test") {
                     val raw = call.parameters["id"].orEmpty()
-                    val result: Either<ConnectorError, ConnectorTestRequest> =
-                        if (ConnectorId.PATTERN.matches(raw)) tests.request(ConnectorId(raw)) else ConnectorError.InvalidId(raw).left()
-                    call.respondEither(result, HttpStatusCode.Accepted)
+                    if (!ConnectorId.PATTERN.matches(raw)) return@post call.respondProblem(ConnectorError.InvalidId(raw))
+                    val id = ConnectorId(raw)
+                    val request = tests.request(id).getOrElse { return@post call.respondProblem(it) }
+                    // Most tests finish within seconds: answer with the result itself. Slower ones
+                    // (big mailboxes) answer later through the connector list's lastTest.
+                    val report = tests.awaitReport(id, request.requestId, TEST_WAIT)
+                    if (report == null) {
+                        call.respond(
+                            HttpStatusCode.Accepted,
+                            ConnectorTestResult(ok = false, error = "still testing", pending = true, requestId = request.requestId),
+                        )
+                    } else {
+                        call.respond(report.toResult())
+                    }
                 }
             }
             authenticate(AuthProviders.CONNECTOR) {

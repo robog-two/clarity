@@ -174,7 +174,36 @@ class DefaultConnectorsRepository(
         return SaveConnectorOutcome.Saved
     }
 
-    override suspend fun test(id: ConnectorId) = api.testConnector(id)
+    override suspend fun test(id: ConnectorId): ApiResult<ConnectorTestResult> =
+        when (val r = api.testConnector(id)) {
+            is ApiResult.Success -> ApiResult.Success(awaitTestResult(id, r.value, list = { api.connectors() }))
+            is ApiResult.Failure -> r
+        }
+}
+
+/**
+ * The server answers a test with its result, or with `pending` when the connector is slower than
+ * the server's wait (a big mailbox). Then the result is read from the connector list's
+ * `lastTest`, matched by request id, checking every [every] for up to [tries] times.
+ */
+suspend fun awaitTestResult(
+    id: ConnectorId,
+    first: ConnectorTestResult,
+    list: suspend () -> ApiResult<List<ConnectorSummary>>,
+    every: kotlin.time.Duration = kotlin.time.Duration.parse("3s"),
+    tries: Int = 40,
+): ConnectorTestResult {
+    val requestId = first.requestId
+    if (!first.pending || requestId == null) return first
+    repeat(tries) {
+        kotlinx.coroutines.delay(every)
+        val report = (list() as? ApiResult.Success)?.value?.firstOrNull { it.id == id }?.lastTest
+        if (report?.requestId == requestId) {
+            return if (report.ok) ConnectorTestResult(ok = true, summary = report.message, requestId = requestId)
+            else ConnectorTestResult(ok = false, error = report.message, requestId = requestId)
+        }
+    }
+    return ConnectorTestResult(ok = false, error = "still testing: check again in a minute", requestId = requestId)
 }
 
 // --- sessions ---

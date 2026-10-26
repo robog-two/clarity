@@ -60,17 +60,22 @@ class DomainTools(
         @Description("End of the window (exclusive), ISO-8601 instant") val until: String,
         @Description("Only messages sent or received by this address/number (exact, case-insensitive)") val participant: String? = null,
         @Description("Maximum messages to return (1-$MAX_LIMIT, default 50)") val limit: Int = 50,
+        @Description("Email folder or label: INBOX (default), Sent, Junk, Spam, Archive, a label, or \"*\" for every folder. SMS and chat are always included.")
+        val folder: String = "INBOX",
     )
 
     private val listMessages = tool<ListMessagesInput>(
         name = "list_messages",
         description = "List the user's messages (email, SMS, chat) in a time window, newest first. " +
-            "Use to see what happened or arrived in a period, or what a person has written.",
+            "Use to see what happened or arrived in a period, or what a person has written. " +
+            "Email comes from the inbox unless you name another folder (e.g. Junk when something seems missing).",
         json = ClarityJson,
     ) { input ->
         withRange(input.from, input.until) { range ->
-            val found = reader.messages(range, input.participant?.takeIf { it.isNotBlank() }, input.limit.clampLimit())
-            ToolResult.Ok(found.map { it.messageJson() }.asJsonArray().toString())
+            val folder = input.folder.trim().takeUnless { it.isEmpty() || it == "*" }
+            val found = reader.messages(range, input.participant?.takeIf { it.isNotBlank() }, input.limit.clampLimit(), folder)
+            val folders = reader.messageFolders(found.map { it.id })
+            ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty()) }.asJsonArray().toString())
         }
     }
 
@@ -201,8 +206,9 @@ private fun Iterable<JsonElement>.asJsonArray() = JsonArray(toList())
 
 private fun Handle.label(): String = if (displayName.isNullOrBlank()) value else "$displayName <$value>"
 
-private fun Stored<MessagePayload>.messageJson(): JsonElement = buildJsonObject {
+private fun Stored<MessagePayload>.messageJson(folders: List<String>): JsonElement = buildJsonObject {
     put("id", id.value)
+    if (folders.isNotEmpty()) put("folders", JsonArray(folders.map(::JsonPrimitive)))
     put("channel", payload.channel.name.lowercase())
     put("from", payload.sender.label())
     put("to", JsonArray(payload.recipients.map { JsonPrimitive(it.label()) }))
