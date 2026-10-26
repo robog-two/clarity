@@ -6,7 +6,9 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -41,6 +43,7 @@ import net.robog.clarity.app.data.SetupRepository
 import net.robog.clarity.app.data.UrlError
 import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.data.feed.SyncState
+import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.testutil.FakeSessionStore
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.agentItem
@@ -690,7 +693,21 @@ class ConnectorSetupViewModelTest {
 class ValuesStepViewModelTest {
     private class Rig {
         val sessions = FakeSessions(); val feed = FakeFeed(); val speech = FakeSpeech()
-        val vm = ValuesStepViewModel(sessions, feed, speech)
+        val connection = ConnectionHolder(
+            CoroutineScope(Dispatchers.Unconfined),
+            feed = { awaitCancellation() },
+            actions = { awaitCancellation() },
+        )
+        val vm = ValuesStepViewModel(sessions, feed, speech, connection)
+    }
+
+    @Test fun theInterviewKeepsTheFeedOpenSoQuestionsArrive() = withMain {
+        val r = Rig()
+        assertFalse(r.connection.feedRunning)
+        r.vm.begin()
+        assertTrue(r.connection.feedRunning, "onboarding runs before the main screen opens the feed")
+        r.vm.restart()
+        assertTrue(r.connection.feedRunning, "still open after redo")
     }
 
     @Test fun beginStartsAValuesInterviewSession() = withMain {

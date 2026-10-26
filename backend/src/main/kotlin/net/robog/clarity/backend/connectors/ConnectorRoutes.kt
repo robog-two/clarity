@@ -16,13 +16,13 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.respondEither
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.api.ApiPaths
-import net.robog.clarity.shared.connector.GrantState
-import net.robog.clarity.shared.noun.Noun
+import net.robog.clarity.shared.connector.GrantsUpdate
 
 /** App-facing connector management (`/api/v1/connectors`), device-authenticated. */
 @Inject
@@ -35,9 +35,9 @@ class ConnectorRoutes(private val registry: ConnectorRegistry) : HttpModule {
                     get { call.respond(registry.list()) }
 
                     put("{id}/grants") {
-                        val grants = call.receive<Map<Noun, GrantState>>()
+                        val update = call.receive<GrantsUpdate>()
                         val result = call.connectorId().let { id ->
-                            id.fold({ it.left() }, { registry.setGrants(it, grants) })
+                            id.fold({ it.left() }, { registry.setGrants(it, update.grants) })
                         }
                         call.respondEither(result)
                     }
@@ -45,12 +45,23 @@ class ConnectorRoutes(private val registry: ConnectorRegistry) : HttpModule {
                         call.respondEither(call.connectorId().let { id -> id.fold({ it.left() }, { registry.getConfig(it) }) })
                     }
                     put("{id}/config") {
-                        val values = call.receive<JsonObject>()
+                        val values = configValues(call.receive<JsonObject>())
                         call.respondEither(call.connectorId().let { id -> id.fold({ it.left() }, { registry.setConfig(it, values) }) })
                     }
                 }
             }
         }
+    }
+
+    /**
+     * The values to store from a config PUT body: either the values object itself, or a whole
+     * [net.robog.clarity.shared.connector.ConnectorConfig] (`{"version": n, "values": {...}}`, as the
+     * app sends it back after a GET). The version in the body is ignored; the registry bumps it.
+     */
+    internal fun configValues(body: JsonObject): JsonObject {
+        val values = body["values"]
+        val wrapped = body.keys == setOf("version", "values") && values is JsonObject && body["version"] is JsonPrimitive
+        return if (wrapped) values as JsonObject else body
     }
 
     private fun ApplicationCall.connectorId(): Either<ConnectorError, ConnectorId> {

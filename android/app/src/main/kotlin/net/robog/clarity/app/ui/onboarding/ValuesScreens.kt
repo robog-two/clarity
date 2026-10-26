@@ -104,6 +104,18 @@ fun ValuesContent(
         kicker = null,
         footer = {
             if (state.phase == InterviewPhase.Active) {
+                // Pinned with the buttons, so it stays in reach (and above the keyboard) however long the question is.
+                ClarityField(
+                    label = "or type your answer",
+                    value = typed,
+                    onValueChange = { typed = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = {
+                        onSendTyped(typed)
+                        typed = ""
+                    }),
+                )
                 Hint("Just talk. The mic stays on until you move on.")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SecondaryButton("reword", onReword, Modifier.weight(1f), enabled = state.canDecide)
@@ -137,7 +149,7 @@ fun ValuesContent(
                 SecondaryButton("start again", onRetry, Modifier.fillMaxWidth())
             }
             InterviewPhase.Finished -> Hint("All seven answered.")
-            InterviewPhase.Active -> InterviewBody(state, typed, { typed = it }, onSendTyped, onMicReady)
+            InterviewPhase.Active -> InterviewBody(state, onMicReady)
         }
     }
 }
@@ -145,9 +157,6 @@ fun ValuesContent(
 @Composable
 private fun InterviewBody(
     state: ValuesState,
-    typed: String,
-    onTypedChange: (String) -> Unit,
-    onSendTyped: (String) -> Unit,
     onMicReady: () -> Unit,
 ) {
     state.question?.let { Text(it, style = MaterialTheme.typography.headlineSmall) }
@@ -157,16 +166,6 @@ private fun InterviewBody(
     MicPermissionGate {
         LaunchedEffect(Unit) { onMicReady() }
     }
-    ClarityField(
-        label = "or type your answer",
-        value = typed,
-        onValueChange = onTypedChange,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-        keyboardActions = KeyboardActions(onSend = {
-            onSendTyped(typed)
-            onTypedChange("")
-        }),
-    )
 }
 
 /** "captured as": the line written from the answer, in its reason's words. */
