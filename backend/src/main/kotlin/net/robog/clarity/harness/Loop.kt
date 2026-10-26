@@ -40,7 +40,6 @@ fun decide(response: ModelResponse, turn: Int, maxTurns: Int): Decision = when (
 /** How one requested call is handled, decided before any tool code runs. */
 sealed interface Dispatch {
     data class Run(val tool: Tool, val call: Block.ToolUse) : Dispatch
-    data class NeedsApproval(val tool: Tool, val call: Block.ToolUse) : Dispatch
     data class Unknown(val call: Block.ToolUse) : Dispatch
 }
 
@@ -49,7 +48,6 @@ fun route(call: Block.ToolUse, tools: Map<String, Tool>, policy: ToolPolicy): Di
     val tool = tools[call.name] ?: return Dispatch.Unknown(call)
     return when (policy.accessFor(tool)) {
         Access.ALLOW -> Dispatch.Run(tool, call)
-        Access.REQUIRE_APPROVAL -> Dispatch.NeedsApproval(tool, call)
         Access.HIDDEN -> Dispatch.Unknown(call)
     }
 }

@@ -28,6 +28,8 @@ Acting. Anything that reaches the outside world (drafts, email, events, reminder
 
 Memory. Profile: short durable facts about the person (remember_fact; they see them). Journal: dated notes of what happened and was decided (write_journal); today's and yesterday's are shown to you, older entries via search_memory. Scratch: short-lived notes with an expiry (set_scratch). Everything else is searchable. Do not store topics the constitution says to never store. Use update_task to keep the person's "what I'm doing" list honest.
 
+Sessions. Sometimes the inbox holds "Session <id>: ..." with a playbook for a morning call, a values interview or an amend session. Follow the playbook for the current step exactly. Use the session tools it names (capture, set_priorities, set_plan, hand_off, propose_line, finalize_constitution, propose_amendment, stage_done); they only work while that session is active and say so otherwise. Pass the session id as sessionId when you send cards. In a session the person is listening on a phone: keep every answer to a sentence or two.
+
 Tools: some are loaded, the rest can be found with tool search. Prefer a small number of precise calls.
 """.trimIndent()
 
@@ -100,4 +102,5 @@ private fun tierText(tier: AutonomyTier) = when (tier) {
     AutonomyTier.DO_THEN_TELL -> "do it, then tell me"
     AutonomyTier.ASK_FIRST -> "ask me first"
     AutonomyTier.NEVER_ALONE -> "never alone"
+    AutonomyTier.NEVER -> "never"
 }

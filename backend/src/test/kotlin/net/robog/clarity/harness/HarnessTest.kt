@@ -79,30 +79,12 @@ class HarnessTest : FunSpec({
         events.last().shouldBeInstanceOf<HarnessEvent.Finished>().reason shouldBe FinishReason.END_TURN
     }
 
-    test("approval-required: WRITE tool is not executed, event emitted, error result returned") {
-        var ran = false
-        val write = fakeTool("create_thing", ToolEffect.WRITE) { ran = true; ToolResult.Ok("done") }
-        val gateway = ScriptedGateway(
-            listOf(
-                response(StopReason.TOOL_USE, toolUse("1", "create_thing")),
-                response(StopReason.END_TURN, Block.Text("ok without it")),
-            ),
-        )
-        val events = Harness(gateway).run(request(write)).toList()
-
-        ran shouldBe false
-        events.filterIsInstance<HarnessEvent.ApprovalRequired>().single().name shouldBe "create_thing"
-        val result = gateway.requests[1].messages.last().content.single().shouldBeInstanceOf<Block.Result>()
-        result.isError shouldBe true
-        result.content.contains("pending") shouldBe true
-    }
-
-    test("a policy that allows writes lets them run") {
+    test("writes run under the default policy (they are gated at their own door)") {
         val write = fakeTool("create_thing", ToolEffect.WRITE)
         val gateway = ScriptedGateway(
             listOf(response(StopReason.TOOL_USE, toolUse("1", "create_thing")), response(StopReason.END_TURN)),
         )
-        Harness(gateway).run(request(write, policy = ToolPolicy.AllowAll)).toList()
+        Harness(gateway).run(request(write)).toList()
         gateway.requests[1].messages.last().content.single() shouldBe Block.Result("1", "create_thing ok", false)
     }
 

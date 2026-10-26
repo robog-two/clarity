@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -374,8 +375,9 @@ class LeadScenarioTest : FunSpec({
 
     test("without an API key the lead stays off and says so once") {
         val r = rig(apiKey = null)
-        r.lead.run()
-        r.lead.run()
+        // With no key the lead waits for one; it says so once however often it is started.
+        withTimeoutOrNull(500) { r.lead.run() }
+        withTimeoutOrNull(500) { r.lead.run() }
         val items = r.feed.page(0, 10).items
         items shouldHaveSize 1
         items.single().cards.single().shouldBeInstanceOf<Card.Note>()

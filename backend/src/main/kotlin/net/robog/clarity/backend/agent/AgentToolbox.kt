@@ -4,6 +4,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.serialization.Serializable
+import net.robog.clarity.backend.vault.VaultTools
 import net.robog.clarity.harness.Description
 import net.robog.clarity.harness.Tool
 import net.robog.clarity.harness.ToolEffect
@@ -20,12 +21,14 @@ val LEAD_LOADED = setOf(
     "save_draft", "send_email", "create_event",
     "send_to_user", "delegate", "list_helpers", "message_helper", "cancel_helper",
     "remember_fact", "write_journal", "read_journal", "set_scratch", "search_memory", "update_task", "read_result",
-)
+    "request_credential", "list_credentials", "ask_code",
+) + SESSION_TOOL_NAMES
 
 /** What a helper may use unless the lead narrows it: reads and the gated external tools. */
 val HELPER_BASE = setOf(
     "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_journal", "read_profile", "read_result",
     "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
+    "request_credential", "list_credentials", "ask_code",
 )
 
 /** The memory clean-up helper's tools. */
@@ -107,21 +110,27 @@ class AgentToolbox(
     private val helperTools: HelperTools,
     private val results: LargeResults,
     private val mcp: McpToolSources,
+    private val session: SessionTools,
+    private val vault: VaultTools,
+    private val browser: BrowserGate,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
 
-    private suspend fun mcpTools(scope: RunScope): List<Tool> = mcp.tools().map { it.taintingScope(scope) }
+    /** Every MCP tool; the browser's are wrapped (placeholders, gate, scrubbing) and its raw-script tools hidden. */
+    private suspend fun mcpTools(scope: RunScope): List<Tool> = browser.wrap(scope, mcp.tools()).map { it.taintingScope(scope) }
 
     private fun everything(scope: RunScope, forLead: Boolean): List<Tool> = buildList {
         addAll(domain.all)
         addAll(external.all(scope))
         add(results.readResultTool())
+        addAll(vault.all(scope))
         with(own) {
             addAll(listOf(searchMemory(), readJournal(), readProfile()))
             if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask()))
         }
         if (forLead) addAll(helperTools.all(scope))
+        if (forLead) addAll(session.all())
     }.let { guarded(scope, it) }
 
     /** The lead's tools: the common ones loaded, the rest (and every MCP tool) behind tool search. */

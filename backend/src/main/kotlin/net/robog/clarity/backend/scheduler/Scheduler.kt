@@ -107,6 +107,24 @@ class Scheduler(
         }
     }
 
+    /**
+     * Recomputes the next run of every job whose time follows the settings (not the fixed-interval
+     * ones), after the person changed them: a new call time takes effect at once.
+     */
+    suspend fun resetSchedules() {
+        val current = settings.current()
+        val now = clock.now()
+        val zone = zoneOrUtc(current.timeZone)
+        database.tx {
+            jobs.forEach { job ->
+                val schedule = job.schedule(current)
+                if (schedule !is Schedule.Every) {
+                    ScheduledJobs.update({ ScheduledJobs.name eq job.name }) { it[nextRunAt] = schedule.nextAfter(now, zone) }
+                }
+            }
+        }
+    }
+
     /** Claims and fires one due job; false when none is due. */
     suspend fun tickOnce(): Boolean {
         val current = settings.current()

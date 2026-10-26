@@ -63,6 +63,11 @@ sealed interface GovernanceError : HttpProblem {
         override val title = "Invalid edit"
     }
 
+    data class ApproveElsewhere(override val detail: String) : GovernanceError {
+        override val status = HttpStatusCode.Conflict
+        override val title = "Cannot be approved here"
+    }
+
     data class NoHandler(val kind: String) : GovernanceError {
         override val status = HttpStatusCode.UnprocessableEntity
         override val title = "No connector can do this"

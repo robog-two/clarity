@@ -15,7 +15,8 @@ import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.noun.Handle
 
 private fun expected(kind: ActionKind, tier: AutonomyTier, untrusted: Boolean, external: Boolean): Decision = when {
-    kind == ActionKind.PAYMENT -> Decision.DENY
+    tier == AutonomyTier.NEVER -> Decision.DENY // the person's own hard line, for any kind
+    kind in VAULT_KINDS -> Decision.ASK // vault releases are never done alone, whatever the tier
     tier != AutonomyTier.DO_THEN_TELL -> Decision.ASK
     untrusted && external -> Decision.ASK
     else -> Decision.ALLOW
@@ -41,10 +42,32 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(sample(ActionKind.CREATE_REMINDER), constitution(), trusted()).decision shouldBe Decision.ASK
     }
 
-    test("payments are denied even when the constitution says do-then-tell") {
-        val v = deterministicVerdict(sample(ActionKind.PAYMENT), constitution(autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.DO_THEN_TELL)), trusted(requestedByUser = true))
-        v.decision shouldBe Decision.DENY
-        v.rationale shouldContain "money"
+    test("boundaries come from the interview: payments follow the person's tier like any other kind") {
+        fun pay(tier: AutonomyTier?) = deterministicVerdict(
+            sample(ActionKind.PAYMENT),
+            constitution(autonomy = tier?.let { mapOf(ActionKind.PAYMENT to it) } ?: emptyMap()),
+            trusted(requestedByUser = true),
+        )
+        pay(null).decision shouldBe Decision.ASK // not discussed: ask first
+        pay(AutonomyTier.NEVER_ALONE).decision shouldBe Decision.ASK
+        pay(AutonomyTier.NEVER).also { it.decision shouldBe Decision.DENY; it.rationale shouldContain "never" }
+        // someone may also rule out sending email entirely
+        deterministicVerdict(sample(ActionKind.SEND_EMAIL), constitution(autonomy = mapOf(ActionKind.SEND_EMAIL to AutonomyTier.NEVER)), trusted())
+            .decision shouldBe Decision.DENY
+    }
+
+    test("vault kinds always ask, even when the person lets everything run alone, and say why") {
+        for (kind in VAULT_KINDS) {
+            val v = deterministicVerdict(sample(kind), constitution(tier = AutonomyTier.DO_THEN_TELL), trusted(requestedByUser = true))
+            v.decision shouldBe Decision.ASK
+            v.rationale shouldContain "phone"
+        }
+    }
+
+    test("using a payment card credential is asked about, not denied: the person can still approve on the phone") {
+        val use = (sample(ActionKind.USE_CREDENTIAL) as ProposedAction.UseCredential).copy(summary = "Use card to pay at checkout")
+        effectiveKind(use) shouldBe ActionKind.USE_CREDENTIAL
+        deterministicVerdict(use, constitution(), trusted()).decision shouldBe Decision.ASK
     }
 
     test("an external tool is recognised as a payment by its name, input or summary") {
@@ -129,7 +152,9 @@ class GuardRulesTest : FunSpec({
         val askedOnly = GuardVerdict(Decision.ASK, listOf(LineId("h1")), "x")
         hardLineViolation(sample(ActionKind.SEND_EMAIL), blockedByLine, c) shouldContain "hard line"
         hardLineViolation(sample(ActionKind.SEND_EMAIL), askedOnly, c) shouldBe null
-        hardLineViolation(sample(ActionKind.PAYMENT), askedOnly, c) shouldContain "hard line"
+        hardLineViolation(sample(ActionKind.PAYMENT), askedOnly, c) shouldBe null
+        val noPayments = constitution(lines = listOf(hard, line("v1")), autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.NEVER))
+        hardLineViolation(sample(ActionKind.PAYMENT), askedOnly, noPayments) shouldContain "hard line"
         hardLineViolation(sample(ActionKind.SEND_EMAIL), GuardVerdict(Decision.DENY, listOf(LineId("v1")), "x"), c) shouldBe null
     }
 
@@ -145,7 +170,8 @@ class GuardRulesTest : FunSpec({
             }
             calls shouldBe 1
 
-            guard { GuardVerdict(Decision.ALLOW, emptyList(), "ok") }.check(sample(ActionKind.PAYMENT), c, trusted()).decision shouldBe Decision.DENY
+            val never = constitution(tier = AutonomyTier.NEVER, lines = listOf(line("v1")))
+            guard { GuardVerdict(Decision.ALLOW, emptyList(), "ok") }.check(sample(ActionKind.SAVE_DRAFT), never, trusted()).decision shouldBe Decision.DENY
             calls shouldBe 1 // not consulted
 
             guard { GuardVerdict(Decision.ALLOW, emptyList(), "ok") }.check(sample(ActionKind.SAVE_DRAFT), constitution(), trusted()).decision shouldBe Decision.ASK

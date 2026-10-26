@@ -124,7 +124,7 @@ class LeadPureTest : FunSpec({
             lead.cache!!.ttl shouldBe "1h"
             (lead.compaction != null) shouldBe true
             lead.effort shouldBe "medium"
-            lead.policy shouldBe ToolPolicy.AllowAll
+            lead.policy shouldBe ToolPolicy.Gated
             val helper = roleRequest(roles[AgentRole.HELPER], "h", helperSystemBlocks(), emptyList(), emptyList(), emptyList(), 30, null)
             helper.model shouldBe "claude-sonnet-5-5"
             helper.cache!!.ttl shouldBe "5m"

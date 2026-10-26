@@ -49,6 +49,7 @@ room = "2.8.5"
 ksp = "2.3.12"
 tink = "1.24.0"
 okhttp = "5.5.0"
+guava = "33.6.0-jre"
 
 [libraries]
 # Kotlin / kotlinx
@@ -137,6 +138,7 @@ androidx-work-runtime = { module = "androidx.work:work-runtime", version.ref = "
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
 kotlin-test-junit = { module = "org.jetbrains.kotlin:kotlin-test-junit", version.ref = "kotlin" }

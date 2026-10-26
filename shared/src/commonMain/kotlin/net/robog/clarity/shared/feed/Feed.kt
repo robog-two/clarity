@@ -77,6 +77,10 @@ sealed interface Card {
     /** Progress of tasks the agent is doing ("setting up" after a call). */
     @Serializable @SerialName("tasks")
     data class Tasks(val label: String, val taskIds: List<TaskId>) : Card
+
+    /** A form asking the person to enter a credential; the client fetches the request via `GET /api/v1/vault/requests/{id}`. */
+    @Serializable @SerialName("credential_request")
+    data class CredentialRequest(val requestId: net.robog.clarity.shared.vault.CredentialRequestId) : Card
 }
 
 @Serializable

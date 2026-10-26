@@ -57,4 +57,6 @@ fun sample(kind: ActionKind, key: String = "k-${kind.name}"): ProposedAction = w
     ActionKind.READ_DOCUMENT -> ProposedAction.ReadDocument(key, "read it", EntityId("d1"))
     ActionKind.PAYMENT -> ProposedAction.ExternalTool(key, "pay the invoice", "bank", "pay", JsonObject(emptyMap()))
     ActionKind.EXTERNAL_TOOL -> ProposedAction.ExternalTool(key, "submit form", "browser", "click", JsonObject(emptyMap()))
+    ActionKind.USE_CREDENTIAL -> ProposedAction.UseCredential(key, "use bank login", net.robog.clarity.shared.vault.CredentialId("c1"), "bank.com", listOf("username", "password"))
+    ActionKind.TWO_FACTOR_CODE -> ProposedAction.AskCode(key, "type the code", "bank.com", "login")
 }

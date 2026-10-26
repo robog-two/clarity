@@ -11,8 +11,14 @@ import net.robog.clarity.shared.governance.LineId
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Provenance
 
-/** Kinds that are hard lines: never executed on the guard's say-so, only reviewed (money, purchases). */
-val HARD_LINE_KINDS: Set<ActionKind> = setOf(ActionKind.PAYMENT)
+/** Kinds that only the phone can approve (vault): never executed by a connector, never approved from the generic decision route. */
+val VAULT_KINDS: Set<ActionKind> = setOf(ActionKind.USE_CREDENTIAL, ActionKind.TWO_FACTOR_CODE)
+
+/** The server name browser tools are exposed under (`clarity.agent.mcpServers[].name`), and the `server` of their proposals. */
+const val BROWSER_SERVER = "browser"
+
+/** True for effects the backend performs itself once approved (browser actions): approval only records the yes. */
+fun isLocalAction(action: ProposedAction): Boolean = action is ProposedAction.ExternalTool && action.server == BROWSER_SERVER
 
 /** Human spelling of a kind for rationales, e.g. "send email". */
 fun ActionKind.label(): String = wire().replace('_', ' ')
@@ -31,16 +37,28 @@ private val PAYMENT_WORDS = Regex(
 fun effectiveKind(action: ProposedAction): ActionKind =
     if (action is ProposedAction.ExternalTool && PAYMENT_WORDS.containsMatchIn(textOf(action).replace('_', ' ').replace('-', ' '))) ActionKind.PAYMENT else action.kind
 
-/** The tier that applies to [kind]: fixed never-alone kinds first, then the person's setting, else "ask first". */
-fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier = when {
-    kind in Constitution.ALWAYS_NEVER_ALONE -> AutonomyTier.NEVER_ALONE
-    else -> constitution.autonomy[kind] ?: AutonomyTier.ASK_FIRST
+/**
+ * The tier that applies to [kind]: the person's own setting from the interview (a "never" is
+ * always respected), else "ask first". Vault kinds can never be looser than "never alone".
+ */
+fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
+    val set = constitution.autonomy[kind] ?: AutonomyTier.ASK_FIRST
+    return when {
+        set == AutonomyTier.NEVER -> AutonomyTier.NEVER
+        kind in Constitution.ALWAYS_NEVER_ALONE -> AutonomyTier.NEVER_ALONE
+        else -> set
+    }
 }
+
+/** Kinds the person ruled out entirely ("never"): refused, and not approvable until amended. */
+fun isHardLineKind(kind: ActionKind, constitution: Constitution): Boolean = tierOf(kind, constitution) == AutonomyTier.NEVER
 
 /** Actions that reach other people or outside systems; untrusted-content influence matters most here. */
 fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.SendEmail -> true
     is ProposedAction.ExternalTool -> true
+    is ProposedAction.UseCredential -> true
+    is ProposedAction.AskCode -> false
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
@@ -65,6 +83,8 @@ fun textOf(action: ProposedAction): String = buildString {
         is ProposedAction.CreateReminder -> append(action.text)
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())
+        is ProposedAction.UseCredential -> append(action.site)
+        is ProposedAction.AskCode -> append(action.site).append(' ').append(action.purpose)
         is ProposedAction.MoveEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
     }
 }.lowercase()
@@ -94,11 +114,13 @@ fun deterministicVerdict(
     val kind = effectiveKind(action)
     val kindName = kind.label()
 
-    if (kind in HARD_LINE_KINDS) {
-        findings += Finding(Decision.DENY, "it would move money, which is a line I never cross")
-    }
     when (tierOf(kind, constitution)) {
-        AutonomyTier.NEVER_ALONE -> findings += Finding(Decision.ASK, "you said \"$kindName\" is never done alone")
+        AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you said I never do \"$kindName\"")
+        AutonomyTier.NEVER_ALONE -> findings += Finding(
+            Decision.ASK,
+            if (kind in VAULT_KINDS) "$kindName always needs you on your phone (with your fingerprint or face)"
+            else "you said \"$kindName\" is never done alone",
+        )
         AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, "you want to be asked before I do \"$kindName\"")
         AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you let me do \"$kindName\" and tell you after")
     }
@@ -161,7 +183,7 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (effectiveKind(action) in HARD_LINE_KINDS) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
+    if (isHardLineKind(effectiveKind(action), constitution)) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
         return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"

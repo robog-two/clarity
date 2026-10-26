@@ -103,7 +103,7 @@ class ThemeTest {
     }
 
     @Test fun maskedKeyKeepsThePrefixReadable() {
-        assertEquals("sk-ant-api03-••••••••••••••••••••", maskKey("sk-ant-api03-7Qx2Lm9vRt4KpZ8wNc1y"))
+        assertEquals("sk-ant-api03-••••••••••••••••••••", maskKey("sk-ant-api03-EXAMPLEEXAMPLEEXAMPL"))
         assertEquals("sk-ant", maskKey("sk-ant"))
         assertEquals("", maskKey(""))
     }

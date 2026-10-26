@@ -76,7 +76,7 @@ class HelperManager(
     private val live = ConcurrentHashMap<String, Channel<List<Message>>>()
 
     override suspend fun run() {
-        if (!runtime.enabled) return
+        runtime.awaitEnabled()
         coroutineScope {
             scope.complete(this)
             runs.open().forEach { start(it) }

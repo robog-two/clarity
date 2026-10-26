@@ -18,7 +18,8 @@ Each workstream is one spec file here, implemented by one agent on its own branc
 | 3 | `app-screens` | Android: call + scheduling/notifications, Today, Ask, Held, Amend, Settings, phone connector | app-core, sessions contracts |
 | 3 | `vault-backend` | Vault contracts, store, placeholders + browser gate + scrubbing, harness approval cleanup | lead |
 | 3 | `vault-app` | Phone vault key (Keystore, per-use biometric), credential form card, approval with biometric yes | vault-backend, app-screens |
-| 3 | `push-evals` | Push over the SSE feed (foreground service), scenario evals, end-to-end test, docs | lead, sessions |
+| 3 | `evals-e2e` | Scenario evals, opt-in live evals, end-to-end compose test, docs | lead, sessions |
+| 3 | `push` | Push over the SSE feed from a foreground service (Android) | app-screens |
 
 ## Rules for every workstream
 
