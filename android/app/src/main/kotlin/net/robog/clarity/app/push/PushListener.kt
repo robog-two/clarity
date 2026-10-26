@@ -7,6 +7,12 @@ import net.robog.clarity.app.data.feed.Arrival
 /** Posts the notification (or removes it); the Android side is [AndroidPushNotifier]. */
 interface PushNotifier {
     fun post(plan: NotificationPlan)
+
+    /** The person replied from the notification; [sent] says whether the server took it. */
+    fun replied(text: String, sent: Boolean) {}
+
+    /** The app came to the front: the conversation is read there, so the notification goes. */
+    fun clearConversation() {}
 }
 
 /** Turns what arrives from the feed into notifications, as [decideNotification] says. */

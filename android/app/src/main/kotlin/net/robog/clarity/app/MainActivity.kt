@@ -51,6 +51,7 @@ class MainActivity : FragmentActivity() {
         // The biometric prompt needs the activity in front.
         graph.foregroundActivity.set(this)
         graph.frontScreen.appVisible(true)
+        graph.pushNotifier.clearConversation()
         // Make sure the server knows this phone's vault key and approval key (a no-op when nothing is set up yet).
         lifecycleScope.launch(Dispatchers.Default) {
             if (graph.sessionStore.session.first() != null) graph.vaultRepository.register()

@@ -106,11 +106,38 @@ class ReconnectPolicyTest {
 }
 
 class NotificationDecisionTest {
-    @Test fun onlyPushNowItemsNotifyAndEveryOtherValueStaysInTheApp() {
-        assertNotNull(plan(Arrival.Item(item("push_now"))))
-        assertNull(plan(Arrival.Item(item("in_app"))))
+    @Test fun pushNowAlwaysNotifiesInAppOnlyWhileTheAppIsClosedAndHoldWaits() {
+        val elsewhere = Front.Showing(Place.Tab(MainTab.Settings))
+        assertNotNull(plan(Arrival.Item(item("push_now")), elsewhere))
+        assertNull(plan(Arrival.Item(item("in_app")), elsewhere))
+        assertNull(plan(Arrival.Item(agentItem(7, "old client item")), elsewhere), "an item without a stored decision is in-app")
+        assertNotNull(plan(Arrival.Item(item("in_app"))))
+        assertNotNull(plan(Arrival.Item(agentItem(7, "old client item"))))
         assertNull(plan(Arrival.Item(item("hold_until:2026-10-26T12:00:00Z"))))
-        assertNull(plan(Arrival.Item(agentItem(7, "old client item"))), "an item without a stored decision is in-app")
+    }
+
+    @Test fun aMessageWhileClosedIsOneConversationWithAReplyForItsSession() {
+        val p = plan(Arrival.Item(item("in_app").copy(sessionId = SessionId("s1"))))!!
+        assertEquals(PlanStyle.Message, p.style)
+        assertEquals(MESSAGE_ID, p.id)
+        assertEquals(SessionId("s1"), p.sessionId)
+        assertEquals(MESSAGE_ID, plan(Arrival.Item(item("push_now", seq = 8)))!!.id)
+    }
+
+    @Test fun somethingToApproveOrALoginToEnterOnlyOpensTheApp() {
+        val proposal = agentItem(9, "unused").copy(notify = "push_now", cards = listOf(Card.Proposal(HeldActionId("h1"))))
+        val p = plan(Arrival.Item(proposal))!!
+        assertEquals(PlanStyle.OpenApp, p.style)
+        assertEquals(DeepLink.HeldItem(HeldActionId("h1")), p.link)
+        assertEquals("Open Clarity to review it.", p.text)
+        // the same notification as the urgent held action itself
+        assertEquals(plan(Arrival.Held(urgentHeld("h1")))!!.id, p.id)
+        val login = agentItem(10, "I need your Ulta login").copy(
+            cards = listOf(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r1")), Card.Text("I need your Ulta login")),
+        )
+        val q = plan(Arrival.Item(login))!!
+        assertEquals(PlanStyle.OpenApp, q.style)
+        assertEquals("I need your Ulta login", q.text)
     }
 
     @Test fun anItemWithTheEveningSpellingUsesTheLowChannel() {
@@ -185,7 +212,9 @@ class NotificationDecisionTest {
     @Test fun theSameThingGetsTheSameNotificationId() {
         assertEquals(plan(Arrival.Item(item("push_now")))!!.id, plan(Arrival.Item(item("push_now")))!!.id)
         assertEquals(plan(Arrival.Held(urgentHeld("h1")))!!.id, plan(Arrival.Held(urgentHeld("h1")))!!.id)
-        assertFalse(plan(Arrival.Item(item("push_now", seq = 7)))!!.id == plan(Arrival.Item(item("push_now", seq = 8)))!!.id)
+        // messages are one conversation; different evening summaries are not
+        assertEquals(plan(Arrival.Item(item("push_now", seq = 7)))!!.id, plan(Arrival.Item(item("push_now", seq = 8)))!!.id)
+        assertFalse(plan(Arrival.Item(item("evening_batch:x", seq = 7)))!!.id == plan(Arrival.Item(item("evening_batch:x", seq = 8)))!!.id)
         assertFalse(plan(Arrival.Held(urgentHeld("h1")))!!.id == plan(Arrival.Held(urgentHeld("h2")))!!.id)
     }
 

@@ -15,6 +15,8 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.Person
+import androidx.core.app.RemoteInput
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -190,14 +192,23 @@ object PushNotifications {
 class AndroidPushNotifier(private val context: Context) : PushNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
+    /** The conversation shown in the message notification, oldest first: (text, from the person). */
+    private val conversation = ArrayDeque<Pair<String, Boolean>>()
+    private var lastMessage: NotificationPlan? = null
+    private val me = Person.Builder().setName("You").build()
+    private val agent = Person.Builder().setName("Clarity").setBot(true).build()
+
     override fun post(plan: NotificationPlan) {
         PushNotifications.ensureChannels(context)
-        val open = PendingIntent.getActivity(
-            context, plan.id,
-            Intent(Intent.ACTION_VIEW, plan.link.toUri().toUri(), context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
+        if (plan.style == PlanStyle.Message) {
+            synchronized(conversation) {
+                conversation.addLast(plan.text to false)
+                lastMessage = plan
+            }
+            postConversation(alert = true)
+            return
+        }
+        val open = openIntent(plan)
         val builder = NotificationCompat.Builder(context, plan.channel.id)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(plan.title)
@@ -208,6 +219,89 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
             .setCategory(if (plan.channel == PushChannel.Urgent) NotificationCompat.CATEGORY_MESSAGE else NotificationCompat.CATEGORY_EMAIL)
         if (plan.channel == PushChannel.Urgent) builder.setPriority(NotificationCompat.PRIORITY_HIGH)
         manager.notify(plan.id, builder.build())
+    }
+
+    override fun replied(text: String, sent: Boolean) {
+        synchronized(conversation) {
+            conversation.addLast((if (sent) text else "Not sent: $text. Open Clarity to try again.") to true)
+        }
+        postConversation(alert = false)
+    }
+
+    override fun clearConversation() {
+        synchronized(conversation) {
+            conversation.clear()
+            lastMessage = null
+        }
+        manager.cancel(MESSAGE_ID)
+    }
+
+    /** One chat-style notification with the recent messages and a reply box. */
+    private fun postConversation(alert: Boolean) {
+        val (plan, lines) = synchronized(conversation) {
+            while (conversation.size > MAX_LINES) conversation.removeFirst()
+            (lastMessage ?: return) to conversation.toList()
+        }
+        val style = NotificationCompat.MessagingStyle(me)
+        lines.forEach { (text, mine) -> style.addMessage(text, System.currentTimeMillis(), if (mine) null else agent) }
+        val replyIntent = PendingIntent.getBroadcast(
+            context, MESSAGE_ID,
+            Intent(context, NotificationReplyReceiver::class.java)
+                .putExtra(NotificationReplyReceiver.EXTRA_SESSION, plan.sessionId?.value),
+            // A reply box needs a mutable intent: the system adds the typed text to it.
+            PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        val reply = NotificationCompat.Action.Builder(R.drawable.ic_notification, "Reply", replyIntent)
+            .addRemoteInput(RemoteInput.Builder(NotificationReplyReceiver.KEY_TEXT).setLabel("Reply to Clarity").build())
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+            .setShowsUserInterface(false)
+            .setAllowGeneratedReplies(true)
+            .build()
+        val builder = NotificationCompat.Builder(context, plan.channel.id)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setStyle(style)
+            .addAction(reply)
+            .setContentIntent(openIntent(plan))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(!alert)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+        manager.notify(MESSAGE_ID, builder.build())
+    }
+
+    private fun openIntent(plan: NotificationPlan): PendingIntent =
+        PendingIntent.getActivity(
+            context, plan.id,
+            Intent(Intent.ACTION_VIEW, plan.link.toUri().toUri(), context, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+    private companion object {
+        const val MAX_LINES = 8
+    }
+}
+
+/** The reply box on the message notification: sends the text as the person's input. */
+class NotificationReplyReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim()
+        if (text.isNullOrEmpty()) return
+        val session = intent.getStringExtra(EXTRA_SESSION)?.let { net.robog.clarity.shared.session.SessionId(it) }
+        val graph = (context.applicationContext as ClarityApp).graph
+        val pending = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+            try {
+                val result = graph.feedRepository.send(text, net.robog.clarity.shared.feed.InputSource.TYPED, session, null)
+                graph.pushNotifier.replied(text, result is net.robog.clarity.app.data.ApiResult.Success)
+            } finally {
+                pending.finish()
+            }
+        }
+    }
+
+    companion object {
+        const val KEY_TEXT = "reply"
+        const val EXTRA_SESSION = "session"
     }
 }
 
