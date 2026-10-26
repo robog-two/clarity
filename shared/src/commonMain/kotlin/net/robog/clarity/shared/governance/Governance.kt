@@ -32,7 +32,7 @@ data class Constitution(
 ) {
     companion object {
         /** Kinds that are never done alone, whatever [autonomy] says. */
-        val ALWAYS_NEVER_ALONE: Set<ActionKind> = setOf(ActionKind.PAYMENT)
+        val ALWAYS_NEVER_ALONE: Set<ActionKind> = setOf(ActionKind.PAYMENT, ActionKind.USE_CREDENTIAL, ActionKind.TWO_FACTOR_CODE)
     }
 }
 
@@ -91,6 +91,10 @@ enum class ActionKind {
     @SerialName("payment") PAYMENT,
     /** Anything through a generic MCP tool (browser form submit, third-party server). */
     @SerialName("external_tool") EXTERNAL_TOOL,
+    /** Releasing a stored credential's secret fields to the browser for one site (vault). Always asks, with biometric. */
+    @SerialName("use_credential") USE_CREDENTIAL,
+    /** Asking the person to type a two-factor code. */
+    @SerialName("two_factor_code") TWO_FACTOR_CODE,
 }
 
 /**
@@ -183,6 +187,28 @@ sealed interface ProposedAction {
         val tool: String,
         val input: JsonObject,
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.EXTERNAL_TOOL }
+
+    /**
+     * Use [fields] of a stored credential on [site] (the registrable domain of the page). Approved
+     * only through `POST /api/v1/vault/grants/{heldId}` (biometric on the phone), never executed by a connector.
+     */
+    @Serializable @SerialName("use_credential")
+    data class UseCredential(
+        override val idempotencyKey: String,
+        override val summary: String,
+        val credentialId: net.robog.clarity.shared.vault.CredentialId,
+        val site: String,
+        val fields: List<String>,
+    ) : ProposedAction { override val kind: ActionKind get() = ActionKind.USE_CREDENTIAL }
+
+    /** Ask the person for a two-factor code for [site]; answered through `POST /api/v1/vault/codes/{heldId}`. */
+    @Serializable @SerialName("ask_code")
+    data class AskCode(
+        override val idempotencyKey: String,
+        override val summary: String,
+        val site: String,
+        val purpose: String,
+    ) : ProposedAction { override val kind: ActionKind get() = ActionKind.TWO_FACTOR_CODE }
 }
 
 @Serializable

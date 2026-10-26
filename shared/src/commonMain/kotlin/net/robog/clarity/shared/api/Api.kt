@@ -27,6 +27,19 @@ object ApiPaths {
     const val HELD = "$APP/held"
     const val ACTIVITY = "$APP/activity"
 
+    // Vault (under APP)
+    const val VAULT = "$APP/vault"
+    /** `POST` registers the caller's vault public key; `GET` lists devices' vault keys. */
+    const val VAULT_DEVICES = "$VAULT/devices"
+    /** `GET` lists credential metadata; `POST` completes a request with envelopes; `DELETE {id}` removes one; `GET {id}/envelope` is the caller's own ciphertext. */
+    const val VAULT_CREDENTIALS = "$VAULT/credentials"
+    /** `GET {id}`: a credential request (the form to show). */
+    const val VAULT_REQUESTS = "$VAULT/requests"
+    /** `POST {heldId}`: release secret fields for an approved use (biometric on the phone). */
+    const val VAULT_GRANTS = "$VAULT/grants"
+    /** `POST {heldId}`: the two-factor code the person typed. */
+    const val VAULT_CODES = "$VAULT/codes"
+
     // Connector API (under INGEST)
     const val ACTIONS = "$INGEST/actions"
     /** `GET`: the connector's pending connection test (204 when none). `POST`: its report. */
