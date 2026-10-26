@@ -1,8 +1,8 @@
 #!/bin/sh
 # Smoke test for the egress proxy, against real containers (needs podman and internet access).
-# Mirrors the compose topology with throwaway networks: two internal client networks (browser,
-# backend) and one normal network, with the proxy on all three. Proves:
-#   - one public HTTPS request through the browser listener works
+# Mirrors the compose topology with throwaway networks: three internal client networks (browser,
+# backend, sandbox) and one normal network, with the proxy on all four. Proves:
+#   - one public HTTPS request through the browser and the sandbox listeners works
 #   - private/loopback/link-local/ULA/mapped destinations, a name resolving to a private address,
 #     the host gateway names and non-443 CONNECT are refused (403)
 #   - the backend listener allows only api.anthropic.com (+ CLARITY_BACKEND_EGRESS_ALLOW)
@@ -15,8 +15,8 @@ image="${1:-ghcr.io/robog-two/clarity-egress:local}"
 curl_image="${SMOKE_CURL_IMAGE:-docker.io/curlimages/curl:8.11.1}"
 id="$$"
 egress="clarity-egress-smoke-$id"
-nets="clarity-egsmoke-browser-$id clarity-egsmoke-backend-$id clarity-egsmoke-out-$id"
-net_browser="clarity-egsmoke-browser-$id"; net_backend="clarity-egsmoke-backend-$id"; net_out="clarity-egsmoke-out-$id"
+nets="clarity-egsmoke-browser-$id clarity-egsmoke-backend-$id clarity-egsmoke-sandbox-$id clarity-egsmoke-out-$id"
+net_browser="clarity-egsmoke-browser-$id"; net_backend="clarity-egsmoke-backend-$id"; net_sandbox="clarity-egsmoke-sandbox-$id"; net_out="clarity-egsmoke-out-$id"
 
 cleanup() {
   podman rm -f "$egress" >/dev/null 2>&1 || true
@@ -27,6 +27,7 @@ fail() { echo "FAIL: $*" >&2; podman logs "$egress" 2>&1 | tail -20 >&2 || true;
 
 podman network create --internal "$net_browser" >/dev/null
 podman network create --internal "$net_backend" >/dev/null
+podman network create --internal "$net_sandbox" >/dev/null
 podman network create "$net_out" >/dev/null
 
 # private.test resolves (via /etc/hosts, which Squid reads) to an RFC 1918 address.
@@ -34,7 +35,7 @@ podman run -d --name "$egress" --user 10001:10001 --read-only --cap-drop ALL --s
   --tmpfs /tmp:rw,nosuid,size=64m --memory 128m \
   --add-host private.test:10.1.2.3 --add-host private6.test:fd00::5 \
   -e CLARITY_BACKEND_EGRESS_ALLOW=example.com \
-  --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_out" \
+  --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_sandbox:alias=egress-sandbox" --network "$net_out" \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
   podman exec "$egress" nc -z 127.0.0.1 3130 >/dev/null 2>&1 && break
@@ -56,6 +57,7 @@ expect() { # expect <description> <wanted-status> <actual>
 }
 via_browser() { client "$net_browser" -x http://egress-browser:3128 "$@"; }
 via_backend() { client "$net_backend" -x http://egress-backend:3128 "$@"; }
+via_sandbox() { client "$net_sandbox" -x http://egress-sandbox:3128 "$@"; }
 
 # --- browser listener: public yes, private no ---------------------------------------------------
 expect "browser: public HTTPS (example.com)" 200 "$(via_browser https://example.com/)"
@@ -68,6 +70,14 @@ for url in http://10.0.0.1/ http://192.168.1.1/ http://172.16.0.1/ http://169.25
 done
 expect "browser: CONNECT to non-443 port refused" 403 "$(via_browser https://example.com:8443/)"
 expect "browser: plain HTTP to non-80 port refused" 403 "$(via_browser http://example.com:8080/)"
+
+# --- sandbox listener: the browser's policy ------------------------------------------------------
+expect "sandbox: public HTTPS (example.com)" 200 "$(via_sandbox https://example.com/)"
+expect "sandbox refuses a private address" 403 "$(via_sandbox http://10.0.0.1/)"
+expect "sandbox refuses localhost" 403 "$(via_sandbox http://localhost/)"
+expect "sandbox: CONNECT to non-443 port refused" 403 "$(via_sandbox https://example.com:8443/)"
+expect "sandbox network: no direct route to a public IP" 000 "$(client "$net_sandbox" --noproxy '*' https://1.1.1.1/)"
+expect "sandbox network cannot use the backend listener name" 000 "$(client "$net_sandbox" -x http://egress-backend:3128 https://example.com/)"
 
 # --- backend listener: only the allowlist -------------------------------------------------------
 expect "backend: allowlisted host (example.com via CLARITY_BACKEND_EGRESS_ALLOW)" 200 "$(via_backend https://example.com/)"

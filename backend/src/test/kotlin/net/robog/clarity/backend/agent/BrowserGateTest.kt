@@ -78,6 +78,7 @@ class BrowserGateTest : FunSpec({
         rig.tools.keys shouldContain "sandbox__run"
         rig.tools.getValue("sandbox__run").description shouldBe "not the browser"
         rig.tools.getValue("browser__fill_by_uid").description shouldContain "[secret:"
+        rig.tools.getValue("browser__click_by_uid").description shouldContain "/workspace/downloads"
     }
 
     test("no grant: the placeholder is not substituted, the person is asked once per credential, and the browser is not called") {

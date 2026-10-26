@@ -137,8 +137,9 @@ services:
 
   egress:
     <<: *hardened
-    # Squid, the single door to the internet for the browser and the backend (computers/egress).
-    # Public hosts only for the browser; api.anthropic.com only for the backend. Each client
+    # Squid, the single door to the internet for the browser, the sandbox and the backend
+    # (computers/egress). Public hosts only for the browser and the sandbox; api.anthropic.com only
+    # for the backend. Each client
     # network gets its own listener, bound to this container's address on it (hence the aliases).
     image: ghcr.io/robog-two/clarity-egress:${CLARITY_TAG:-latest}
     build:
@@ -157,6 +158,7 @@ services:
     networks:
       browser-proxy: { aliases: [egress-browser] }
       backend-proxy: { aliases: [egress-backend] }
+      sandbox-proxy: { aliases: [egress-sandbox] }
       egress: {}
     mem_limit: 128m
     cpus: 0.5
@@ -254,8 +256,9 @@ services:
   sandbox:
     <<: *hardened
     profiles: [computers]
-    # sandboxd: the agent's Linux workspace as an MCP server (computers/sandbox). Only on the
-    # internal `tools` network: no route to the internet, to Postgres or to the connectors.
+    # sandboxd: the agent's Linux workspace as an MCP server (computers/sandbox). On the internal
+    # `tools` network, and on `sandbox-proxy` to reach public websites through the egress proxy
+    # (never the LAN). No route to Postgres or the connectors.
     image: ghcr.io/robog-two/clarity-sandbox:${CLARITY_TAG:-latest}
     build:
       context: ..
@@ -265,17 +268,22 @@ services:
       SANDBOX_PORT: "8940"
       SANDBOX_WORKSPACE: /workspace
       SANDBOX_KEY_FILE: /run/secrets/sandbox_key
+      # Remove to take the sandbox offline (then also drop sandbox-proxy below).
+      SANDBOX_HTTP_PROXY: http://egress-sandbox:3128
     secrets:
       - sandbox_key
     volumes:
       - sandbox-workspace:/workspace   # the only thing that persists; the container is disposable
+      - browser-downloads:/workspace/downloads:ro   # what the browser downloads, read-only here
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8940 && printf 'GET /healthz HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ok <&3"]
       interval: 10s
       timeout: 3s
       retries: 6
       start_period: 15s
-    networks: [tools]
+    networks: [tools, sandbox-proxy]
+    depends_on:
+      egress: { condition: service_healthy }
     mem_limit: 1g
     cpus: 1.0
     pids_limit: 512
@@ -301,7 +309,10 @@ services:
       # BROWSER_PROFILE_DIR: /profile
     secrets:
       - browser_key
-    # Profile, HOME and downloads live on tmpfs, so every start is a clean browser.
+    # Profile and HOME live on tmpfs, so every start is a clean browser. Downloads go to a volume the
+    # sandbox reads; files older than BROWSER_DOWNLOADS_DAYS (7) are deleted at start.
+    volumes:
+      - browser-downloads:/downloads
     tmpfs:
       - /tmp:rw,nosuid,size=768m
     shm_size: 512m
@@ -322,10 +333,11 @@ networks:
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
   proxy:    { internal: true }   # caddy <-> backend
-  # The proxy's two client networks: browser <-> egress, backend <-> egress.
+  # The proxy's client networks: browser, sandbox and backend, each <-> egress.
   browser-proxy: { internal: true }
+  sandbox-proxy: { internal: true }
   backend-proxy: { internal: true }
-  # The only route out for the browser and the backend, and only `egress` is on it.
+  # The only route out for the browser, the sandbox and the backend, and only `egress` is on it.
   egress: { enable_ipv6: true }
   # One egress network per remaining service that needs the internet (connectors usually talk to
   # servers on your LAN), so connectors cannot reach each other.
@@ -360,3 +372,4 @@ volumes:
   connector-mail-data:
   connector-dav-data:
   sandbox-workspace:
+  browser-downloads:

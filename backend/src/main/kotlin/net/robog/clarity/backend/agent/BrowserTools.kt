@@ -239,8 +239,11 @@ class BrowserGate(
         override val name get() = inner.name
         override val inputSchema get() = inner.inputSchema
         override val effect get() = inner.effect
-        override val description: String =
-            if (remote in TEXT_ENTRY_TOOLS) inner.description + " " + PLACEHOLDER_HINT else inner.description
+        override val description: String = when (remote) {
+            in TEXT_ENTRY_TOOLS -> inner.description + " " + PLACEHOLDER_HINT
+            in DOWNLOAD_TOOLS -> inner.description + " " + DOWNLOAD_HINT
+            else -> inner.description
+        }
 
         override suspend fun invoke(input: JsonObject): ToolResult {
             val result = try {
@@ -410,6 +413,10 @@ class BrowserGate(
     companion object {
         const val PREFIX = "browser__"
         private val TRIAGE_CACHE = 5.minutes
+        /** Tools that can start a download. */
+        val DOWNLOAD_TOOLS = setOf("click_by_uid", "navigate_page", "new_page")
+        const val DOWNLOAD_HINT =
+            "A file this downloads (a PDF, CSV, ZIP...) is saved without asking and shows up in the sandbox at /workspace/downloads, read-only, for the shell to work on."
         const val PLACEHOLDER_HINT =
             "To enter a saved secret write a placeholder such as [secret:bank_login_password] (see list_credentials); the real value is filled in for you after the person approves, and you never see it."
     }

@@ -49,9 +49,10 @@ user_pref("extensions.autoDisableScopes", 0);
 user_pref("extensions.enabledScopes", 15);
 user_pref("extensions.postDownloadThirdPartyPrompt", false);
 user_pref("xpinstall.signatures.required", true);
-// Downloads go to one fixed place and never prompt.
+// Downloads go to one fixed place and never prompt. /downloads is a volume the sandbox reads
+// (read-only) at /workspace/downloads.
 user_pref("browser.download.folderList", 2);
-user_pref("browser.download.dir", "/tmp/downloads");
+user_pref("browser.download.dir", "/downloads");
 user_pref("browser.download.useDownloadDir", true);
 user_pref("browser.download.manager.addToRecentDocs", false);
 user_pref("browser.helperApps.deleteTempFileOnExit", true);

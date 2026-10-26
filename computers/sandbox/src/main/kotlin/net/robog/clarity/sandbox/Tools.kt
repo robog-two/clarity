@@ -62,8 +62,10 @@ class ShellTool(private val workspace: Workspace, private val runner: ShellRunne
     override val name = "shell"
     override val description = """
         Run a bash command in your Linux workspace (/workspace) and get its combined stdout+stderr and exit code.
-        Available: coreutils, ripgrep (rg), jq, git, python3, pandoc, pdftotext (poppler-utils), sqlite3.
-        There is no internet access. Files under /workspace persist between calls; nothing else does.
+        Available: coreutils, ripgrep (rg), jq, git, python3 (make a venv under /workspace to pip install), pandoc, pdftotext (poppler-utils), sqlite3, curl, wget.
+        ${internetLine(runner.proxy != null)}
+        Files the browser downloads appear in /workspace/downloads (read-only; newest first with `ls -t`; copy one elsewhere to change it).
+        Files under /workspace persist between calls; nothing else does.
         Each call is a fresh shell (cd and exported variables do not carry over; pass `cwd` instead).
         Default timeout is $DEFAULT_TIMEOUT seconds (max $MAX_TIMEOUT); on timeout the whole process group is killed.
         Output over 32 KB is cut to its head and tail; the full output is saved under /workspace/.logs/ (path given in the result),
@@ -359,3 +361,8 @@ fun sandboxTools(workspace: Workspace, runner: ShellRunner = ShellRunner(workspa
         ListFilesTool(workspace),
     )
 }
+
+/** Pure: what the shell's description says about the internet. */
+fun internetLine(online: Boolean): String =
+    if (online) "Public websites are reachable through a proxy (curl, wget, pip, git over http(s); ports 80 and 443 only, never private or local addresses). Sites that need the person's login only work in the browser."
+    else "There is no internet access."
