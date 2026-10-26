@@ -10,6 +10,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.Json
 import net.robog.clarity.backend.agent.AgentRuntime
 import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
 import net.robog.clarity.harness.ModelRequest
@@ -129,12 +130,12 @@ class GatewayGuardModel(
     }
 }
 
-/** Wires [GatewayGuardModel] to the runtime's model key (configured or entered in setup); without a key every check fails and so asks. */
+/** Wires [GatewayGuardModel] to the guard role's gateway and model; without a key every check fails and so asks. */
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ConfiguredGuardModel(private val runtime: AgentRuntime, config: AgentConfig) : GuardModel {
-    private val delegate = GatewayGuardModel({ requireNotNull(runtime.gateway) { "no model key configured" } }, config.model)
+    private val delegate = GatewayGuardModel({ requireNotNull(runtime.gatewayFor(AgentRole.GUARD)) { "no model key configured" } }, config.roles.guard.model)
 
     override suspend fun review(question: GuardQuestion): GuardVerdict = delegate.review(question)
 }

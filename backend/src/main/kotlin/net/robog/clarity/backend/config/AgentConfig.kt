@@ -13,7 +13,14 @@ data class AgentConfig(
     val roles: AgentRoles = AgentRoles(),
     /** Overrides the Anthropic API base URL (`ANTHROPIC_BASE_URL`): a gateway or proxy, or a fake endpoint in tests. */
     val anthropicBaseUrl: String? = null,
+    /** `OPENROUTER_API_KEY`; required when a role's [RoleConfig.provider] is [ModelProvider.OPENROUTER]. */
+    val openRouterApiKey: String? = null,
+    /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
+    val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
 ) {
+    /** The providers some role runs on; agents are enabled once each has a key. */
+    val providersInUse: Set<ModelProvider> get() = AgentRole.entries.mapTo(sortedSetOf()) { roles[it].provider }
+
     /** The lead role's model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
 
@@ -26,6 +33,15 @@ data class AgentConfig(
  * (e.g. a Podman secret mounted at /run/secrets/sandbox_key).
  */
 data class McpServerConfig(val name: String, val url: String, val keyFile: String? = null)
+
+const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+/**
+ * Who serves a role's model. [OPENROUTER] speaks the OpenAI-compatible API without prompt-cache
+ * breakpoints or server-side compaction, so it suits the one-shot roles (guard, triage); the lead
+ * stays on [ANTHROPIC] until compaction runs client-side.
+ */
+enum class ModelProvider { ANTHROPIC, OPENROUTER }
 
 /** Who is calling the model; roles never switch models inside a thread (the cache is per model). */
 enum class AgentRole { LEAD, HELPER, GUARD, TRIAGE }
@@ -49,6 +65,8 @@ data class RoleConfig(
      * rewrites the whole history at the cache-write price, and the next turn writes the summary again.
      */
     val idleCompaction: Boolean = false,
+    /** Who serves [model]; the model name is that provider's (`anthropic/claude-haiku-5.5` on OpenRouter). */
+    val provider: ModelProvider = ModelProvider.ANTHROPIC,
 )
 
 data class AgentRoles(
