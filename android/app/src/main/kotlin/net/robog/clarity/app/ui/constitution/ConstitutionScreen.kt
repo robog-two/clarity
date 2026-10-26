@@ -59,6 +59,8 @@ private fun ActionKind.phrase(): String = when (this) {
     ActionKind.READ_DOCUMENT -> "Reading my files"
     ActionKind.PAYMENT -> "Anything with money"
     ActionKind.EXTERNAL_TOOL -> "Using other tools"
+    ActionKind.USE_CREDENTIAL -> "Using a saved login"
+    ActionKind.TWO_FACTOR_CODE -> "Entering a login code"
 }
 
 /** Kinds not listed ask first; payments never go out alone whatever the tiers say. */
