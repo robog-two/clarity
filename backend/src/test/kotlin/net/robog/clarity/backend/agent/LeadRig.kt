@@ -33,6 +33,11 @@ import net.robog.clarity.backend.sessions.DayPlanStore
 import net.robog.clarity.backend.sessions.SessionService
 import net.robog.clarity.backend.sessions.SessionStore
 import net.robog.clarity.backend.triggers.ExposedTriggerStore
+import net.robog.clarity.backend.vault.ExposedVaultStore
+import net.robog.clarity.backend.vault.GovernedVaultHolds
+import net.robog.clarity.backend.vault.GrantStore
+import net.robog.clarity.backend.vault.VaultService
+import net.robog.clarity.backend.vault.VaultTools
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.ModelGateway
 import net.robog.clarity.harness.ModelRequest
@@ -114,6 +119,12 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val sessionService = SessionService(SessionStore(database), feed, inbox, heldStore, constitutions, clock)
     val dayPlans = DayPlanStore(database, clock)
     val sessionTools = SessionTools(sessionService, feed, dayPlans, tasks, constitutions, settingsProvider, clock)
+    val vaultStore = ExposedVaultStore(database, clock)
+    val grants = GrantStore(clock)
+    val vaultHolds = GovernedVaultHolds(gate, heldStore, feed, clock)
+    val vaultService = VaultService(vaultStore, grants, heldStore, events, feed)
+    var triageVerdict = TriageVerdict(true, "ordinary")
+    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock)
 
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
@@ -121,7 +132,7 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
 
     init {
         val helperTools = HelperTools(lazy { helpers })
-        toolbox = AgentToolbox(domain, own, external, helperTools, large, mcp, sessionTools)
+        toolbox = AgentToolbox(domain, own, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserGate)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, toolbox, large, feed, settingsProvider, clock,
@@ -134,7 +145,7 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
         database.tx {
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
-                    "constitution_version, amendment, memory_journal, memory_scratch, agent_task, scheduled_job, tool_result, message, " +
+                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, agent_task, scheduled_job, tool_result, message, " +
                     "agent_session, day_plan, settings " +
                     "RESTART IDENTITY CASCADE",
             )

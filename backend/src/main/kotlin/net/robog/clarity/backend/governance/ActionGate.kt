@@ -41,6 +41,23 @@ sealed interface ProposalOutcome {
     data class Blocked(val heldId: HeldActionId, override val text: String) : ProposalOutcome
 }
 
+/**
+ * What [ActionGate.gateLocal] decided for an effect the backend performs itself (a browser action,
+ * releasing a credential): nothing is queued for a connector.
+ */
+sealed interface LocalOutcome {
+    val text: String
+
+    /** The guard let it through alone; the caller does it. */
+    data class Cleared(override val text: String) : LocalOutcome
+
+    /** Waiting for the person. */
+    data class Held(val heldId: HeldActionId, override val text: String) : LocalOutcome
+
+    /** Hit a hard line; the person can still review it. */
+    data class Blocked(val heldId: HeldActionId, override val text: String) : LocalOutcome
+}
+
 /** The person's time zone, for protected-time checks; replaced when settings exist. */
 fun interface PersonZone {
     suspend fun zone(): TimeZone
@@ -95,6 +112,30 @@ class ActionGate(
         val stored = held.insert(action, verdict, agentView, context, urgency, status)
         events.publish(GovernanceEvent.HeldChanged(stored))
         return outcomeFor(stored)
+    }
+
+    /**
+     * Like [propose] for effects the backend performs itself (browser actions, vault releases):
+     * the guard decides; ALLOW returns [LocalOutcome.Cleared] for the caller to act on, anything else
+     * is held for the person and nothing reaches a connector. [action] must carry a fresh key per attempt.
+     */
+    suspend fun gateLocal(
+        action: ProposedAction,
+        agentView: String,
+        context: List<ContextItem>,
+        provenance: Provenance,
+        urgency: Urgency,
+    ): LocalOutcome {
+        val constitution = constitutions.current() ?: emptyConstitution(clock.now())
+        val verdict = guard.check(action, constitution, provenance, agentReason = agentView, zone = zone.zone())
+        if (verdict.decision == Decision.ALLOW) return LocalOutcome.Cleared("Allowed alone: ${action.summary}.")
+        val status = if (verdict.decision == Decision.DENY) HeldAction.Status.BLOCKED else HeldAction.Status.HELD
+        val stored = held.insert(action, verdict, agentView, context, urgency, status)
+        events.publish(GovernanceEvent.HeldChanged(stored))
+        return when (stored.status) {
+            HeldAction.Status.BLOCKED -> LocalOutcome.Blocked(stored.id, "Blocked: ${stored.action.summary}. ${stored.verdict.rationale} The person can still review it.")
+            else -> LocalOutcome.Held(stored.id, "Waiting for the person: ${stored.action.summary}. ${stored.verdict.rationale}")
+        }
     }
 
     private suspend fun unroutable(
@@ -162,6 +203,17 @@ class HeldActionService(
             is HeldDecision.Approve -> {
                 val action = decision.edited ?: current.action
                 ensure(action.kind == current.action.kind) { GovernanceError.InvalidEdit("an edit cannot change the kind of action") }
+                // Vault actions are approved only on the phone, with the secret (see vault/VaultService).
+                ensure(action.kind !in VAULT_KINDS) { GovernanceError.ApproveElsewhere("this one is approved on your phone's vault screen, with your fingerprint or face") }
+                // Browser actions are done by the backend itself when the agent repeats the call: approving only records the yes.
+                if (isLocalAction(action)) {
+                    ensure(decision.edited == null) { GovernanceError.InvalidEdit("a browser action cannot be edited") }
+                    val constitution = constitutions.current() ?: emptyConstitution(clock.now())
+                    hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
+                    ensure(store.transition(id, PENDING_STATUSES, HeldAction.Status.APPROVED)) { GovernanceError.HeldNotPending(id.value, "decided") }
+                    publish(id)
+                    return@either ensureNotNull(store.get(id)) { GovernanceError.HeldNotFound(id.value) }
+                }
                 val constitution = constitutions.current() ?: emptyConstitution(clock.now())
                 hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
                 val connector = router.select(action.kind)

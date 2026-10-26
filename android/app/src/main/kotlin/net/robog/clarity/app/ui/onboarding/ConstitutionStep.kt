@@ -38,6 +38,7 @@ fun tierLabel(tier: AutonomyTier): String = when (tier) {
     AutonomyTier.DO_THEN_TELL -> "do it, then tell me"
     AutonomyTier.ASK_FIRST -> "ask me first"
     AutonomyTier.NEVER_ALONE -> "never alone"
+    AutonomyTier.NEVER -> "never"
 }
 
 fun actionKindLabel(kind: ActionKind): String = kind.name.lowercase().replace('_', ' ')

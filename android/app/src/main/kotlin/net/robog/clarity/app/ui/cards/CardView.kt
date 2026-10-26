@@ -70,6 +70,8 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Note -> NoteBox(card.text, modifier)
         is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier)
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
+        // Rendered as a form by the vault-app workstream; until then, a plain note.
+        is Card.CredentialRequest -> NoteBox("I need a login or card from you. Open the vault to add it.", modifier)
     }
 }
 

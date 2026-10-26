@@ -195,7 +195,7 @@ class GovernanceFlowTest : FunSpec({
 
             val v1 = Constitution(
                 version = 99, lines = listOf(line("v1", "Family first"), line("h1", "Never email my boss", hard = true)),
-                autonomy = mapOf(ActionKind.SAVE_DRAFT to AutonomyTier.DO_THEN_TELL), updatedAt = T0,
+                autonomy = mapOf(ActionKind.SAVE_DRAFT to AutonomyTier.DO_THEN_TELL, ActionKind.PAYMENT to AutonomyTier.NEVER), updatedAt = T0,
             )
             val created = client.postAsDevice("/api/v1/constitution", v1)
             created.status shouldBe HttpStatusCode.Created

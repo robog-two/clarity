@@ -126,6 +126,7 @@ private val TIER_SUB = mapOf(
     AutonomyTier.DO_THEN_TELL to "do it, then tell me",
     AutonomyTier.ASK_FIRST to "ask me first",
     AutonomyTier.NEVER_ALONE to "never alone",
+    AutonomyTier.NEVER to "never",
 )
 
 /**
@@ -327,7 +328,7 @@ class SessionTools(
         val section: Section,
         @Description("The line, first person, in the person's own words (\"Never speak for me to a group without my review.\").") val text: String,
         @Description("Their reason, in their words, starting lower-case (\"being misrepresented costs more than any time saved.\").") val because: String,
-        @Description("Question 3 only: the three autonomy tiers with the person's examples.") val tiers: List<TierInput>? = null,
+        @Description("Question 3 only: the autonomy tiers (do it then tell me, ask me first, never alone, never) with the person's examples.") val tiers: List<TierInput>? = null,
         @Description("True for a hard line that is never crossed.") val hard: Boolean = false,
     )
 

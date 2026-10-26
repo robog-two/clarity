@@ -309,8 +309,9 @@ network, no credentials).
 ### Constitution
 
 Versioned document (`constitution_version`), sections as in the design: what I value, hard
-lines (never crossed), how much I do alone (three **autonomy tiers**: *do it, then tell me* /
-*ask me first* / *never alone*), when things collide, who gets through, when I get it wrong.
+lines (never crossed), how much I do alone (**autonomy tiers** per action kind: *do it, then
+tell me* / *ask me first* / *never alone* (only with a yes on the phone, fingerprint or face) /
+*never* (refused even if asked, until amended)), when things collide, who gets through, when I get it wrong.
 Every line keeps its **because** (the reason is what lets the agent use judgment where no rule
 applies). Structured parts (autonomy tiers per action kind, people who get through, protected
 time blocks) are machine-readable so the guard and the notification policy can apply them
@@ -320,8 +321,12 @@ deterministically; the rest is natural language.
 
 Every proposed action (`ProposedAction`) goes through `Guard.check(action, constitution, provenance)`:
 
-1. **Deterministic rules first** (pure): hard-line kinds (money, purchases) → `DENY`; the
-   action kind's autonomy tier → `ALLOW` / `ASK`; recipients > 1 for "sent as me" → `ASK`;
+1. **Deterministic rules first** (pure): the action kind's autonomy tier from the person's own
+   interview → `ALLOW` / `ASK` / `DENY` (*never*). Nothing is hard-coded: one person may let the
+   agent pay for things with a yes on the phone, another may rule out sending email entirely.
+   Kinds the interview didn't cover default to *ask first*. The only fixed floor is mechanical:
+   using a stored credential or a two-factor code always needs the phone (*never alone*), since
+   only the phone can open the vault; recipients > 1 for "sent as me" → `ASK`;
    provenance includes untrusted content and the action is external → at least `ASK`.
 2. **Model check** (`guard` role, structured output): the action, the constitution and the
    agent's stated reason → `ALLOW` / `ASK` / `DENY` + the line ids it touches + one-sentence
@@ -368,7 +373,7 @@ The agent can log in and pay for things without ever seeing a password or card n
   MCP; the model's tool call, the journal and logs only ever hold the placeholder.
   A grant is created by an approval: the first placeholder for a credential on a site makes a
   held approval with context (which site, what for, which credential, the agent's reason; the
-  guard still applies, payment cards are *never alone* so they always ask). **Yes** requires
+  the guard still applies, and any stored credential needs the phone). **Yes** requires
   biometric/device auth; the phone opens the secret in the Keystore and returns it over the
   authenticated channel. The grant covers **that credential on that site (registrable domain)
   for 5 minutes**, so the agent can click through a multi-step login or checkout; values are

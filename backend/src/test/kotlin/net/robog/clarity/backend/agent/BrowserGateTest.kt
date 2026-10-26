@@ -1,0 +1,275 @@
+package net.robog.clarity.backend.agent
+
+import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.collections.shouldContain
+import io.kotest.matchers.collections.shouldNotContain
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
+import io.kotest.matchers.types.shouldBeInstanceOf
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.time.Clock
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
+import kotlin.uuid.Uuid
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import net.robog.clarity.backend.vault.CreateOutcome
+import net.robog.clarity.backend.vault.GrantStore
+import net.robog.clarity.backend.vault.Hold
+import net.robog.clarity.backend.vault.VaultGovernance
+import net.robog.clarity.backend.vault.VaultStore
+import net.robog.clarity.harness.Tool
+import net.robog.clarity.harness.ToolEffect
+import net.robog.clarity.harness.ToolResult
+import net.robog.clarity.shared.DeviceId
+import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.shared.governance.HeldActionId
+import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.shared.governance.Provenance
+import net.robog.clarity.shared.vault.CredentialId
+import net.robog.clarity.shared.vault.CredentialKind
+import net.robog.clarity.shared.vault.CredentialMeta
+import net.robog.clarity.shared.vault.CredentialRequest
+import net.robog.clarity.shared.vault.CredentialRequestId
+import net.robog.clarity.shared.vault.DeviceVaultKey
+import net.robog.clarity.shared.vault.FieldSpec
+import net.robog.clarity.shared.vault.FieldType
+import net.robog.clarity.shared.vault.VaultEnvelope
+
+private fun fields(vararg names: Pair<String, FieldType>) = names.map { (n, t) -> FieldSpec(n, n.replaceFirstChar { it.uppercase() }, t) }
+
+private fun cred(name: String, site: String, kind: CredentialKind, fields: List<FieldSpec>) =
+    CredentialMeta(CredentialId(Uuid.random().toString()), name, kind, site, "purpose", fields, emptyMap(), Instant.parse("2026-10-25T00:00:00Z"))
+
+class BrowserGateTest : FunSpec({
+    val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
+    val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
+
+    class Rig {
+        val clock = StepClock()
+        val browser = FakeBrowser()
+        val vault = MemoryVault(listOf(login, card))
+        val grants = GrantStore(clock)
+        val governance = FakeGovernance()
+        var triage = TriageVerdict(true, "ordinary")
+        val triaged = CopyOnWriteArrayList<TriageStep>()
+        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock)
+        val scope = RunScope("run-1", isLead = true)
+        val tools: Map<String, Tool> = gate.wrap(scope, browser.tools).associateBy { it.name }
+
+        suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue("browser__$name").invoke(input)
+        suspend fun snapshot() = call("take_snapshot", JsonObject(emptyMap()))
+        fun grantLogin(domain: String = "example.com", ttl: Duration = 5.minutes) =
+            grants.put("bank_login", domain, mapOf("username" to "dana@example.com", "password" to "hunter2!"), ttl)
+    }
+
+    test("raw-script tools are hidden; other servers' tools and read tools are untouched") {
+        val rig = Rig()
+        rig.tools.keys shouldNotContain "browser__evaluate_script"
+        rig.tools.keys shouldNotContain "browser__send_bidi_command"
+        rig.tools.keys shouldContain "browser__fill_by_uid"
+        rig.tools.keys shouldContain "sandbox__run"
+        rig.tools.getValue("sandbox__run").description shouldBe "not the browser"
+        rig.tools.getValue("browser__fill_by_uid").description shouldContain "[secret:"
+    }
+
+    test("no grant: the placeholder is not substituted, the person is asked once per credential, and the browser is not called") {
+        val rig = Rig()
+        rig.snapshot()
+        val result = rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        result.shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "Asked the person"
+        rig.governance.credentialAsks shouldBe listOf("bank_login" to "example.com")
+        rig.browser.calls("fill_by_uid").shouldBeEmpty()
+    }
+
+    test("approved release: the value reaches the browser, the agent-visible result holds only the placeholder") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.grantLogin()
+        val result = rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.browser.calls("fill_by_uid").single()["value"] shouldBe kotlinx.serialization.json.JsonPrimitive("hunter2!")
+        val text = result.shouldBeInstanceOf<ToolResult.Ok>().content
+        text shouldBe "filled 1_2 with [secret:bank_login_password]"
+        rig.vault.touched.size shouldBe 1
+    }
+
+    test("every result is scrubbed, including page text, other spellings and errors") {
+        val rig = Rig()
+        rig.grantLogin()
+        rig.grants.put("visa", "example.com", mapOf("card_number" to "4111111111111111"), 5.minutes)
+        val text = (rig.call("get_page_text", JsonObject(emptyMap())) as ToolResult.Ok).content
+        text shouldNotContain "hunter2"
+        text shouldNotContain "4111"
+        text shouldContain "[secret:bank_login_password]"
+        text shouldContain "[secret:visa_card_number]"
+        val error = rig.call("fill_by_uid", args("uid" to "boom", "value" to "x")).shouldBeInstanceOf<ToolResult.Error>().message
+        error shouldBe "could not fill [secret:bank_login_password]"
+    }
+
+    test("values keep being scrubbed after the grant expires, but the next placeholder asks again") {
+        val rig = Rig()
+        rig.grantLogin()
+        rig.clock.advance(6.minutes)
+        (rig.call("get_page_text", JsonObject(emptyMap())) as ToolResult.Ok).content shouldNotContain "hunter2"
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]")).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.governance.credentialAsks.size shouldBe 1
+        rig.browser.calls("fill_by_uid").shouldBeEmpty()
+    }
+
+    test("a grant covers its credential on its site only: another site asks again") {
+        val rig = Rig()
+        rig.grantLogin(domain = "example.com")
+        rig.browser.url = "https://bank.evil.io/login"
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.governance.credentialAsks shouldBe listOf("bank_login" to "evil.io")
+        rig.browser.calls("fill_by_uid").shouldBeEmpty()
+    }
+
+    test("a subdomain of the granted registrable domain is the same site") {
+        val rig = Rig()
+        rig.grantLogin(domain = "example.com")
+        rig.browser.url = "https://accounts.example.com/signin"
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.browser.calls("fill_by_uid").size shouldBe 1
+    }
+
+    test("a grant for one credential does not cover another") {
+        val rig = Rig()
+        rig.grantLogin()
+        rig.call("fill_by_uid", args("uid" to "1_5", "value" to "[secret:visa_card_number]"))
+        rig.governance.credentialAsks shouldBe listOf("visa" to "example.com")
+    }
+
+    test("secrets are never typed into plain http pages, unknown placeholders are explained, and other tools refuse placeholders") {
+        val rig = Rig()
+        rig.grantLogin()
+        rig.browser.url = "http://bank.example.com/login"
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]")).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "https"
+        rig.browser.url = "https://bank.example.com/login"
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:nope_password]")).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "bank_login"
+        rig.call("click_by_uid", args("uid" to "[secret:bank_login_password]")).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "only work in"
+        rig.call("navigate_page", args("url" to "https://x.com/?p=[secret:bank_login_password]")).shouldBeInstanceOf<ToolResult.Error>()
+        rig.browser.calls("navigate_page").shouldBeEmpty()
+        rig.browser.calls("fill_by_uid").shouldBeEmpty()
+    }
+
+    test("a form fill substitutes inside nested values") {
+        val rig = Rig()
+        rig.grantLogin()
+        val input = buildJsonObject {
+            put("elements", buildJsonArray {
+                add(args("uid" to "1_1", "value" to "[secret:bank_login_username]"))
+                add(args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+            })
+        }
+        val result = rig.call("fill_form_by_uid", input) as ToolResult.Ok
+        result.content shouldNotContain "hunter2"
+        result.content shouldNotContain "dana@example.com"
+        rig.browser.calls("fill_form_by_uid").single().toString() shouldContain "hunter2!"
+    }
+
+    test("a code placeholder waits until the person has typed it, then works only on its site") {
+        val rig = Rig()
+        val waiting = rig.call("type_text", args("text" to "[secret:code_h-1]")) as ToolResult.Ok
+        waiting.content shouldContain "not entered"
+        rig.grants.put("code", "example.com", mapOf("h-1" to "424242"), 5.minutes)
+        val ok = rig.call("type_text", args("text" to "[secret:code_h-1]")) as ToolResult.Ok
+        ok.content shouldBe "typed [secret:code_h-1]"
+        rig.browser.calls("type_text").single()["text"] shouldBe kotlinx.serialization.json.JsonPrimitive("424242")
+        rig.browser.url = "https://other.org/"
+        rig.call("type_text", args("text" to "[secret:code_h-1]")).shouldBeInstanceOf<ToolResult.Error>()
+    }
+
+    test("screenshots are refused right after a secret was typed, and allowed again after other actions or leaving the site") {
+        val rig = Rig()
+        rig.snapshot()
+        (rig.call("screenshot_page", JsonObject(emptyMap()))).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.grantLogin()
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.call("screenshot_page", JsonObject(emptyMap())).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "Refused"
+        repeat(8) { rig.call("fill_by_uid", args("uid" to "1_1", "value" to "hello")) }
+        rig.call("screenshot_page", JsonObject(emptyMap())).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.call("fill_by_uid", args("uid" to "1_2", "value" to "[secret:bank_login_password]"))
+        rig.call("screenshot_page", JsonObject(emptyMap())).shouldBeInstanceOf<ToolResult.Error>()
+        rig.call("navigate_page", args("url" to "https://elsewhere.org/"))
+        rig.call("screenshot_page", JsonObject(emptyMap())).shouldBeInstanceOf<ToolResult.Ok>()
+    }
+
+    test("a risky click is held, not run; nothing reaches the browser; one approval lets the same call through") {
+        val rig = Rig()
+        rig.snapshot()
+        val held = rig.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok
+        held.content shouldContain "Waiting"
+        rig.browser.calls("click_by_uid").shouldBeEmpty()
+        val proposed = rig.governance.steps.single()
+        proposed.server shouldBe "browser"
+        proposed.tool shouldBe "click_by_uid"
+        proposed.summary shouldBe "Click button \"Send money\" on bank.example.com/login"
+        rig.governance.stepAnswer = Hold.Proceed
+        rig.call("click_by_uid", args("uid" to "1_4")) shouldBe ToolResult.Ok("clicked 1_4")
+        rig.browser.calls("click_by_uid").size shouldBe 1
+    }
+
+    test("an ordinary click goes to the triage, whose verdict is cached per page and element") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.call("click_by_uid", args("uid" to "1_3")) shouldBe ToolResult.Ok("clicked 1_3")
+        rig.call("click_by_uid", args("uid" to "1_3")) shouldBe ToolResult.Ok("clicked 1_3")
+        rig.triaged.size shouldBe 1
+        rig.triaged.single().description shouldBe "Click button \"Next\" on bank.example.com/login"
+        rig.clock.advance(6.minutes)
+        rig.call("click_by_uid", args("uid" to "1_3"))
+        rig.triaged.size shouldBe 2
+    }
+
+    test("when the triage says ask, the step is held with its reason") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.triage = TriageVerdict(false, "it looks like it submits a form")
+        val result = rig.call("click_by_uid", args("uid" to "1_3")) as ToolResult.Ok
+        result.content shouldContain "Waiting"
+        rig.browser.calls("click_by_uid").shouldBeEmpty()
+    }
+
+    test("typing into an ordinary field passes without any model call, and typing a card number asks") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.call("fill_by_uid", args("uid" to "1_1", "value" to "dana")) shouldBe ToolResult.Ok("filled 1_1 with dana")
+        rig.triaged.shouldBeEmpty()
+        rig.call("fill_by_uid", args("uid" to "1_5", "value" to "4111111111111111")).shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "Waiting"
+        rig.governance.steps.single().input["value"] shouldBe kotlinx.serialization.json.JsonPrimitive("4111111111111111")
+    }
+
+    test("what governance is asked to hold carries placeholders, never values") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.grantLogin()
+        rig.governance.stepAnswer = Hold.Wait("held", HeldActionId("h9"))
+        rig.triage = TriageVerdict(false, "types a password")
+        rig.call("fill_by_uid", args("uid" to "1_3", "value" to "[secret:bank_login_password]"))
+        val step = rig.governance.steps.single()
+        step.input.toString() shouldContain "[secret:bank_login_password]"
+        step.toString() shouldNotContain "hunter2"
+        rig.triaged.single().description shouldNotContain "hunter2"
+    }
+
+    test("a browser tool that throws becomes a scrubbed error, not a crash") {
+        val rig = Rig()
+        rig.grantLogin()
+        val boom = object : Tool {
+            override val name = "browser__type_text"
+            override val description = "boom"
+            override val inputSchema = buildJsonObject { put("type", "object") }
+            override val effect = ToolEffect.EXTERNAL
+            override suspend fun invoke(input: JsonObject): ToolResult = error("driver said hunter2!")
+        }
+        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__type_text" } + boom).associateBy { it.name }
+        val result = tools.getValue("browser__type_text").invoke(args("text" to "hello"))
+        result.shouldBeInstanceOf<ToolResult.Error>().message shouldBe "Browser tool type_text failed: driver said [secret:bank_login_password]"
+    }
+})
