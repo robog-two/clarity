@@ -45,6 +45,11 @@ COMPOSE_FILE="deploy/compose.e2e.generated.yaml"   # next to compose.yaml: relat
 
 if [ "${E2E_SKIP_COMPUTERS:-}" = 1 ]; then SKIP_SANDBOX=1; SKIP_BROWSER=1; else SKIP_SANDBOX=0; SKIP_BROWSER="${E2E_SKIP_BROWSER:-0}"; fi
 
+# Container names below follow podman-compose (<project>_<service>_1). `podman compose` would
+# otherwise prefer a docker-compose plugin when one is installed (as on GitHub runners).
+if [ -z "${PODMAN_COMPOSE_PROVIDER:-}" ] && command -v podman-compose >/dev/null; then
+    export PODMAN_COMPOSE_PROVIDER="$(command -v podman-compose)"
+fi
 compose() { podman compose -p "$PROJECT" -f "$COMPOSE_FILE" --env-file "$WORK/env" "$@"; }
 cli() { java "$root/e2e/DeviceCli.java" "$@"; }
 log() { printf '\n== %s\n' "$*"; }
