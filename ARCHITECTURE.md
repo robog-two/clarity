@@ -372,7 +372,7 @@ The agent can log in and pay for things without ever seeing a password or card n
   placeholders, checks there is a live **grant**, substitutes the values, and calls the browser
   MCP; the model's tool call, the journal and logs only ever hold the placeholder.
   A grant is created by an approval: the first placeholder for a credential on a site makes a
-  held approval with context (which site, what for, which credential, the agent's reason; the
+  held approval with context (which site, what for, which credential, the agent's reason;
   the guard still applies, and any stored credential needs the phone). **Yes** requires
   biometric/device auth; the phone opens the secret in the Keystore and returns it over the
   authenticated channel. The grant covers **that credential on that site (registrable domain)
