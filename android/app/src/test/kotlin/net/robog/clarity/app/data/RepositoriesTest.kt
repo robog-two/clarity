@@ -247,4 +247,16 @@ class RootViewModelTest {
         assertEquals(RootState.Ready, rootState(true, false, complete))
     }
 
+    @Test fun serverCompleteSetupMarksThisDeviceDoneSoPushCanStart() {
+        Dispatchers.setMain(UnconfinedTestDispatcher())
+        try {
+            val flag = Flag(false)
+            val vm = RootViewModel(Sessions(true), flag, Setup(complete))
+            kotlinx.coroutines.runBlocking { assertEquals(RootState.Ready, vm.state.first { it != RootState.Loading }) }
+            assertEquals(true, flag.state.value)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
 }
