@@ -17,6 +17,7 @@ import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.ConnectorsRepository
+import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.connector.ConnectorSummary
 import net.robog.clarity.shared.connector.GrantState
 
@@ -29,7 +30,11 @@ sealed interface ConnectorRow {
     data class Server(val summary: ConnectorSummary) : ConnectorRow {
         override val key: String get() = summary.id.value
         override val title: String get() = summary.manifest?.displayName ?: summary.id.value
-        override val proto: String get() = "${summary.manifest?.kind ?: "connector"} · on your server"
+        override val proto: String
+            get() = if (notRunning) NOT_RUNNING else "${summary.manifest?.kind ?: "connector"} · on your server"
+
+        /** Its container has not started, so it never sent a manifest and there is nothing to set up yet. */
+        val notRunning: Boolean get() = summary.manifest == null
     }
 
     data class Phone(val kind: PhoneConnectorKind) : ConnectorRow {
@@ -39,6 +44,11 @@ sealed interface ConnectorRow {
     }
 }
 
+const val NOT_RUNNING = "not running on your server"
+
+/** Connectors that stand for a phone (`device-*`) are set up elsewhere and never listed as sources. */
+fun isDeviceConnector(id: ConnectorId): Boolean = id.value.startsWith("device-")
+
 /** What the last test of a connector said. */
 sealed interface TestState {
     data object Testing : TestState
@@ -47,9 +57,13 @@ sealed interface TestState {
 }
 
 data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: TestState?) {
+    /** A server connector whose container is not running: shown, but it never blocks onboarding. */
+    val notRunning: Boolean get() = row is ConnectorRow.Server && row.notRunning
+
     /** The right-hand status text from the prototype. */
     val status: String
         get() = when {
+            notRunning -> "not running"
             test is TestState.Testing -> "testing…"
             test is TestState.Ok -> test.summary ?: "synced"
             test is TestState.Failed -> "failed · fix →"
@@ -60,6 +74,7 @@ data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: Te
     /** The caption under the name: the protocol, the failure reason, or "allowed" for phone items. */
     val caption: String
         get() = when {
+            notRunning -> NOT_RUNNING
             test is TestState.Failed -> test.reason
             saved && row is ConnectorRow.Phone -> "allowed · on this phone"
             else -> row.proto
@@ -74,17 +89,20 @@ data class ConnectorsState(
     val unavailable: Boolean = false,
     val error: ApiError? = null,
 ) {
-    val anyFailed: Boolean get() = items.any { it.test is TestState.Failed }
-    val allSynced: Boolean get() = items.isNotEmpty() && items.all { it.test is TestState.Ok }
-    val allSaved: Boolean get() = items.isNotEmpty() && items.all { it.saved }
+    /** Connectors that are not running are left out of every check below. */
+    private val active: List<ConnectorItem> get() = items.filterNot { it.notRunning }
+    val notRunning: List<ConnectorItem> get() = items.filter { it.notRunning }
+    val anyFailed: Boolean get() = active.any { it.test is TestState.Failed }
+    val allSynced: Boolean get() = active.isNotEmpty() && active.all { it.test is TestState.Ok }
+    val allSaved: Boolean get() = active.isNotEmpty() && active.all { it.saved }
     val canSync: Boolean get() = allSaved && !syncing && !anyFailed
 
     /** "3 of 6 set up", "testing and syncing…", ... */
     val summaryLine: String
         get() = connectorsSummaryLine(
-            total = items.size,
-            saved = items.count { it.saved },
-            synced = items.count { it.test is TestState.Ok },
+            total = active.size,
+            saved = active.count { it.saved },
+            synced = active.count { it.test is TestState.Ok },
             syncing = syncing,
             anyFailed = anyFailed,
         )
@@ -116,6 +134,9 @@ class ConnectorsStepViewModel(
 
     private var summaries: Map<String, ConnectorSummary> = emptyMap()
 
+    /** The latest test text of a connector (what its screen shows per account). */
+    fun testOf(key: String): TestState? = _state.value.items.firstOrNull { it.row.key == key }?.test
+
     /** The row of a server connector (for the setup form). */
     fun summaryOf(key: String): ConnectorSummary? = summaries[key]
 
@@ -126,7 +147,7 @@ class ConnectorsStepViewModel(
             val tests = _state.value.items.associate { it.row.key to it.test }
             val list = connectors.list()
             val server: List<ConnectorSummary> = when (list) {
-                is ApiResult.Success -> list.value
+                is ApiResult.Success -> list.value.filterNot { isDeviceConnector(it.id) }
                 is ApiResult.Failure -> {
                     val notFound = list.error is ApiError.NotFound
                     // Without a list the phone connectors can still be set up.
@@ -165,7 +186,7 @@ class ConnectorsStepViewModel(
         if (!_state.value.canSync) return
         viewModelScope.launch {
             _state.update { s -> s.copy(syncing = true, items = s.items.map { it.copy(test = null) }) }
-            for (item in _state.value.items) testOne(item.row.key)
+            for (item in _state.value.items) if (!item.notRunning) testOne(item.row.key)
             _state.update { it.copy(syncing = false) }
         }
     }

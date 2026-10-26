@@ -61,6 +61,7 @@ fun MainScaffold(
     onReview: (HeldActionId) -> Unit,
     onOpenHeldItem: (HeldActionId) -> Unit,
     onOpenConstitution: () -> Unit,
+    onOpenConnector: (String) -> Unit,
     viewModel: MainViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -109,7 +110,7 @@ fun MainScaffold(
             MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content)
             MainTab.Ask -> AskScreen(content, onReview = onReview)
             MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
-            MainTab.Settings -> SettingsTab(onOpenConstitution, content)
+            MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content)
         }
     }
 }

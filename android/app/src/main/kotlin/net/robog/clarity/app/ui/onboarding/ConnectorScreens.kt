@@ -1,10 +1,10 @@
 package net.robog.clarity.app.ui.onboarding
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -12,27 +12,26 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import dev.zacsweers.metrox.viewmodel.metroViewModel
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import net.robog.clarity.app.connector.ConfigForm
-import net.robog.clarity.app.connector.FieldError
+import net.robog.clarity.app.connector.ConfigForms
 import net.robog.clarity.app.connector.FieldKind
-import net.robog.clarity.app.connector.FormField
+import net.robog.clarity.app.connector.FormValues
+import net.robog.clarity.app.connector.ItemPreset
+import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
-import net.robog.clarity.app.ui.components.ClarityField
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.components.SelectRow
-import net.robog.clarity.app.ui.components.ToggleRow
 import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.shared.ConnectorId
+import net.robog.clarity.shared.connector.ConnectorSummary
 
 // --- connectors list ---
 
@@ -74,6 +73,12 @@ fun ConnectorsContent(
         },
     ) {
         Hint("Tap each one to set it up. Then sync, and I’ll test them all.")
+        if (state.notRunning.isNotEmpty()) {
+            Hint(
+                "${state.notRunning.joinToString { it.row.title.lowercase() }} isn’t running on your server. " +
+                    "You can set it up later; it won’t stop you here.",
+            )
+        }
         if (state.unavailable) Hint("This server can’t list its connectors yet. Only the ones on this phone are shown.")
         state.error?.let { ErrorBox("Could not load the connectors.", "Check your connection and come back to this step.") }
         Column {
@@ -84,7 +89,11 @@ fun ConnectorsContent(
                     status = item.status,
                     statusAlpha = if (item.saved || item.test != null) 1f else 0.72f,
                     onClick = { onOpen(item) },
-                    statusColor = if (item.test is TestState.Failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                    statusColor = when {
+                        item.notRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                        item.test is TestState.Failed -> MaterialTheme.colorScheme.error
+                        else -> MaterialTheme.colorScheme.primary
+                    },
                 )
             }
         }
@@ -93,8 +102,18 @@ fun ConnectorsContent(
 
 // --- one connector ---
 
+/**
+ * The screen of one connector. [step] is the onboarding step it sits in, or null when it is opened
+ * from settings (then [backLabel] says where back goes).
+ */
 @Composable
-fun ConnectorSetupScreen(viewModel: ConnectorSetupViewModel, onSaved: () -> Unit, onBack: () -> Unit) {
+fun ConnectorSetupScreen(
+    viewModel: ConnectorSetupViewModel,
+    onSaved: () -> Unit,
+    onBack: () -> Unit,
+    step: OnboardingStep? = OnboardingStep.ConnectorSetup,
+    backLabel: String = "← connectors",
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.saved) {
         if (state.saved) {
@@ -102,44 +121,127 @@ fun ConnectorSetupScreen(viewModel: ConnectorSetupViewModel, onSaved: () -> Unit
             onSaved()
         }
     }
+    // Back from an account or from the presets goes to the account list, not out of the connector.
+    BackHandler(enabled = state.editor != null) { viewModel.cancelItem() }
+    BackHandler(enabled = state.choosing != null) { viewModel.closeChooser() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onPermissionResult(it)
     }
     ConnectorSetupContent(
         state = state,
-        onValueChanged = viewModel::onValueChanged,
-        onAllow = { state.phone?.let { permission.launch(it.permission) } },
-        onSave = viewModel::save,
-        onBack = onBack,
+        actions = SetupActions(
+            onValueChanged = viewModel::onValueChanged,
+            onListChanged = viewModel::onListChanged,
+            onAllow = { state.phone?.let { permission.launch(it.permission) } },
+            onSave = viewModel::save,
+            onBack = onBack,
+            onRecheck = viewModel::recheck,
+            collections = CollectionActions(viewModel::startAdd, viewModel::editItem, viewModel::removeItem),
+            onChoosePreset = viewModel::choosePreset,
+            onCloseChooser = viewModel::closeChooser,
+            onItemValueChanged = viewModel::onItemValueChanged,
+            onItemListChanged = viewModel::onItemListChanged,
+            onSaveItem = viewModel::saveItem,
+            onCancelItem = viewModel::cancelItem,
+        ),
+        step = step,
+        backLabel = backLabel,
     )
 }
+
+/** Everything the connector screen can do, grouped so previews and tests can pass no-ops. */
+data class SetupActions(
+    val onValueChanged: (String, String) -> Unit = { _, _ -> },
+    val onListChanged: (String, List<String>) -> Unit = { _, _ -> },
+    val onAllow: () -> Unit = {},
+    val onSave: () -> Unit = {},
+    val onBack: () -> Unit = {},
+    val onRecheck: () -> Unit = {},
+    val collections: CollectionActions = CollectionActions(),
+    val onChoosePreset: (String, ItemPreset?) -> Unit = { _, _ -> },
+    val onCloseChooser: () -> Unit = {},
+    val onItemValueChanged: (String, String) -> Unit = { _, _ -> },
+    val onItemListChanged: (String, List<String>) -> Unit = { _, _ -> },
+    val onSaveItem: () -> Unit = {},
+    val onCancelItem: () -> Unit = {},
+)
 
 @Composable
 fun ConnectorSetupContent(
     state: ConnectorSetupState,
-    onValueChanged: (String, String) -> Unit,
-    onAllow: () -> Unit,
-    onSave: () -> Unit,
-    onBack: () -> Unit,
+    actions: SetupActions,
+    step: OnboardingStep? = OnboardingStep.ConnectorSetup,
+    backLabel: String = "← connectors",
 ) {
+    val editor = state.editor
+    val choosing = state.choosing
+    when {
+        editor != null -> ItemEditorContent(state, editor, actions, step)
+        choosing != null -> PresetChooserContent(state, choosing, actions, step)
+        else -> ConnectorFormContent(state, actions, step, backLabel)
+    }
+}
+
+@Composable
+private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActions, step: OnboardingStep?, backLabel: String) {
     StepScaffold(
-        step = OnboardingStep.ConnectorSetup,
-        backLabel = "← connectors",
-        onBack = onBack,
-        kicker = state.proto,
+        step = step,
+        backLabel = backLabel,
+        onBack = actions.onBack,
+        kicker = state.proto.ifEmpty { null },
         title = state.title,
         footer = {
-            PrimaryButton(state.saveLabel, onSave, Modifier.fillMaxWidth(), enabled = state.canSave)
+            when {
+                state.loading || state.missing -> Unit
+                state.notRunning -> PrimaryButton("check again", actions.onRecheck, Modifier.fillMaxWidth())
+                else -> PrimaryButton(
+                    state.saveLabel,
+                    actions.onSave,
+                    Modifier.fillMaxWidth(),
+                    enabled = if (state.phone != null) state.canSave else !state.saving,
+                )
+            }
         },
     ) {
+        if (state.loading) Hint("Loading…")
+        if (state.missing) ErrorBox("${state.title} is not on this server.", "Check that its container is part of your setup.")
         state.failedReason?.let {
-            ErrorBox("sync failed · $it", if (state.form.fields.any { f -> f.secret }) "Tap the password to enter it again." else null)
+            ErrorBox(
+                "sync failed · $it",
+                if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
+            )
         }
-        Hint(state.blurb)
+        if (state.notRunning) {
+            InfoBox {
+                Text("not running on your server", style = MaterialTheme.typography.titleMedium)
+                Hint(state.blurb)
+            }
+        } else if (!state.missing && !state.loading) {
+            Hint(state.blurb)
+        }
         state.problem?.let { ErrorBox(it.message()) }
         val errors = state.errors
         state.form.fields.forEach { field ->
-            FieldInput(field, state.values[field.key].orEmpty(), errors[field.key]) { onValueChanged(field.key, it) }
+            FieldInput(
+                field = field,
+                values = state.values,
+                error = errors[field.key],
+                onText = actions.onValueChanged,
+                onList = actions.onListChanged,
+                collection = {
+                    CollectionSection(
+                        field = it,
+                        form = state.form,
+                        values = state.values,
+                        error = errors[it.key],
+                        actions = actions.collections,
+                        testLineFor = state::testLineFor,
+                    )
+                },
+            )
+        }
+        if (state.form.fields.any { it.kind == FieldKind.COLLECTION }) {
+            Hint("Accounts are stored when you tap ${state.saveLabel}.")
         }
         if (state.phone != null) {
             InfoBox {
@@ -148,50 +250,60 @@ fun ConnectorSetupContent(
                 if (state.allowed) {
                     StatusLine("● allowed")
                 } else {
-                    SecondaryButton("allow", onAllow)
+                    SecondaryButton("allow", actions.onAllow)
                 }
             }
         }
     }
 }
 
+/** "Add account": pick iCloud, Fastmail, ... or other; a choice prefills the account form. */
 @Composable
-private fun FieldInput(field: FormField, value: String, error: FieldError?, onChange: (String) -> Unit) {
-    val label = if (field.required) field.label else "${field.label} (optional)"
-    when (field.kind) {
-        FieldKind.BOOLEAN -> ToggleRow(field.label, field.description.orEmpty(), value == "true", onCheckedChange = { onChange(it.toString()) })
-        else -> ClarityField(
-            label = label,
-            value = value,
-            onValueChange = onChange,
-            supporting = field.description,
-            error = error?.message(),
-            visualTransformation = if (field.kind == FieldKind.PASSWORD) PasswordVisualTransformation() else VisualTransformation.None,
-            keyboardOptions = KeyboardOptions(
-                keyboardType = when (field.kind) {
-                    FieldKind.PASSWORD -> KeyboardType.Password
-                    FieldKind.URL -> KeyboardType.Uri
-                    FieldKind.EMAIL -> KeyboardType.Email
-                    FieldKind.NUMBER -> if (field.integer) KeyboardType.Number else KeyboardType.Decimal
-                    else -> KeyboardType.Text
-                },
-                imeAction = ImeAction.Next,
-            ),
-        )
+private fun PresetChooserContent(state: ConnectorSetupState, collection: String, actions: SetupActions, step: OnboardingStep?) {
+    val presets = state.collectionField(collection)?.collection?.presets.orEmpty()
+    StepScaffold(
+        step = step,
+        backLabel = "← ${state.title.lowercase()}",
+        onBack = actions.onCloseChooser,
+        kicker = "new account",
+        title = "Which Kind?",
+    ) {
+        Hint("Pick a provider and I’ll fill in its server settings. You can change anything.")
+        Column {
+            presets.forEach { p ->
+                SelectRow(
+                    p.title,
+                    p.description.orEmpty().ifEmpty { "server settings filled in" },
+                    "→",
+                    { actions.onChoosePreset(collection, p) },
+                )
+            }
+            SelectRow("other", "enter the server settings yourself", "→", { actions.onChoosePreset(collection, null) })
+        }
     }
 }
 
-private fun FieldError.message(): String = when (this) {
-    FieldError.Required -> "Required."
-    FieldError.InvalidUrl -> "Enter a full address, like https://example.com."
-    FieldError.InvalidEmail -> "Enter an email address."
-    FieldError.NotANumber -> "Enter a number."
-    FieldError.NotAWholeNumber -> "Enter a whole number."
-    is FieldError.TooSmall -> "At least ${trim(minimum)}."
-    is FieldError.TooLarge -> "At most ${trim(maximum)}."
+/** One account's fields in their own screen. Nothing is sent until the connector is saved. */
+@Composable
+private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, actions: SetupActions, step: OnboardingStep?) {
+    val form = state.itemForm(editor.collection) ?: ConfigForm(emptyList())
+    val errors = state.editorErrors
+    val field = state.collectionField(editor.collection)
+    val title = field?.let { form.itemTitle(it, ItemValues(editor.id, editor.values)) }?.takeIf { !editor.isNew }
+    StepScaffold(
+        step = step,
+        backLabel = "← ${state.title.lowercase()}",
+        onBack = actions.onCancelItem,
+        kicker = if (editor.isNew) "new account" else "edit account",
+        title = title ?: if (editor.isNew) "New Account" else "Account",
+        footer = { PrimaryButton("save account", actions.onSaveItem, Modifier.fillMaxWidth()) },
+    ) {
+        editor.hint?.let { InfoBox { Hint(it) } }
+        form.fields.forEach { f ->
+            FieldInput(f, editor.values, errors[f.key], actions.onItemValueChanged, actions.onItemListChanged)
+        }
+    }
 }
-
-private fun trim(d: Double): String = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
 
 private fun SetupProblem.message(): String = when (this) {
     SetupProblem.NoSealingKey -> "This connector hasn’t published its encryption key yet, so I can’t send the password safely. Try again in a minute."
@@ -202,25 +314,73 @@ private fun SetupProblem.message(): String = when (this) {
 
 // --- previews ---
 
+private val PREVIEW_SCHEMA = Json.parseToJsonElement(
+    """
+    {"type":"object","required":["accounts"],"properties":{"accounts":{"type":"array","title":"Accounts","minItems":1,
+      "x-item-title":"label","x-item-subtitle":"username",
+      "x-presets":[{"title":"iCloud","description":"Use an app-specific password from account.apple.com","values":{"imapHost":"imap.mail.me.com","imapPort":993,"imapSecurity":"ssl"}}],
+      "items":{"type":"object","required":["label","imapHost","username","password"],"properties":{
+        "id":{"type":"string","readOnly":true},
+        "label":{"type":"string","title":"Name","examples":["Work"]},
+        "imapHost":{"type":"string","title":"IMAP host"},
+        "imapPort":{"type":"integer","title":"IMAP port","default":993},
+        "imapSecurity":{"type":"string","enum":["ssl","starttls","none"],"x-enum-titles":["SSL","STARTTLS","None"],"default":"ssl"},
+        "username":{"type":"string"},
+        "password":{"type":"string","format":"password"},
+        "folders":{"type":"array","items":{"type":"string"},"default":["INBOX"]}}}}}}
+    """,
+).jsonObject
+
+private fun previewState(editing: Boolean = false, choosing: Boolean = false): ConnectorSetupState {
+    val form = ConfigForms.parse(PREVIEW_SCHEMA)
+    val itemForm = form.fields.first().collection!!.itemForm
+    fun item(id: String, label: String, user: String) = ItemValues(
+        id,
+        itemForm.initialValues().withText("label", label).withText("username", user).withText("imapHost", "imap.mail.me.com"),
+    )
+    val values = FormValues().withItems("accounts", listOf(item("k3j9x2p1", "Work", "sam@work.example"), item("m4n8q7r2", "Personal", "sam@icloud.com")))
+    return ConnectorSetupState(
+        key = "mail", title = "Mail", proto = "imap · on your server", blurb = "I read your inbox and save drafts.",
+        form = form, values = values, lastTest = TestLine("Work: 4,218 messages · Personal: password rejected", ok = false),
+        editor = if (editing) ItemEdit("accounts", "k3j9x2p1", false, values.items("accounts").first().values, showErrors = true) else null,
+        choosing = if (choosing) "accounts" else null,
+    )
+}
+
 @Preview(showBackground = true, widthDp = 390, heightDp = 780)
 @Composable
 private fun ConnectorSetupPreview() = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        val form = ConfigForm(
-            listOf(
-                FormField("host", "imap host", kind = FieldKind.TEXT, required = true),
-                FormField("user", "username", kind = FieldKind.EMAIL, required = true),
-                FormField("password", "password", kind = FieldKind.PASSWORD, required = true),
-                FormField("tls", "use tls", kind = FieldKind.BOOLEAN),
-            ),
-        )
+        ConnectorSetupContent(previewState().copy(failedReason = "Personal: password rejected"), SetupActions())
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 780)
+@Composable
+private fun AccountEditorPreview() = ClarityTheme {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        ConnectorSetupContent(previewState(editing = true), SetupActions())
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 780)
+@Composable
+private fun PresetChooserPreview() = ClarityTheme {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        ConnectorSetupContent(previewState(choosing = true), SetupActions())
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 780)
+@Composable
+private fun NotRunningPreview() = ClarityTheme {
+    Surface(color = MaterialTheme.colorScheme.surface) {
         ConnectorSetupContent(
             ConnectorSetupState(
-                key = "mail", title = "Mail", proto = "imap · on your server", blurb = "I read your inbox and save drafts.",
-                form = form, values = mapOf("host" to "imap.home.local:993", "tls" to "true"), showErrors = true,
-                failedReason = "password rejected (401)",
+                key = "dav", title = "Dav", proto = NOT_RUNNING, notRunning = true,
+                blurb = "Dav is not running on your server yet. Start its container (the `dav` compose profile), then come back and check again.",
             ),
-            { _, _ -> }, {}, {}, {},
+            SetupActions(),
         )
     }
 }
@@ -230,8 +390,11 @@ private fun ConnectorSetupPreview() = ClarityTheme {
 private fun PhoneConnectorPreview() = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
         ConnectorSetupContent(
-            ConnectorSetupState(key = "phone-messages", title = "Messages", proto = "on this phone", blurb = PhoneConnectorKind.Messages.blurb, phone = PhoneConnectorKind.Messages),
-            { _, _ -> }, {}, {}, {},
+            ConnectorSetupState(
+                key = "phone-messages", title = "Messages", proto = "on this phone",
+                blurb = PhoneConnectorKind.Messages.blurb, phone = PhoneConnectorKind.Messages,
+            ),
+            SetupActions(),
         )
     }
 }
@@ -245,6 +408,7 @@ private fun ConnectorsPreview() = ClarityTheme {
                 loading = false,
                 items = listOf(
                     ConnectorItem(ConnectorRow.Phone(PhoneConnectorKind.Messages), saved = true, test = TestState.Ok("86 threads")),
+                    ConnectorItem(ConnectorRow.Server(ConnectorSummary(ConnectorId("dav"), null, emptyMap(), null)), saved = false, test = null),
                 ),
             ),
             {}, {}, {}, {},
