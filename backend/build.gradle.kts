@@ -27,3 +27,8 @@ dependencies {
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.testcontainers.postgresql)
 }
+
+// Live evals (real Anthropic API, costs money) run only on request: -Pclarity.liveEvals. Never in CI.
+tasks.test {
+    if (providers.gradleProperty("clarity.liveEvals").isPresent) systemProperty("clarity.liveEvals", "true")
+}
