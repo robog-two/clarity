@@ -12,7 +12,12 @@ import net.robog.clarity.shared.noun.ContactPayload
 import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Payload
+import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
@@ -32,18 +37,34 @@ import org.jetbrains.exposed.v1.json.contains
 @ContributesBinding(AppScope::class)
 class ExposedNounReader(private val database: Database) : NounReader {
 
-    override suspend fun messages(range: TimeRange, participant: String?, limit: Int): List<Stored<MessagePayload>> =
+    override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?): List<Stored<MessagePayload>> =
         database.tx {
             Messages.selectAll()
                 .where {
-                    val inRange = (Messages.sentAt greaterEq range.from) and (Messages.sentAt less range.until) and
+                    var op = (Messages.sentAt greaterEq range.from) and (Messages.sentAt less range.until) and
                         Messages.deletedAt.isNull()
-                    if (participant == null) inRange
-                    else inRange and Messages.participants.contains(listOf(normalizeLooseHandle(participant)))
+                    if (participant != null) op = op and Messages.participants.contains(listOf(normalizeLooseHandle(participant)))
+                    if (folder != null) op = op and ((Messages.channel neq EMAIL) or InEmailFolder(emailFolderPattern(folder)))
+                    op
                 }
                 .orderBy(Messages.sentAt, SortOrder.DESC)
                 .limit(limit.coerceIn(1, MAX_LIMIT))
                 .map { it.toMessage() }
+        }
+
+    override suspend fun messageFolders(ids: List<EntityId>): Map<EntityId, List<String>> =
+        ids.mapNotNull { kotlin.uuid.Uuid.parseOrNull(it.value) }.let { uuids ->
+            if (uuids.isEmpty()) return emptyMap()
+            database.tx {
+            SourceLinks.selectAll()
+                .where {
+                    (SourceLinks.entityId inList uuids) and
+                        (SourceLinks.noun eq "message") and SourceLinks.deletedAt.isNull()
+                }
+                .mapNotNull { row -> emailFolder(row[SourceLinks.sourceId])?.let { EntityId(row[SourceLinks.entityId].toString()) to it } }
+                .groupBy({ it.first }, { it.second })
+                .mapValues { (_, folders) -> folders.distinct().sorted() }
+            }
         }
 
     override suspend fun calendarEvents(range: TimeRange, limit: Int): List<Stored<CalendarEventPayload>> =
@@ -187,4 +208,17 @@ fun documentTsQuery(raw: String): String? {
     val words = TOKEN.findAll(raw.lowercase()).map { it.value }.take(12).toList()
     if (words.isEmpty()) return null
     return words.mapIndexed { i, w -> if (i == words.lastIndex) "$w:*" else w }.joinToString(" & ")
+}
+
+private const val EMAIL = "email"
+
+/** `EXISTS` a live source link of this message whose id is in the folder matched by [pattern]. */
+private class InEmailFolder(private val pattern: String) : Op<Boolean>() {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+        append("EXISTS (SELECT 1 FROM source_link sl WHERE sl.entity_id = ")
+        append(Messages.id)
+        append(" AND sl.noun = 'message' AND sl.deleted_at IS NULL AND sl.source_id ~* ")
+        registerArgument(TextColumnType(), pattern)
+        append(")")
+    }
 }

@@ -5,6 +5,9 @@ import jakarta.mail.Session
 import java.util.Properties
 import org.eclipse.angus.mail.imap.IMAPFolder
 import org.eclipse.angus.mail.imap.IMAPStore
+import io.github.oshai.kotlinlogging.KotlinLogging
+
+private val log = KotlinLogging.logger {}
 
 private const val TIMEOUT_MS = "30000"
 
@@ -62,7 +65,7 @@ class MailAccess(val config: MailConfig) {
     /** Authenticates against both servers; counts the folders and the messages in the configured ones. Throws the server's error otherwise. */
     fun check(): MailCheck {
         val check = imap().use { store ->
-            val messages = config.folders.sumOf { name -> store.folder(name).takeIf { it.exists() }?.messageCount?.coerceAtLeast(0) ?: 0 }
+            val messages = store.syncFolders(config.folders).sumOf { it.messageCount.coerceAtLeast(0) }
             MailCheck(store.defaultFolder.list("*").size, messages)
         }
         val session = smtpSession()
@@ -90,6 +93,25 @@ fun IMAPStore.specialFolder(attribute: String, vararg names: String): IMAPFolder
     for (name in names) all.firstOrNull { it.fullName.equals(name, ignoreCase = true) }?.let { return it }
     return null
 }
+
+/**
+ * The folders to sync: the [configured] ones that exist, or, when none are configured, every
+ * folder that can hold messages (Sent, Junk, Trash and Gmail's All Mail included: a message seen
+ * in several folders is stored once, and the agent can ask for a folder).
+ */
+fun IMAPStore.syncFolders(configured: List<String>): List<IMAPFolder> =
+    if (configured.isEmpty()) {
+        defaultFolder.list("*").map { it as IMAPFolder }.filter { it.canHoldMessages() }
+    } else {
+        configured.mapNotNull { name ->
+            folder(name).takeIf { it.exists() } ?: null.also { log.warn { "folder '$name' does not exist; skipping" } }
+        }
+    }
+
+/** Selectable and able to hold messages (not a `\Noselect` parent such as Gmail's `[Gmail]`). */
+private fun IMAPFolder.canHoldMessages(): Boolean =
+    (type and Folder.HOLDS_MESSAGES) != 0 &&
+        attributes.none { it.equals("\\Noselect", ignoreCase = true) || it.equals("\\NonExistent", ignoreCase = true) }
 
 /** Opens [name] read-only. */
 fun IMAPStore.folder(name: String): IMAPFolder = getFolder(name) as IMAPFolder

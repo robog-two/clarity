@@ -28,12 +28,14 @@ import net.robog.clarity.shared.query.TriggerSpec
 private val t0 = Instant.parse("2026-10-24T09:00:00Z")
 
 private class FakeReader : NounReader {
+    override suspend fun messageFolders(ids: List<EntityId>) = ids.associateWith { listOf("INBOX", "[Gmail]/All Mail") }
     var lastRange: TimeRange? = null
     var lastParticipant: String? = null
     var lastLimit: Int? = null
+    var lastFolder: String? = "unset"
 
-    override suspend fun messages(range: TimeRange, participant: String?, limit: Int): List<Stored<MessagePayload>> {
-        lastRange = range; lastParticipant = participant; lastLimit = limit
+    override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?): List<Stored<MessagePayload>> {
+        lastRange = range; lastParticipant = participant; lastLimit = limit; lastFolder = folder
         return listOf(
             Stored(
                 EntityId("m1"),
@@ -100,6 +102,18 @@ class DomainToolsTest : FunSpec({
         first["from"].toString() shouldBe "\"Bob <bob@x.org>\""
         first["body"].toString().length shouldBe (1_500 + 2 + "…[truncated 3500 chars]".length)
         result.content.contains("\n") shouldBe false
+    }
+
+    test("list_messages reads the inbox unless asked for another folder or every folder, and shows each message's folders") {
+        val window = """"from":"2026-10-24T00:00:00Z","until":"2026-10-25T00:00:00Z""""
+        val result = tools.getValue("list_messages").invoke(obj("{$window}")).shouldBeInstanceOf<ToolResult.Ok>()
+        reader.lastFolder shouldBe "INBOX"
+        Json.parseToJsonElement(result.content).let { it as kotlinx.serialization.json.JsonArray }.first().jsonObject["folders"]
+            .toString() shouldBe """["INBOX","[Gmail]/All Mail"]"""
+        tools.getValue("list_messages").invoke(obj("""{$window,"folder":"Junk"}"""))
+        reader.lastFolder shouldBe "Junk"
+        tools.getValue("list_messages").invoke(obj("""{$window,"folder":"*"}"""))
+        reader.lastFolder shouldBe null
     }
 
     test("bad timestamps and missing fields are tool errors, not exceptions") {

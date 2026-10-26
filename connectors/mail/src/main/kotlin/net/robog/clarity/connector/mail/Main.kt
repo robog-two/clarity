@@ -105,7 +105,7 @@ private suspend fun watchAccount(cfg: MailConfig, sync: MailSync, push: suspend 
     val started = TimeSource.Monotonic.markNow()
     try {
         while (started.elapsedNow() < RUN_WINDOW - IDLE_SLICE) {
-            val changed = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.first(), IDLE_SLICE) }.getOrElse { log.warn { "IDLE failed for '${cfg.label}': ${it.message}" }; null } }
+            val changed = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.firstOrNull() ?: "INBOX", IDLE_SLICE) }.getOrElse { log.warn { "IDLE failed for '${cfg.label}': ${it.message}" }; null } }
             when (changed) {
                 null -> return
                 true -> sync.syncAll(push)

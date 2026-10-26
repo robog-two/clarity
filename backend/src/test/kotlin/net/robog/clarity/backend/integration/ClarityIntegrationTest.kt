@@ -241,6 +241,16 @@ class ClarityIntegrationTest : FunSpec({
             reader.messages(range, participant = "zed@example.com") shouldBe emptyList()
             reader.changedSince(Instant.fromEpochSeconds(0)).size shouldBe 1
 
+            // --- email folders: the same message also seen in Gmail's spam folder, matched by full name or last part
+            push(keyA, upsert("acct1/[Gmail]/Spam/7/42", "1", message("Lunch tomorrow?"))).single().shouldBeInstanceOf<RecordOutcome.Merged>()
+            reader.messages(range, folder = "spam").size shouldBe 1
+            reader.messages(range, folder = "[Gmail]/Spam").size shouldBe 1
+            reader.messages(range, folder = "INBOX") shouldBe emptyList()
+            reader.messages(range, folder = "Gmail]/Spam(") shouldBe emptyList() // regex characters are literal
+            reader.messageFolders(listOf(EntityId(created.entityId.value))) shouldBe mapOf(EntityId(created.entityId.value) to listOf("[Gmail]/Spam"))
+            push(keyA, IngestRecord.Tombstone(SourceId("acct1/[Gmail]/Spam/7/42"), "2", Clock.System.now(), Noun.MESSAGE))
+            reader.messages(range, folder = "spam") shouldBe emptyList()
+
             // --- trigger store round trip
             val triggers = ExposedTriggerStore(db, Clock.System)
             val spec = TriggerSpec("lunch", Noun.MESSAGE, RecordQuery.Contains("body", "lunch"), "reply yes")
@@ -420,6 +430,10 @@ class ClarityIntegrationTest : FunSpec({
                 contentType(ContentType.Application.Json)
                 setBody(ConnectorTestReport(request.requestId, true, "Connected, 2 calendars", mapOf("calendars" to 2), Clock.System.now()))
             }.status shouldBe HttpStatusCode.NoContent
+            asked.await().run {
+                status shouldBe HttpStatusCode.OK
+                body<ConnectorTestResult>() shouldBe ConnectorTestResult(ok = true, summary = "Connected, 2 calendars", requestId = request.requestId)
+            }
             pending().status shouldBe HttpStatusCode.NoContent
             val listed = client.get("/api/v1/connectors") { header(HttpHeaders.Authorization, appAuth) }.body<List<ConnectorSummary>>()
             listed.first { it.id.value == "a" }.lastTest!!.run {
@@ -430,8 +444,4 @@ class ClarityIntegrationTest : FunSpec({
             listed.first { it.id.value == "b" }.lastTest shouldBe null
         }
     }
-            asked.await().run {
-                status shouldBe HttpStatusCode.OK
-                body<ConnectorTestResult>() shouldBe ConnectorTestResult(ok = true, summary = "Connected, 2 calendars", requestId = request.requestId)
-            }
 })
