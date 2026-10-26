@@ -296,6 +296,15 @@ class ClarityIntegrationTest : FunSpec({
             }
             refreshed.status shouldBe HttpStatusCode.OK
             refreshed.headers[HttpHeaders.ETag] shouldBe "\"1\""
+            // the app sends a whole ConnectorConfig back; only its values are stored
+            client.put("/api/v1/connectors/a/config") {
+                header(HttpHeaders.Authorization, bearer(jwt))
+                contentType(ContentType.Application.Json)
+                setBody(ConnectorConfig(7, JsonObject(mapOf("folder" to JsonPrimitive("Archive")))))
+            }.body<ConnectorConfig>().let {
+                it.version shouldBe 2
+                it.values shouldBe JsonObject(mapOf("folder" to JsonPrimitive("Archive")))
+            }
 
             // --- unknown connector -> 404 problem; bad id -> 400
             client.put("/api/v1/connectors/nope/grants") {
