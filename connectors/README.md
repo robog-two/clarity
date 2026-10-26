@@ -11,8 +11,8 @@ connectors. `connectors/example` is the template: copy it.
 2. Add `":connectors:<name>"` to `settings.gradle.kts`.
 3. Edit the `manifest` (kind, nouns it `produces`, JSON Schema for its settings) and the sync block.
 4. Add the service to `deploy/compose.yaml` (copy `connector-example`), a secret
-   `connector_<name>_key` mounted into **both** the backend and the connector, and an entry in the
-   `matrix` of `.github/workflows/publish.yml` and `ci.yml`.
+   `connector_<name>_key` mounted into **both** the backend and the connector, and a line in the
+   image list of the `images` job in `.github/workflows/android-release.yml`.
 
 ## The contract
 
