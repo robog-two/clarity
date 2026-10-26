@@ -61,6 +61,7 @@ import net.robog.clarity.app.ui.onboarding.ValuesState
 import net.robog.clarity.app.ui.onboarding.WelcomeScreen
 import net.robog.clarity.app.ui.settings.SettingsActions
 import net.robog.clarity.app.ui.settings.SettingsContent
+import net.robog.clarity.app.ui.settings.SettingsPage
 import net.robog.clarity.app.ui.settings.SettingsUiState
 import net.robog.clarity.app.ui.settings.SourceRow
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -319,16 +320,20 @@ private val settingsState = SettingsUiState(
 )
 
 @Composable
-private fun SettingsFull() = SettingsContent(settingsState, SettingsActions(), vault = { VaultSectionContent(VaultUiState(VaultKeyStatus.READY, vaultRows, loading = false), {}, {}) })
+private fun SettingsAt(page: SettingsPage) = SettingsContent(
+    settingsState, SettingsActions(),
+    vault = { VaultSectionContent(VaultUiState(VaultKeyStatus.READY, vaultRows, loading = false), {}, {}, showTitle = false) },
+    startPage = page,
+)
 
 @PreviewTest @Screen @Composable
-fun SetupSettingsTop() = Slice(0.dp) { SettingsFull() }
+fun SetupSettingsTop() = Slice(0.dp) { SettingsAt(SettingsPage.Home) }
 
 @PreviewTest @Screen @Composable
-fun SetupSettingsMiddle() = Slice(850.dp) { SettingsFull() }
+fun SetupSettingsMiddle() = Frame { SettingsAt(SettingsPage.MorningCall) }
 
 @PreviewTest @Screen @Composable
-fun SetupSettingsBottom() = Slice(1700.dp) { SettingsFull() }
+fun SetupSettingsBottom() = Frame { SettingsAt(SettingsPage.Sources) }
 
 @PreviewTest @Screen @Composable
 fun SetupSettingsLoading() = Frame { SettingsContent(SettingsUiState(), SettingsActions()) }

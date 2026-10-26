@@ -36,9 +36,9 @@ fun credentialTitle(name: String): String = sentenceCase(name.replace('_', ' ').
 
 /** The "Vault" section of Settings. */
 @Composable
-fun VaultSection(viewModel: VaultViewModel = metroViewModel()) {
+fun VaultSection(showTitle: Boolean = true, viewModel: VaultViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    VaultSectionContent(state, viewModel::delete, viewModel::rekey)
+    VaultSectionContent(state, viewModel::delete, viewModel::rekey, showTitle)
 }
 
 @Composable
@@ -46,9 +46,11 @@ fun VaultSectionContent(
     state: VaultUiState,
     onDelete: (net.robog.clarity.shared.vault.CredentialId) -> Unit,
     onRekey: () -> Unit,
+    /** Off when the section is a page of its own and the page already names it. */
+    showTitle: Boolean = true,
 ) {
     var deleting by remember { mutableStateOf<CredentialRow?>(null) }
-    SectionTitle("Vault")
+    if (showTitle) SectionTitle("Vault")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint("Logins and cards I can use for you, each locked on your phone. I can’t read them; I ask you every time.")
         state.message?.let { ErrorBox(it) }
