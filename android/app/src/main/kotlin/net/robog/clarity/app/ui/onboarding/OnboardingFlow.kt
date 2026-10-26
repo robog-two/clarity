@@ -1,7 +1,10 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Spacer
@@ -135,7 +138,7 @@ fun StepScaffold(
             .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = ScreenGutter)
             .padding(top = 24.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -162,21 +165,52 @@ fun WelcomeScreen(onBegin: () -> Unit) {
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = ScreenGutter)
             .padding(top = 72.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
-            Text("Personal Agent", style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+            Text("Personal agent", style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             Text("You set the priorities.", style = MaterialTheme.clarityText.hero)
             ReadingText(
                 "I take small, scoped tasks and stay out of the way. Setup takes about ten minutes, mostly talking.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Kicker("1 setup · 2 values · 3 review · 4 morning call")
-            PrimaryButton("begin →", onBegin, Modifier.fillMaxWidth())
+        // The four steps ahead, so the screen says what "ten minutes" is made of.
+        Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Kicker("What we’ll do")
+            WELCOME_STEPS.forEachIndexed { i, (title, caption) -> WelcomeStep(i + 1, title, caption) }
+        }
+        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+        PrimaryButton("begin", onBegin, Modifier.fillMaxWidth())
+    }
+}
+
+private val WELCOME_STEPS = listOf(
+    "Connect" to "Your server, your model key, and where your day lives",
+    "Values" to "Seven questions about how you like to work",
+    "Review" to "Check the lines I wrote down from your answers",
+    "Morning call" to "Pick when I call to plan the day",
+)
+
+@Composable
+private fun WelcomeStep(number: Int, title: String, caption: String) {
+    androidx.compose.foundation.layout.Row(
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.layout.Box(
+            Modifier
+                .size(32.dp)
+                .background(MaterialTheme.colorScheme.secondaryContainer, androidx.compose.foundation.shape.CircleShape),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+            Text("$number", color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.labelLarge)
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Hint(caption)
         }
     }
 }
@@ -202,10 +236,10 @@ fun ServerContent(
         step = OnboardingStep.Server,
         backLabel = "← welcome",
         onBack = onBack,
-        title = "Your Server",
+        title = "Your server",
         footer = {
             if (state.enrolled) {
-                PrimaryButton("next →", onNext, Modifier.fillMaxWidth())
+                PrimaryButton("next", onNext, Modifier.fillMaxWidth())
             } else {
                 PrimaryButton("check server", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck)
             }
@@ -214,7 +248,7 @@ fun ServerContent(
         Hint("Your data stays here. I read from it over open standards and keep nothing elsewhere.")
         val urlError = (state.error as? ServerError.InvalidUrl)?.reason
         ClarityField(
-            label = "server address",
+            label = "Server address",
             value = state.url,
             onValueChange = onUrlChanged,
             placeholder = "https://clarity.example.com",
@@ -278,10 +312,10 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
         step = OnboardingStep.Model,
         backLabel = "← server",
         onBack = onBack,
-        title = "Your Model",
+        title = "Your model",
         footer = {
             if (state.canContinue) {
-                PrimaryButton("next →", onNext, Modifier.fillMaxWidth())
+                PrimaryButton("next", onNext, Modifier.fillMaxWidth())
             } else {
                 PrimaryButton("check key", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck)
             }
@@ -300,7 +334,11 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
         Hint("I pick the model size for each task: small for sorting mail, larger for drafting as you.")
         when (val r = state.result) {
             ModelResult.Works -> StatusLine("● key works")
-            is ModelResult.Rejected -> ErrorBox("The key was not accepted.", r.detail)
+            is ModelResult.Rejected -> ErrorBox(
+                "Anthropic didn’t accept this key.",
+                "Check that you copied the whole key and that it’s still active.",
+                raw = r.detail,
+            )
             ModelResult.ServerNotReady -> Hint("This server can’t take the key yet. You can continue and add it in settings later.")
             ModelResult.Failed -> ErrorBox("Could not check the key.", "Try again in a moment.")
             null -> if (state.checking) {

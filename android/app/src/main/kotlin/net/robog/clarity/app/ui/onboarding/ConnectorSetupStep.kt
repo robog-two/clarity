@@ -68,6 +68,8 @@ data class ConnectorSetupState(
     val loading: Boolean = false,
     /** A server connector that has no manifest: its container is not running. */
     val notRunning: Boolean = false,
+    /** For a connector that is not running: how the server's admin starts it (shown behind "How to fix"). */
+    val adminHint: String? = null,
     /** The connector is not in the server's list at all. */
     val missing: Boolean = false,
     val editor: ItemEdit? = null,
@@ -125,8 +127,10 @@ class ConnectorSetupViewModel(
                     // The container is not running, so there is no schema: say so instead of an empty form.
                     _state.value = ConnectorSetupState(
                         key = row.key, title = row.title, proto = row.proto, notRunning = true,
-                        blurb = "${row.title} is not running on your server yet. Start its container " +
-                            "(the `${row.summary.id.value}` compose profile), then come back and check again.",
+                        blurb = "${row.title} hasn’t started on your server yet, so there’s nothing to set up. " +
+                            "Once it’s running, tap Check again.",
+                        adminHint = "Whoever runs your server can start it: it’s the “${row.summary.id.value}” " +
+                            "profile in the server’s compose setup.",
                     )
                     return
                 }
@@ -156,19 +160,19 @@ class ConnectorSetupViewModel(
 
     /** Opened from settings, where only the connector's id is known. */
     fun openById(id: String) {
-        _state.value = ConnectorSetupState(key = id, title = id, loading = true)
+        _state.value = ConnectorSetupState(key = id, title = connectorDisplayName(id), loading = true)
         viewModelScope.launch {
             when (val r = connectors.list()) {
                 is ApiResult.Success -> {
                     val summary = r.value.firstOrNull { it.id.value == id }
                     if (summary == null) {
-                        _state.value = ConnectorSetupState(key = id, title = id, missing = true)
+                        _state.value = ConnectorSetupState(key = id, title = connectorDisplayName(id), missing = true)
                     } else {
                         open(ConnectorRow.Server(summary), failedReason = null)
                     }
                 }
                 is ApiResult.Failure -> _state.value = ConnectorSetupState(
-                    key = id, title = id,
+                    key = id, title = connectorDisplayName(id),
                     problem = if (r.error is ApiError.NotFound) SetupProblem.NotAvailable else SetupProblem.Unreachable,
                 )
             }

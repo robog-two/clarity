@@ -37,7 +37,7 @@ data class CredentialForm(
 
     /** What is wrong with [field] right now, whether or not it has been touched. */
     fun error(field: FieldSpec): String? =
-        Validators.field(field.type, valueOf(field), field.required, nowYear, nowMonth, cardNumber)
+        Validators.field(field.type, valueOf(field), field.required, nowYear, nowMonth, cardNumber)?.curlyApostrophes()
 
     /** The error to show: only once the person has been in the field. */
     fun shownError(field: FieldSpec): String? = if (field.name in touched) error(field) else null
@@ -66,3 +66,6 @@ fun normalizeExpiry(value: String): String {
     val year = m.groupValues[2].takeLast(2)
     return "${m.groupValues[1]}/$year"
 }
+
+/** Pure: the shared validators write "doesn't"; the app's copy uses the typographic apostrophe ("doesn’t"). */
+fun String.curlyApostrophes(): String = replace('\'', '’')

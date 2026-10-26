@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,8 +55,8 @@ fun ValuesIntroScreen(onStart: () -> Unit, onBack: () -> Unit) {
         step = OnboardingStep.ValuesIntro,
         backLabel = "← connectors",
         onBack = onBack,
-        title = "How You Work",
-        footer = { PrimaryButton("start →", onStart, Modifier.fillMaxWidth()) },
+        title = "How you work",
+        footer = { PrimaryButton("start", onStart, Modifier.fillMaxWidth()) },
     ) {
         ReadingText("Seven questions, about six minutes.")
         Hint("I’ll ask about real moments, good and bad, rather than abstract rules. Stories show what matters more reliably than guesses about it.")
@@ -106,7 +107,7 @@ fun ValuesContent(
             if (state.phase == InterviewPhase.Active) {
                 // Pinned with the buttons, so it stays in reach (and above the keyboard) however long the question is.
                 ClarityField(
-                    label = "or type your answer",
+                    label = "Or type your answer",
                     value = typed,
                     onValueChange = { typed = it },
                     modifier = Modifier.fillMaxWidth(),
@@ -119,7 +120,7 @@ fun ValuesContent(
                 Hint("Just talk. The mic stays on until you move on.")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SecondaryButton("reword", onReword, Modifier.weight(1f), enabled = state.canDecide)
-                    PrimaryButton("keep →", onKeep, Modifier.weight(1f), enabled = state.canDecide)
+                    PrimaryButton("keep", onKeep, Modifier.weight(1f), enabled = state.canDecide)
                 }
             }
         },
@@ -129,16 +130,19 @@ fun ValuesContent(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 MicStateChip(state.mic)
                 if (state.mic == MicChipState.Muted) {
-                    TextButton(onClick = onUnmute) { Text("unmute") }
+                    TextButton(onClick = onUnmute) { Text("Unmute") }
                 } else if (state.mic != MicChipState.Off) {
-                    TextButton(onClick = onMute) { Text("mute") }
+                    TextButton(onClick = onMute) { Text("Mute") }
                 }
             }
         }
         when (val phase = state.phase) {
-            InterviewPhase.Idle, InterviewPhase.Starting -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(4.dp))
-                Hint("Getting the first question ready…")
+            InterviewPhase.Idle, InterviewPhase.Starting -> {
+                Text("How you work", style = MaterialTheme.typography.headlineMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
+                    Hint("Getting the first question ready…")
+                }
             }
             InterviewPhase.Unavailable -> {
                 Hint("This server can’t run the values interview yet. You can skip it for now and do it later.")
@@ -173,14 +177,11 @@ private fun InterviewBody(
 fun CapturedLine(line: Line, modifier: Modifier = Modifier) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Kicker("captured as", Modifier.padding(top = 4.dp))
-        InfoBox(
-            container = MaterialTheme.colorScheme.primaryContainer,
-            content = MaterialTheme.colorScheme.onPrimaryContainer,
-            border = null,
-        ) {
-            Kicker(sectionLabel(line.section), color = MaterialTheme.colorScheme.onPrimaryContainer)
+        // Neutral and outlined, so it doesn't read as another chat bubble next to the answer.
+        InfoBox(border = MaterialTheme.colorScheme.primary) {
+            Kicker(sectionLabel(line.section), color = MaterialTheme.colorScheme.primary)
             ReadingText(line.text)
-            line.because?.let { Hint("because $it", italic = true, color = MaterialTheme.colorScheme.onPrimaryContainer) }
+            line.because?.let { Hint("Because $it", italic = true) }
         }
     }
 }
@@ -204,14 +205,14 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
     StepScaffold(
         step = OnboardingStep.Constitution,
         kicker = "step 3 of 4 · your constitution" + (version?.let { " · v$it" } ?: ""),
-        title = "How I Want to Work",
+        title = "How I want to work",
         footer = {
             when (state) {
                 is ConstitutionUi.Loaded -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     SecondaryButton("redo", onRedo, Modifier.weight(1f))
-                    PrimaryButton("looks right →", onNext, Modifier.weight(1f))
+                    PrimaryButton("looks right", onNext, Modifier.weight(1f))
                 }
-                ConstitutionUi.Unavailable -> PrimaryButton("continue →", onNext, Modifier.fillMaxWidth())
+                ConstitutionUi.Unavailable -> PrimaryButton("continue", onNext, Modifier.fillMaxWidth())
                 is ConstitutionUi.Failed -> SecondaryButton("try again", onRetry, Modifier.fillMaxWidth())
                 ConstitutionUi.Loading -> Unit
             }
@@ -229,7 +230,7 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
                         section.entries.forEach { entry ->
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 ReadingText(entry.text)
-                                entry.because?.let { Hint("because $it", italic = true) }
+                                entry.because?.let { Hint("Because $it", italic = true) }
                             }
                         }
                     }

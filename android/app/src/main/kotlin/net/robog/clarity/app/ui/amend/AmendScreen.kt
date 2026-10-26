@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.amend
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -69,7 +70,7 @@ fun AmendContent(
 ) {
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 16.dp),
+            .padding(horizontal = ScreenGutter, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         BackLink(backLabel, onBack)
@@ -89,7 +90,7 @@ fun AmendContent(
             else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
             state.talk.forEach { FeedItemView(it) }
             state.live?.let { LiveBubble(it) }
-            if (state.waitingAgent) Hint("working on it…", italic = true)
+            if (state.waitingAgent) Hint("Working on it…", italic = true)
             state.proposal?.let { p ->
                 Kicker("proposed change")
                 InfoBox(border = MaterialTheme.colorScheme.primary) {
@@ -102,7 +103,7 @@ fun AmendContent(
                         )
                     }
                     ReadingText(p.proposed.text)
-                    p.proposed.because?.let { Hint("because $it") }
+                    p.proposed.because?.let { Hint("Because $it") }
                     p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = 4.dp)) }
                 }
             }

@@ -29,9 +29,9 @@ sealed interface ConnectorRow {
 
     data class Server(val summary: ConnectorSummary) : ConnectorRow {
         override val key: String get() = summary.id.value
-        override val title: String get() = summary.manifest?.displayName ?: summary.id.value
+        override val title: String get() = summary.manifest?.displayName ?: connectorDisplayName(summary.id.value)
         override val proto: String
-            get() = if (notRunning) NOT_RUNNING else "${summary.manifest?.kind ?: "connector"} · on your server"
+            get() = if (notRunning) NOT_RUNNING else "${protocolLabel(summary.manifest?.kind ?: "connector")} · on your server"
 
         /** Its container has not started, so it never sent a manifest and there is nothing to set up yet. */
         val notRunning: Boolean get() = summary.manifest == null
@@ -45,6 +45,21 @@ sealed interface ConnectorRow {
 }
 
 const val NOT_RUNNING = "not running on your server"
+
+/** Pure: a connector id as a readable name when it has no manifest ("dav" → "Dav", "apple-notes" → "Apple notes"). */
+fun connectorDisplayName(id: String): String =
+    id.replace('-', ' ').replace('_', ' ').trim().replaceFirstChar { it.titlecase() }
+
+/** Pure: protocol names keep their usual capitals ("imap" → "IMAP"); anything else is left as it is. */
+fun protocolLabel(kind: String): String = when (kind.lowercase()) {
+    "imap" -> "IMAP"
+    "smtp" -> "SMTP"
+    "caldav" -> "CalDAV"
+    "carddav" -> "CardDAV"
+    "webdav" -> "WebDAV"
+    "dav" -> "DAV"
+    else -> kind
+}
 
 /** Connectors that stand for a phone (`device-*`) are set up elsewhere and never listed as sources. */
 fun isDeviceConnector(id: ConnectorId): Boolean = id.value.startsWith("device-")
@@ -105,14 +120,19 @@ data class ConnectorsState(
             synced = active.count { it.test is TestState.Ok },
             syncing = syncing,
             anyFailed = anyFailed,
+            notRunning = notRunning.size,
         )
 }
 
-fun connectorsSummaryLine(total: Int, saved: Int, synced: Int, syncing: Boolean, anyFailed: Boolean): String = when {
-    syncing -> "testing and syncing…"
-    anyFailed -> "$synced of $total synced · tap the failed one to fix it"
-    total > 0 && synced == total -> "all $total synced"
-    else -> "$saved of $total set up"
+fun connectorsSummaryLine(total: Int, saved: Int, synced: Int, syncing: Boolean, anyFailed: Boolean, notRunning: Int = 0): String {
+    // Rows that are not running are listed too, so the count says where they went.
+    val skipped = if (notRunning > 0) " · $notRunning not running" else ""
+    return when {
+        syncing -> "testing and syncing…"
+        anyFailed -> "$synced of $total synced$skipped · tap the failed one to fix it"
+        total > 0 && synced == total -> "all $total synced$skipped"
+        else -> "$saved of $total set up$skipped"
+    }
 }
 
 /** Server connectors count as set up when every noun they produce is granted. */

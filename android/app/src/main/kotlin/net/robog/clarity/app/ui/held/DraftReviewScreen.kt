@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -83,7 +84,7 @@ fun DraftReviewContent(
     val held = state.held
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = 20.dp, vertical = 8.dp),
+            .padding(horizontal = ScreenGutter, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         BackLink("Back", onBack)

@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.call
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -132,23 +133,23 @@ private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Un
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 20.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state.mic == MicChipState.Off) Spacer(Modifier) else MicStateChip(state.mic)
             Kicker("morning meeting · $elapsed")
         }
-        StageSegments(state.stage, Modifier.padding(horizontal = 20.dp).padding(bottom = 14.dp))
+        StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = 14.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         SessionFeed(state, Modifier.weight(1f))
         if (!mic.granted) {
-            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
-        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
+        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp)) }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 24.dp),
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 14.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SecondaryButton(
@@ -209,7 +210,7 @@ private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
     LazyColumn(
         modifier.fillMaxWidth(),
         state = listState,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(state.items, key = { it.seq }) { FeedItemView(it, env = env) }
@@ -269,7 +270,7 @@ private fun SetupRow(task: AgentTask) {
 @Composable
 private fun ReplayScreen(state: CallUiState, onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 16.dp)) {
-        Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = ScreenGutter), verticalAlignment = Alignment.CenterVertically) {
             net.robog.clarity.app.ui.components.BackLink("Your morning", onClose)
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
