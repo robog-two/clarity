@@ -16,7 +16,8 @@ Each workstream is one spec file here, implemented by one agent on its own branc
 | 2 | `egress` | Egress proxy: browser can reach only the public internet, backend only the model API | computers |
 | 3 | `sessions` | Morning call, values interview, amend, Today, settings, setup API | lead |
 | 3 | `app-screens` | Android: call + scheduling/notifications, Today, Ask, Held, Amend, Settings, phone connector | app-core, sessions contracts |
-| 3 | `vault` | Credential vault: phone-held key, forms, fill + scrubbing, biometric approval | governance, computers, lead |
+| 3 | `vault-backend` | Vault contracts, store, placeholders + browser gate + scrubbing, harness approval cleanup | lead |
+| 3 | `vault-app` | Phone vault key (Keystore, per-use biometric), credential form card, approval with biometric yes | vault-backend, app-screens |
 | 3 | `push-evals` | Push over the SSE feed (foreground service), scenario evals, end-to-end test, docs | lead, sessions |
 
 ## Rules for every workstream
