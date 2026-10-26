@@ -43,6 +43,12 @@ class DocumentDedupTest : FunSpec({
         }
     }
 
+    test("trailing whitespace and slashes normalize the same way in one pass") {
+        normalizeDocumentPath("d /") shouldBe "/d"
+        normalizeDocumentPath("/d") shouldBe "/d"
+        DocumentPayload("Store / ", "d /", "t").normalized().store shouldBe "store"
+    }
+
     test("search queries become prefix tsqueries") {
         documentTsQuery("Quarterly rep") shouldBe "quarterly & rep:*"
         documentTsQuery("  ;; ") shouldBe null

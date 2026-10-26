@@ -80,7 +80,8 @@ private val SLASHES = Regex("/{2,}")
 
 /** `a//b/` -> `/a/b`: one leading slash, no repeated or trailing slashes (the root is `/`). */
 fun normalizeDocumentPath(raw: String): String {
-    val collapsed = raw.trim().replace('\\', '/').replace(SLASHES, "/").trimEnd('/')
+    // Trailing whitespace and slashes are trimmed together, so "d /" and "/d" agree (idempotent).
+    val collapsed = raw.replace('\\', '/').replace(SLASHES, "/").trimStart().trimEnd { it == '/' || it.isWhitespace() }
     return if (collapsed.startsWith('/')) collapsed else "/$collapsed"
 }
 
@@ -100,7 +101,7 @@ fun String.truncateUtf8(maxBytes: Int): String {
 }
 
 fun DocumentPayload.normalized(): DocumentPayload = copy(
-    store = store.trim().trimEnd('/').lowercase(),
+    store = store.trimStart().trimEnd { it == '/' || it.isWhitespace() }.lowercase(),
     path = normalizeDocumentPath(path),
     title = title.collapseWhitespace(),
     mimeType = mimeType.collapsedOrNull()?.lowercase(),
