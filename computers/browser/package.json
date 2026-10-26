@@ -5,5 +5,12 @@
   "dependencies": {
     "@mozilla/firefox-devtools-mcp": "0.10.6",
     "supergateway": "4.2.1"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/core": "2.4.0",
+    "zod": "4.6.7"
   }
 }
