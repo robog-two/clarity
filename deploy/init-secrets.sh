@@ -1,7 +1,7 @@
 #!/bin/sh
 # Creates the secrets the compose stack mounts. Idempotent: existing values are never overwritten.
 #
-#   ./deploy/init-secrets.sh [connector-id ...]     (connector_example_key is always created)
+#   ./deploy/init-secrets.sh [connector-id ...]     (the example, mail and dav connector keys are always created)
 #
 # 1. Values live as 0600 files in deploy/secrets/ (gitignored): the source of truth you can back up.
 # 2. They are loaded into Podman's secret store under the same name; compose references them as
@@ -49,7 +49,7 @@ load_into_podman() { # load_into_podman <name>: create or refresh the Podman sec
 ensure_file postgres_password
 ensure_file sandbox_key   # bearer keys for the agent computers (sandbox, browser)
 ensure_file browser_key
-for id in example "$@"; do ensure_file "connector_${id}_key"; done
+for id in example mail dav "$@"; do ensure_file "connector_${id}_key"; done
 
 # Provided by you. An empty file keeps the backend running with the agent disabled.
 if [ ! -e "$dir/anthropic_api_key" ]; then

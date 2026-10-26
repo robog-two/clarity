@@ -67,6 +67,8 @@ jobs:
         include:
           - { service: backend, file: deploy/container/jvm-app.Containerfile, module: backend, app: clarity-backend, dir: backend }
           - { service: connector-example, file: deploy/container/jvm-app.Containerfile, module: "connectors:example", app: clarity-connector-example, dir: connectors/example }
+          - { service: connector-mail, file: deploy/container/jvm-app.Containerfile, module: "connectors:mail", app: clarity-connector-mail, dir: connectors/mail }
+          - { service: connector-dav, file: deploy/container/jvm-app.Containerfile, module: "connectors:dav", app: clarity-connector-dav, dir: connectors/dav }
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4

@@ -3,6 +3,7 @@
 #   ./deploy/init-secrets.sh
 #   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + caddy (TLS)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
+#   podman compose -f deploy/compose.yaml --profile mail --profile dav up -d   # + email (IMAP/SMTP), calendar/contacts/files (DAV)
 #   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
 #
 # Settings come from deploy/.env (copy .env.example; pass --env-file deploy/.env).
@@ -81,6 +82,8 @@ services:
       - postgres_password
       - anthropic_api_key
       - connector_example_key
+      - connector_mail_key
+      - connector_dav_key
       - sandbox_key      # bearer keys for the `computers` profile (CLARITY_MCP_SERVERS keyFile=...)
       - browser_key
     volumes:
@@ -154,6 +157,66 @@ services:
     # ingest = reach the backend only; its own egress network = reach its upstream (none for the sample).
     networks: [ingest, connector-example-egress]
     mem_limit: 256m
+    cpus: 0.5
+
+  connector-mail:
+    <<: *hardened
+    profiles: [mail]
+    image: ghcr.io/robog-two/clarity-connector-mail:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/jvm-app.Containerfile
+      args:
+        MODULE: connectors:mail
+        APP_NAME: clarity-connector-mail
+        MODULE_DIR: connectors/mail
+    user: "10001:10001"
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_mail_key
+      CLARITY_CONNECTOR_ID: mail
+      CLARITY_SYNC_INTERVAL: ${CLARITY_MAIL_SYNC_INTERVAL:-30s}
+      CLARITY_STATE_DIR: /data
+    secrets:
+      - connector_mail_key
+    volumes:
+      - connector-mail-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    # ingest = reach the backend only; its own egress network = reach the mail servers.
+    networks: [ingest, connector-mail-egress]
+    mem_limit: 384m
+    cpus: 0.5
+
+  connector-dav:
+    <<: *hardened
+    profiles: [dav]
+    image: ghcr.io/robog-two/clarity-connector-dav:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/jvm-app.Containerfile
+      args:
+        MODULE: connectors:dav
+        APP_NAME: clarity-connector-dav
+        MODULE_DIR: connectors/dav
+    user: "10001:10001"
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_dav_key
+      CLARITY_CONNECTOR_ID: dav
+      CLARITY_SYNC_INTERVAL: ${CLARITY_DAV_SYNC_INTERVAL:-5m}
+      CLARITY_STATE_DIR: /data
+    secrets:
+      - connector_dav_key
+    volumes:
+      - connector-dav-data:/data
+    depends_on:
+      backend:
+        condition: service_healthy
+    # ingest = reach the backend only; its own egress network = reach the calendar, contacts and file server.
+    networks: [ingest, connector-dav-egress]
+    mem_limit: 512m
     cpus: 0.5
 
   sandbox:
@@ -231,6 +294,8 @@ networks:
   backend-egress: {}             # model API
   caddy-egress: { enable_ipv6: true }   # ACME (certificate issuance/renewal), v4 or v6
   connector-example-egress: {}
+  connector-mail-egress: {}
+  connector-dav-egress: {}
   browser-egress: {}
 
 secrets:
@@ -240,6 +305,10 @@ secrets:
   anthropic_api_key:
     external: true
   connector_example_key:
+    external: true
+  connector_mail_key:
+    external: true
+  connector_dav_key:
     external: true
   sandbox_key:
     external: true
@@ -252,4 +321,6 @@ volumes:
   caddy-data:
   caddy-config:
   connector-example-data:
+  connector-mail-data:
+  connector-dav-data:
   sandbox-workspace:
