@@ -13,6 +13,7 @@ import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.NOTIFY_IN_APP
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedPage
 import net.robog.clarity.shared.session.SessionId
@@ -141,4 +142,5 @@ private fun ResultRow.toItem() = FeedItem(
     sessionId = this[FeedItems.sessionId]?.let(::SessionId),
     cards = this[FeedItems.cards],
     streaming = this[FeedItems.streaming],
+    notify = this[FeedItems.notify] ?: NOTIFY_IN_APP,
 )

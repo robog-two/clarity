@@ -53,6 +53,7 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedPage
 import net.robog.clarity.shared.feed.InputAccepted
+import net.robog.clarity.shared.feed.NOTIFY_IN_APP
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.UserInput
 
@@ -62,7 +63,7 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun append(draft: FeedDraft): Appended = synchronized(items) {
         draft.clientInputId?.let { id -> items.firstOrNull { it.second.clientInputId == id }?.let { return@synchronized Appended(it.first, created = false) } }
         val item = FeedItem(
-            FeedItemId(Uuid.random().toString()), items.size + 1L, Clock.System.now(), draft.author, draft.sessionId, draft.cards, draft.streaming,
+            FeedItemId(Uuid.random().toString()), items.size + 1L, Clock.System.now(), draft.author, draft.sessionId, draft.cards, draft.streaming, draft.notify ?: NOTIFY_IN_APP,
         )
         items += item to draft
         Appended(item, created = true)
@@ -174,6 +175,22 @@ class FeedRoutesTest : FunSpec({
         }
     }
 
+    test("the feed carries each item's stored notify decision; items without one default to in-app") {
+        testApplication {
+            val client = setup()
+            val pushed = feed.append(agentItem("urgent").copy(notify = "push_now")).item
+            val plain = feed.append(agentItem("plain")).item
+            val page = client.get("/api/v1/feed?after=${pushed.seq - 1}") { header(HttpHeaders.Authorization, TOKEN) }.body<FeedPage>()
+            page.items.first { it.id == pushed.id }.notify shouldBe "push_now"
+            page.items.first { it.id == plain.id }.notify shouldBe "in_app"
+        }
+    }
+
+    test("a feed item stored or sent without notify still decodes, as in-app") {
+        val old = """{"id":"i1","seq":1,"at":"2026-10-25T10:00:00Z","author":"agent","cards":[]}"""
+        ClarityJson.decodeFromString(FeedItem.serializer(), old).notify shouldBe "in_app"
+    }
+
     /** SSE is tested against a real server: the in-memory test engine does not stream until a response completes. */
     suspend fun <T> withServer(heartbeat: kotlin.time.Duration = 20.seconds, block: suspend (HttpClient) -> T): T {
         val server = embeddedServer(Netty, port = 0) {
@@ -207,7 +224,7 @@ class FeedRoutesTest : FunSpec({
                     incoming.take(3).collect { event ->
                         received += event.event to event.data
                         if (received.size == 1) {
-                            feed.append(agentItem("live"))
+                            feed.append(agentItem("live").copy(notify = "push_now"))
                             hub.publish(FeedEvent.Busy(true))
                         }
                     }
@@ -218,7 +235,10 @@ class FeedRoutesTest : FunSpec({
         ClarityJson.decodeFromString(FeedEvent.serializer(), received[0].second!!)
             .shouldBeInstanceOf<FeedEvent.ItemAppended>().item.id shouldBe missed.id
         ClarityJson.decodeFromString(FeedEvent.serializer(), received[1].second!!)
-            .shouldBeInstanceOf<FeedEvent.ItemAppended>().item.cards shouldBe listOf(Card.Text("live"))
+            .shouldBeInstanceOf<FeedEvent.ItemAppended>().item.let {
+                it.cards shouldBe listOf(Card.Text("live"))
+                it.notify shouldBe "push_now"
+            }
     }
 
     test("SSE sends a heartbeat comment while idle (on the wire; clients skip comments)") {

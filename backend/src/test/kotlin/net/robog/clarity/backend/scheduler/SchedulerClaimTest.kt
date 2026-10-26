@@ -151,6 +151,15 @@ class SchedulerClaimTest : FunSpec({
         }
     }
 
+    test("the stored notify decision comes back on the feed item, and defaults to in-app") {
+        val feedStore = ExposedFeedStore(database, Clock.System)
+        val pushed = feedStore.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Urgent")), notify = "push_now")).item
+        val plain = feedStore.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Plain")))).item
+        pushed.notify shouldBe "push_now"
+        plain.notify shouldBe "in_app"
+        feedStore.page(pushed.seq - 1, 10).items.first { it.id == pushed.id }.notify shouldBe "push_now"
+    }
+
     test("the evening batch turns held items into one summary and does not post twice") {
         val feedStore = ExposedFeedStore(database, Clock.System)
         val feed = FeedService(feedStore, FeedHub())
