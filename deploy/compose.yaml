@@ -1,7 +1,7 @@
 # Clarity: single-tenant stack for Podman (rootless works).
 #
 #   ./deploy/init-secrets.sh
-#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + caddy (TLS)
+#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
 #   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
 #
@@ -69,6 +69,8 @@ services:
       CLARITY_ENROLLMENT_MODE: ${CLARITY_ENROLLMENT_MODE:-tofu}
       CLARITY_CONNECTORS_AUTO_GRANT: ${CLARITY_CONNECTORS_AUTO_GRANT:-false}
       ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+      # The model API is reached only through the egress proxy (api.anthropic.com is all it allows).
+      CLARITY_HTTPS_PROXY: http://egress:3128
       CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-claude-opus-5-5}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
@@ -88,6 +90,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      egress:
+        condition: service_healthy
     healthcheck:
       # busybox wget ships with the alpine JRE image
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz"]
@@ -95,7 +99,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    networks: [db, ingest, tools, proxy, backend-egress]
+    networks: [db, ingest, tools, proxy, backend-proxy]
     mem_limit: 1g
     cpus: 2.0
 
@@ -126,6 +130,33 @@ services:
     networks: [proxy, caddy-egress]
     mem_limit: 256m
     cpus: 0.5
+
+  egress:
+    <<: *hardened
+    # Squid, the single door to the internet for the browser and the backend (computers/egress).
+    # Public hosts only for the browser; api.anthropic.com only for the backend. Each client
+    # network gets its own listener, bound to this container's address on it (hence the aliases).
+    image: ghcr.io/robog-two/clarity-egress:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/egress.Containerfile
+    user: "10001:10001"
+    environment:
+      # Extra hosts the backend may reach (comma separated), e.g. a self-hosted model gateway.
+      CLARITY_BACKEND_EGRESS_ALLOW: ${CLARITY_BACKEND_EGRESS_ALLOW:-}
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "3130"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    networks:
+      browser-proxy: { aliases: [egress-browser] }
+      backend-proxy: { aliases: [egress-backend] }
+      egress: {}
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
 
   connector-example:
     <<: *hardened
@@ -189,8 +220,8 @@ services:
     <<: *hardened
     profiles: [computers]
     # Headless Firefox ESR + uBlock Origin + Privacy Badger, driven by Mozilla's Firefox DevTools
-    # MCP server, served as streamable HTTP on :8931/mcp (computers/browser). It can reach the
-    # internet through its own egress network and the backend through `tools`, nothing else.
+    # MCP server, served as streamable HTTP on :8931/mcp (computers/browser). It reaches the public
+    # internet only through the `egress` proxy (never the LAN) and the backend through `tools`.
     image: ghcr.io/robog-two/clarity-browser:${CLARITY_TAG:-latest}
     build:
       context: ..
@@ -216,7 +247,7 @@ services:
       timeout: 3s
       retries: 6
       start_period: 15s
-    networks: [tools, browser-egress]
+    networks: [tools, browser-proxy]
     mem_limit: 1536m
     cpus: 2.0
     pids_limit: 1024
@@ -227,11 +258,15 @@ networks:
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
   proxy:    { internal: true }   # caddy <-> backend
-  # One egress network per service that needs the internet, so connectors cannot reach each other.
-  backend-egress: {}             # model API
+  # The proxy's two client networks: browser <-> egress, backend <-> egress.
+  browser-proxy: { internal: true }
+  backend-proxy: { internal: true }
+  # The only route out for the browser and the backend, and only `egress` is on it.
+  egress: { enable_ipv6: true }
+  # One egress network per remaining service that needs the internet (connectors usually talk to
+  # servers on your LAN), so connectors cannot reach each other.
   caddy-egress: { enable_ipv6: true }   # ACME (certificate issuance/renewal), v4 or v6
   connector-example-egress: {}
-  browser-egress: {}
 
 secrets:
   # Created by deploy/init-secrets.sh (`podman secret create <name>`; podman-compose mounts them at /run/secrets/<name>).
