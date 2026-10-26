@@ -9,6 +9,8 @@
 #   BROWSER_VIEWPORT            window size (default 1280x800)
 #   BROWSER_TOOL_PRESET         firefox-devtools-mcp --tool-preset (default: the server's own default)
 #   BROWSER_IDLE_TIMEOUT        passed to --idle-timeout when set (e.g. 10m)
+#   BROWSER_SESSION_TIMEOUT_MS  how long an idle MCP session (and its Firefox) is kept (default 6 hours);
+#                               a new session starts a new Firefox, which loses the open pages
 #   BROWSER_DOWNLOADS_DAYS      downloads older than this are deleted at start (default 7)
 #
 # Downloads go to /downloads, a volume the sandbox also mounts (read-only), so the agent can work on
@@ -33,6 +35,10 @@ if [ ! -f "$profile/.firefox-devtools-mcp" ]; then
   cp -r /opt/profile-template/. "$profile/"
   : >"$profile/.firefox-devtools-mcp"
 fi
+# A kept profile still takes this image's preferences, and a Firefox killed with the container
+# leaves its lock behind (another process may hold that pid now).
+cp /opt/profile-template/user.js "$profile/user.js"
+rm -f "$profile/lock" "$profile/.parentlock"
 
 auth=""
 if [ -s "$key_file" ]; then
@@ -51,7 +57,7 @@ mcp="$mcp --headless --firefox-path /opt/firefox/firefox --profile-path $profile
 # shellcheck disable=SC2086
 exec node /opt/mcp/node_modules/supergateway/dist/index.js \
   --stdio "$mcp" \
-  --outputTransport streamableHttp --stateful --sessionTimeout 600000 \
+  --outputTransport streamableHttp --stateful --sessionTimeout "${BROWSER_SESSION_TIMEOUT_MS:-21600000}" \
   --port "$port" --streamableHttpPath /mcp \
   --healthEndpoint /healthz \
   $auth

@@ -195,9 +195,13 @@ sealed interface StepVerdict {
  * - typing a literal into a card field asks as a payment (card values come from a credential's
  *   placeholders, whose release the person already approved on the phone);
  * - Enter / submitKey submits: asks on a payment page, otherwise the triage decides;
- * - typing into an ordinary text field on an ordinary page, and plain links, pass.
+ * - typing into an ordinary text field on an ordinary page, and plain links, pass;
+ * - plain buttons that only move along or acknowledge ("Continue", "Next", "Sign in", "I understand",
+ *   "Accept cookies", "Not now") pass off payment pages;
+ * - with [signingIn] (the person released a saved login for this site), the steps of a sign-in page
+ *   pass too: choosing where the code goes ("SMS", "Send code"), verifying, "Submit", "Trust this device".
  */
-fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageUrl: String?): StepVerdict {
+fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageUrl: String?, signingIn: Boolean = false): StepVerdict {
     val payment = isPaymentPage(pageUrl)
     val typed = typedStrings(input)
     val allPlaceholders = typed.isNotEmpty() && typed.all { t -> Placeholders.tokens(t).isNotEmpty() && Placeholders.replace(t) { "" }.isEmpty() }
@@ -210,13 +214,20 @@ fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageU
                 return StepVerdict.Ask("typing card details into $names", neverAlone = true)
             }
             val submit = (input["submitKey"] as? JsonPrimitive)?.contentOrNull
-            if (submit != null && isSubmitKey(submit)) return if (payment) StepVerdict.Ask("submitting a payment form", neverAlone = true) else StepVerdict.Triage
+            if (submit != null && isSubmitKey(submit)) {
+                return when {
+                    payment -> StepVerdict.Ask("submitting a payment form", neverAlone = true)
+                    signingIn && isSignInPage(pageUrl) -> StepVerdict.Pass
+                    else -> StepVerdict.Triage
+                }
+            }
             return if (elements.all { it?.role == null || it.role.lowercase() in TEXT_ROLES }) StepVerdict.Pass else StepVerdict.Triage
         }
         "press_key" -> {
             val key = (input["key"] as? JsonPrimitive)?.contentOrNull.orEmpty()
             return when {
-                isSubmitKey(key) -> if (payment) StepVerdict.Ask("pressing Enter on a payment page", neverAlone = true) else StepVerdict.Triage
+                isSubmitKey(key) && payment -> StepVerdict.Ask("pressing Enter on a payment page", neverAlone = true)
+                isSubmitKey(key) -> if (signingIn && isSignInPage(pageUrl)) StepVerdict.Pass else StepVerdict.Triage
                 key.lowercase() in SAFE_KEYS -> StepVerdict.Pass
                 else -> StepVerdict.Triage
             }
@@ -227,6 +238,8 @@ fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageU
             val navigating = elements.isNotEmpty() && elements.all { isNavigatingLink(it) }
             if (strong != null && navigating && !payment && !isMoney(strong)) return StepVerdict.Triage
             if (strong != null) return StepVerdict.Ask("clicking \"$names\" ($strong)", neverAlone = isMoney(strong) || payment)
+            val labels = elements.mapNotNull { it?.name?.trim() }
+            if (!payment && labels.isNotEmpty() && labels.all { isPlainStep(it) || (signingIn && isSignInPage(pageUrl) && isSignInStep(it)) }) return StepVerdict.Pass
             val buttonLike = roles.isEmpty() || roles.any { it in BUTTON_ROLES }
             if (buttonLike) {
                 val weak = BUTTON_RISK.find(names)?.value
@@ -245,6 +258,41 @@ fun stepVerdict(tool: String, input: JsonObject, elements: List<Element?>, pageU
         }
     }
     return StepVerdict.Triage
+}
+
+// The whole label of a button that only moves along, signs in or acknowledges a notice.
+private val PLAIN_STEP = Regex(
+    "(continue|next|next step|go|start|get started|sign in|log in|login|sign in with (email|password)|use password|show password|" +
+        "i understand|understood|got it|ok|okay|close|dismiss|no,? thanks|no thank you|not now|maybe later|skip|skip for now|remind me later|" +
+        "accept( all)? cookies|accept cookies and continue|allow( all)? cookies|reject( all)?( cookies)?|decline( all)?( cookies)?|necessary cookies only|" +
+        "manage cookies|cookie settings|back|previous|see (all|more)( times| availability)?|show (all|more)( times)?|load more|view (all|more)|search|apply|filter|" +
+        "find a (store|salon|location)|change (store|salon|location)|select (store|salon|location)|choose (store|salon|location))[.!]?",
+    RegexOption.IGNORE_CASE,
+)
+
+/** Pure: [label] is the whole label of a button that only moves along, signs in or acknowledges a notice. */
+fun isPlainStep(label: String): Boolean = PLAIN_STEP.matches(label.trim().replace(Regex("\\s+"), " "))
+
+// The whole label of a sign-in page's own steps: where to send the code, verifying it, keeping the device signed in.
+private val SIGN_IN_STEP = Regex(
+    "(sms|text|text message|text me|text me a code|call|call me|email|email me|email me a code|phone|send|send code|send (me )?(a |the )?(new )?code|resend|resend code|" +
+        "verify|verify code|confirm|confirm code|submit|submit code|done|remember (me|this device|this browser)|trust this (device|browser)|" +
+        "don'?t ask again( on this device)?|yes|try another (method|way)|use another (method|way))[.!]?",
+    RegexOption.IGNORE_CASE,
+)
+
+/** Pure: [label] is one of a sign-in page's own steps (choosing where the code goes, verifying it). */
+fun isSignInStep(label: String): Boolean = SIGN_IN_STEP.matches(label.trim().replace(Regex("\\s+"), " "))
+
+private val SIGN_IN_PATH = Regex("""(^|[/._-])(login|log-in|signin|sign-in|sign_in|auth|authorize|oauth|sso|mfa|2fa|otp|verify|verification|challenge|identifier|password|account/login|u/login)([/._?#-]|$)""", RegexOption.IGNORE_CASE)
+
+/** Pure: [url] looks like a sign-in or verification page (its path, or a login/auth/accounts host). */
+fun isSignInPage(url: String?): Boolean {
+    if (url == null) return false
+    val host = Sites.host(url) ?: return false
+    if (listOf("login.", "auth.", "accounts.", "account.", "id.", "sso.", "signin.").any { host.startsWith(it) }) return true
+    val path = runCatching { java.net.URI(url).path.orEmpty() }.getOrDefault("")
+    return SIGN_IN_PATH.containsMatchIn(path)
 }
 
 private val SAFE_KEYS = setOf("tab", "escape", "arrowup", "arrowdown", "arrowleft", "arrowright", "pageup", "pagedown", "home", "end", "shift+tab")

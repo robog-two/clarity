@@ -231,7 +231,7 @@ class PhoneApprovalFlowTest : FunSpec({
             constitutions, heldStore, ActionOutbox(database, Clock.System, heldStore, OutboxSignals(), GovernanceEvents(), ActionResults()),
             ConnectorRouter(database, NoConnectorPreferences()), GovernanceEvents(), UtcPersonZone(), Clock.System,
         )
-        val holds = GovernedVaultHolds(slowGate, heldStore, Clock.System)
+        val holds = GovernedVaultHolds(slowGate, heldStore, Clock.System, GovernanceEvents())
         val login = CredentialMeta(
             CredentialId(Uuid.random().toString()), "shop_login", CredentialKind.LOGIN, "shop.example.com", "orders",
             listOf(FieldSpec("email", "Email", FieldType.EMAIL), FieldSpec("password", "Password", FieldType.PASSWORD)), createdAt = Clock.System.now(),
@@ -251,7 +251,7 @@ class PhoneApprovalFlowTest : FunSpec({
             constitutions, heldStore, ActionOutbox(database, Clock.System, heldStore, OutboxSignals(), GovernanceEvents(), ActionResults()),
             ConnectorRouter(database, NoConnectorPreferences()), GovernanceEvents(), UtcPersonZone(), Clock.System,
         )
-        val holds = GovernedVaultHolds(gate, heldStore, Clock.System)
+        val holds = GovernedVaultHolds(gate, heldStore, Clock.System, GovernanceEvents())
         val page = Provenance("run", untrustedInput = true)
         fun click(uid: String) = ProposedAction.ExternalTool(
             "browser:pending", "Click button \"Book now\" on shop.example.com/visit", "browser", "click_by_uid",

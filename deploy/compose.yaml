@@ -305,13 +305,15 @@ services:
     environment:
       BROWSER_PORT: "8931"
       BROWSER_KEY_FILE: /run/secrets/browser_key
-      # Uncomment (and add a volume) to keep cookies and logins between restarts:
-      # BROWSER_PROFILE_DIR: /profile
+      # Cookies and site logins are kept between restarts (a deploy, a crash), so a sign-in the
+      # person approved survives them. Saved passwords and form data are never kept (user.js).
+      BROWSER_PROFILE_DIR: /profile
     secrets:
       - browser_key
-    # Profile and HOME live on tmpfs, so every start is a clean browser. Downloads go to a volume the
-    # sandbox reads; files older than BROWSER_DOWNLOADS_DAYS (7) are deleted at start.
+    # The profile lives on a volume; HOME on tmpfs. Downloads go to a volume the sandbox reads;
+    # files older than BROWSER_DOWNLOADS_DAYS (7) are deleted at start.
     volumes:
+      - browser-profile:/profile
       - browser-downloads:/downloads
     tmpfs:
       - /tmp:rw,nosuid,size=768m
@@ -373,3 +375,4 @@ volumes:
   connector-dav-data:
   sandbox-workspace:
   browser-downloads:
+  browser-profile:

@@ -20,6 +20,7 @@ import net.robog.clarity.backend.governance.ActionResults
 import net.robog.clarity.backend.governance.ConnectorRouter
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.governance.GovernanceEvents
+import net.robog.clarity.backend.governance.HeldWaiters
 import net.robog.clarity.backend.governance.Guard
 import net.robog.clarity.backend.governance.GuardModel
 import net.robog.clarity.backend.governance.HeldActionStore
@@ -121,10 +122,11 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val sessionTools = SessionTools(sessionService, feed, dayPlans, tasks, constitutions, settingsProvider, clock)
     val vaultStore = ExposedVaultStore(database, clock)
     val grants = GrantStore(clock)
-    val vaultHolds = GovernedVaultHolds(gate, heldStore, clock)
+    val vaultHolds = GovernedVaultHolds(gate, heldStore, clock, events)
     val vaultService = VaultService(vaultStore, grants, heldStore, events, inbox)
     var triageVerdict = TriageVerdict(true, "ordinary")
-    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock)
+    val heldWaiters = HeldWaiters(clock)
+    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters)
 
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox

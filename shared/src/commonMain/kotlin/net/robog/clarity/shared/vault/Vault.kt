@@ -196,7 +196,11 @@ data class GrantReceipt(val expiresAt: Instant, val site: String)
 
 /** Naming rules and limits shared by app and backend. */
 object VaultNames {
-    const val MAX_GRANT_SECONDS = 300
+    /** How long released login values stay usable: long enough for one task (sign in, a code, a few pages). */
+    const val MAX_GRANT_SECONDS = 3600
+
+    /** The cap before it was raised: phones built then always ask for exactly this, meaning "as long as allowed". */
+    const val LEGACY_MAX_GRANT_SECONDS = 300
     val HINT_KEYS: Set<String> = setOf("username", "brand", "last4", "expiry_month")
 
     private val SLUG = Regex("^[a-z][a-z0-9]*(_[a-z0-9]+)*$")

@@ -296,7 +296,7 @@ class VaultFlowTest : FunSpec({
             val ok = client.postAs(phone, "/api/v1/vault/grants/${held.id}", ReleaseGrant(mapOf("username" to USERNAME, "password" to PASSWORD), ttlSeconds = 9999, signature = approvedBy(phoneApproval, held)))
             ok.status shouldBe HttpStatusCode.OK
             val receipt: GrantReceipt = ok.body()
-            (receipt.expiresAt - Clock.System.now() <= 5.minutes) shouldBe true
+            (receipt.expiresAt - Clock.System.now() <= 60.minutes) shouldBe true
             rig.heldStore.get(held.id)!!.status shouldBe HeldAction.Status.APPROVED
             // a second release for the same item is refused
             client.postAs(phone, "/api/v1/vault/grants/${held.id}", ReleaseGrant(mapOf("username" to USERNAME, "password" to PASSWORD))).status shouldBe HttpStatusCode.Conflict

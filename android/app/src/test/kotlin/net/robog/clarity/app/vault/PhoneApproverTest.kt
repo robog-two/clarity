@@ -148,7 +148,7 @@ class PhoneApproverTest {
         val (id, release) = api.grants.single()
         assertEquals(HeldActionId("h2"), id)
         assertEquals(mapOf("username" to "dana@example.com", "password" to "hunter2!-Zebra"), release.fields)
-        assertEquals(300, release.ttlSeconds)
+        assertEquals(3600, release.ttlSeconds)
         assertTrue(verifies(checkNotNull(release.signature), approvalPayload(h)))
         assertTrue(api.signed.isEmpty())
     }

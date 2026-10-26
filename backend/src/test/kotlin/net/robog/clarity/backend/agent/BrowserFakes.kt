@@ -28,6 +28,7 @@ import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.shared.DeviceId
 import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Provenance
@@ -83,6 +84,17 @@ class FakeGovernance : VaultGovernance {
         steps += action
         return stepAnswer
     }
+
+    /** What the person answers when a helper waits (null: never); [onDecision] runs just before, like the phone's release. */
+    var decision: HeldAction.Status? = null
+    var onDecision: () -> Unit = {}
+    val awaited = CopyOnWriteArrayList<HeldActionId>()
+
+    override suspend fun awaitDecision(heldId: HeldActionId, timeout: kotlin.time.Duration): HeldAction.Status? {
+        awaited += heldId
+        decision?.let { onDecision() }
+        return decision
+    }
 }
 
 /** A fake browser: remembers what each tool received and answers like the real one would (echoing typed values back). */
@@ -93,7 +105,7 @@ class FakeBrowser {
         uid=1_0 document "Sign in"
           uid=1_1 textbox "Username"
           uid=1_2 textbox "Password"
-          uid=1_3 button "Next"
+          uid=1_3 button "Review details"
           uid=1_4 button "Send money"
           uid=1_5 textbox "Card number"
     """.trimIndent()

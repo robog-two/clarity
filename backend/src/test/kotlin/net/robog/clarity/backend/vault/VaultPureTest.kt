@@ -11,6 +11,7 @@ import java.security.KeyPairGenerator
 import java.security.spec.ECGenParameterSpec
 import java.util.Base64
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -160,10 +161,13 @@ class VaultPureTest : FunSpec({
     }
 
     context("grant store") {
-        test("grants expire, are capped at five minutes, and replace earlier ones for the same site") {
+        test("grants expire, are capped at an hour, and replace earlier ones for the same site") {
             val clock = FakeClock()
             val store = GrantStore(clock)
-            val g = store.put("bank", "bank.com", mapOf("password" to "hunter2!"), 10.minutes)
+            store.put("bank", "bank.com", mapOf("password" to "hunter2!"), 3.hours).expiresAt shouldBe clock.now + 60.minutes
+            store.hasLiveLogin("bank.com") shouldBe true
+            store.hasLiveLogin("other.com") shouldBe false
+            val g = store.put("bank", "bank.com", mapOf("password" to "hunter2!"), 5.minutes)
             g.expiresAt shouldBe clock.now + 5.minutes
             store.find("bank", "bank.com").shouldNotBeNull().value("password") shouldBe "hunter2!"
             store.find("bank", "other.com").shouldBeNull()
@@ -173,6 +177,12 @@ class VaultPureTest : FunSpec({
             clock.advance(2.seconds)
             store.find("bank", "bank.com").shouldBeNull()
             store.liveCount() shouldBe 0
+        }
+
+        test("a phone that asks for the old five-minute cap gets the task-length grant; shorter asks are kept") {
+            grantSeconds(300) shouldBe 3600
+            grantSeconds(9999) shouldBe 3600
+            grantSeconds(120) shouldBe 120
         }
 
         test("released values keep being scrubbed after the grant is gone, then are forgotten") {

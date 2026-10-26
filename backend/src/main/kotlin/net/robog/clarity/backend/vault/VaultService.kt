@@ -80,6 +80,13 @@ fun envelopeProblem(envelope: VaultEnvelope, context: String): String? {
 
 private const val MAX_CIPHERTEXT = 64 * 1024
 
+/**
+ * Pure: the lifetime of a released grant. Phones built before the cap was raised always ask for
+ * the old cap, which meant "as long as allowed", so that asks for the new cap.
+ */
+fun grantSeconds(requested: Int): Int =
+    if (requested == VaultNames.LEGACY_MAX_GRANT_SECONDS) VaultNames.MAX_GRANT_SECONDS else requested.coerceAtMost(VaultNames.MAX_GRANT_SECONDS)
+
 /** Pure: why the agent's request is unacceptable, else null. */
 fun requestProblem(name: String, fields: List<FieldSpec>, site: String, purpose: String): String? = when {
     name == "code" || name.startsWith("code_") -> "`name` cannot start with code_ (that is for two-factor codes)"
@@ -217,7 +224,7 @@ class VaultService(
         requireSignature(current, device, release.signature)
         ensure(held.transition(heldId, PENDING_STATUSES, HeldAction.Status.APPROVED)) { VaultError.NotPending(heldId.value, "decided") }
         publish(heldId)
-        val grant = grants.put(meta.name, action.site, release.fields, release.ttlSeconds.coerceAtMost(VaultNames.MAX_GRANT_SECONDS).seconds)
+        val grant = grants.put(meta.name, action.site, release.fields, grantSeconds(release.ttlSeconds).seconds)
         GrantReceipt(grant.expiresAt, action.site)
     }
 
@@ -233,7 +240,7 @@ class VaultService(
         ensure(held.transition(heldId, PENDING_STATUSES, HeldAction.Status.APPROVED)) { VaultError.NotPending(heldId.value, "decided") }
         publish(heldId)
         val domain = Sites.registrableDomain(action.site) ?: action.site
-        val grant = grants.put("code", domain, mapOf(heldId.value to code), release.ttlSeconds.coerceAtMost(VaultNames.MAX_GRANT_SECONDS).seconds)
+        val grant = grants.put("code", domain, mapOf(heldId.value to code), grantSeconds(release.ttlSeconds).seconds)
         GrantReceipt(grant.expiresAt, domain)
     }
 

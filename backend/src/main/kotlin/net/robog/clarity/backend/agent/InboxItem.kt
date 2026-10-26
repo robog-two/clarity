@@ -95,8 +95,12 @@ sealed interface InboxItem {
 
     /** The person ruled on a held action. */
     @Serializable @SerialName("held_decided")
-    data class HeldDecided(val heldId: String, val status: String, val actionSummary: String) : InboxItem {
-        override val priority get() = Priority.NORMAL
+    data class HeldDecided(
+        val heldId: String,
+        val status: String,
+        val actionSummary: String,
+        override val priority: Priority = Priority.NORMAL,
+    ) : InboxItem {
         override val summary get() = "The person ruled on the held action \"$actionSummary\" ($heldId): $status." +
             if (status == "approved") " If it was a browser step, delegate a helper to take exactly that step on that page now (it snapshots the page again first); it goes through without asking. A login approval is used by the helper's next sign-in." else ""
     }

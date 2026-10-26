@@ -88,7 +88,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     tab = tab,
                     onTab = { tab = it },
                     onReview = { push(DraftReview(it.value)) },
-                    onOpenHeldItem = { push(Amend(it.value)) },
+                    onOpenHeldItem = { push(DraftReview(it.value)) },
                     onOpenConstitution = { push(ConstitutionView) },
                     onOpenConnector = { push(ConnectorView(it)) },
                 )
@@ -97,7 +97,6 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                 DraftReviewScreen(
                     HeldActionId(key.heldId),
                     onBack = { backStack.removeLastOrNull() },
-                    onAmend = { push(Amend(key.heldId)) },
                 )
             }
             entry<Amend> { key ->
