@@ -79,7 +79,7 @@ class TodayRulesTest {
     }
 
     @Test fun textsMatchThePrototype() {
-        assertEquals("monday, october 26 · 10:04", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
+        assertEquals("monday, October 26 · 10:04 am", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
         assertEquals("nothing held today", heldLine(0))
         assertEquals("2 held today", heldLine(2))
         assertEquals("Feedback for Alex, expense report. Back in tomorrow’s call.", parkedLine(listOf("feedback for Alex", "expense report")))
@@ -107,7 +107,7 @@ class TodayViewModelTest {
         assertEquals(HeldActionId("h1"), s.doing.single().review)
         assertEquals(1, s.heldWaiting)
         assertFalse(s.loading)
-        assertTrue(s.kicker.startsWith("monday, october 26"))
+        assertTrue(s.kicker.startsWith("monday, October 26"))
     }
 
     @Test fun anOlderServerWithoutTodayIsNotAnError() = withMain {

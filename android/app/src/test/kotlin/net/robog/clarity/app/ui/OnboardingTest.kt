@@ -70,6 +70,8 @@ import net.robog.clarity.app.ui.onboarding.TestState
 import net.robog.clarity.app.ui.onboarding.ValuesStepViewModel
 import net.robog.clarity.app.ui.onboarding.callTimeChoices
 import net.robog.clarity.app.ui.onboarding.connectorsSummaryLine
+import net.robog.clarity.app.ui.onboarding.connectorDisplayName
+import net.robog.clarity.app.ui.onboarding.protocolLabel
 import net.robog.clarity.app.ui.onboarding.constitutionSections
 import net.robog.clarity.app.ui.onboarding.deriveInterview
 import net.robog.clarity.app.ui.onboarding.doneLine
@@ -302,6 +304,12 @@ class OnboardingStepTest {
         assertEquals("testing and syncing…", connectorsSummaryLine(6, 6, 1, syncing = true, anyFailed = false))
         assertEquals("5 of 6 synced · tap the failed one to fix it", connectorsSummaryLine(6, 6, 5, syncing = false, anyFailed = true))
         assertEquals("all 6 synced", connectorsSummaryLine(6, 6, 6, syncing = false, anyFailed = false))
+        assertEquals("2 of 4 synced · 1 not running · tap the failed one to fix it", connectorsSummaryLine(4, 4, 2, syncing = false, anyFailed = true, notRunning = 1))
+        assertEquals("Dav", connectorDisplayName("dav"))
+        assertEquals("IMAP", protocolLabel("imap"))
+        assertEquals("iCloud", net.robog.clarity.app.ui.components.sentenceCase("iCloud"))
+        assertEquals("v3 · 14 lines", net.robog.clarity.app.ui.components.sentenceCase("v3 · 14 lines"))
+        assertEquals("Not now", net.robog.clarity.app.ui.components.sentenceCase("not now"))
     }
 
     @Test fun aConnectorIsSetUpWhenEveryProducedNounIsGranted() {
@@ -378,10 +386,13 @@ class ScheduleRulesTest {
     private val call = Settings.MorningCall(days = setOf(1, 2, 3, 4, 5), at = LocalTime(9, 0))
 
     @Test fun timeFormattingAndChoices() {
-        assertEquals("9:00", formatTime(LocalTime(9, 0)))
-        assertEquals("8:05", formatTime(LocalTime(8, 5)))
+        assertEquals("9:00 am", formatTime(LocalTime(9, 0)))
+        assertEquals("8:05 am", formatTime(LocalTime(8, 5)))
+        assertEquals("12:00 pm", formatTime(LocalTime(12, 0)))
+        assertEquals("12:15 am", formatTime(LocalTime(0, 15)))
+        assertEquals("6:30 pm", formatTime(LocalTime(18, 30)))
         assertEquals(3, callTimeChoices(LocalTime(9, 30)).size)
-        assertEquals(listOf("8:30", "9:00", "9:30", "10:15"), callTimeChoices(LocalTime(10, 15)).map(::formatTime))
+        assertEquals(listOf("8:30 am", "9:00 am", "9:30 am", "10:15 am"), callTimeChoices(LocalTime(10, 15)).map(::formatTime))
     }
 
     @Test fun daysToggleBothWays() {
@@ -403,9 +414,9 @@ class ScheduleRulesTest {
             "I’ll send a heads-up 10 minutes before, then a notification to start.",
             doneLine(call.copy(mode = Settings.MorningCall.Mode.NOTIFY)),
         )
-        assertEquals("I’ll call at 9:00. Pick up in the app.", doneLine(call.copy(headsUpMinutes = null)))
+        assertEquals("I’ll call at 9:00 am. Pick up in the app.", doneLine(call.copy(headsUpMinutes = null)))
         assertEquals(
-            "You’ll get a notification at 9:00.",
+            "You’ll get a notification at 9:00 am.",
             doneLine(call.copy(headsUpMinutes = null, mode = Settings.MorningCall.Mode.NOTIFY)),
         )
     }
@@ -532,7 +543,7 @@ class ConnectorsStepViewModelTest {
         assertEquals(listOf("mail", "cal", "phone-messages"), items.map { it.row.key })
         assertEquals(listOf(true, false, true), items.map { it.saved })
         assertEquals(listOf("ready", "set up →", "ready"), items.map { it.status })
-        assertEquals("imap · on your server", items[0].row.proto)
+        assertEquals("IMAP · on your server", items[0].row.proto)
         assertEquals("allowed · on this phone", items[2].caption)
         assertFalse(vm.state.value.canSync, "every connector must be set up first")
         assertEquals("2 of 3 set up", vm.state.value.summaryLine)

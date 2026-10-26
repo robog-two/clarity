@@ -17,7 +17,7 @@ fun taskStatusLabel(status: AgentTask.Status): String = when (status) {
 
 /** Label of the confirming button on a proposal. */
 /** "slide to add to calendar" */
-fun slideLabel(kind: ActionKind): String = "slide to " + approveLabel(kind)
+fun slideLabel(kind: ActionKind): String = "Slide to " + approveLabel(kind)
 
 fun approveLabel(kind: ActionKind): String = when (kind) {
     ActionKind.MOVE_EVENT -> "send update"
@@ -44,5 +44,5 @@ fun heldStatusLabel(status: HeldAction.Status): String? = when (status) {
     HeldAction.Status.EXPIRED -> "expired"
 }
 
-/** Caption above a proposal: "needs your ok · sends Dana an update". */
-fun proposalKicker(held: HeldAction): String = "needs your ok · ${held.action.summary}"
+/** Caption above a proposal: "needs your OK · sends Dana an update". */
+fun proposalKicker(held: HeldAction): String = "needs your OK · ${held.action.summary}"

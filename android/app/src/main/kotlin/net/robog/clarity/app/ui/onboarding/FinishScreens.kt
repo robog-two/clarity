@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.components.ScreenGutter
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings as AndroidSettings
@@ -67,7 +71,7 @@ fun ScheduleContent(
     StepScaffold(
         step = OnboardingStep.Schedule,
         title = "When should I call?",
-        footer = { PrimaryButton("finish →", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading && !state.saving) },
+        footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading && !state.saving) },
     ) {
         Hint("Eight minutes. You talk, I take notes, then I set things up.")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -83,16 +87,20 @@ fun ScheduleContent(
         Column(Modifier.padding(top = 8.dp)) {
             ToggleRow(
                 title = "heads-up ${state.call.headsUpMinutes ?: 10} min before",
-                caption = "a notification, then the call",
+                caption = "A notification, then the call",
                 checked = state.call.headsUpMinutes != null,
                 onCheckedChange = { onToggleHeadsUp() },
             )
-            ToggleRow(
-                title = "how I reach you",
-                caption = if (state.call.mode == MorningCall.Mode.CALL) "call me" else "notify",
-                checked = state.call.mode == MorningCall.Mode.CALL,
-                onCheckedChange = { onToggleMode() },
-            )
+            net.robog.clarity.app.ui.components.Kicker("how I reach you", Modifier.padding(top = 12.dp))
+            val calling = state.call.mode == MorningCall.Mode.CALL
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                SegmentedButton(calling, { if (!calling) onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) {
+                    androidx.compose.material3.Text("Call me")
+                }
+                SegmentedButton(!calling, { if (calling) onToggleMode() }, SegmentedButtonDefaults.itemShape(1, 2)) {
+                    androidx.compose.material3.Text("Notify me")
+                }
+            }
         }
         state.error?.let { ErrorBox("Could not save the schedule.", "Check your connection and try again.") }
     }
@@ -126,7 +134,7 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = ScreenGutter)
             .padding(top = 72.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {

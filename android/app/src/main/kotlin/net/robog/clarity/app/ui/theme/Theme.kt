@@ -27,8 +27,10 @@ val BubbleShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd
 /** Always the prototype palette; no dynamic colour, so the app looks the same on every phone. */
 @Composable
 fun ClarityTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable () -> Unit) {
-    val text = remember { clarityTextStyles(ClarityFonts.ui, ClarityFonts.reading) }
-    val typography = remember { clarityTypography(ClarityFonts.ui, ClarityFonts.reading) }
+    // One family everywhere: Material components take body text from the theme, and a serif body
+    // mixed with sans UI inside the same field, dialog or row. Pass ClarityFonts.reading to bring it back.
+    val text = remember { clarityTextStyles(ClarityFonts.ui, ClarityFonts.ui) }
+    val typography = remember { clarityTypography(ClarityFonts.ui, ClarityFonts.ui) }
     CompositionLocalProvider(LocalClarityText provides text) {
         MaterialTheme(
             colorScheme = if (darkTheme) ClarityPalette.dark else ClarityPalette.light,

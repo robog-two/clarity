@@ -47,7 +47,7 @@ class CredentialFormTest {
     @Test fun luhnExpiryAndCvcAreValidatedLive() {
         val good = card("number" to "4242 4242 4242 4242", "expiry" to "03/28", "cvc" to "123")
         assertTrue(good.valid)
-        assertEquals("That card number doesn't look right.", card("number" to "4242 4242 4242 4241").error(cardFields[0]))
+        assertEquals("That card number doesn’t look right.", card("number" to "4242 4242 4242 4241").error(cardFields[0]))
         assertEquals("That card has expired.", card("expiry" to "09/26").error(cardFields[1]))
         assertNull(card("expiry" to "10/26").error(cardFields[1]))
         assertFalse(card("number" to "4242 4242 4242 4242", "expiry" to "03/28", "cvc" to "12").valid)
@@ -69,14 +69,14 @@ class CredentialFormTest {
     @Test fun errorsShowOnlyOnceAFieldWasTouched() {
         val form = card("number" to "1234")
         assertNull(form.shownError(cardFields[0]))
-        assertEquals("That card number doesn't look right.", form.touch(cardFields[0]).shownError(cardFields[0]))
+        assertEquals("That card number doesn’t look right.", form.touch(cardFields[0]).shownError(cardFields[0]))
         assertEquals("Required.", form.touchAll().shownError(cardFields[1]))
     }
 
     @Test fun emailAndPhoneAreChecked() {
         val fields = listOf(FieldSpec("email", "Email", FieldType.EMAIL), FieldSpec("phone", "Phone", FieldType.PHONE))
         val form = CredentialForm(credentialRequest(fields = fields, kind = CredentialKind.IDENTITY), 2026, 10)
-        assertEquals("That email address doesn't look right.", form.with(fields[0], "dana@").error(fields[0]))
+        assertEquals("That email address doesn’t look right.", form.with(fields[0], "dana@").error(fields[0]))
         assertNull(form.with(fields[0], "dana@example.com").error(fields[0]))
         assertNull(form.with(fields[1], "+1 (415) 555-0123").error(fields[1]))
         assertEquals("Use a full phone number, e.g. +14155550123.", form.with(fields[1], "12").error(fields[1]))
@@ -131,7 +131,7 @@ class CredentialFormTest {
         model.save()
         assertEquals("4242424242424242", vault.savedValues.single()["number"])
         val done = assertIs<FormCardState.Done>(model.state)
-        assertTrue("bank_login" in done.line)
+        assertTrue("Bank login" in done.line)
         // typed values are gone with the editing state
         model.edit(cardFields[0], "x")
         assertIs<FormCardState.Done>(model.state)

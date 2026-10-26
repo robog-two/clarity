@@ -24,6 +24,7 @@ import net.robog.clarity.shared.governance.Person
 import net.robog.clarity.shared.governance.Section
 import net.robog.clarity.shared.noun.Handle
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 private val now = Instant.parse("2026-10-25T10:00:00Z")
 
@@ -68,6 +69,14 @@ class LeadPureTest : FunSpec({
         test("falls back to the last turn when nobody ever typed") {
             shouldCompactNow(now, null, turn, null, "1h", 80_000) shouldBe true
         }
+    }
+
+    test("only the history since the latest compaction block counts towards compacting again") {
+        val compacted = Message(Role.ASSISTANT, listOf(Block.Raw(buildJsonObject { put("type", "compaction") })))
+        val old = Message.user("x".repeat(400_000))
+        sinceLastCompaction(listOf(old)) shouldBe listOf(old)
+        sinceLastCompaction(listOf(old, compacted, Message.user("hi"))) shouldBe listOf(compacted, Message.user("hi"))
+        (estimateTokens(sinceLastCompaction(listOf(old, compacted))) < 1_000) shouldBe true
     }
 
     context("resuming") {

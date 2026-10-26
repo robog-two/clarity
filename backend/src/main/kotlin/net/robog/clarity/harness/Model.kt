@@ -3,6 +3,8 @@ package net.robog.clarity.harness
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -137,6 +139,60 @@ fun wireOrder(messages: List<Message>): List<Message> {
     return out
 }
 
+/**
+ * Pure: [element] with every object's keys in Postgres `jsonb` order (shorter keys first, equal
+ * lengths by UTF-8 bytes), recursively. The journal is `jsonb`, which reorders keys, so a turn
+ * replayed from it would differ from the same turn replayed in memory (tool inputs are rendered in
+ * key order) and the prompt cache would miss from that turn on. Putting assistant content in this
+ * order before it enters the history makes both byte-identical. Idempotent.
+ */
+fun jsonbKeyOrder(element: JsonElement): JsonElement = when (element) {
+    is JsonObject -> JsonObject(
+        element.entries.sortedWith(JSONB_KEY_ORDER).associateTo(LinkedHashMap()) { (k, v) -> k to jsonbKeyOrder(v) },
+    )
+    is JsonArray -> JsonArray(element.map(::jsonbKeyOrder))
+    else -> element
+}
+
+private val JSONB_KEY_ORDER: Comparator<Map.Entry<String, JsonElement>> = Comparator { a, b ->
+    val x = a.key.encodeToByteArray()
+    val y = b.key.encodeToByteArray()
+    if (x.size != y.size) return@Comparator x.size - y.size
+    for (i in x.indices) {
+        val d = (x[i].toInt() and 0xff) - (y[i].toInt() and 0xff)
+        if (d != 0) return@Comparator d
+    }
+    0
+}
+
+/** Pure: [blocks] with their JSON payloads (tool inputs, provider blocks) in [jsonbKeyOrder]. */
+fun journalStable(blocks: List<Block>): List<Block> = blocks.map { block ->
+    when (block) {
+        is Block.ToolUse -> block.copy(input = jsonbKeyOrder(block.input) as JsonObject)
+        is Block.Raw -> Block.Raw(jsonbKeyOrder(block.json) as JsonObject)
+        else -> block
+    }
+}
+
+/**
+ * Pure: where to put the explicit cache breakpoint inside [messages] (wire order), as
+ * (message index, block index), or null. It goes on the last block of the last user message before
+ * the last assistant turn: where the previous request's prompt ended, so its cache entry is read
+ * however many blocks the turn since added. The automatic breakpoint alone looks back only 20
+ * blocks, and a missed lookback falls back to the system prompt and rewrites the whole history.
+ * Only text and tool-result blocks after the latest compaction block carry it.
+ */
+fun messageCacheBreakpoint(messages: List<Message>): Pair<Int, Int>? {
+    val lastAssistant = messages.indexOfLast { it.role == Role.ASSISTANT }
+    if (lastAssistant < 0) return null
+    val lastCompaction = messages.indexOfLast { m -> m.content.any { it is Block.Raw && it.isCompaction } }
+    val index = (lastAssistant - 1 downTo 0).firstOrNull { messages[it].role != Role.SYSTEM } ?: return null
+    val message = messages[index]
+    if (index <= lastCompaction || message.role != Role.USER || message.content.isEmpty()) return null
+    val block = message.content.last()
+    return if (block is Block.Text || block is Block.Result) index to message.content.lastIndex else null
+}
+
 /** Token accounting, summed across the turns of a run. */
 @Serializable
 data class Usage(
@@ -161,6 +217,25 @@ data class Usage(
     companion object {
         val ZERO = Usage()
     }
+}
+
+/**
+ * Pure: what one response is billed for. With compaction the provider reports each sampling step in
+ * `usage.iterations` and leaves the compaction step out of the top-level fields ([top]), so the bill
+ * is the sum of the [iterations]. An iteration without a 5m/1h split of its cache writes takes
+ * [top]'s 1 hour share (all writes of one request use the same TTLs).
+ */
+fun billedUsage(top: Usage, iterations: List<Usage>): Usage {
+    if (iterations.isEmpty()) return top
+    val oneHourShare = if (top.cacheCreationInputTokens > 0) top.cacheCreation1hTokens.toDouble() / top.cacheCreationInputTokens else 0.0
+    return iterations.map { u ->
+        if (u.cacheCreation5mTokens + u.cacheCreation1hTokens > 0 || u.cacheCreationInputTokens == 0L) {
+            u
+        } else {
+            val oneHour = Math.round(u.cacheCreationInputTokens * oneHourShare)
+            u.copy(cacheCreation1hTokens = oneHour, cacheCreation5mTokens = u.cacheCreationInputTokens - oneHour)
+        }
+    }.reduce(Usage::plus)
 }
 
 /** Why the model stopped generating, normalised from the provider's stop reasons. */
@@ -244,8 +319,17 @@ data class ModelRequest(
     /** The whole system prompt as one string (for logging and simple assertions). */
     val systemText: String get() = system.joinToString("\n\n") { it.text }
 
+    /** The explicit breakpoint in [messages] ([messageCacheBreakpoint]) when caching is on and a slot is free. */
+    val messageBreakpoint: Pair<Int, Int>? =
+        if (cache != null && system.count { it.cacheBreakpoint } + (if (cache.automatic) 1 else 0) < MAX_CACHE_BREAKPOINTS) {
+            messageCacheBreakpoint(messages)
+        } else {
+            null
+        }
+
     init {
-        val breakpoints = system.count { it.cacheBreakpoint } + if (cache?.automatic == true) 1 else 0
+        val breakpoints = system.count { it.cacheBreakpoint } + (if (cache?.automatic == true) 1 else 0) +
+            (if (messageBreakpoint != null) 1 else 0)
         require(cache != null || system.none { it.cacheBreakpoint }) { "cache breakpoints requested but caching is disabled" }
         require(breakpoints <= MAX_CACHE_BREAKPOINTS) { "at most $MAX_CACHE_BREAKPOINTS cache breakpoints, requested $breakpoints" }
         require(tools.isNotEmpty() || deferredTools.isEmpty()) { "at least one tool must be non-deferred" }

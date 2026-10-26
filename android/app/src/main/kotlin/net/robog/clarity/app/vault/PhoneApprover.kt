@@ -37,7 +37,7 @@ fun signPayload(signature: Signature, payload: String): String {
  * Approves the actions only the phone may approve. A yes runs the system biometric prompt bound to the
  * approval key, signs the decision (the backend verifies it against the registered key) and:
  *  - for a credential use, also opens the sealed credential with the vault key and releases the
- *    fields for five minutes;
+ *    fields for this task (up to an hour);
  *  - for a two-factor code, sends the code the person typed;
  *  - for any other "never alone" kind, sends the signed decision.
  * Secrets are never logged; nothing about them goes into a message.
@@ -78,7 +78,7 @@ class PhoneApprover(
 
         val code = (action as? ProposedAction.AskCode)?.let {
             val typed = input.code?.trim().orEmpty()
-            Validators.otp(typed)?.let { problem -> return ApprovalResult.Denied(problem) }
+            Validators.otp(typed)?.let { problem -> return ApprovalResult.Denied(problem.curlyApostrophes()) }
             typed
         }
         val envelope = (action as? ProposedAction.UseCredential)?.let {
@@ -142,7 +142,7 @@ class PhoneApprover(
 
     private suspend fun open(envelope: net.robog.clarity.shared.vault.VaultEnvelope, site: String): Opened {
         kotlinx.coroutines.delay(PROMPT_GAP_MS) // let the first system prompt finish closing
-        val prompt = AuthPrompt("Open your saved login", "Release it to the agent for $site, for five minutes")
+        val prompt = AuthPrompt("Open your saved login", "Release it to the agent for $site, for this task")
         return when (val r = auth.authenticate(prompt)) {
             is AuthResult.Authenticated -> Opened.Ok(VaultCrypto.open(envelope) { keys.agree(it) })
             AuthResult.Cancelled -> Opened.No("Not approved.")

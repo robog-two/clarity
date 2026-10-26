@@ -60,7 +60,8 @@ fun setupTasks(items: List<FeedItem>, tasks: Map<TaskId, AgentTask>): List<Agent
 /** "7:05" */
 fun formatElapsed(duration: Duration): String {
     val total = duration.inWholeSeconds.coerceAtLeast(0)
-    return "${total / 60}:${(total % 60).toString().padStart(2, '0')}"
+    val seconds = (total % 60).toString().padStart(2, '0')
+    return if (total < 3600) "${total / 60}:$seconds" else "${total / 3600}:${(total / 60 % 60).toString().padStart(2, '0')}:$seconds"
 }
 
 /** Wall-clock time of [at] in [zone], as "9:15". */

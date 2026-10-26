@@ -27,8 +27,12 @@ import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.PrimaryButton
-import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.components.SelectRow
+import net.robog.clarity.app.ui.components.sentenceCase
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.connector.ConnectorSummary
@@ -43,7 +47,7 @@ fun ConnectorsScreen(
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    ConnectorsContent(state, onOpen, viewModel::syncAll, onContinue, onBack)
+    ConnectorsContent(state, onOpen, viewModel::syncAll, onContinue, onBack, onRetry = { viewModel.refresh() })
 }
 
 @Composable
@@ -53,38 +57,45 @@ fun ConnectorsContent(
     onSyncAll: () -> Unit,
     onContinue: () -> Unit,
     onBack: () -> Unit,
+    onRetry: () -> Unit = {},
 ) {
+    val nothingListed = state.items.isEmpty() && !state.loading
     StepScaffold(
         step = OnboardingStep.Connectors,
         backLabel = "← model",
         onBack = onBack,
-        title = "Where Your Day Lives",
+        title = "Where your day lives",
         footer = {
+            if (nothingListed) {
+                // Nothing to count or sync: the only useful action is loading the list again.
+                PrimaryButton("try again", onRetry, Modifier.fillMaxWidth())
+                return@StepScaffold
+            }
             Text(
-                state.summaryLine,
+                sentenceCase(state.summaryLine),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
             if (state.allSynced) {
-                PrimaryButton("continue →", onContinue, Modifier.fillMaxWidth())
+                PrimaryButton("continue", onContinue, Modifier.fillMaxWidth())
             } else {
                 PrimaryButton(if (state.syncing) "syncing…" else "sync all", onSyncAll, Modifier.fillMaxWidth(), enabled = state.canSync)
             }
         },
     ) {
-        Hint("Tap each one to set it up. Then sync, and I’ll test them all.")
+        if (!nothingListed) Hint("Tap each one to set it up. Then sync, and I’ll test them all.")
         if (state.notRunning.isNotEmpty()) {
             Hint(
-                "${state.notRunning.joinToString { it.row.title.lowercase() }} isn’t running on your server. " +
+                "${state.notRunning.joinToString { it.row.title }} isn’t running on your server. " +
                     "You can set it up later; it won’t stop you here.",
             )
         }
         if (state.unavailable) Hint("This server can’t list its connectors yet. Only the ones on this phone are shown.")
-        state.error?.let { ErrorBox("Could not load the connectors.", "Check your connection and come back to this step.") }
+        state.error?.let { ErrorBox("Couldn’t load the connectors.", "Check your connection and try again.") }
         Column {
             state.items.forEach { item ->
                 SelectRow(
-                    title = item.row.title.lowercase(),
+                    title = item.row.title,
                     caption = item.caption,
                     status = item.status,
                     statusAlpha = if (item.saved || item.test != null) 1f else 0.72f,
@@ -194,6 +205,8 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
             when {
                 state.loading || state.missing -> Unit
                 state.notRunning -> PrimaryButton("check again", actions.onRecheck, Modifier.fillMaxWidth())
+                // One step for a phone connector: the button asks for the permission, then saves.
+                state.phone != null && !state.allowed -> PrimaryButton("allow access", actions.onAllow, Modifier.fillMaxWidth())
                 else -> PrimaryButton(
                     state.saveLabel,
                     actions.onSave,
@@ -204,22 +217,27 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
         },
     ) {
         if (state.loading) Hint("Loading…")
-        if (state.missing) ErrorBox("${state.title} is not on this server.", "Check that its container is part of your setup.")
-        state.failedReason?.let {
-            ErrorBox(
-                "sync failed · $it",
-                if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
-            )
-        }
+        if (state.missing) ErrorBox("${state.title} isn’t on this server.", "Check that its container is part of your setup.")
         if (state.notRunning) {
-            InfoBox {
-                Text("not running on your server", style = MaterialTheme.typography.titleMedium)
-                Hint(state.blurb)
-            }
+            Hint(state.blurb)
+            state.adminHint?.let { HowToFix(it) }
         } else if (!state.missing && !state.loading) {
             Hint(state.blurb)
         }
-        state.problem?.let { ErrorBox(it.message()) }
+        // One error box: the failed sync and any problem saving go together.
+        val problem = state.problem?.message()
+        val failed = state.failedReason
+        if (failed != null) {
+            ErrorBox(
+                "Sync failed · $failed",
+                listOfNotNull(
+                    if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
+                    problem,
+                ).joinToString("\n").ifEmpty { null },
+            )
+        } else {
+            problem?.let { ErrorBox(it) }
+        }
         val errors = state.errors
         state.form.fields.forEach { field ->
             FieldInput(
@@ -245,13 +263,9 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
         }
         if (state.phone != null) {
             InfoBox {
-                Text("Allow access to ${state.title.lowercase()}?", style = MaterialTheme.typography.titleMedium)
+                Text(if (state.allowed) "Access allowed" else "Allow access to ${state.title}?", style = MaterialTheme.typography.titleMedium)
                 Hint("Read only. You can turn this off in settings.")
-                if (state.allowed) {
-                    StatusLine("● allowed")
-                } else {
-                    SecondaryButton("allow", actions.onAllow)
-                }
+                if (state.allowed) StatusLine("● Allowed")
             }
         }
     }
@@ -263,23 +277,42 @@ private fun PresetChooserContent(state: ConnectorSetupState, collection: String,
     val presets = state.collectionField(collection)?.collection?.presets.orEmpty()
     StepScaffold(
         step = step,
-        backLabel = "← ${state.title.lowercase()}",
+        backLabel = state.title,
         onBack = actions.onCloseChooser,
         kicker = "new account",
-        title = "Which Kind?",
+        title = "Which kind?",
     ) {
         Hint("Pick a provider and I’ll fill in its server settings. You can change anything.")
         Column {
             presets.forEach { p ->
                 SelectRow(
                     p.title,
-                    p.description.orEmpty().ifEmpty { "server settings filled in" },
+                    p.description.orEmpty().ifEmpty { "I fill in ${p.title}’s server settings" },
                     "→",
                     { actions.onChoosePreset(collection, p) },
                 )
             }
-            SelectRow("other", "enter the server settings yourself", "→", { actions.onChoosePreset(collection, null) })
+            SelectRow("Other provider", "Enter the server settings yourself", "→", { actions.onChoosePreset(collection, null) })
         }
+    }
+}
+
+/** The admin-only instructions, folded away under a quiet "How to fix" toggle. */
+@Composable
+private fun HowToFix(detail: String) {
+    var open by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    Column {
+        androidx.compose.material3.TextButton(
+            onClick = { open = !open },
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 12.dp),
+        ) {
+            Text("How to fix")
+            androidx.compose.material3.Icon(
+                if (open) androidx.compose.material.icons.Icons.Outlined.ExpandLess else androidx.compose.material.icons.Icons.Outlined.ExpandMore,
+                contentDescription = null,
+            )
+        }
+        if (open) Hint(detail)
     }
 }
 
@@ -292,10 +325,10 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     val title = field?.let { form.itemTitle(it, ItemValues(editor.id, editor.values)) }?.takeIf { !editor.isNew }
     StepScaffold(
         step = step,
-        backLabel = "← ${state.title.lowercase()}",
+        backLabel = state.title,
         onBack = actions.onCancelItem,
         kicker = if (editor.isNew) "new account" else "edit account",
-        title = title ?: if (editor.isNew) "New Account" else "Account",
+        title = title ?: if (editor.isNew) "New account" else "Account",
         footer = { PrimaryButton("save account", actions.onSaveItem, Modifier.fillMaxWidth()) },
     ) {
         editor.hint?.let { InfoBox { Hint(it) } }
@@ -378,7 +411,8 @@ private fun NotRunningPreview() = ClarityTheme {
         ConnectorSetupContent(
             ConnectorSetupState(
                 key = "dav", title = "Dav", proto = NOT_RUNNING, notRunning = true,
-                blurb = "Dav is not running on your server yet. Start its container (the `dav` compose profile), then come back and check again.",
+                blurb = "Dav hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.",
+                adminHint = "Whoever runs your server can start it: it’s the “dav” profile in the server’s compose setup.",
             ),
             SetupActions(),
         )

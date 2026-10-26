@@ -122,7 +122,7 @@ class VaultScreenTest {
 
     @Test fun approvalNotesSaySoPlainly() {
         val use = ProposedAction.UseCredential("k", "log in", CredentialId("c1"), "bank.example.com", listOf("username", "password"))
-        assertTrue("five minutes" in checkNotNull(phoneApprovalNote(use, false)))
+        assertTrue("up to an hour" in checkNotNull(phoneApprovalNote(use, false)))
         assertTrue("never alone" in checkNotNull(phoneApprovalNote(sendEmail(), true)))
         assertNull(phoneApprovalNote(sendEmail(), false))
     }

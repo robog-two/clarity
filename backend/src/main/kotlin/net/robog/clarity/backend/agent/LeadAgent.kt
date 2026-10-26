@@ -321,6 +321,7 @@ class LeadAgent(
      * whether a compaction ran. Never blocks a turn: it gives up if the lead is busy.
      */
     suspend fun compactIfIdle(): Boolean {
+        if (!config.roles.lead.idleCompaction) return false
         if (!runtime.enabled || !::threadId.isInitialized || !turnLock.tryLock()) return false
         try {
             val now = clock.now()
@@ -330,7 +331,7 @@ class LeadAgent(
             if (inbox.pending().any { it.item.priority == Priority.USER }) return false
             val due = shouldCompactNow(
                 now, lastUserActivity ?: thread.lastUserInputAt, thread.lastTurnAt, thread.compactedAt,
-                config.roles.lead.cacheTtl, estimateTokens(history),
+                config.roles.lead.cacheTtl, estimateTokens(sinceLastCompaction(history)),
             )
             if (!due) return false
             log.info { "compacting the lead thread while the cache is warm" }

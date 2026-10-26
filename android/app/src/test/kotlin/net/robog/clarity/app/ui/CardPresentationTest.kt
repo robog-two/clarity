@@ -44,6 +44,6 @@ class CardPresentationTest {
             ProposedAction.MoveEvent("k", "sends Dana an update", EntityId("e"), T0, T0, true),
             GuardVerdict(Decision.ASK, rationale = "r"), "view", urgency = Urgency.NORMAL, status = HeldAction.Status.HELD,
         )
-        assertEquals("needs your ok · sends Dana an update", proposalKicker(held))
+        assertEquals("needs your OK · sends Dana an update", proposalKicker(held))
     }
 }

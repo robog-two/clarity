@@ -43,6 +43,12 @@ data class RoleConfig(
     val compaction: Boolean = false,
     /** Compact once the prompt reaches this many tokens (at least 50K). Smaller is cheaper per turn but forgets sooner. */
     val compactAtTokens: Long = 150_000,
+    /**
+     * Also compact while the person is away ([net.robog.clarity.backend.agent.LeadAgent.compactIfIdle]). Off: a
+     * compact-now request sends different compaction settings, so it never reads the warm cache and
+     * rewrites the whole history at the cache-write price, and the next turn writes the summary again.
+     */
+    val idleCompaction: Boolean = false,
 )
 
 data class AgentRoles(

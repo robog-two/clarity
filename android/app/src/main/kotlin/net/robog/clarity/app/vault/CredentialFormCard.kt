@@ -29,11 +29,13 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.ui.cards.NoteBox
+import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.sentence
+import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.vault.CredentialRequest
 import net.robog.clarity.shared.vault.CredentialRequestId
 import net.robog.clarity.shared.vault.CredentialRequestStatus
@@ -95,7 +97,7 @@ class CredentialFormModel(
         state = s.copy(saving = true, error = null)
         state = when (val outcome = vault.save(s.form.request, s.form.normalized())) {
             // Dropping the editing state drops the typed secrets with it.
-            is SaveOutcome.Saved -> FormCardState.Done("Saved. “${outcome.meta.name}” is locked on your phone and I can use it now.")
+            is SaveOutcome.Saved -> FormCardState.Done("Saved. “${credentialTitle(outcome.meta.name)}” is locked on your phone and I can use it now.")
             is SaveOutcome.Failed -> s.copy(saving = false, error = outcome.message)
         }
     }
@@ -117,7 +119,7 @@ fun CredentialFormCard(requestId: CredentialRequestId, modifier: Modifier = Modi
     val model = remember(requestId, vault) { CredentialFormModel(requestId, vault) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(model) { model.load() }
-    CredentialFormContent(model.state, model::edit, model::touch, { scope.launch { model.save() } }, modifier)
+    CredentialFormContent(model.state, model::edit, model::touch, { scope.launch { model.save() } }, modifier, onRetry = { scope.launch { model.load() } })
 }
 
 @Composable
@@ -127,12 +129,16 @@ fun CredentialFormContent(
     onTouch: (FieldSpec) -> Unit,
     onSave: () -> Unit,
     modifier: Modifier = Modifier,
+    onRetry: () -> Unit = {},
 ) {
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         when (state) {
             FormCardState.Loading -> { Kicker("for you to fill in"); Hint("Loading the form…") }
-            is FormCardState.Failed -> { Kicker("for you to fill in"); Hint(state.message) }
-            is FormCardState.Done -> { Kicker("saved"); Text(state.line, style = MaterialTheme.typography.bodyMedium) }
+            is FormCardState.Failed -> {
+                ErrorBox("Couldn’t load the form", state.message)
+                TextButton(onClick = onRetry) { Text("Try again") }
+            }
+            is FormCardState.Done -> { Kicker("saved"); Text(state.line, style = MaterialTheme.clarityText.chat) }
             is FormCardState.Editing -> EditingForm(state, onEdit, onTouch, onSave)
         }
     }
@@ -155,9 +161,9 @@ private fun FormBody(state: FormCardState.Editing, onEdit: (FieldSpec, String) -
             FieldRow(field, state.form.valueOf(field), state.form.shownError(field), enabled = !state.saving, onEdit, onTouch)
         }
     }
-    state.error?.let { Hint(it) }
+    state.error?.let { ErrorBox(it) }
     PrimaryButton(
-        if (state.saving) "locking it up…" else "save",
+        if (state.saving) "Locking it up…" else "Save",
         onSave,
         Modifier.fillMaxWidth().padding(top = 8.dp),
         enabled = !state.saving,
@@ -188,10 +194,11 @@ private fun FieldRow(
         singleLine = true,
         isError = error != null,
         supportingText = error?.let { { Text(it) } },
-        shape = MaterialTheme.shapes.medium,
+        textStyle = MaterialTheme.clarityText.chat,
+        shape = MaterialTheme.shapes.extraSmall,
         visualTransformation = if (secret && !shown) PasswordVisualTransformation() else VisualTransformation.None,
         keyboardOptions = secretKeyboard(keyboardFor(field.type)),
-        trailingIcon = if (secret) ({ TextButton(onClick = { shown = !shown }) { Text(if (shown) "hide" else "show") } }) else null,
+        trailingIcon = if (secret) ({ TextButton(onClick = { shown = !shown }) { Text(if (shown) "Hide" else "Show") } }) else null,
     )
 }
 

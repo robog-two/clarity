@@ -18,8 +18,21 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.SecondaryButton
-import net.robog.clarity.app.ui.components.SelectRow
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.Color
+import net.robog.clarity.app.ui.components.sentenceCase
+import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.today.SectionTitle
+
+/** Pure: a stored handle as a readable title ("chase_checking" → "Chase checking"). */
+fun credentialTitle(name: String): String = sentenceCase(name.replace('_', ' ').trim())
 
 /** The "Vault" section of Settings. */
 @Composable
@@ -50,17 +63,29 @@ fun VaultSectionContent(
         Column {
             if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet. When I need a login or card, I’ll ask you here.")
             state.rows.forEach { row ->
-                SelectRow(row.name, listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(" · "), "delete", { deleting = row })
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ListItem(
+                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                    headlineContent = { Text(credentialTitle(row.name), style = MaterialTheme.clarityText.chat) },
+                    supportingContent = {
+                        Text(sentenceCase(listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(" · ")), style = MaterialTheme.clarityText.chatSmall)
+                    },
+                    trailingContent = {
+                        IconButton(onClick = { deleting = row }) {
+                            Icon(Icons.Outlined.Delete, contentDescription = "Delete ${credentialTitle(row.name)}")
+                        }
+                    },
+                )
             }
         }
     }
     deleting?.let { row ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete ${row.name}?") },
+            title = { Text("Delete ${credentialTitle(row.name)}?") },
             text = { Text("I won’t be able to use it again until you add it again.") },
-            confirmButton = { TextButton(onClick = { deleting = null; onDelete(row.id) }) { Text("delete") } },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("keep") } },
+            confirmButton = { TextButton(onClick = { deleting = null; onDelete(row.id) }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Keep") } },
         )
     }
 }

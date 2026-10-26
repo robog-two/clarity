@@ -60,7 +60,7 @@ fun mergeTasks(fromToday: List<AgentTask>, live: List<AgentTask>): List<AgentTas
 fun dateKicker(date: LocalDate, time: LocalTime): String =
     "${dayName(date.dayOfWeek.isoDayNumber).lowercase()}, ${monthName(date.month)} ${date.day} · ${formatTime(time)}"
 
-private fun monthName(month: Month): String = month.name.lowercase()
+private fun monthName(month: Month): String = month.name.lowercase().replaceFirstChar { it.titlecase() }
 
 /** "2 held today" / "nothing held today". */
 fun heldLine(waiting: Int): String = if (waiting == 0) "nothing held today" else "$waiting held today"

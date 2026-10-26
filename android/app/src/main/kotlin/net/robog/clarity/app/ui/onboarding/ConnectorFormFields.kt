@@ -127,12 +127,12 @@ fun StringListEditor(
         entries.forEachIndexed { i, entry ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(entry, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-                TextButton(onClick = { onChange(entries.filterIndexed { j, _ -> j != i }) }) { Text("remove") }
+                TextButton(onClick = { onChange(entries.filterIndexed { j, _ -> j != i }) }) { Text("Remove") }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
             ClarityField(
-                label = "add one",
+                label = "Add one",
                 value = draft,
                 onValueChange = { draft = it },
                 modifier = Modifier.weight(1f),
@@ -182,9 +182,9 @@ fun CollectionSection(
             title = { Text("Remove $title?") },
             text = { Text("It stops syncing once you save. Its saved password is deleted with it.") },
             confirmButton = {
-                TextButton(onClick = { removing = null; actions.onRemove(field.key, item.id) }) { Text("remove") }
+                TextButton(onClick = { removing = null; actions.onRemove(field.key, item.id) }) { Text("Remove") }
             },
-            dismissButton = { TextButton(onClick = { removing = null }) { Text("cancel") } },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } },
         )
     }
 }
@@ -205,8 +205,8 @@ fun AccountCard(
             Hint(it.text, color = if (it.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onRemove) { Text("remove") }
-            TextButton(onClick = onEdit) { Text("edit") }
+            TextButton(onClick = onRemove) { Text("Remove") }
+            TextButton(onClick = onEdit) { Text("Edit") }
         }
     }
 }

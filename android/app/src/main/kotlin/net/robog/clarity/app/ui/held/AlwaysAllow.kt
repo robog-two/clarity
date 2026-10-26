@@ -21,7 +21,7 @@ fun canAlwaysAllow(held: HeldAction): Boolean = held.waiting && held.action.kind
 /** Pure: the rule the editor opens with: the server's draft, or a plain line until it arrives. */
 fun startingRule(held: HeldAction): RuleDraft = held.ruleDraft ?: RuleDraft(
     "\"${held.action.kind.name.lowercase().replace('_', ' ')}\" is okay without asking: do it, then tell me.",
-    "I'd rather not approve these one by one.",
+    "I’d rather not approve these one by one.",
 )
 
 /** Pure: the amendment that adds [text] and lets the agent do [held]'s kind alone, telling the person after. */
