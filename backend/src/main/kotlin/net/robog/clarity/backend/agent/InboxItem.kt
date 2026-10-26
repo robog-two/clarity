@@ -98,7 +98,7 @@ sealed interface InboxItem {
     data class HeldDecided(val heldId: String, val status: String, val actionSummary: String) : InboxItem {
         override val priority get() = Priority.NORMAL
         override val summary get() = "The person ruled on the held action \"$actionSummary\" ($heldId): $status." +
-            if (status == "approved") " If it was a browser or login step, take it now (snapshot again if needed); it goes through without asking again." else ""
+            if (status == "approved") " If it was a browser step, delegate a helper to take exactly that step on that page now (it snapshots the page again first); it goes through without asking. A login approval is used by the helper's next sign-in." else ""
     }
 
     @Serializable @SerialName("constitution_changed")

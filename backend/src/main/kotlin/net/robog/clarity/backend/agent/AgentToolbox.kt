@@ -133,12 +133,15 @@ class AgentToolbox(
         if (forLead) addAll(session.all())
     }.let { guarded(scope, it) }
 
-    /** The lead's tools: the common ones loaded, the rest (and every MCP tool) behind tool search. */
-    suspend fun leadTools(scope: RunScope): ToolSet {
+    /**
+     * The lead's tools: the common ones loaded, the rest behind tool search. The lead gets no MCP
+     * tools (the browser, the sandbox): it hands that work to a helper on a cheaper model.
+     */
+    fun leadTools(scope: RunScope): ToolSet {
         val all = everything(scope, forLead = true)
         return ToolSet(
             loaded = all.filter { it.name in LEAD_LOADED }.sortedBy { it.name },
-            deferred = (all.filter { it.name !in LEAD_LOADED } + mcpTools(scope)).sortedBy { it.name },
+            deferred = all.filter { it.name !in LEAD_LOADED }.sortedBy { it.name },
         )
     }
 

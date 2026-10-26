@@ -83,7 +83,7 @@ const val HELPER_MODEL = "claude-sonnet-5-5"
 class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: String? = "sk-test") {
     val model = FakeModel()
     val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2)
-    val runtime = AgentRuntime(config, ModelGatewayFactory { model })
+    val runtime = AgentRuntime(config, ModelGatewayFactory { model }, UsageRecorder { _, _ -> })
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)

@@ -33,9 +33,13 @@ import kotlinx.coroutines.flow.first
  */
 @Inject
 @SingleIn(AppScope::class)
-class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFactory) {
+class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFactory, private val usage: UsageRecorder) {
     private val configured: Boolean = !config.anthropicApiKey.isNullOrBlank()
-    private val current = MutableStateFlow<ModelGateway?>(config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let(factory::create))
+
+    /** Every gateway records each call's tokens and cost (`model_call`). */
+    private fun create(apiKey: String): ModelGateway = RecordingGateway(factory.create(apiKey), usage)
+
+    private val current = MutableStateFlow<ModelGateway?>(config.anthropicApiKey?.takeIf { it.isNotBlank() }?.let(::create))
 
     val gateway: ModelGateway? get() = current.value
 
@@ -47,7 +51,7 @@ class AgentRuntime(val config: AgentConfig, private val factory: ModelGatewayFac
     /** Uses [apiKey] from now on, unless a configured key takes precedence. Returns whether it is in use. */
     fun installKey(apiKey: String): Boolean {
         if (configured) return false
-        current.value = factory.create(apiKey)
+        current.value = create(apiKey)
         return true
     }
 
