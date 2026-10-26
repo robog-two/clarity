@@ -92,7 +92,7 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
             .setOngoing(true)
             .setUsesChronometer(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(callScreen(answer = false, code = 7))
+            .setContentIntent(callScreen(answer = false, code = 7, fresh = false))
             .setStyle(NotificationCompat.CallStyle.forOngoingCall(agent, hangUp))
             .build()
         manager.notify(ID_ONGOING, notification)
@@ -108,9 +108,13 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    private fun callScreen(answer: Boolean, code: Int): PendingIntent {
+    /** [fresh] starts the call screen from scratch (a new call); otherwise it resumes the one on screen. */
+    private fun callScreen(answer: Boolean, code: Int, fresh: Boolean = true): PendingIntent {
         val intent = Intent(Intent.ACTION_VIEW, DeepLink.Call(answer).toUri().toUri(), context, CallActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .addFlags(
+                if (fresh) Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP,
+            )
         return PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 

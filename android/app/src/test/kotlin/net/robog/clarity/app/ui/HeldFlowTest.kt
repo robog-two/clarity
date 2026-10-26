@@ -398,6 +398,14 @@ class AmendViewModelTest {
         assertEquals(SessionControl.End, r.sessions.controls.last())
     }
 
+    @Test fun aSettledHeldActionStartsNoConversation() = withMain {
+        val r = AmendRig(heldFor = heldAction(status = HeldAction.Status.KEPT))
+        assertTrue(r.sessions.started.isEmpty())
+        assertTrue(r.state.settled)
+        assertFalse(r.state.canKeep)
+        assertFalse(r.state.canSave)
+    }
+
     @Test fun keepingWithoutAHeldActionJustEndsTheTalk() = withMain {
         val r = AmendRig(heldFor = null)
         r.vm.keep()

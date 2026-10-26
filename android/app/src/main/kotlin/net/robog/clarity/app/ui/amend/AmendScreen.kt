@@ -85,7 +85,8 @@ fun AmendContent(
                     Hint(held.verdict.rationale)
                 }
             }
-            if (!agentHasSpoken(state.talk)) AgentText(fallbackQuestion(state.held != null))
+            if (state.settled) Hint("This one is settled. Nothing more to decide here.")
+            else if (!agentHasSpoken(state.talk)) AgentText(fallbackQuestion(state.held != null))
             state.talk.forEach { FeedItemView(it) }
             state.live?.let { LiveBubble(it) }
             if (state.waitingAgent) Hint("working on it…", italic = true)

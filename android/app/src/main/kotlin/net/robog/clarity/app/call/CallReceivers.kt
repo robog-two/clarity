@@ -59,11 +59,22 @@ class CallActionReceiver : BroadcastReceiver() {
 /** Boot, time zone and clock changes, and app updates all invalidate the alarms. */
 class ScheduleReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action !in HANDLED) return
         val graph = context.graph()
         async {
             graph.callScheduler.refresh()
             graph.phoneConnector.schedule()
             graph.dndActions.endIfDue()
         }
+    }
+
+    private companion object {
+        val HANDLED = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_TIMEZONE_CHANGED,
+            Intent.ACTION_TIME_CHANGED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            "android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED",
+        )
     }
 }

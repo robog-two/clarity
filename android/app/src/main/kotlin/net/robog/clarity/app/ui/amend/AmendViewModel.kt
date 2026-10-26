@@ -65,6 +65,8 @@ data class AmendUiState(
     val waitingAgent: Boolean = false,
     val working: Boolean = false,
     val finished: Boolean = false,
+    /** The held action was already decided: nothing left to talk about. */
+    val settled: Boolean = false,
     val message: String? = null,
 ) {
     val busy: Boolean get() = working || waitingAgent || session?.state == Session.State.BUSY
@@ -143,6 +145,10 @@ class AmendViewModel(
         viewModelScope.launch {
             val held = id?.let { hid -> feed.held.first().firstOrNull { it.id == hid } }
             _state.update { it.copy(held = held) }
+            if (held != null && !held.waiting) {
+                _state.update { it.copy(loading = false, settled = true) }
+                return@launch
+            }
             when (val r = sessions.start(SessionKind.AMEND, id)) {
                 is ApiResult.Success -> {
                     _state.update { it.copy(loading = false, session = r.value) }

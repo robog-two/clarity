@@ -51,13 +51,15 @@
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="clarity" android:host="today" />
-                <data android:scheme="clarity" android:host="ask" />
-                <data android:scheme="clarity" android:host="held" />
+                <data android:scheme="clarity" />
+                <data android:host="today" />
+                <data android:host="ask" />
+                <data android:host="held" />
             </intent-filter>
         </activity>
 
-        <!-- The morning call: its own task, shown over the lock screen. -->
+        <!-- The morning call: its own task, shown over the lock screen. Notifications open it with an
+             explicit intent carrying clarity://call, so it needs no intent filter. -->
         <activity
             android:name=".app.call.CallActivity"
             android:exported="false"
@@ -65,14 +67,9 @@
             android:showWhenLocked="true"
             android:turnScreenOn="true"
             android:excludeFromRecents="true"
-            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:taskAffinity="net.robog.clarity.call"
             android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="clarity" android:host="call" />
-            </intent-filter>
         </activity>
 
         <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
