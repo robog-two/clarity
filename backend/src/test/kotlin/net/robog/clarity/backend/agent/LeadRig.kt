@@ -81,9 +81,14 @@ const val LEAD_MODEL = "claude-opus-5-5"
 const val HELPER_MODEL = "claude-sonnet-5-5"
 
 /** Everything the lead needs, wired by hand against a real database (what Metro does in production). */
-class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: String? = "sk-test") {
+class LeadRig(
+    val database: Database,
+    val clock: Clock = Clock.System,
+    apiKey: String? = "sk-test",
+    roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles(),
+) {
     val model = FakeModel()
-    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2)
+    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
     val runtime = AgentRuntime(config, ModelGatewayFactory { model }, UsageRecorder { _, _ -> })
 
     val signals = InboxSignals()

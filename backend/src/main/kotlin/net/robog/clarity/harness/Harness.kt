@@ -135,7 +135,8 @@ fun planTools(tools: List<Tool>, deferred: List<Tool>, policy: ToolPolicy): Tool
  * turn, run the requested tools in parallel, return every result in ONE user message, repeat until
  * the model finishes or a limit hits. History is append-only: assistant content is replayed
  * exactly as received (thinking, compaction and server-tool blocks included), which preserved
- * thinking requires and which keeps the prompt cache warm.
+ * thinking requires and which keeps the prompt cache warm; only JSON key order is normalised
+ * ([journalStable]), once, so a replay from a `jsonb` journal is byte-identical to one from memory.
  *
  * Durability: the initial messages, each assistant message, each tool-result message and each
  * interrupt are appended to the [journal]; [resume] continues a run from it.
@@ -257,7 +258,8 @@ class Harness(
                         if (request.cache != null && completedCalls > 1 && response.usage.cacheReadInputTokens == 0L) {
                             send(HarnessEvent.CacheMiss(turn, response.usage))
                         }
-                        append(listOf(Message(Role.ASSISTANT, response.content)))
+                        // In the journal's (jsonb) key order, so this turn replays the same from memory and from the journal.
+                        append(listOf(Message(Role.ASSISTANT, journalStable(response.content))))
                         if (response.text.isNotEmpty()) send(HarnessEvent.AssistantText(response.text))
 
                         if (request.compactNow && response.stopReason == StopReason.COMPACTION) {

@@ -16,6 +16,7 @@ import com.anthropic.models.beta.messages.BetaThinkingConfigAdaptive
 import com.anthropic.models.beta.messages.BetaToolChoiceAuto
 import com.anthropic.models.beta.messages.BetaToolUnion
 import com.anthropic.models.beta.messages.BetaCacheControlEphemeral
+import com.anthropic.models.beta.messages.BetaUsage
 import com.anthropic.models.beta.messages.MessageCreateParams
 import kotlin.jvm.optionals.getOrNull
 import kotlinx.coroutines.Dispatchers
@@ -105,11 +106,13 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
                 .systemOfBetaTextBlockParams(request.system.map { it.toWire(request.cache).toSdk<BetaTextBlockParam>() })
                 .thinking(thinkingWire(request.thinkingDisplay).toSdk<BetaThinkingConfigAdaptive>())
 
-            request.messages.forEach { message ->
+            val marker = request.messageBreakpoint
+            request.messages.forEachIndexed { index, message ->
+                val breakpoint = marker?.takeIf { it.first == index }?.let { it.second to request.cache!!.ephemeral() }
                 if (message.role == Role.SYSTEM) {
-                    builder.addMessage(message.toWire().toSdk<BetaSystemMessageParam>())
+                    builder.addMessage(message.toWire(breakpoint).toSdk<BetaSystemMessageParam>())
                 } else {
-                    builder.addMessage(message.toWire().toSdk<BetaMessageParam>())
+                    builder.addMessage(message.toWire(breakpoint).toSdk<BetaMessageParam>())
                 }
             }
             if (request.messages.any { it.effort != null }) builder.addBeta(MID_CONVERSATION_EFFORT_BETA)
@@ -198,7 +201,8 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
             if (deferred) put("defer_loading", true)
         }
 
-        private fun Message.toWire(): JsonObject = buildJsonObject {
+        /** [breakpoint]: the index of the block that carries `cache_control`, and its value. */
+        private fun Message.toWire(breakpoint: Pair<Int, JsonObject>? = null): JsonObject = buildJsonObject {
             put(
                 "role",
                 when (role) {
@@ -207,7 +211,15 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
                     Role.SYSTEM -> "system"
                 },
             )
-            put("content", JsonArray(content.map { it.toWire() }))
+            put(
+                "content",
+                JsonArray(
+                    content.mapIndexed { i, block ->
+                        val wire = block.toWire()
+                        if (breakpoint?.first == i) JsonObject(wire + ("cache_control" to breakpoint.second)) else wire
+                    },
+                ),
+            )
             if (role == Role.SYSTEM && effort != null) putJsonObject("output_config") { put("effort", effort) }
         }
 
@@ -226,17 +238,30 @@ class AnthropicModelGateway(private val client: AnthropicClient) : ModelGateway 
         internal fun toModelResponse(message: BetaMessage): ModelResponse {
             val usage = message.usage()
             val split = usage.cacheCreation().getOrNull()
+            val top = Usage(
+                inputTokens = usage.inputTokens(),
+                outputTokens = usage.outputTokens(),
+                cacheCreationInputTokens = usage.cacheCreationInputTokens().getOrNull() ?: 0,
+                cacheReadInputTokens = usage.cacheReadInputTokens().getOrNull() ?: 0,
+                cacheCreation5mTokens = split?.ephemeral5mInputTokens() ?: 0,
+                cacheCreation1hTokens = split?.ephemeral1hInputTokens() ?: 0,
+            )
             return ModelResponse(
                 content = message.content().map { it.toBlock() },
                 stopReason = message.stopReason().getOrNull()?.toStopReason() ?: StopReason.OTHER,
-                usage = Usage(
-                    inputTokens = usage.inputTokens(),
-                    outputTokens = usage.outputTokens(),
-                    cacheCreationInputTokens = usage.cacheCreationInputTokens().getOrNull() ?: 0,
-                    cacheReadInputTokens = usage.cacheReadInputTokens().getOrNull() ?: 0,
-                    cacheCreation5mTokens = split?.ephemeral5mInputTokens() ?: 0,
-                    cacheCreation1hTokens = split?.ephemeral1hInputTokens() ?: 0,
-                ),
+                usage = billedUsage(top, usage.iterations().getOrNull().orEmpty().map { it.toUsage() }),
+            )
+        }
+
+        private fun BetaUsage.Iteration.toUsage(): Usage {
+            val split = cacheCreation().getOrNull()
+            return Usage(
+                inputTokens = inputTokens(),
+                outputTokens = outputTokens(),
+                cacheCreationInputTokens = cacheCreationInputTokens(),
+                cacheReadInputTokens = cacheReadInputTokens(),
+                cacheCreation5mTokens = split?.ephemeral5mInputTokens() ?: 0,
+                cacheCreation1hTokens = split?.ephemeral1hInputTokens() ?: 0,
             )
         }
 

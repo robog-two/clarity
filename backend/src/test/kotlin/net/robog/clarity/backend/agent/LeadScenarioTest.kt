@@ -63,8 +63,11 @@ class LeadScenarioTest : FunSpec({
         postgres.stop()
     }
 
-    suspend fun rig(clock: kotlin.time.Clock = kotlin.time.Clock.System, apiKey: String? = "sk-test"): LeadRig =
-        LeadRig(database, clock, apiKey).also { it.reset() }
+    suspend fun rig(
+        clock: kotlin.time.Clock = kotlin.time.Clock.System,
+        apiKey: String? = "sk-test",
+        roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles(),
+    ): LeadRig = LeadRig(database, clock, apiKey, roles).also { it.reset() }
 
     fun user(text: String, id: String = text) = InboxItem.UserInput(ClientInputId(id), text)
 
@@ -345,9 +348,21 @@ class LeadScenarioTest : FunSpec({
         r.large.sink.limit("run-1", "toolu_big", "list_messages", big) shouldContain id
     }
 
-    test("idle compaction runs once, only when the person is away, the thread is long and the cache is warm") {
+    test("idle compaction is off by default: a compact-now request cannot read the warm cache") {
         val clock = MovableClock()
         val r = rig(clock)
+        r.lead.start()
+        r.inbox.enqueue(user("x".repeat(250_000), id = "long"))
+        r.lead.step()
+        clock.advance(5.minutes)
+        r.lead.compactIfIdle() shouldBe false
+        r.model.requests shouldHaveSize 1
+    }
+
+    test("idle compaction (when on) runs once, only when the person is away, the thread is long and the cache is warm") {
+        val clock = MovableClock()
+        val defaults = net.robog.clarity.backend.config.AgentRoles()
+        val r = rig(clock, roles = defaults.copy(lead = defaults.lead.copy(idleCompaction = true)))
         r.model.handler = { request ->
             if (request.compaction?.pauseAfterCompaction == true) {
                 net.robog.clarity.harness.ModelResponse(
@@ -376,6 +391,43 @@ class LeadScenarioTest : FunSpec({
         r.inbox.enqueue(user("what did I miss?"))
         r.lead.step()
         r.model.requests.last().messages.any { m -> m.content.any { it is Block.Raw && it.isCompaction } } shouldBe true
+
+        // the history before the compaction block no longer counts: a short thread since is not compacted again
+        clock.advance(5.minutes)
+        val before = r.model.requests.size
+        r.lead.compactIfIdle() shouldBe false
+        r.model.requests.size shouldBe before
+    }
+
+    test("the next turn replays the last one byte for byte from the jsonb journal, with a breakpoint where the last request ended") {
+        val r = rig()
+        r.model.handler = { request ->
+            if (request.messages.last().content.any { it is Block.Result }) end("done")
+            // keys in an order jsonb does not keep
+            else callTool("toolu_k", "probe", buildJsonObject { put("zeta_long_key", "1"); put("a", "2"); put("mid", "3") })
+        }
+        r.inbox.enqueue(user("first"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.handler = { end("second done") }
+        r.inbox.enqueue(user("second"))
+        r.lead.step() shouldBe true
+
+        fun wire(request: net.robog.clarity.harness.ModelRequest): List<String> {
+            val body = net.robog.clarity.harness.AnthropicModelGateway.bodyJson(net.robog.clarity.harness.AnthropicModelGateway.buildParams(request))
+            return body["messages"]!!.let { it as JsonArray }.map { message ->
+                // breakpoints move from request to request; they are not part of the cached prefix
+                message.toString().replace(Regex(""","cache_control":\{[^}]*\}"""), "")
+            }
+        }
+        val inMemory = r.model.requests[1] // turn 1, after the tool result (history held in memory)
+        val reloaded = r.model.requests[2] // turn 2, history loaded from the journal
+        val shared = inMemory.messages.size
+        wire(reloaded).take(shared) shouldBe wire(inMemory)
+        // the explicit breakpoint sits on the tool result: the end of the previous request's prompt
+        val (index, block) = reloaded.messageBreakpoint!!
+        reloaded.messages[index].content[block].shouldBeInstanceOf<Block.Result>()
+        index shouldBe shared - 1
     }
 
     test("without an API key the lead stays off and says so once") {
