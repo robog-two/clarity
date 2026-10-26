@@ -1,9 +1,13 @@
 version: 2
+# Security updates only. Every ecosystem has open-pull-requests-limit: 0, which turns off routine
+# version-update PRs; Dependabot security updates (enabled in the repo settings) still open PRs for
+# known vulnerabilities and use the groups below. Security PRs target the default branch (main).
 updates:
   - package-ecosystem: gradle
     directories: ["/", "/android"]
     target-branch: dev
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
     groups:
       gradle-minor-patch:
         update-types: [minor, patch]
@@ -12,6 +16,7 @@ updates:
     directory: "/"
     target-branch: dev
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
@@ -20,6 +25,7 @@ updates:
     directory: "/deploy/container"
     target-branch: dev
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
     groups:
       docker-minor-patch:
         update-types: [minor, patch]
@@ -29,6 +35,7 @@ updates:
     directory: "/deploy"
     target-branch: dev
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
     groups:
       compose-minor-patch:
         update-types: [minor, patch]
@@ -38,3 +45,4 @@ updates:
     directory: "/computers/browser"
     target-branch: dev
     schedule: { interval: weekly }
+    open-pull-requests-limit: 0
