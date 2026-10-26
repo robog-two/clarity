@@ -70,11 +70,14 @@ private fun obj(json: String): JsonObject = Json.parseToJsonElement(json).jsonOb
 class DomainToolsTest : FunSpec({
     val reader = FakeReader()
     val triggers = FakeTriggers()
-    val tools = DomainTools(reader, triggers).all.associateBy { it.name }
+    val tools = DomainTools(reader, triggers, DocumentTools(reader) { DocumentFetch.Unavailable("none") }).all.associateBy { it.name }
 
-    test("exposes the six tools, sorted, with the right effects") {
+    test("exposes the eight tools, sorted, with the right effects") {
         tools.keys.toList() shouldContainExactly
-            listOf("create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers", "search_contacts")
+            listOf(
+                "create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers",
+                "read_document", "search_contacts", "search_documents",
+            )
         tools.getValue("create_trigger").effect shouldBe ToolEffect.WRITE
         tools.getValue("delete_trigger").effect shouldBe ToolEffect.WRITE
         tools.getValue("list_messages").effect shouldBe ToolEffect.READ

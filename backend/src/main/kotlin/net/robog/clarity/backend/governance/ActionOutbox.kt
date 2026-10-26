@@ -16,12 +16,15 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import net.robog.clarity.backend.persistence.SourceLinks
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.shared.ConnectorId
+import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.action.ActionId
 import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.action.ConnectorAction
+import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.governance.ActivityEntry
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
@@ -30,6 +33,7 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -64,6 +68,17 @@ fun transitionFor(attempts: Int, outcome: ActionOutcome, now: Instant): Transiti
     is ActionOutcome.Done -> Transition.Finish
     is ActionOutcome.Failed ->
         if (outcome.retryable && attempts < MAX_ATTEMPTS) Transition.Retry(now + retryDelay(attempts)) else Transition.GiveUp
+}
+
+/** The canonical entity an action refers to, if it refers to one. */
+fun referencedEntity(action: ProposedAction): EntityId? = when (action) {
+    is ProposedAction.SaveDraft -> action.email.inReplyTo
+    is ProposedAction.SendEmail -> action.email.inReplyTo
+    is ProposedAction.MoveEvent -> action.event
+    is ProposedAction.RespondToInvite -> action.event
+    is ProposedAction.ReadDocument -> action.document
+    is ProposedAction.CreateEvent, is ProposedAction.CreateReminder,
+    is ProposedAction.SetDoNotDisturb, is ProposedAction.ExternalTool -> null
 }
 
 object OutboxStatus {
@@ -196,12 +211,26 @@ class ActionOutbox(
                     it[leaseUntil] = now + LEASE_DURATION
                     it[attempts] = attempt
                 }
-                ConnectorAction(ActionId(row[ActionOutboxTable.id].toString()), row[ActionOutboxTable.action], target = null, attempt = attempt, createdAt = row[ActionOutboxTable.createdAt])
+                val action = row[ActionOutboxTable.action]
+                ConnectorAction(ActionId(row[ActionOutboxTable.id].toString()), action, target = targetFor(connector, action), attempt = attempt, createdAt = row[ActionOutboxTable.createdAt])
             }
             actions to exhaustedRows
         }
         exhausted.forEach { announce(it.copy(status = OutboxStatus.FAILED, result = ActionOutcome.Failed("the connector never reported a result", false))) }
         return leased
+    }
+
+    /**
+     * The connector's own id for the record [action] refers to (the original message of a reply, the
+     * event to move, the document to read), from the source link this connector reported for it.
+     */
+    private fun JdbcTransaction.targetFor(connector: ConnectorId, action: ProposedAction): SourceId? {
+        val entity = referencedEntity(action) ?: return null
+        val uuid = parseHeldId(entity.value) ?: return null
+        return SourceLinks.selectAll()
+            .where { (SourceLinks.connectorId eq connector.value) and (SourceLinks.entityId eq uuid) and SourceLinks.deletedAt.isNull() }
+            .orderBy(SourceLinks.latestVersion, SortOrder.DESC)
+            .firstOrNull()?.get(SourceLinks.sourceId)?.let(::SourceId)
     }
 
     /** Long-poll: [lease], waiting up to [wait] (max [MAX_WAIT]) for work to appear. */

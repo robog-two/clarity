@@ -104,7 +104,8 @@ class LeadRig(val database: Database, val clock: Clock = Clock.System, apiKey: S
     val large = LargeResults(database, mcp, clock)
     val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock)
     val external = ExternalTools(gate)
-    val domain = DomainTools(ExposedNounReader(database), ExposedTriggerStore(database, clock))
+    private val reader = ExposedNounReader(database)
+    val domain = DomainTools(reader, ExposedTriggerStore(database, clock), DocumentTools(reader) { DocumentFetch.Unavailable("none") })
 
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox

@@ -57,5 +57,11 @@ Rules for records:
   `CLARITY_CONNECTORS_AUTO_GRANT=true`). The connector only declares what it *wants* in `produces`.
 - **Network**: a connector sits on the internal `ingest` network (reaches only the backend) plus its
   own egress network for its upstream. It cannot reach Postgres, the browser tool, or other connectors.
-- **Config & secrets**: the app edits config per connector; secret values are sealed to the
-  connector's key (scaffolded in the DTOs, `ConnectorManifest.sealingKey`).
+- **Config & secrets**: the app edits config per connector; secret values are sealed (HPKE) to the
+  connector's key. In a connector: create `ConnectorRuntime(settings)` first, publish
+  `runtime.sealingKey` in the manifest, read secrets with `runtime.secret(config, "password")`,
+  and pass the runtime to `runConnector(..., runtime = runtime, test = { config -> ... })` so action
+  handlers see the newest config and the app's "test connection" button gets an answer.
+- **Actions**: `actionHandlers { onTargeted<ProposedAction.X> { action, target -> ... } }`; `target` is
+  the source id the connector itself reported for the record the action refers to.
+- Real examples: `connectors/mail` (IMAP/SMTP) and `connectors/dav` (CalDAV/CardDAV/WebDAV).

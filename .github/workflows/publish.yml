@@ -26,6 +26,8 @@ jobs:
         include:
           - { service: backend, file: deploy/container/jvm-app.Containerfile, module: backend, app: clarity-backend, dir: backend }
           - { service: connector-example, file: deploy/container/jvm-app.Containerfile, module: "connectors:example", app: clarity-connector-example, dir: connectors/example }
+          - { service: connector-mail, file: deploy/container/jvm-app.Containerfile, module: "connectors:mail", app: clarity-connector-mail, dir: connectors/mail }
+          - { service: connector-dav, file: deploy/container/jvm-app.Containerfile, module: "connectors:dav", app: clarity-connector-dav, dir: connectors/dav }
           # The agent's computers (module/app/dir are unused by their Containerfiles).
           - { service: sandbox, file: deploy/container/sandbox.Containerfile, module: "", app: "", dir: "" }
           - { service: browser, file: deploy/container/browser.Containerfile, module: "", app: "", dir: "" }

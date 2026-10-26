@@ -13,9 +13,11 @@ import kotlinx.serialization.builtins.MapSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.serializer
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.action.ConnectorAction
+import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.ProposedAction
 
@@ -35,13 +37,13 @@ private val log = KotlinLogging.logger {}
  * [ActionOutcome.Failed] with `retryable = true` for transient problems; a thrown exception is
  * treated the same way.
  */
-class ActionHandlers internal constructor(private val byType: Map<KClass<out ProposedAction>, suspend (ProposedAction) -> ActionOutcome>) {
+class ActionHandlers internal constructor(private val byType: Map<KClass<out ProposedAction>, suspend (ProposedAction, SourceId?) -> ActionOutcome>) {
     val isEmpty: Boolean get() = byType.isEmpty()
 
     /** The kinds handled, for comparing against the manifest's `handles`. */
     val kinds: Set<ActionKind> get() = byType.keys.mapNotNull { kindOf(it) }.toSet()
 
-    internal suspend fun handle(action: ProposedAction): ActionOutcome? = byType[action::class]?.invoke(action)
+    internal suspend fun handle(action: ProposedAction, target: SourceId? = null): ActionOutcome? = byType[action::class]?.invoke(action, target)
 
     companion object {
         val None = ActionHandlers(emptyMap())
@@ -59,12 +61,20 @@ class ActionHandlers internal constructor(private val byType: Map<KClass<out Pro
 }
 
 class ActionHandlersBuilder {
-    private val handlers = LinkedHashMap<KClass<out ProposedAction>, suspend (ProposedAction) -> ActionOutcome>()
+    private val handlers = LinkedHashMap<KClass<out ProposedAction>, suspend (ProposedAction, SourceId?) -> ActionOutcome>()
 
     fun <T : ProposedAction> on(type: KClass<T>, handler: suspend (T) -> ActionOutcome) {
         @Suppress("UNCHECKED_CAST")
-        handlers[type] = { action -> handler(action as T) }
+        handlers[type] = { action, _ -> handler(action as T) }
     }
+
+    /** Like [on], also receiving the connector's own id for the record the action refers to (`ConnectorAction.target`). */
+    fun <T : ProposedAction> onTargeted(type: KClass<T>, handler: suspend (T, SourceId?) -> ActionOutcome) {
+        @Suppress("UNCHECKED_CAST")
+        handlers[type] = { action, target -> handler(action as T, target) }
+    }
+
+    inline fun <reified T : ProposedAction> onTargeted(noinline handler: suspend (T, SourceId?) -> ActionOutcome) = onTargeted(T::class, handler)
 
     inline fun <reified T : ProposedAction> on(noinline handler: suspend (T) -> ActionOutcome) = on(T::class, handler)
 
@@ -115,7 +125,7 @@ internal suspend fun execute(action: ConnectorAction, handlers: ActionHandlers, 
         return it
     }
     val outcome = try {
-        handlers.handle(action.action)
+        handlers.handle(action.action, action.target)
             ?: ActionOutcome.Failed("this connector has no handler for ${action.action.kind}", retryable = false)
     } catch (e: CancellationException) {
         throw e
@@ -136,11 +146,13 @@ internal suspend fun pollAndExecute(
     handlers: ActionHandlers,
     ledger: ActionLedger,
     wait: Duration,
+    beforeExecute: suspend () -> Unit = {},
 ): ClientError? {
     val poll = when (val r = client.pollActions(wait)) {
         is Either.Left -> return r.value
         is Either.Right -> r.value
     }
+    if (poll.actions.isNotEmpty()) beforeExecute()
     for (action in poll.actions) {
         val outcome = execute(action, handlers, ledger)
         // A failed report is fine: the lease lapses, the action is re-delivered, and the ledger answers it.
@@ -155,12 +167,23 @@ internal suspend fun runActionLoop(
     state: StateStore,
     handlers: ActionHandlers,
     wait: Duration = 25.seconds,
+    runtime: ConnectorRuntime? = null,
+    test: (suspend (ConnectorConfig) -> ConnectorTestResult)? = null,
 ) {
     val ledger = ActionLedger(state)
     var backoff = 1.seconds
     while (true) {
-        val error = pollAndExecute(client, handlers, ledger, wait)
+        // Handlers read credentials from the runtime's config; keep it current before executing.
+        val error = if (handlers.isEmpty) {
+            if (test != null) delay(wait) // nothing to long-poll for: just pace the test checks
+            null
+        } else {
+            pollAndExecute(client, handlers, ledger, wait, beforeExecute = { runtime?.refresh(client) })
+        }
         if (error == null) {
+            if (test != null && runtime != null) {
+                client.pollTest().onRight { request -> if (request != null) runtime.answerTest(client, request, test) }
+            }
             backoff = 1.seconds
         } else {
             log.warn { "action poll failed: ${error.message}; retrying in $backoff" }

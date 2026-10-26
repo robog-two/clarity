@@ -22,6 +22,8 @@ use `up -d --build` (the `build:` sections use `deploy/container/jvm-app.Contain
 |---|---|---|
 | (none) | `postgres`, `backend`, `caddy` (TLS) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
+| `mail` | `connector-mail` (IMAP sync, SMTP send, drafts) | `--profile mail` |
+| `dav` | `connector-dav` (CalDAV events and reminders, CardDAV contacts, WebDAV files) | `--profile dav` |
 | `computers` | `sandbox` (Linux workspace) and `browser` (Firefox), the agent's tools | `--profile computers`, and set `CLARITY_MCP_SERVERS` (see below) |
 
 ## The agent's computers (`--profile computers`)

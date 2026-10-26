@@ -54,6 +54,27 @@ data class ConnectorSummary(
     val manifest: ConnectorManifest?,
     val grants: Map<Noun, GrantState>,
     val lastSeenAt: kotlin.time.Instant?,
+    /** Newest result of `POST /api/v1/connectors/{id}/test`, if the connector has reported one. */
+    val lastTest: ConnectorTestReport? = null,
+)
+
+/**
+ * A "test this connection" request (`POST /api/v1/connectors/{id}/test`). The connector sees it on
+ * its next poll of `GET /ingest/v1/test`, checks its upstream with
+ * the current config and answers with [ConnectorTestReport] (`POST /ingest/v1/test`).
+ */
+@Serializable
+data class ConnectorTestRequest(val requestId: String, val requestedAt: kotlin.time.Instant)
+
+@Serializable
+data class ConnectorTestReport(
+    val requestId: String,
+    val ok: Boolean,
+    /** Human readable: "Connected to imap.example.com, 3 folders" or what failed. */
+    val message: String,
+    /** E.g. `{"folders": 3, "calendars": 2}`. */
+    val counts: Map<String, Int> = emptyMap(),
+    val at: kotlin.time.Instant,
 )
 
 /** `PUT /api/v1/connectors/{id}/grants`: the desired state per noun. */
