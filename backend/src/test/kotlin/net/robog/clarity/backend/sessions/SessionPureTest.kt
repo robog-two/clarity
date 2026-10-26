@@ -199,6 +199,16 @@ class SessionPureTest : FunSpec({
             (validateSettings(Settings(morningCall = Settings.MorningCall(headsUpMinutes = null))) is Either.Right) shouldBe true
         }
 
+        test("heads-up off survives the wire (ClarityJson omits nulls, the default would turn it back on)") {
+            val off = Settings(morningCall = Settings.MorningCall(headsUpMinutes = null))
+            val json = net.robog.clarity.shared.ClarityJson.encodeToString(Settings.serializer(), off)
+            json shouldContain "\"headsUpMinutes\":null"
+            net.robog.clarity.shared.ClarityJson.decodeFromString(Settings.serializer(), json) shouldBe off
+            net.robog.clarity.shared.ClarityJson.decodeFromString(Settings.serializer(), net.robog.clarity.shared.ClarityJson.encodeToString(Settings.serializer(), Settings())) shouldBe Settings()
+            // an older client that omits the field gets the default
+            net.robog.clarity.shared.ClarityJson.decodeFromString(Settings.serializer(), """{"morningCall":{}}""").morningCall.headsUpMinutes shouldBe 10
+        }
+
         test("ready connectors have announced themselves and hold a grant") {
             fun summary(id: String, manifest: Boolean, vararg grants: GrantState) = ConnectorSummary(
                 ConnectorId(id),
