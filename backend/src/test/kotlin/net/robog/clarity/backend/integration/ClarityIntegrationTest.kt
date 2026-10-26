@@ -67,6 +67,7 @@ import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.connector.ConnectorSummary
 import net.robog.clarity.shared.connector.GrantState
+import net.robog.clarity.shared.connector.GrantsUpdate
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestRecord
 import net.robog.clarity.shared.ingest.IngestResponse
@@ -300,7 +301,7 @@ class ClarityIntegrationTest : FunSpec({
             client.put("/api/v1/connectors/nope/grants") {
                 header(HttpHeaders.Authorization, bearer(jwt))
                 contentType(ContentType.Application.Json)
-                setBody(mapOf(Noun.MESSAGE to GrantState.GRANTED))
+                setBody(GrantsUpdate(mapOf(Noun.MESSAGE to GrantState.GRANTED)))
             }.status shouldBe HttpStatusCode.NotFound
             client.get("/api/v1/connectors/BAD_ID/config") { header(HttpHeaders.Authorization, bearer(jwt)) }
                 .status shouldBe HttpStatusCode.BadRequest
@@ -318,7 +319,7 @@ class ClarityIntegrationTest : FunSpec({
             client.put("/api/v1/connectors/$phone/grants") {
                 header(HttpHeaders.Authorization, bearer(jwt))
                 contentType(ContentType.Application.Json)
-                setBody(mapOf(Noun.MESSAGE to GrantState.GRANTED))
+                setBody(GrantsUpdate(mapOf(Noun.MESSAGE to GrantState.GRANTED)))
             }.status shouldBe HttpStatusCode.OK
             // different version so the earlier rejected attempt is not an idempotent replay
             val granted = client.post("/ingest/v1/batches") {
