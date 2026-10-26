@@ -22,8 +22,8 @@ val DEFAULT_PREP_LEAD: Duration = 10.minutes
 fun prepLead(call: Settings.MorningCall): Duration = (call.headsUpMinutes ?: 10).minutes
 
 /**
- * Pure: the first moment strictly after [after] at which the call is due (its stored UTC time on one
- * of its days, moved by daylight saving in the home zone [zone]); null when the call is off or has no days.
+ * Pure: the first moment strictly after [after] at which the call is due (its time on one of its days,
+ * on the clock of the home zone [zone]); null when the call is off or has no days.
  */
 fun nextCallAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): Instant? =
     firstAfter(call, after, zone, Duration.ZERO)

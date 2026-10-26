@@ -67,19 +67,26 @@ class NextCallPlanTest {
         assertEquals(at("2026-10-27T09:00:00Z"), plan.callAt)
     }
 
-    @Test fun storedUtcIsMovedByTheHomeZonesDaylightSaving() {
-        // Stored 14:00 = 9:00 in New York; 13:00 UTC while New York is on daylight time (UTC-4).
-        val plan = nextCallPlan(settings(at = LocalTime(14, 0), zone = "America/New_York"), at("2026-10-26T10:00:00Z"))!!
+    @Test fun theStoredTimeIsOnTheHomeClock() {
+        // 9:00 in New York is 13:00 UTC while New York is on daylight time (UTC-4).
+        val plan = nextCallPlan(settings(at = LocalTime(9, 0), zone = "America/New_York"), at("2026-10-26T10:00:00Z"))!!
         assertEquals(at("2026-10-26T13:00:00Z"), plan.callAt)
     }
 
     @Test fun wallClockHoldsAcrossDst() {
         // US clocks go back on 2026-11-01 (a Sunday). Saturday's call is UTC-4, Monday's is UTC-5.
-        val s = settings(at = LocalTime(14, 0), zone = "America/New_York", days = setOf(6, 1))
+        val s = settings(at = LocalTime(9, 0), zone = "America/New_York", days = setOf(6, 1))
         val saturday = nextCallPlan(s, at("2026-10-31T00:00:00Z"))!!
         assertEquals(at("2026-10-31T13:00:00Z"), saturday.callAt)
         val monday = nextCallPlan(s, at("2026-10-31T14:00:00Z"))!!
         assertEquals(at("2026-11-02T14:00:00Z"), monday.callAt)
+    }
+
+    @Test fun wallClockHoldsAcrossDstInBerlin() {
+        // Berlin clocks go back on 2026-10-25 (a Sunday): Saturday's 9:00 is UTC+2, Monday's is UTC+1.
+        val s = settings(at = LocalTime(9, 0), zone = "Europe/Berlin", days = setOf(6, 1))
+        assertEquals(at("2026-10-24T07:00:00Z"), nextCallPlan(s, at("2026-10-24T00:00:00Z"))!!.callAt)
+        assertEquals(at("2026-10-26T08:00:00Z"), nextCallPlan(s, at("2026-10-24T08:00:00Z"))!!.callAt)
     }
 
     @Test fun unknownHomeZoneIsTreatedAsUtc() {

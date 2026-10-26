@@ -109,8 +109,8 @@ private fun connector(id: String, kind: String, seen: Instant?) = ConnectorSumma
 private class SettingsRig(
     loaded: ApiResult<Settings> = ApiResult.Success(Settings(homeZone = "UTC")),
     connectors: ApiResult<List<ConnectorSummary>> = ApiResult.Success(emptyList()),
+    val clock: FixedClock = FixedClock(T0 + 1.hours),
 ) {
-    val clock = FixedClock(T0 + 1.hours)
     val repo = ScreenSettings(loaded)
     val alarms = FakeAlarms()
     val scheduler = CallScheduler(repo, MemorySettingsCache(), alarms, clock)
@@ -159,6 +159,23 @@ class SettingsViewModelTest {
         r.vm.setEveningAt(LocalTime(19, 0)); assertEquals(LocalTime(19, 0), r.state.settings!!.eveningSummaryAt)
         assertEquals(r.state.settings, r.repo.saved.last(), "the last save carries every change")
         assertEquals(9, r.repo.saved.size)
+    }
+
+    @Test fun theEveningSummaryReadsAndSavesOnTheHomeClockAcrossDaylightSaving() = withMain {
+        // Either side of New York's change (2026-11-01, 2027-03-14) and Berlin's (2026-10-25, 2027-03-28)
+        val cases = listOf(
+            "America/New_York" to listOf("2026-10-31T12:00:00Z", "2026-11-02T12:00:00Z", "2027-03-13T12:00:00Z", "2027-03-15T12:00:00Z"),
+            "Europe/Berlin" to listOf("2026-10-24T12:00:00Z", "2026-10-26T12:00:00Z", "2027-03-27T12:00:00Z", "2027-03-29T12:00:00Z"),
+        )
+        for ((home, moments) in cases) {
+            for (moment in moments) {
+                val stored = Settings(eveningSummaryAt = LocalTime(19, 0), homeZone = home)
+                val r = SettingsRig(ApiResult.Success(stored), clock = FixedClock(Instant.parse(moment), kotlinx.datetime.TimeZone.of(home)))
+                assertEquals(LocalTime(19, 0), r.state.settings!!.eveningSummaryAt, "$home at $moment")
+                r.vm.setEveningAt(LocalTime(19, 30))
+                assertEquals(stored.copy(eveningSummaryAt = LocalTime(19, 30)), r.repo.saved.last(), "$home at $moment")
+            }
+        }
     }
 
     @Test fun switchingTheCallToNotifyKeepsTheAlarms() = withMain {
