@@ -13,6 +13,7 @@ import net.robog.clarity.app.net.VaultApi
 import net.robog.clarity.app.vault.AuthPrompt
 import net.robog.clarity.app.vault.AuthResult
 import net.robog.clarity.app.vault.KeysInvalidatedException
+import net.robog.clarity.app.vault.NotAuthenticatedException
 import net.robog.clarity.app.vault.PhoneAuth
 import net.robog.clarity.app.vault.SaveOutcome
 import net.robog.clarity.app.vault.VaultKeyStatus
@@ -51,6 +52,8 @@ class FakeVaultKeys(
     var status: VaultKeyStatus = VaultKeyStatus.READY,
 ) : VaultKeys {
     var resets = 0
+    /** How many [agree] calls still fail as "authenticate first" (the unlock window has passed). */
+    var staleAgreements = 0
     override fun status() = status
     override fun vaultPublicKey() = spki(vault)
     override fun approvalPublicKey() = spki(approval)
@@ -59,7 +62,7 @@ class FakeVaultKeys(
         return Signature.getInstance("SHA256withECDSA").apply { initSign(approval.private) }
     }
     override fun agree(ephemeral: PublicKey): ByteArray =
-        KeyAgreement.getInstance("ECDH").apply { init(vault.private); doPhase(ephemeral, true) }.generateSecret()
+        if (staleAgreements > 0) { staleAgreements--; throw NotAuthenticatedException(IllegalStateException("window")) } else KeyAgreement.getInstance("ECDH").apply { init(vault.private); doPhase(ephemeral, true) }.generateSecret()
     override fun reset() { resets++; status = VaultKeyStatus.READY }
 }
 

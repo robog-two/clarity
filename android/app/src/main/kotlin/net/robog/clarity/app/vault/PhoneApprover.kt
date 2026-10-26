@@ -1,5 +1,6 @@
 package net.robog.clarity.app.vault
 
+import android.util.Log
 import java.security.Signature
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
@@ -58,8 +59,9 @@ class PhoneApprover(
             ApprovalResult.Denied("This phone’s vault keys were reset. Open Settings → Vault to set them up again.")
         } catch (_: NotAuthenticatedException) {
             ApprovalResult.Denied("That took too long. Try again.")
-        } catch (_: Exception) {
-            // Deliberately not echoing the exception: it could carry secret material.
+        } catch (e: Exception) {
+            // Only the exception's type is logged and nothing is echoed: its message could carry secret material.
+            runCatching { Log.w(TAG, "approval failed: ${e::class.java.name}") }
             ApprovalResult.Denied("Couldn’t approve that on this phone.")
         }
     }
@@ -95,9 +97,16 @@ class PhoneApprover(
         return when (action) {
             is ProposedAction.UseCredential -> {
                 val allowed = action.fields.toSet()
-                val opened = when (val o = open(checkNotNull(envelope), action.site)) {
-                    is Opened.Ok -> o.fields
-                    is Opened.No -> return ApprovalResult.Denied(o.message)
+                // The fingerprint that just authorized the signature also unlocks the vault key for a few
+                // seconds, so one prompt is enough. A second prompt is only shown when that window has
+                // passed: two system prompts back to back often had the second one cancelled at once.
+                val opened = try {
+                    VaultCrypto.open(checkNotNull(envelope)) { keys.agree(it) }
+                } catch (_: NotAuthenticatedException) {
+                    when (val o = open(envelope!!, action.site)) {
+                        is Opened.Ok -> o.fields
+                        is Opened.No -> return ApprovalResult.Denied(o.message)
+                    }
                 }
                 val release = ReleaseGrant(opened.filterKeys { it in allowed }, VaultNames.MAX_GRANT_SECONDS, signature)
                 api.releaseGrant(held.id, release).toResult()
@@ -132,6 +141,7 @@ class PhoneApprover(
     }
 
     private suspend fun open(envelope: net.robog.clarity.shared.vault.VaultEnvelope, site: String): Opened {
+        kotlinx.coroutines.delay(PROMPT_GAP_MS) // let the first system prompt finish closing
         val prompt = AuthPrompt("Open your saved login", "Release it to the agent for $site, for five minutes")
         return when (val r = auth.authenticate(prompt)) {
             is AuthResult.Authenticated -> Opened.Ok(VaultCrypto.open(envelope) { keys.agree(it) })
@@ -139,6 +149,11 @@ class PhoneApprover(
             is AuthResult.Unavailable -> Opened.No(r.message)
             is AuthResult.Failed -> Opened.No(r.message)
         }
+    }
+
+    private companion object {
+        const val TAG = "ClarityVault"
+        const val PROMPT_GAP_MS = 400L
     }
 
     private fun <T> ApiResult<T>.toResult(): ApprovalResult = when (this) {
