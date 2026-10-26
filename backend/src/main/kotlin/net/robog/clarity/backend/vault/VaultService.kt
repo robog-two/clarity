@@ -242,12 +242,12 @@ class VaultService(
     }
 
     /**
-     * A device that registered an approval key must sign the release (its biometric yes): the
-     * signature covers this exact held action and works once. Devices without one are not checked.
+     * Every release must be signed by the device's approval key (its biometric yes): the signature
+     * covers this exact held action and works once. A device without an approval key cannot release.
      */
     context(_: Raise<VaultError>)
     private suspend fun requireSignature(current: HeldAction, device: DeviceId, signature: String?) {
-        val key = store.approvalKey(device) ?: return
+        val key = ensureNotNull(store.approvalKey(device)) { VaultError.ApprovalRequired("this phone has no approval key; set up the vault on it first") }
         ensureNotNull(signature) { VaultError.ApprovalRequired("this release must be signed with your approval key") }
         ensure(PhoneApprovals.verify(key, ApprovalPayload.payloadFor(current, SignedDecision.APPROVE), signature)) {
             VaultError.ApprovalRequired("the signature does not match this action")

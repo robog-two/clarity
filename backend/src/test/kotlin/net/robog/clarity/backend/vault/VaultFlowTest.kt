@@ -121,6 +121,13 @@ class VaultFlowTest : FunSpec({
     val stranger = Uuid.random().toString()
     val phoneKey: KeyPair = VaultCryptoReference.newDeviceKey()
     val tabletKey: KeyPair = VaultCryptoReference.newDeviceKey()
+    val phoneApproval: KeyPair = VaultCryptoReference.newDeviceKey()
+    /** The phone's biometric yes for [held]: an ES256 signature by its approval key. */
+    fun approvedBy(key: KeyPair, held: HeldAction): String = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+        java.security.Signature.getInstance("SHA256withECDSA").apply {
+            initSign(key.private); update(ApprovalPayload.payloadFor(held, SignedDecision.APPROVE).toByteArray())
+        }.sign(),
+    )
     val browser = FakeBrowser()
     lateinit var credentialId: String
     lateinit var browserTools: Map<String, Tool>
@@ -203,7 +210,7 @@ class VaultFlowTest : FunSpec({
     test("devices register their vault keys; bad keys are refused") {
         testApplication {
             val client = setup()
-            client.postAs(phone, "/api/v1/vault/devices", RegisterVaultKey(VaultCryptoReference.publicKeyWire(phoneKey))).status shouldBe HttpStatusCode.Created
+            client.postAs(phone, "/api/v1/vault/devices", RegisterVaultKey(VaultCryptoReference.publicKeyWire(phoneKey), approvalKey = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(phoneApproval.public.encoded))).status shouldBe HttpStatusCode.Created
             client.postAs(tablet, "/api/v1/vault/devices", RegisterVaultKey(VaultCryptoReference.publicKeyWire(tabletKey))).status shouldBe HttpStatusCode.Created
             client.postAs(phone, "/api/v1/vault/devices", RegisterVaultKey("garbage")).status shouldBe HttpStatusCode.BadRequest
             val keys: List<DeviceVaultKey> = client.getAs(phone, "/api/v1/vault/devices").body()
@@ -282,7 +289,7 @@ class VaultFlowTest : FunSpec({
             client.postAs(phone, "/api/v1/vault/grants/${Uuid.random()}", ReleaseGrant(mapOf("username" to USERNAME, "password" to PASSWORD))).status shouldBe HttpStatusCode.NotFound
             rig.grants.liveCount() shouldBe 0
 
-            val ok = client.postAs(phone, "/api/v1/vault/grants/${held.id}", ReleaseGrant(mapOf("username" to USERNAME, "password" to PASSWORD), ttlSeconds = 9999))
+            val ok = client.postAs(phone, "/api/v1/vault/grants/${held.id}", ReleaseGrant(mapOf("username" to USERNAME, "password" to PASSWORD), ttlSeconds = 9999, signature = approvedBy(phoneApproval, held)))
             ok.status shouldBe HttpStatusCode.OK
             val receipt: GrantReceipt = ok.body()
             (receipt.expiresAt - Clock.System.now() <= 5.minutes) shouldBe true
@@ -323,7 +330,10 @@ class VaultFlowTest : FunSpec({
         testApplication {
             val client = setup()
             client.postAs(phone, "/api/v1/vault/codes/${held.id}", ReleaseCode("1")).status shouldBe HttpStatusCode.BadRequest
-            client.postAs(phone, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE)).status shouldBe HttpStatusCode.OK
+            // unsigned, or from a device that never registered an approval key: refused
+            client.postAs(phone, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE)).status shouldBe HttpStatusCode.Forbidden
+            client.postAs(tablet, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE)).status shouldBe HttpStatusCode.Forbidden
+            client.postAs(phone, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE, signature = approvedBy(phoneApproval, held))).status shouldBe HttpStatusCode.OK
             client.postAs(phone, "/api/v1/vault/codes/${held.id}", ReleaseCode(CODE)).status shouldBe HttpStatusCode.Conflict
             // a code is not a credential release, and vice versa
             val use = heldOf(ProposedAction.UseCredential::class.java).single()
