@@ -20,7 +20,7 @@ val LEAD_LOADED = setOf(
     "save_draft", "send_email", "create_event",
     "send_to_user", "delegate", "list_helpers", "message_helper", "cancel_helper",
     "remember_fact", "write_journal", "read_journal", "set_scratch", "search_memory", "update_task", "read_result",
-)
+) + SESSION_TOOL_NAMES
 
 /** What a helper may use unless the lead narrows it: reads and the gated external tools. */
 val HELPER_BASE = setOf(
@@ -107,6 +107,7 @@ class AgentToolbox(
     private val helperTools: HelperTools,
     private val results: LargeResults,
     private val mcp: McpToolSources,
+    private val session: SessionTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -122,6 +123,7 @@ class AgentToolbox(
             if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask()))
         }
         if (forLead) addAll(helperTools.all(scope))
+        if (forLead) addAll(session.all())
     }.let { guarded(scope, it) }
 
     /** The lead's tools: the common ones loaded, the rest (and every MCP tool) behind tool search. */

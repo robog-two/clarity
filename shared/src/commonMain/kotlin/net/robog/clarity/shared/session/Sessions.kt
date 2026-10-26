@@ -6,6 +6,10 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonTransformingSerializer
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Chip
 import net.robog.clarity.shared.feed.IfThen
@@ -101,10 +105,15 @@ data class Today(
     val called: Boolean = false,
 )
 
-/** `GET/PUT /api/v1/settings`. */
+/**
+ * `GET/PUT /api/v1/settings`.
+ *
+ * [ClarityJson] omits nulls, and an omitted `headsUpMinutes` would decode as its default of 10, so
+ * "heads-up off" could never travel; [MorningCallSerializer] writes that null explicitly.
+ */
 @Serializable
 data class Settings(
-    val morningCall: MorningCall = MorningCall(),
+    @Serializable(with = MorningCallSerializer::class) val morningCall: MorningCall = MorningCall(),
     /** "low-urgency holds": reviewed together in the evening, or right away. */
     val batchLowUrgency: Boolean = true,
     val eveningSummaryAt: LocalTime = LocalTime(18, 0),
@@ -149,4 +158,10 @@ data class SetupStatus(
         @SerialName("valid") VALID,
         @SerialName("invalid") INVALID,
     }
+}
+
+/** Keeps `headsUpMinutes = null` ("heads-up off") on the wire; see [Settings]. */
+object MorningCallSerializer : JsonTransformingSerializer<Settings.MorningCall>(Settings.MorningCall.serializer()) {
+    override fun transformSerialize(element: JsonElement): JsonElement =
+        if (element is JsonObject && "headsUpMinutes" !in element) JsonObject(element + ("headsUpMinutes" to JsonNull)) else element
 }

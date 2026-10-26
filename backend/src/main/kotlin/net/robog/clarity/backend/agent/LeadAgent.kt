@@ -94,6 +94,7 @@ class LeadAgent(
     private val feed: FeedService,
     private val settings: SettingsProvider,
     private val clock: Clock,
+    private val effortOverride: EffortOverride,
 ) : BackgroundService {
     override val name = "lead-agent"
 
@@ -117,9 +118,10 @@ class LeadAgent(
 
     override suspend fun run() {
         if (!runtime.enabled) {
-            log.warn { "No Anthropic API key configured (clarity.agent.anthropicApiKey): the lead agent is disabled" }
+            log.warn { "No Anthropic API key configured (ANTHROPIC_API_KEY_FILE or setup): the lead agent waits for one" }
             noticeDisabled()
-            return
+            runtime.awaitEnabled()
+            log.info { "an Anthropic API key arrived: the lead agent starts" }
         }
         start()
         while (true) {
@@ -191,7 +193,13 @@ class LeadAgent(
             val history = journal.load(threadId)
             val closing = closeOpenToolCalls(history)
             closing?.let { trackedJournal.append(threadId, it) }
-            val messages = foldInterrupts(if (closing != null) Role.USER else history.lastOrNull()?.role, deliveries.map { it.message })
+            // A live call runs at low effort and the thread goes back afterwards, by a mid-conversation message (the cache prefix stays intact).
+            val roleEffort = config.roles.lead.effort
+            val effortMessage = effortChange(lastEffort(history) ?: roleEffort, effortOverride.current() ?: roleEffort)
+            val messages = foldInterrupts(
+                if (closing != null) Role.USER else history.lastOrNull()?.role,
+                deliveries.map { it.message } + listOfNotNull(effortMessage),
+            )
             awaiting.addAll(deliveries.filter { it.seqs.isNotEmpty() })
             messages.forEach { trackedJournal.append(threadId, it) }
             runHarness(compactNow = false)
