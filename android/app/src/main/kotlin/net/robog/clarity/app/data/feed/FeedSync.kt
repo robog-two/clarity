@@ -89,7 +89,7 @@ class FeedSync(
     val signals: SharedFlow<SyncSignal> = _signals.asSharedFlow()
 
     private val _arrivals = MutableSharedFlow<Arrival>(extraBufferCapacity = 64)
-    /** New feed items and newly held actions, once each; only the push service listens. */
+    /** New feed items (once complete) and newly held actions, once each; the push service and its fallback listen. */
     val arrivals: SharedFlow<Arrival> = _arrivals.asSharedFlow()
 
     private val nudges = Channel<Unit>(Channel.CONFLATED)
@@ -184,10 +184,13 @@ class FeedSync(
         }
     }
 
-    /** Pages through the feed after the last cached seq until the server says there is no more. */
+    /**
+     * Pages through the feed from [resumePoint] until the server says there is no more. Starting
+     * before a cached item that is still streaming fetches its final version if it was missed.
+     */
     suspend fun fillGap(onArrival: (Arrival) -> Unit = {}) {
+        var after = resumePoint()
         while (true) {
-            val after = store.lastSeq()
             when (val result = backend.feed(after)) {
                 is ApiResult.Failure -> throw GapFailed(
                     when (result.error) {
@@ -199,18 +202,31 @@ class FeedSync(
                 is ApiResult.Success -> {
                     val page = result.value
                     page.items.sortedBy { it.seq }.forEach { storeItem(it, final = true, onArrival) }
+                    val next = page.items.maxOfOrNull { it.seq } ?: return
                     // No progress means nothing new; stop even if the server claims more.
-                    if (!page.hasMore || page.items.isEmpty() || store.lastSeq() <= after) return
+                    if (!page.hasMore || next <= after) return
+                    after = next
                 }
             }
         }
     }
 
+    /** The last cached seq, or just before the oldest recent item still streaming. */
+    private suspend fun resumePoint(): Long {
+        val last = store.lastSeq()
+        val streaming = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming }.minOfOrNull { it.seq } ?: return last
+        return minOf(last, streaming - 1)
+    }
+
+    /**
+     * Stores [item]; it arrives (for notifications) once, when the cache first holds it complete:
+     * first seen already final, or a streaming copy being finished. Partials never arrive.
+     */
     private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: (Arrival) -> Unit = {}) {
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            if (existing == null) arrive(Arrival.Item(it), onArrival)
+            if (becameComplete(existing, it)) arrive(Arrival.Item(it), onArrival)
         }
     }
 
@@ -243,3 +259,10 @@ class FeedSync(
         }
     }
 }
+
+/** Whether storing [stored] over [existing] is the first time the cache holds that item complete. */
+fun becameComplete(existing: FeedItem?, stored: FeedItem): Boolean =
+    !stored.streaming && (existing == null || existing.streaming)
+
+/** How far back [FeedSync.fillGap] looks for items left streaming (a reply cut off by a dropped stream). */
+private const val STREAMING_LOOKBACK = 50
