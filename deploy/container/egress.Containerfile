@@ -7,7 +7,7 @@
 #   podman build -f deploy/container/egress.Containerfile -t ghcr.io/robog-two/clarity-egress .
 #
 # Alpine and Squid are pinned. To bump: `apk policy squid` inside the new Alpine image.
-FROM docker.io/library/alpine:3.23.7
+FROM docker.io/library/alpine:3.24.2
 
 ARG SQUID_VERSION=7.6-r0
 
