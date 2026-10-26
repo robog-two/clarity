@@ -28,6 +28,14 @@ class ModelCostsTest : FunSpec({
         costMicros("some-other-model", Usage(1, 1)) shouldBe null
     }
 
+    test("a cost the provider reports wins over the price table; an unknown model still has its tokens") {
+        costMicros("anthropic/claude-haiku-5.5", Usage(10_000, 1_000, reportedCostMicros = 1_234)) shouldBe 1_234L
+        costMicros("claude-opus-5-5", Usage(1_000_000, 0, reportedCostMicros = 7)) shouldBe 7L
+        costMicros("vendor/unknown", Usage(10_000, 1_000)) shouldBe null
+        (Usage(1, 1, reportedCostMicros = 5) + Usage(1, 1)).reportedCostMicros shouldBe 5L
+        (Usage(1, 1) + Usage(1, 1)).reportedCostMicros shouldBe null
+    }
+
     test("every call through the gateway is recorded, and a failing recorder never fails the call") {
         val response = ModelResponse(listOf(Block.Text("hi")), StopReason.END_TURN, Usage(10, 5))
         val inner = object : ModelGateway {
@@ -35,9 +43,9 @@ class ModelCostsTest : FunSpec({
         }
         val seen = mutableListOf<Pair<String, Usage>>()
         val request = ModelRequest("claude-opus-5-5", emptyList(), emptyList(), emptyList(), 10, null)
-        RecordingGateway(inner) { m, u -> seen += m to u }.generate(request) shouldBe response
-        RecordingGateway(inner) { m, u -> seen += m to u }.complete(request) shouldBe response
+        RecordingGateway(inner, { m, u, _ -> seen += m to u }).generate(request) shouldBe response
+        RecordingGateway(inner, { m, u, _ -> seen += m to u }).complete(request) shouldBe response
         seen shouldBe listOf("claude-opus-5-5" to Usage(10, 5), "claude-opus-5-5" to Usage(10, 5))
-        RecordingGateway(inner) { _, _ -> error("db down") }.generate(request) shouldBe response
+        RecordingGateway(inner, { _, _, _ -> error("db down") }).generate(request) shouldBe response
     }
 })

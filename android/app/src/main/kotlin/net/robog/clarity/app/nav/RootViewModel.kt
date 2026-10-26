@@ -10,6 +10,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import net.robog.clarity.app.data.OnboardingFlagStore
@@ -39,13 +40,26 @@ class RootViewModel(
     setup: SetupRepository,
 ) : ViewModel() {
     val state: StateFlow<RootState> = combine(sessions.session, flag.done, flag.redo) { session, done, redo -> Triple(session != null, done, redo) }
+        // All three read the same DataStore file, which re-emits on every write to any key (battery
+        // asked, cached settings, the SMS cursor...). Without this each write asked the server again
+        // and could swap onboarding for the app halfway through, before its last screen marked it done.
+        .distinctUntilChanged()
         .transformLatest { (enrolled, done, redo) ->
             when {
                 !enrolled -> emit(RootState.Onboarding)
                 redo -> emit(RootState.Onboarding)
                 done -> emit(RootState.Ready)
                 // Enrolled but not marked done: ask the server once (the previous value stays until it answers).
-                else -> emit(if (isServerSetupComplete(setup.status())) RootState.Ready else RootState.Onboarding)
+                else -> if (isServerSetupComplete(setup.status())) {
+                    // Showing the app counts as set up on this device: mark it, or the push service
+                    // (which waits for the flag, see PushConditions.setUp) never starts and nothing
+                    // notifies while the app is closed. Marked before the app shows, so its first
+                    // push reconcile already sees it.
+                    flag.markDone()
+                    emit(RootState.Ready)
+                } else {
+                    emit(RootState.Onboarding)
+                }
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), RootState.Loading)

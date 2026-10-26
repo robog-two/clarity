@@ -8,8 +8,8 @@ import net.robog.clarity.shared.time.WeeklyTime
 import net.robog.clarity.shared.time.zoneOrUtc
 
 /*
- * The server stores repeating times in UTC (see ScheduleClock). Screens work on "seen" settings, with
- * those times on the phone's clock, and convert only through these two functions.
+ * The server stores repeating times on the home zone's clock (see ScheduleClock). Screens work on
+ * "seen" settings, with those times on the phone's clock, and convert only through these two functions.
  */
 
 /** [stored] settings with the call and evening times as they read on a clock in [zone] around [now]. */

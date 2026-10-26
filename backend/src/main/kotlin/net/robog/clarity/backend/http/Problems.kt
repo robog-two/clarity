@@ -7,6 +7,7 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.api.FieldError
 import net.robog.clarity.shared.api.Problem
 
 /**
@@ -18,6 +19,9 @@ interface HttpProblem {
     val status: HttpStatusCode
     val title: String
     val detail: String?
+
+    /** Per-field reasons, for a refused input. */
+    val errors: List<FieldError>? get() = null
 }
 
 /** Generic problems for the edge itself (malformed input, missing credentials, bugs). */
@@ -65,7 +69,7 @@ class ProblemException(val problem: HttpProblem) : RuntimeException(problem.titl
 
 val ContentTypeProblemJson: ContentType = ContentType.Application.ProblemJson
 
-fun HttpProblem.toProblem(): Problem = Problem(title = title, status = status.value, detail = detail)
+fun HttpProblem.toProblem(): Problem = Problem(title = title, status = status.value, detail = detail, errors = errors)
 
 suspend fun ApplicationCall.respondProblem(problem: HttpProblem) {
     respondText(

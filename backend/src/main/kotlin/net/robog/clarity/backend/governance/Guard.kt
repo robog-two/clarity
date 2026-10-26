@@ -9,7 +9,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.Json
 import net.robog.clarity.backend.agent.AgentRuntime
-import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.agent.BoundRole
+import net.robog.clarity.backend.config.RoleConfig
+import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
 import net.robog.clarity.harness.ModelRequest
@@ -76,22 +78,27 @@ class Guard(private val model: GuardModel) {
 /**
  * [GuardModel] over the harness [ModelGateway] (`generate`, plain text out, parsed as JSON).
  * Deliberately small: replace the body with a structured `complete` call when the harness has one.
+ * [bind] is asked on every review, so a changed guard model takes effect on the next check.
  */
 class GatewayGuardModel(
-    private val gateway: () -> ModelGateway,
-    private val modelName: String,
+    private val bind: () -> BoundRole,
     private val json: Json = ClarityJson,
 ) : GuardModel {
+    /** A fixed gateway and model (tests). */
+    constructor(gateway: () -> ModelGateway, modelName: String, json: Json = ClarityJson) :
+        this({ BoundRole(AgentRole.GUARD, RoleConfig(modelName, effort = "low"), gateway()) }, json)
+
     override suspend fun review(question: GuardQuestion): GuardVerdict {
+        val bound = bind()
         val request = ModelRequest(
-            model = modelName,
+            model = bound.config.model,
             system = SYSTEM,
             messages = listOf(Message.user(render(question, json))),
             tools = emptyList(),
             maxTokens = 2_000,
-            effort = "low",
+            effort = bound.config.effort,
         )
-        return parseVerdict(gateway().generate(request).text, json)
+        return parseVerdict(bound.gateway.generate(request).text, json)
     }
 
     companion object {
@@ -129,12 +136,12 @@ class GatewayGuardModel(
     }
 }
 
-/** Wires [GatewayGuardModel] to the runtime's model key (configured or entered in setup); without a key every check fails and so asks. */
+/** Wires [GatewayGuardModel] to the guard role's current gateway and settings; without a key every check fails and so asks. */
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
-class ConfiguredGuardModel(private val runtime: AgentRuntime, config: AgentConfig) : GuardModel {
-    private val delegate = GatewayGuardModel({ requireNotNull(runtime.gateway) { "no model key configured" } }, config.model)
+class ConfiguredGuardModel(private val runtime: AgentRuntime) : GuardModel {
+    private val delegate = GatewayGuardModel({ requireNotNull(runtime.bind(AgentRole.GUARD)) { "no model key configured" } })
 
     override suspend fun review(question: GuardQuestion): GuardVerdict = delegate.review(question)
 }

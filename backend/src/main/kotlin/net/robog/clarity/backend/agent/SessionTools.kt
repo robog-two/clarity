@@ -409,7 +409,7 @@ class SessionTools(
         if (!session.finalizing) {
             return@tool ToolResult.Error("The interview is not finished: the person is on question ${(session.session.question ?: 0) + 1} of ${session.session.questionCount}. Wait until they keep the last line.")
         }
-        // Said on the person's home clock; stored in UTC.
+        // Said on the person's home clock; stored on it too.
         val home = zoneOrUtc(settings.current().homeZone)
         val now = clock.now()
         val blocks = input.protectedTimes.map { b ->

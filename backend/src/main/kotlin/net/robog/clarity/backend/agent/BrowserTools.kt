@@ -19,6 +19,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.backend.config.RoleConfig
 import net.robog.clarity.backend.governance.BROWSER_SERVER
 import net.robog.clarity.backend.governance.HeldWaiters
 import net.robog.clarity.backend.vault.GrantStore
@@ -63,14 +65,19 @@ fun interface BrowserTriage {
 
 /** [BrowserTriage] over the model gateway's structured one-shot call. Any failure becomes "ask". */
 class GatewayBrowserTriage(
-    private val gateway: () -> net.robog.clarity.harness.ModelGateway?,
-    private val model: String,
-    private val effort: String? = "low",
+    /** Asked on every step, so a changed triage model takes effect on the next one; null without a key. */
+    private val bind: () -> BoundRole?,
 ) : BrowserTriage {
+    /** A fixed gateway and model (tests). */
+    constructor(gateway: () -> net.robog.clarity.harness.ModelGateway?, model: String, effort: String = "low") :
+        this({ gateway()?.let { BoundRole(AgentRole.TRIAGE, RoleConfig(model, effort = effort), it) } })
+
     override suspend fun review(step: TriageStep): TriageVerdict {
-        val g = gateway() ?: return TriageVerdict(false, "no model to double-check with")
+        val bound = bind() ?: return TriageVerdict(false, "no model to double-check with")
+        val g = bound.gateway
+        val effort = bound.config.effort
         val request = ModelRequest(
-            model = model,
+            model = bound.config.model,
             system = listOf(SystemBlock(SYSTEM)),
             messages = listOf(
                 Message.user(
@@ -138,12 +145,12 @@ class GatewayBrowserTriage(
     }
 }
 
-/** Wires [GatewayBrowserTriage] to the runtime's gateway and the triage role's model. */
+/** Wires [GatewayBrowserTriage] to the triage role's current gateway and settings. */
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ConfiguredBrowserTriage(private val runtime: AgentRuntime) : BrowserTriage {
-    private val delegate = GatewayBrowserTriage({ runtime.gateway }, runtime.config.roles.triage.model, runtime.config.roles.triage.effort)
+    private val delegate = GatewayBrowserTriage { runtime.bind(AgentRole.TRIAGE) }
 
     override suspend fun review(step: TriageStep): TriageVerdict = delegate.review(step)
 }

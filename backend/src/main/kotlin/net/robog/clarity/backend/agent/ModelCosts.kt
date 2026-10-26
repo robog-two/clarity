@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToLong
 import kotlin.time.Clock
+import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.harness.ModelGateway
 import net.robog.clarity.harness.ModelRequest
@@ -39,8 +40,12 @@ fun cacheWrites(u: Usage): Pair<Long, Long> {
     return (u.cacheCreation5mTokens + unsplit) to u.cacheCreation1hTokens
 }
 
-/** Pure: what one call cost, in millionths of a dollar, or null for an unknown model. */
+/**
+ * Pure: what one call cost, in millionths of a dollar: the provider's own figure when it reports one
+ * (OpenRouter), else from [priceOf]; null for an unknown model without a reported cost.
+ */
 fun costMicros(model: String, u: Usage): Long? {
+    u.reportedCostMicros?.let { return it }
     val (w5, w1) = cacheWrites(u)
     val prompt = u.inputTokens + u.cacheReadInputTokens + w5 + w1
     val p = priceOf(model, prompt) ?: return null
@@ -60,19 +65,21 @@ object ModelCalls : Table("model_call") {
     val cacheWrite5mTokens = long("cache_write_5m_tokens")
     val cacheWrite1hTokens = long("cache_write_1h_tokens")
     val costMicros = long("cost_micros").nullable()
+    /** Who called (`lead`, `helper`, `guard`, `triage`); null for calls made before roles were recorded. */
+    val role = text("role").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
-/** Where every model call's usage goes. */
+/** Where every model call's usage goes: the model actually called, and which role called it. */
 fun interface UsageRecorder {
-    suspend fun record(model: String, usage: Usage)
+    suspend fun record(model: String, usage: Usage, role: AgentRole?)
 }
 
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class DbUsageRecorder(private val database: Database, private val clock: Clock) : UsageRecorder {
-    override suspend fun record(model: String, usage: Usage) {
+    override suspend fun record(model: String, usage: Usage, role: AgentRole?) {
         val (w5, w1) = cacheWrites(usage)
         database.tx {
             ModelCalls.insert {
@@ -84,13 +91,14 @@ class DbUsageRecorder(private val database: Database, private val clock: Clock) 
                 it[cacheWrite5mTokens] = w5
                 it[cacheWrite1hTokens] = w1
                 it[costMicros] = costMicros(model, usage)
+                it[ModelCalls.role] = role?.wireName
             }
         }
     }
 }
 
-/** Records the usage of every call made through [inner]; a failed record never fails the call. */
-class RecordingGateway(private val inner: ModelGateway, private val recorder: UsageRecorder) : ModelGateway {
+/** Records the usage of every call made through [inner] (as [role]); a failed record never fails the call. */
+class RecordingGateway(private val inner: ModelGateway, private val recorder: UsageRecorder, private val role: AgentRole? = null) : ModelGateway {
     override suspend fun generate(request: ModelRequest, onTextDelta: (String) -> Unit): ModelResponse =
         inner.generate(request, onTextDelta).also { record(request.model, it.usage) }
 
@@ -99,7 +107,7 @@ class RecordingGateway(private val inner: ModelGateway, private val recorder: Us
 
     private suspend fun record(model: String, usage: Usage) {
         try {
-            recorder.record(model, usage)
+            recorder.record(model, usage, role)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -205,7 +205,6 @@ private class FakeFeed : FeedRepository {
         return ApiResult.Success(InputAccepted(userItem(100, text, sessionId)))
     }
     override suspend fun decideHeld(id: HeldActionId, decision: HeldDecision) = ApiResult.Success(Unit)
-    override suspend fun sync() = Unit
 }
 
 private class FakeSpeech : SpeechInput {
@@ -872,20 +871,20 @@ class ScheduleStepViewModelTest {
     }
 
     @Test fun showsStoredSettingsOnThePhonesClock() = withMain {
-        // Stored 08:30 UTC = 09:30 Berlin (CET on T0)
-        val existing = Settings(morningCall = Settings.MorningCall(at = LocalTime(8, 30)), homeZone = "Europe/Berlin")
-        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Success(existing)), FixedClock(zone = kotlinx.datetime.TimeZone.of("Europe/Berlin")))
-        assertEquals(LocalTime(9, 30), vm.state.value.call.at)
+        // 09:30 on the Berlin clock, seen from a phone in New York (EDT on T0, Berlin already on CET)
+        val existing = Settings(morningCall = Settings.MorningCall(at = LocalTime(9, 30)), homeZone = "Europe/Berlin")
+        val vm = ScheduleStepViewModel(FakeSettings(ApiResult.Success(existing)), FixedClock(zone = kotlinx.datetime.TimeZone.of("America/New_York")))
+        assertEquals(LocalTime(4, 30), vm.state.value.call.at)
         assertEquals("Europe/Berlin", vm.state.value.settings.homeZone)
     }
 
-    @Test fun aTimePickedInNewYorkIsSavedInUtcWithNewYorkAsHome() = withMain {
+    @Test fun aTimePickedInNewYorkIsSavedAsPickedWithNewYorkAsHome() = withMain {
         val settings = FakeSettings(ApiResult.Failure(ApiError.NotFound(null)))
         val vm = ScheduleStepViewModel(settings, FixedClock(zone = kotlinx.datetime.TimeZone.of("America/New_York")))
         vm.pickTime(LocalTime(8, 30))
         vm.finish()
         val saved = settings.saved.single()
-        assertEquals(LocalTime(13, 30), saved.morningCall.at) // EST offset; daylight saving moves the moment, not this
+        assertEquals(LocalTime(8, 30), saved.morningCall.at) // on the New York clock; its daylight saving moves the moment
         assertEquals("America/New_York", saved.homeZone)
     }
 

@@ -99,12 +99,16 @@ sealed interface NotifyKind {
     data object InApp : NotifyKind
     data object Hold : NotifyKind
     data object EveningBatch : NotifyKind
+
+    /** A hold that protected time no longer covers, released by the server at [at]: notify like push-now. */
+    data class Released(val at: Instant?) : NotifyKind
 }
 
 fun parseNotify(value: String?): NotifyKind = when {
     value == null || value == "in_app" -> NotifyKind.InApp
     value == "push_now" -> NotifyKind.PushNow
     value.startsWith("hold_until") -> NotifyKind.Hold
+    value.startsWith(RELEASED) -> NotifyKind.Released(runCatching { Instant.parse(value.removePrefix(RELEASED)) }.getOrNull())
     value.startsWith("evening_batch") -> NotifyKind.EveningBatch
     else -> NotifyKind.InApp
 }
@@ -169,12 +173,12 @@ data class NotificationPlan(
 val MAX_PUSH_AGE: Duration = 2.hours
 
 /**
- * Whether [arrival] earns a notification, and which. Push-now agent items, the evening summary and
- * urgent held actions always do; any other agent message does while the app is not on screen
- * (only "hold until" waits). Never when notifications are off, when the item is stale, or when the
- * person is looking at the very place it shows up (the feed on Today or Ask, the Held list, or that
- * held action). Messages become one conversation with a reply box; something to approve or a login
- * to enter only offers to open the app.
+ * Whether [arrival] earns a notification, and which. Push-now agent items, released holds, the
+ * evening summary and urgent held actions always do; any other agent message does while the app is
+ * not on screen ("hold until" waits for its release, whose age counts from the release). Never when
+ * notifications are off, when the item is stale, or when the person is looking at the very place
+ * it shows up (the feed on Today or Ask, the Held list, or that held action). Messages become one
+ * conversation with a reply box; something to approve or a login to enter only offers to open the app.
  */
 fun decideNotification(
     arrival: Arrival,
@@ -192,9 +196,11 @@ fun decideNotification(
 
 private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duration): NotificationPlan? {
     if (item.author != FeedItem.Author.AGENT || item.streaming) return null
-    if (now - item.at > maxAge) return null
-    val channel = when (parseNotify(item.notify)) {
-        NotifyKind.PushNow -> PushChannel.Agent
+    val kind = parseNotify(item.notify)
+    val since = (kind as? NotifyKind.Released)?.at ?: item.at
+    if (now - since > maxAge) return null
+    val channel = when (kind) {
+        NotifyKind.PushNow, is NotifyKind.Released -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
         NotifyKind.InApp -> if (front == Front.Background) PushChannel.Agent else return null
         NotifyKind.Hold -> return null
@@ -270,6 +276,7 @@ fun itemText(item: FeedItem, limit: Int = 140, fallback: String = "New from Clar
     }
 }
 
+private const val RELEASED = "released:"
 private const val ID_SPAN = 100_000
 private const val ITEM_ID_BASE = 10_000
 private const val HELD_ID_BASE = 200_000

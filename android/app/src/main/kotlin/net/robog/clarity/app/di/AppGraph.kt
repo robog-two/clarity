@@ -46,6 +46,8 @@ import net.robog.clarity.app.device.AndroidDeviceCapabilities
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.net.IngestApi
 import net.robog.clarity.app.net.VaultApi
+import net.robog.clarity.app.data.DefaultModelsRepository
+import net.robog.clarity.app.data.ModelsRepository
 import net.robog.clarity.app.vault.AndroidVaultKeys
 import net.robog.clarity.app.vault.BiometricPhoneAuth
 import net.robog.clarity.app.vault.DefaultVaultRepository
@@ -113,6 +115,16 @@ import net.robog.clarity.app.push.PushController
 import net.robog.clarity.app.push.PushListener
 import net.robog.clarity.app.push.PushNotifier
 import net.robog.clarity.app.push.PushPrefs
+import net.robog.clarity.app.push.DataStoreNotifiedLedger
+import net.robog.clarity.app.push.FeedService
+import net.robog.clarity.app.push.NotifiedLedger
+import net.robog.clarity.app.push.PushFallback
+import net.robog.clarity.app.push.PushFallbackWork
+import net.robog.clarity.app.push.WorkManagerPushFallbackWork
+import net.robog.clarity.app.push.canStartServiceNow
+import net.robog.clarity.app.push.pushConditions
+import net.robog.clarity.app.data.feed.SyncState
+import kotlinx.coroutines.flow.first
 
 /**
  * The application graph. ViewModels are contributed with `@ContributesIntoMap(AppScope::class)`
@@ -205,6 +217,8 @@ interface AppGraph : ViewModelGraph {
 
     @Provides fun vaultApi(api: KtorClarityApi): VaultApi = api
 
+    @Provides fun modelsRepository(api: KtorClarityApi): ModelsRepository = DefaultModelsRepository(api)
+
     @Provides @SingleIn(AppScope::class)
     fun vaultKeys(): VaultKeys = AndroidVaultKeys()
 
@@ -280,9 +294,21 @@ interface AppGraph : ViewModelGraph {
     @Provides @SingleIn(AppScope::class)
     fun frontScreen(): FrontScreen = FrontScreen()
 
+    @Provides fun pushFallbackWork(context: Context): PushFallbackWork = WorkManagerPushFallbackWork(context)
+
     @Provides @SingleIn(AppScope::class)
-    fun pushController(context: Context, sessions: SessionStore, flag: OnboardingFlagStore, prefs: PushPrefs): PushController =
-        AndroidPushController(context, sessions, flag, prefs)
+    fun pushController(
+        context: Context,
+        sessions: SessionStore,
+        flag: OnboardingFlagStore,
+        prefs: PushPrefs,
+        fallback: PushFallbackWork,
+    ): PushController = AndroidPushController(context, sessions, flag, prefs, fallback)
+
+    /** What the service and the fallback have already notified. */
+    @Provides @SingleIn(AppScope::class)
+    fun notifiedLedger(store: DataStore<Preferences>, sessions: SessionStore): NotifiedLedger =
+        DataStoreNotifiedLedger(store, sessions)
 
     /** The app in front and the push service share one feed connection and one action loop. */
     @Provides @SingleIn(AppScope::class)
@@ -299,7 +325,31 @@ interface AppGraph : ViewModelGraph {
         capabilities: DeviceCapabilities,
         clock: AppClock,
         notifier: PushNotifier,
-    ): PushListener = PushListener(sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier)
+        ledger: NotifiedLedger,
+    ): PushListener = PushListener(sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier, ledger)
+
+    /** The periodic catch-up for when the service is not running. */
+    @Provides fun pushFallback(
+        sessions: SessionStore,
+        flag: OnboardingFlagStore,
+        prefs: PushPrefs,
+        sync: FeedSync,
+        listener: PushListener,
+        capabilities: DeviceCapabilities,
+        controller: PushController,
+        work: PushFallbackWork,
+    ): PushFallback = PushFallback(
+        conditions = { pushConditions(sessions, flag, prefs).first() },
+        serviceRunning = FeedService::isRunning,
+        feedLive = { sync.state.value == SyncState.Live },
+        catchUp = sync::catchUp,
+        deliver = listener::deliver,
+        reconnect = sync::reconnectNow,
+        canStartService = { canStartServiceNow(capabilities.batteryUnrestricted()) },
+        // Reconcile starts it when the conditions hold, and copes with a refusal.
+        startService = controller::reconcile,
+        work = work,
+    )
 
     // Entry points for receivers and workers, which are not created by the graph.
     val callAlarmHandler: CallAlarmHandler
@@ -318,6 +368,7 @@ interface AppGraph : ViewModelGraph {
     val connection: ConnectionHolder
     val pushListener: PushListener
     val pushNotifier: PushNotifier
+    val pushFallback: PushFallback
     val feedRepository: net.robog.clarity.app.data.FeedRepository
 
     @DependencyGraph.Factory

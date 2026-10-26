@@ -305,12 +305,13 @@ class NotificationReplyReceiver : android.content.BroadcastReceiver() {
     }
 }
 
-/** Starts and stops [FeedService] to match [PushConditions]. */
+/** Starts and stops [FeedService] to match [PushConditions], and the background fallback with it. */
 class AndroidPushController(
     private val context: Context,
     private val sessions: SessionStore,
     private val flag: net.robog.clarity.app.data.OnboardingFlagStore,
     private val prefs: PushPrefs,
+    private val fallback: PushFallbackWork,
 ) : PushController {
     override val enabled = prefs.enabled
     override val batteryAsked = prefs.batteryAsked
@@ -324,6 +325,7 @@ class AndroidPushController(
 
     override suspend fun reconcile() {
         val conditions = pushConditions(sessions, flag, prefs).first()
+        fallback.follow(conditions)
         when (serviceAction(conditions.shouldRun, FeedService.isRunning())) {
             ServiceAction.Start -> try {
                 ContextCompat.startForegroundService(context, FeedService.intent(context))

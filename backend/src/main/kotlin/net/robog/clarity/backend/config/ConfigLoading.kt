@@ -97,8 +97,8 @@ private class Lookup(
     }
 
     /**
-     * `CLARITY_AGENT_<ROLE>_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION|_COMPACT_AT_TOKENS` (yaml
-     * `agent.roles.<role>.model|effort|maxTokens|cacheTtl|compaction|compactAtTokens`). The legacy
+     * `CLARITY_AGENT_<ROLE>_PROVIDER|_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION|_COMPACT_AT_TOKENS` (yaml
+     * `agent.roles.<role>.provider|model|effort|maxTokens|cacheTtl|compaction|compactAtTokens`). The legacy
      * `CLARITY_AGENT_MODEL` / `CLARITY_AGENT_EFFORT` (yaml `agent.model` / `agent.effort`) are the
      * lead's fallback.
      */
@@ -124,7 +124,15 @@ private class Lookup(
                 "CLARITY_AGENT_${name}_COMPACT_AT_TOKENS", "agent.roles.$yamlKey.compactAtTokens", base.compactAtTokens.toInt(),
                 min = net.robog.clarity.harness.COMPACTION_MIN_TRIGGER_TOKENS.toInt(),
             ).toLong()
+            val providerRaw = string("CLARITY_AGENT_${name}_PROVIDER", "agent.roles.$yamlKey.provider")
+            val provider = when (providerRaw?.lowercase()) {
+                null -> base.provider
+                "anthropic" -> ModelProvider.ANTHROPIC
+                "openrouter" -> ModelProvider.OPENROUTER
+                else -> raise(ConfigError.Invalid("CLARITY_AGENT_${name}_PROVIDER", providerRaw, "expected anthropic or openrouter"))
+            }
             return RoleConfig(
+                provider = provider,
                 model = model,
                 effort = effort,
                 maxTokens = int("CLARITY_AGENT_${name}_MAX_TOKENS", "agent.roles.$yamlKey.maxTokens", base.maxTokens.toInt()).toLong(),
@@ -151,6 +159,13 @@ private class Lookup(
             }
         }
         val mcpRaw = string("CLARITY_MCP_SERVERS", "agent.mcpServers").orEmpty()
+        val roles = agentRoles()
+        val openRouterKey = secret("OPENROUTER_API_KEY", "agent.openRouterApiKey")
+        if (openRouterKey == null) {
+            AgentRole.entries.firstOrNull { roles[it].provider == ModelProvider.OPENROUTER }?.let {
+                raise(ConfigError.Invalid("CLARITY_AGENT_${it.name}_PROVIDER", "openrouter", "set OPENROUTER_API_KEY (or OPENROUTER_API_KEY_FILE) to use OpenRouter"))
+            }
+        }
         return AppConfig(
             instance = InstanceConfig(string("CLARITY_INSTANCE_NAME", "instance.name") ?: "Clarity"),
             http = HttpConfig(int("CLARITY_HTTP_PORT", "http.port", 8080, min = 0)),
@@ -171,12 +186,14 @@ private class Lookup(
             ),
             agent = AgentConfig(
                 anthropicApiKey = secret("ANTHROPIC_API_KEY", "agent.anthropicApiKey"),
-                roles = agentRoles(),
+                roles = roles,
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
                 anthropicBaseUrl = string("ANTHROPIC_BASE_URL", "agent.anthropicBaseUrl"),
+                openRouterApiKey = openRouterKey,
+                openRouterBaseUrl = string("OPENROUTER_BASE_URL", "agent.openRouterBaseUrl") ?: DEFAULT_OPENROUTER_BASE_URL,
             ),
         )
     }

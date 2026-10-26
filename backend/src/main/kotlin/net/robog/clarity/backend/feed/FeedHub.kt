@@ -3,6 +3,7 @@ package net.robog.clarity.backend.feed
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import kotlin.time.Instant
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -48,6 +49,9 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
         store.update(itemId, cards, streaming = false)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
 
     fun publish(event: FeedEvent) = hub.publish(event)
+
+    /** Items whose held notification was released at or after [since] (resent to a reconnecting phone). */
+    suspend fun releasedSince(since: Instant) = store.releasedSince(since)
 
     suspend fun page(after: Long, limit: Int) = store.page(after, limit)
 }

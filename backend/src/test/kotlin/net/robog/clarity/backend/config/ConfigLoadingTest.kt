@@ -63,6 +63,38 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_LEAD_COMPACT_AT_TOKENS" to "20000")).shouldBeInstanceOf<Either.Left<*>>()
     }
 
+    test("roles run on Anthropic unless a provider is set; OpenRouter needs its key") {
+        val defaults = load().getOrNull()!!.agent
+        AgentRole.entries.map { defaults.roles[it].provider }.toSet() shouldBe setOf(ModelProvider.ANTHROPIC)
+        defaults.openRouterApiKey shouldBe null
+        defaults.openRouterBaseUrl shouldBe "https://openrouter.ai/api/v1"
+        defaults.providersInUse shouldBe setOf(ModelProvider.ANTHROPIC)
+
+        val missing = load(mapOf("CLARITY_AGENT_GUARD_PROVIDER" to "openrouter")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
+        missing.key shouldBe "CLARITY_AGENT_GUARD_PROVIDER"
+        missing.message.contains("OPENROUTER_API_KEY") shouldBe true
+
+        val c = load(
+            mapOf(
+                "CLARITY_AGENT_GUARD_PROVIDER" to "OpenRouter", "CLARITY_AGENT_GUARD_MODEL" to "anthropic/claude-haiku-5.5",
+                "OPENROUTER_API_KEY_FILE" to "/run/secrets/openrouter", "OPENROUTER_BASE_URL" to "http://fake/api/v1",
+            ),
+            files = mapOf("/run/secrets/openrouter" to "sk-or-file\n"),
+        ).getOrNull()!!.agent
+        c.roles.guard.provider shouldBe ModelProvider.OPENROUTER
+        c.roles.guard.model shouldBe "anthropic/claude-haiku-5.5"
+        c.roles.lead.provider shouldBe ModelProvider.ANTHROPIC
+        c.openRouterApiKey shouldBe "sk-or-file"
+        c.openRouterBaseUrl shouldBe "http://fake/api/v1"
+        c.providersInUse shouldBe setOf(ModelProvider.ANTHROPIC, ModelProvider.OPENROUTER)
+
+        // A key alone changes nothing; yaml sets a provider too; nonsense is refused.
+        load(mapOf("OPENROUTER_API_KEY" to "sk-or")).getOrNull()!!.agent.providersInUse shouldBe setOf(ModelProvider.ANTHROPIC)
+        val withYaml = MapApplicationConfig("clarity.agent.reviewInterval" to "2h", "clarity.agent.roles.triage.provider" to "openrouter")
+        AppConfig.load(mapOf("OPENROUTER_API_KEY" to "sk-or"), withYaml).getOrNull()!!.agent.roles.triage.provider shouldBe ModelProvider.OPENROUTER
+        load(mapOf("CLARITY_AGENT_TRIAGE_PROVIDER" to "openai")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
+    }
+
     test("environment overrides yaml") {
         val c = load(mapOf(
             "CLARITY_HTTP_PORT" to "9090", "CLARITY_DB_URL" to "jdbc:postgresql://env/db",

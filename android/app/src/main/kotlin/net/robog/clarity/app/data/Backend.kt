@@ -281,9 +281,6 @@ interface FeedRepository {
     /** Sends the person's input; retries with the same [UserInput.clientId] never duplicate. */
     suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId? = null): ApiResult<InputAccepted>
     suspend fun decideHeld(id: net.robog.clarity.shared.governance.HeldActionId, decision: HeldDecision): ApiResult<Unit>
-
-    /** Keeps the cache current until cancelled. */
-    suspend fun sync()
 }
 
 class DefaultFeedRepository(
@@ -309,8 +306,6 @@ class DefaultFeedRepository(
 
     override suspend fun decideHeld(id: net.robog.clarity.shared.governance.HeldActionId, decision: HeldDecision) =
         api.decideHeld(id, decision)
-
-    override suspend fun sync() = feedSync.run()
 }
 
 /** Wall clock, injectable. */

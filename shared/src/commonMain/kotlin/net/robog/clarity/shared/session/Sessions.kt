@@ -108,9 +108,10 @@ data class Today(
 /**
  * `GET/PUT /api/v1/settings`.
  *
- * Repeating times ([MorningCall.at] and its days, [eveningSummaryAt]) are stored in UTC at the
- * standard offset of [homeZone]; convert them with [net.robog.clarity.shared.time.ScheduleClock],
- * never by hand.
+ * Repeating times ([MorningCall.at] and its days, [eveningSummaryAt]) are wall-clock times in
+ * [homeZone], as the person set them (19:00 means 7 pm there, summer and winter). Turn them into
+ * moments, or into another zone's clock, with [net.robog.clarity.shared.time.ScheduleClock], never
+ * with a fixed offset.
  *
  * [ClarityJson] omits nulls, and an omitted `headsUpMinutes` would decode as its default of 10, so
  * "heads-up off" could never travel; [MorningCallSerializer] writes that null explicitly.
@@ -120,24 +121,24 @@ data class Settings(
     @Serializable(with = MorningCallSerializer::class) val morningCall: MorningCall = MorningCall(),
     /** "low-urgency holds": reviewed together in the evening, or right away. */
     val batchLowUrgency: Boolean = true,
-    /** UTC (see above). */
+    /** On the home clock (see above). */
     val eveningSummaryAt: LocalTime = LocalTime(18, 0),
     /** "urgent holds": a notification as it happens. */
     val pushUrgent: Boolean = true,
     /** "mic during calls": always on, or push to talk. */
     val micAlwaysOn: Boolean = true,
     /**
-     * IANA zone the person was in when they last set a time. Its daylight-saving rules move the
-     * repeating times and it sets where their day starts; no time is stored in it.
+     * IANA zone the person was in when they last set a time. The repeating times are on its clock,
+     * its daylight-saving rules turn them into moments, and it sets where their day starts.
      */
     val homeZone: String = "UTC",
 ) {
     @Serializable
     data class MorningCall(
         val enabled: Boolean = true,
-        /** UTC (see [Settings]). */
+        /** On the home clock (see [Settings]). */
         val at: LocalTime = LocalTime(9, 0),
-        /** ISO days, 1 = Monday, in UTC: the days [at] falls on. */
+        /** ISO days, 1 = Monday, on the home clock: the days [at] falls on. */
         val days: Set<Int> = setOf(1, 2, 3, 4, 5),
         val headsUpMinutes: Int? = 10,
         val mode: Mode = Mode.CALL,
@@ -160,6 +161,11 @@ data class SetupStatus(
     val connectorsReady: Int,
     val constitutionVersion: Int?,
     val settings: Settings,
+    /**
+     * Providers some role uses that have no key yet (`anthropic`, `openrouter`). [modelKey] is valid
+     * only when this is empty; an OpenRouter key is set on the server, not in the app.
+     */
+    val missingKeys: List<String> = emptyList(),
 ) {
     @Serializable
     enum class KeyState {

@@ -80,6 +80,10 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun pendingBatch() = items.filter { it.second.batchPending }.map { it.first }
     override suspend fun markSummarized(ids: Collection<FeedItemId>) = Unit
     override suspend fun notifyOf(id: FeedItemId): String? = null
+    override suspend fun heldNotifications(): List<FeedItem> = emptyList()
+    override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? = null
+    val released = CopyOnWriteArrayList<FeedItem>()
+    override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
 }
 
 private class MemoryInbox : InboxStore {
@@ -238,6 +242,51 @@ class FeedRoutesTest : FunSpec({
         ClarityJson.decodeFromString(FeedEvent.serializer(), received[1].second!!)
             .shouldBeInstanceOf<FeedEvent.ItemAppended>().item.let {
                 it.cards shouldBe listOf(Card.Text("live"))
+                it.notify shouldBe "push_now"
+            }
+    }
+
+    test("SSE resends a recently released hold the client already has, then a live release below its position") {
+        val old = feed.append(agentItem("held during focus").copy(notify = "hold_until:2026-03-04T12:00:00Z")).item
+        val seen = feed.append(agentItem("seen")).item
+        store.released += old.copy(notify = "released:2026-03-04T12:00:00Z")
+        val received = mutableListOf<FeedEvent>()
+        try {
+            withServer { client ->
+                withTimeout(10.seconds) {
+                    client.sse("/api/v1/events?after=${seen.seq}", request = { header(HttpHeaders.Authorization, TOKEN) }) {
+                        incoming.take(2).collect { event ->
+                            received += ClarityJson.decodeFromString(FeedEvent.serializer(), event.data!!)
+                            if (received.size == 1) hub.publish(FeedEvent.ItemFinal(seen.copy(notify = "released:2026-03-04T12:01:00Z")))
+                        }
+                    }
+                }
+            }
+        } finally {
+            store.released.clear()
+        }
+        received.map { (it as FeedEvent.ItemFinal).item.id } shouldContainExactly listOf(old.id, seen.id)
+    }
+
+    test("SSE delivers the final version of an item the client was already sent") {
+        val known = feed.append(agentItem("seen")).item
+        val received = mutableListOf<Pair<String?, String?>>()
+        withServer { client ->
+            withTimeout(10.seconds) {
+                client.sse("/api/v1/events?after=${known.seq}", request = { header(HttpHeaders.Authorization, TOKEN) }) {
+                    // A streamed reply: appended while streaming, then finished with its final cards.
+                    val started = feed.append(agentItem("").copy(streaming = true, notify = "push_now")).item
+                    incoming.take(2).collect { event ->
+                        received += event.event to event.data
+                        if (received.size == 1) hub.publish(FeedEvent.ItemFinal(started.copy(cards = listOf(Card.Text("done")), streaming = false)))
+                    }
+                }
+            }
+        }
+        received.map { it.first } shouldContainExactly listOf("item", "item_final")
+        ClarityJson.decodeFromString(FeedEvent.serializer(), received[1].second!!)
+            .shouldBeInstanceOf<FeedEvent.ItemFinal>().item.let {
+                it.streaming shouldBe false
                 it.notify shouldBe "push_now"
             }
     }

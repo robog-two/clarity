@@ -89,7 +89,8 @@ class LeadRig(
 ) {
     val model = FakeModel()
     val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
-    val runtime = AgentRuntime(config, ModelGatewayFactory { model }, UsageRecorder { _, _ -> })
+    val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
+    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { _, _ -> model }, UsageRecorder { _, _, _ -> })
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)

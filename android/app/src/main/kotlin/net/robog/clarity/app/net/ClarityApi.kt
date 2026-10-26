@@ -77,6 +77,8 @@ import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionId
+import net.robog.clarity.shared.session.ModelSettingsView
+import net.robog.clarity.shared.session.RoleModelOverride
 import net.robog.clarity.shared.session.Settings
 import net.robog.clarity.shared.session.SetupStatus
 import net.robog.clarity.shared.session.StartSession
@@ -151,6 +153,13 @@ interface IngestApi {
     suspend fun reportResult(id: ActionId, result: ActionResult): ApiResult<Unit>
 }
 
+/** Each role's model settings (`/api/v1/settings/models`). */
+interface ModelsApi {
+    suspend fun modelSettings(): ApiResult<ModelSettingsView>
+    suspend fun putRoleModel(role: String, override: RoleModelOverride): ApiResult<ModelSettingsView>
+    suspend fun resetRoleModel(role: String): ApiResult<ModelSettingsView>
+}
+
 /** The credential vault's routes and phone-signed decisions. */
 interface VaultApi {
     /** Registers this phone's vault key and approval key (replacing earlier ones). */
@@ -199,7 +208,7 @@ fun createHttpClient(
 class KtorClarityApi(
     private val client: HttpClient,
     private val sessions: SessionStore,
-) : ClarityApi, IngestApi, VaultApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -230,6 +239,20 @@ class KtorClarityApi(
     override suspend fun putSettings(settings: Settings): ApiResult<Unit> = putUnit(ApiPaths.SETTINGS, settings)
 
     override suspend fun connectors(): ApiResult<List<ConnectorSummary>> = get(ApiPaths.CONNECTORS)
+
+    override suspend fun modelSettings(): ApiResult<ModelSettingsView> = get(ApiPaths.SETTINGS_MODELS)
+
+    override suspend fun putRoleModel(role: String, override: RoleModelOverride): ApiResult<ModelSettingsView> =
+        authed { base ->
+            client.put {
+                url(base + "${ApiPaths.SETTINGS_MODELS}/$role")
+                contentType(ContentType.Application.Json)
+                setBody(override)
+            }
+        }
+
+    override suspend fun resetRoleModel(role: String): ApiResult<ModelSettingsView> =
+        authed { base -> client.delete { url(base + "${ApiPaths.SETTINGS_MODELS}/$role") } }
 
     override suspend fun putGrants(id: ConnectorId, update: GrantsUpdate): ApiResult<Unit> =
         putUnit("${ApiPaths.CONNECTORS}/$id/grants", update)

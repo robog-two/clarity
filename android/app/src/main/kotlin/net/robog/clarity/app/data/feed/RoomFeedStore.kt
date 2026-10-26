@@ -38,6 +38,9 @@ interface FeedDao {
     @Query("SELECT COALESCE(MAX(seq), 0) FROM feed_item")
     suspend fun lastSeq(): Long
 
+    @Query("SELECT json FROM feed_item ORDER BY seq DESC LIMIT :limit")
+    suspend fun recent(limit: Int): List<String>
+
     @Query("SELECT json FROM feed_item WHERE id = :id")
     suspend fun itemById(id: String): String?
 
@@ -98,6 +101,9 @@ class RoomFeedStore(private val dao: FeedDao) : FeedStore {
         dao.held().map { rows -> rows.map { json.decodeFromString(HeldAction.serializer(), it) } }
 
     override suspend fun lastSeq(): Long = dao.lastSeq()
+
+    override suspend fun recentItems(limit: Int): List<FeedItem> =
+        dao.recent(limit).map { json.decodeFromString(FeedItem.serializer(), it) }.reversed()
 
     override suspend fun item(id: FeedItemId): FeedItem? =
         dao.itemById(id.value)?.let { json.decodeFromString(FeedItem.serializer(), it) }

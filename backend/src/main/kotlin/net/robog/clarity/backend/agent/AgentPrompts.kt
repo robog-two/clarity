@@ -53,7 +53,7 @@ data class HomeClock(val zone: kotlinx.datetime.TimeZone, val near: kotlin.time.
 
 /**
  * Pure, deterministic rendering of the constitution and profile for the system prompt. Protected
- * times are stored in UTC; with [home] they are shown on the person's home clock, else as UTC.
+ * times are stored on the person's home clock and shown as stored; [home] names the zone.
  */
 fun renderConstitution(c: Constitution?, home: HomeClock? = null): String {
     if (c == null || c.version == 0) {
@@ -82,7 +82,7 @@ fun renderConstitution(c: Constitution?, home: HomeClock? = null): String {
             append("\n\nWho gets through during protected time: ").append(c.getsThrough.joinToString { it.name })
         }
         if (c.protectedTimes.isNotEmpty()) {
-            append("\n\nProtected time (").append(home?.let { "the person's local time, ${it.zone.id}" } ?: "UTC").append("):")
+            append("\n\nProtected time (").append(home?.let { "the person's local time, ${it.zone.id}" } ?: "the person's local time").append("):")
             c.protectedTimes.map { stored ->
                 home?.let { ScheduleClock.blockToSeen(stored, it.zone, it.zone, it.near) } ?: stored
             }.forEach { b ->

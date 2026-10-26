@@ -13,7 +13,9 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import net.robog.clarity.backend.agent.AgentRuntime
-import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.agent.BoundRole
+import net.robog.clarity.backend.config.RoleConfig
+import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelGateway
@@ -44,20 +46,24 @@ fun interface RuleDrafter {
 
 /** [RuleDrafter] over the harness gateway with the small guard model (plain text out, parsed as JSON). */
 class GatewayRuleDrafter(
-    private val gateway: () -> ModelGateway,
-    private val modelName: String,
+    private val bind: () -> BoundRole,
     private val json: Json = ClarityJson,
 ) : RuleDrafter {
+    /** A fixed gateway and model (tests). */
+    constructor(gateway: () -> ModelGateway, modelName: String, json: Json = ClarityJson) :
+        this({ BoundRole(AgentRole.GUARD, RoleConfig(modelName, effort = "low"), gateway()) }, json)
+
     override suspend fun draft(held: HeldAction, constitution: Constitution?): RuleDraft {
+        val bound = bind()
         val request = ModelRequest(
-            model = modelName,
+            model = bound.config.model,
             system = SYSTEM,
             messages = listOf(Message.user(render(held, constitution, json))),
             tools = emptyList(),
             maxTokens = 2_000,
             effort = "low",
         )
-        return parse(gateway().generate(request).text, json)
+        return parse(bound.gateway.generate(request).text, json)
     }
 
     companion object {
@@ -92,8 +98,9 @@ class GatewayRuleDrafter(
 @Inject
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
-class ConfiguredRuleDrafter(private val runtime: AgentRuntime, config: AgentConfig) : RuleDrafter {
-    private val delegate = GatewayRuleDrafter({ requireNotNull(runtime.gateway) { "no model key configured" } }, config.roles.guard.model)
+class ConfiguredRuleDrafter(private val runtime: AgentRuntime) : RuleDrafter {
+    // The guard role's model, read on every draft.
+    private val delegate = GatewayRuleDrafter({ requireNotNull(runtime.bind(AgentRole.GUARD)) { "no model key configured" } })
 
     override suspend fun draft(held: HeldAction, constitution: Constitution?): RuleDraft = delegate.draft(held, constitution)
 }

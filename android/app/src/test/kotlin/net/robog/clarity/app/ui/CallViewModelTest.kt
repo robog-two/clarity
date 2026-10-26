@@ -8,13 +8,20 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import net.robog.clarity.app.call.AlarmSlot
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.testutil.FakeAlarms
 import net.robog.clarity.app.testutil.FixedClock
 import net.robog.clarity.app.testutil.MemorySettingsCache
@@ -64,7 +71,14 @@ private class CallRig(active: Session? = null, settings: Settings = Settings(hom
     val alarms = FakeAlarms()
     val notifier = RecordingNotifier()
     val scheduler = CallScheduler(settingsRepo, MemorySettingsCache(), alarms, clock)
-    val vm = CallViewModel(sessions, feed, settingsRepo, CallService(sessions, scheduler, notifier), notifier, speech, clock)
+    /** How many times the shared feed connection was opened. */
+    var feedOpens = 0
+    val connection = ConnectionHolder(
+        CoroutineScope(Dispatchers.Unconfined),
+        feed = { feedOpens++; awaitCancellation() },
+        actions = { awaitCancellation() },
+    )
+    val vm = CallViewModel(sessions, feed, settingsRepo, CallService(sessions, scheduler, notifier), notifier, speech, clock, connection)
     val state: CallUiState get() = vm.state.value
 }
 
@@ -110,6 +124,23 @@ class CallStageRulesTest {
 }
 
 class CallViewModelTest {
+    @Test fun theCallScreenSharesTheOneFeedConnection() = withMain {
+        val r = CallRig()
+        runTest {
+            val service = launch { r.connection.holdFeed() }
+            runCurrent()
+            val call = launch { r.vm.keepInSync() }
+            runCurrent()
+            assertEquals(1, r.feedOpens, "the call screen joins the stream the push service already has open")
+
+            service.cancel(); runCurrent()
+            assertTrue(r.connection.feedRunning, "the call screen keeps it open on its own")
+            call.cancel(); runCurrent()
+            assertFalse(r.connection.feedRunning, "and lets it go when it leaves the front")
+            assertEquals(1, r.feedOpens)
+        }
+    }
+
     @Test fun startsOnTheIncomingScreenWhenNoCallIsRunning() = withMain {
         val r = CallRig()
         assertEquals(CallScreen.Incoming, r.state.screen)
