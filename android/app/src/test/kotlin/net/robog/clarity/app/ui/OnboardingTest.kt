@@ -168,7 +168,8 @@ private class FakeSessions : SessionsRepository {
     val controls = mutableListOf<SessionControl>()
     var controlResult: ApiResult<Session>? = null
     var current: Session = session(0)
-    override suspend fun start(kind: SessionKind): ApiResult<Session> { started += kind; return startResult }
+    override suspend fun start(kind: SessionKind, heldActionId: net.robog.clarity.shared.governance.HeldActionId?): ApiResult<Session> { started += kind; return startResult }
+    override suspend fun active(kind: SessionKind): ApiResult<Session?> = ApiResult.Success(null)
     override suspend fun get(id: SessionId): ApiResult<Session> = ApiResult.Success(current)
     override suspend fun control(id: SessionId, control: SessionControl): ApiResult<Session> {
         controls += control
@@ -496,14 +497,14 @@ class ModelStepViewModelTest {
 
 class FlowViewModelTest {
     @Test fun notEnrolledStartsAtWelcome() = withMain {
-        val vm = OnboardingFlowViewModel(FakeSessionRepo(false), FakeSetup())
+        val vm = OnboardingFlowViewModel(FakeSessionRepo(false), FakeSetup(), FakeFlag())
         assertTrue(vm.state.value.ready)
         assertEquals(OnboardingStep.Welcome, vm.state.value.step)
     }
 
     @Test fun enrolledResumesWhereTheServerSaysSetupStopped() = withMain {
         val setup = FakeSetup(SetupStatus(SetupStatus.KeyState.VALID, 0, null, Settings()))
-        val vm = OnboardingFlowViewModel(FakeSessionRepo(true), setup)
+        val vm = OnboardingFlowViewModel(FakeSessionRepo(true), setup, FakeFlag())
         assertEquals(OnboardingStep.Connectors, vm.state.value.step)
         vm.next()
         assertEquals(OnboardingStep.ValuesIntro, vm.state.value.step)
