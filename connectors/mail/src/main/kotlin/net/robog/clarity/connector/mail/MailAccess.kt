@@ -11,6 +11,9 @@ private val log = KotlinLogging.logger {}
 
 private const val TIMEOUT_MS = "30000"
 
+/** IMAP reads wait longer: Gmail can take over 30 s to answer a search or fetch on a big folder such as All Mail. */
+private const val IMAP_READ_TIMEOUT_MS = "180000"
+
 /** Opens connections for one [MailConfig]. Connections are short-lived; callers close them. */
 class MailAccess(val config: MailConfig) {
 
@@ -21,7 +24,7 @@ class MailAccess(val config: MailConfig) {
             put("mail.$protocol.host", config.imapHost)
             put("mail.$protocol.port", config.imapPort.toString())
             put("mail.$protocol.connectiontimeout", TIMEOUT_MS)
-            put("mail.$protocol.timeout", TIMEOUT_MS)
+            put("mail.$protocol.timeout", IMAP_READ_TIMEOUT_MS)
             put("mail.$protocol.writetimeout", TIMEOUT_MS)
             put("mail.$protocol.peek", "true") // reading must not set \Seen
             put("mail.$protocol.ssl.checkserveridentity", "true")
