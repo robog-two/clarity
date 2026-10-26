@@ -16,6 +16,7 @@ dependencies {
     implementation(libs.bundles.exposed)
     implementation(libs.bundles.persistence)
     implementation(libs.arrow.core)
+    implementation(libs.guava) // Public Suffix List (InternetDomainName) for vault grants
     implementation(libs.arrow.fx.coroutines)
     implementation(libs.kotlinx.coroutines.core)
 

@@ -14,7 +14,7 @@ fun headline(item: FeedItem): String {
             is Card.Context -> card.label
             is Card.Said -> card.text
             is Card.Plan -> card.items.firstOrNull()?.sentence()
-            is Card.Proposal, is Card.Tasks -> null
+            is Card.Proposal, is Card.Tasks, is Card.CredentialRequest -> null
         }
     } ?: "Something to look at"
     return text.lineSequence().first().trim().let { if (it.length > MAX_HEADLINE) it.take(MAX_HEADLINE - 1) + "…" else it }

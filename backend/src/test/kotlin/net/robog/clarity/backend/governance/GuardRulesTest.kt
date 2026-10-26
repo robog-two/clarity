@@ -16,6 +16,7 @@ import net.robog.clarity.shared.noun.Handle
 
 private fun expected(kind: ActionKind, tier: AutonomyTier, untrusted: Boolean, external: Boolean): Decision = when {
     kind == ActionKind.PAYMENT -> Decision.DENY
+    kind in VAULT_KINDS -> Decision.ASK // vault releases are never done alone, whatever the tier
     tier != AutonomyTier.DO_THEN_TELL -> Decision.ASK
     untrusted && external -> Decision.ASK
     else -> Decision.ALLOW
@@ -45,6 +46,20 @@ class GuardRulesTest : FunSpec({
         val v = deterministicVerdict(sample(ActionKind.PAYMENT), constitution(autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.DO_THEN_TELL)), trusted(requestedByUser = true))
         v.decision shouldBe Decision.DENY
         v.rationale shouldContain "money"
+    }
+
+    test("vault kinds always ask, even when the person lets everything run alone, and say why") {
+        for (kind in VAULT_KINDS) {
+            val v = deterministicVerdict(sample(kind), constitution(tier = AutonomyTier.DO_THEN_TELL), trusted(requestedByUser = true))
+            v.decision shouldBe Decision.ASK
+            v.rationale shouldContain "phone"
+        }
+    }
+
+    test("using a payment card credential is asked about, not denied: the person can still approve on the phone") {
+        val use = (sample(ActionKind.USE_CREDENTIAL) as ProposedAction.UseCredential).copy(summary = "Use card to pay at checkout")
+        effectiveKind(use) shouldBe ActionKind.USE_CREDENTIAL
+        deterministicVerdict(use, constitution(), trusted()).decision shouldBe Decision.ASK
     }
 
     test("an external tool is recognised as a payment by its name, input or summary") {

@@ -14,6 +14,15 @@ import net.robog.clarity.shared.governance.Provenance
 /** Kinds that are hard lines: never executed on the guard's say-so, only reviewed (money, purchases). */
 val HARD_LINE_KINDS: Set<ActionKind> = setOf(ActionKind.PAYMENT)
 
+/** Kinds that only the phone can approve (vault): never executed by a connector, never approved from the generic decision route. */
+val VAULT_KINDS: Set<ActionKind> = setOf(ActionKind.USE_CREDENTIAL, ActionKind.TWO_FACTOR_CODE)
+
+/** The server name browser tools are exposed under (`clarity.agent.mcpServers[].name`), and the `server` of their proposals. */
+const val BROWSER_SERVER = "browser"
+
+/** True for effects the backend performs itself once approved (browser actions): approval only records the yes. */
+fun isLocalAction(action: ProposedAction): Boolean = action is ProposedAction.ExternalTool && action.server == BROWSER_SERVER
+
 /** Human spelling of a kind for rationales, e.g. "send email". */
 fun ActionKind.label(): String = wire().replace('_', ' ')
 
@@ -41,6 +50,8 @@ fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier = when {
 fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.SendEmail -> true
     is ProposedAction.ExternalTool -> true
+    is ProposedAction.UseCredential -> true
+    is ProposedAction.AskCode -> false
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
@@ -65,6 +76,8 @@ fun textOf(action: ProposedAction): String = buildString {
         is ProposedAction.CreateReminder -> append(action.text)
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())
+        is ProposedAction.UseCredential -> append(action.site)
+        is ProposedAction.AskCode -> append(action.site).append(' ').append(action.purpose)
         is ProposedAction.MoveEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
     }
 }.lowercase()
@@ -98,7 +111,11 @@ fun deterministicVerdict(
         findings += Finding(Decision.DENY, "it would move money, which is a line I never cross")
     }
     when (tierOf(kind, constitution)) {
-        AutonomyTier.NEVER_ALONE -> findings += Finding(Decision.ASK, "you said \"$kindName\" is never done alone")
+        AutonomyTier.NEVER_ALONE -> findings += Finding(
+            Decision.ASK,
+            if (kind in VAULT_KINDS) "$kindName always needs you on your phone (with your fingerprint or face)"
+            else "you said \"$kindName\" is never done alone",
+        )
         AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, "you want to be asked before I do \"$kindName\"")
         AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you let me do \"$kindName\" and tell you after")
     }
