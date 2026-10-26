@@ -84,12 +84,9 @@ data class SettingError(val field: String, val message: String)
  */
 fun validateOverride(role: AgentRole, override: RoleOverride, boot: RoleConfig, keys: Set<ModelProvider>): List<SettingError> = buildList {
     val effective = override.applyTo(boot)
-    if (override.provider == ModelProvider.OPENROUTER) {
-        when {
-            // The lead's journal holds Anthropic-only blocks (thinking, compaction) and it needs server-side compaction.
-            role == AgentRole.LEAD -> add(SettingError("provider", "the lead runs on Anthropic for now: OpenRouter can't compact its long thread yet"))
-            ModelProvider.OPENROUTER !in keys -> add(SettingError("provider", "this server has no OpenRouter key (set OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE)"))
-        }
+    // Any role may run on OpenRouter; the lead then compacts its thread client-side.
+    if (override.provider == ModelProvider.OPENROUTER && ModelProvider.OPENROUTER !in keys) {
+        add(SettingError("provider", "this server has no OpenRouter key (set OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE)"))
     }
     override.model?.let {
         when {

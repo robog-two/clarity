@@ -127,6 +127,9 @@ fun changedOverride(view: RoleModelView, provider: String? = null, model: String
     )
 }
 
+/** Under the lead: when a change applies, and what OpenRouter changes for it. */
+const val LEAD_NOTE = "Changes apply from its next turn. On OpenRouter it summarizes its own thread when the thread gets long."
+
 /** Pure: the rows the section shows. */
 fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap()): List<RoleModelRow> {
     val openRouter = ModelRoles.OPENROUTER in view.providersWithKeys
@@ -139,9 +142,9 @@ fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap())
             model = r.effective.model,
             effort = r.effective.effort,
             isDefault = r.sources.values.none { it == SettingSource.OVERRIDE },
-            openRouterAllowed = openRouter && r.role != ModelRoles.LEAD,
+            openRouterAllowed = openRouter,
             suggestions = modelSuggestions(r.effective.provider),
-            note = if (r.role == ModelRoles.LEAD) "Changes apply from its next turn. It runs on Anthropic for now." else null,
+            note = if (r.role == ModelRoles.LEAD) LEAD_NOTE else null,
             error = errors[r.role],
         )
     }

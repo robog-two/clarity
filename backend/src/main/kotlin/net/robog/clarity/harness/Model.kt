@@ -48,6 +48,20 @@ sealed interface Block {
         val type: String? get() = (json["type"] as? JsonPrimitive)?.contentOrNull
 
         val isCompaction: Boolean get() = type == "compaction"
+
+        /** The readable summary of an Anthropic `compaction` block (`content`); null when it has none (encrypted only). */
+        val compactionSummary: String? get() = if (isCompaction) (json["content"] as? JsonPrimitive)?.contentOrNull else null
+
+        /**
+         * The provider that wrote this block when it is not Anthropic ([FOREIGN_PROVIDER_KEY]), e.g.
+         * `openrouter` for its reasoning. The Anthropic gateway never sends such a block.
+         */
+        val foreignProvider: String? get() = (json[FOREIGN_PROVIDER_KEY] as? JsonPrimitive)?.contentOrNull
+
+        companion object {
+            /** Tags a [Raw] block written by a provider other than Anthropic. */
+            const val FOREIGN_PROVIDER_KEY = "clarity_provider"
+        }
     }
 }
 
@@ -76,8 +90,47 @@ data class Message(
 
         /** An effort-only operator message: changes the effort for the rest of the conversation without breaking the cached prefix. */
         fun effort(effort: String) = Message(Role.SYSTEM, emptyList(), effort)
+
+        /** A client-side compaction summary ([isSummary]): what is sent to the model starts here. */
+        fun summary(text: String) = user("$SUMMARY_MARKER\n$text")
     }
+
+    /** A user message of one text block starting with [SUMMARY_MARKER]: a client-side compaction summary. */
+    val isSummary: Boolean get() = role == Role.USER && (content.singleOrNull() as? Block.Text)?.text?.startsWith(SUMMARY_MARKER) == true
+
+    /** Summarizes everything before it: a client summary ([isSummary]) or a message holding an Anthropic `compaction` block. */
+    val isCompactionPoint: Boolean get() = isSummary || content.any { it is Block.Raw && it.isCompaction }
 }
+
+/**
+ * First line of a client-side compaction summary. Client compaction (for providers without
+ * server-side compaction) appends the summary as a new user message, so the journal stays
+ * append-only; every provider is sent the history from the latest one on ([sinceSummary]).
+ */
+const val SUMMARY_MARKER = "[clarity:summary] A summary of the conversation before this point:"
+
+/**
+ * Pure: [messages] from the latest client summary ([Message.isSummary]) on, or all of them. Cutting
+ * the front only keeps later thinking blocks valid, and the journal itself is never rewritten.
+ */
+fun sinceSummary(messages: List<Message>): List<Message> {
+    val last = messages.indexOfLast { it.isSummary }
+    return if (last <= 0) messages else messages.subList(last, messages.size)
+}
+
+/**
+ * Pure: the part of [messages] the model still reads: from the latest compaction point
+ * ([Message.isCompactionPoint]: a client summary, or an Anthropic `compaction` block, before which
+ * Anthropic drops everything server-side) on, or all of them.
+ */
+fun contextSince(messages: List<Message>): List<Message> {
+    val last = messages.indexOfLast { it.isCompactionPoint }
+    return if (last <= 0) messages else messages.subList(last, messages.size)
+}
+
+/** Pure: the effort [messages] run at: that of the last effort-only message, else [default]. */
+fun effortIn(messages: List<Message>, default: String?): String? =
+    messages.lastOrNull { it.role == Role.SYSTEM && it.effort != null }?.effort ?: default
 
 /**
  * Placement rule for mid-conversation system messages: each must be followed (possibly through other
@@ -207,6 +260,9 @@ data class Usage(
     /** What the provider says the call cost, in millionths of a dollar (OpenRouter); null when it does not say. */
     val reportedCostMicros: Long? = null,
 ) {
+    /** The whole prompt of one call: uncached input plus cache reads and writes. */
+    val promptTokens: Long get() = inputTokens + cacheReadInputTokens + cacheCreationInputTokens
+
     operator fun plus(other: Usage) = Usage(
         inputTokens + other.inputTokens,
         outputTokens + other.outputTokens,

@@ -38,8 +38,7 @@ const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 /**
  * Who serves a role's model. [OPENROUTER] speaks the OpenAI-compatible API without prompt-cache
- * breakpoints or server-side compaction, so it suits the one-shot roles (guard, triage); the lead
- * stays on [ANTHROPIC] until compaction runs client-side.
+ * breakpoints or server-side compaction; the lead runs there too and then compacts client-side.
  */
 enum class ModelProvider { ANTHROPIC, OPENROUTER }
 
@@ -57,7 +56,8 @@ val EFFORTS: List<String> = net.robog.clarity.shared.session.ModelRoles.EFFORTS
 /**
  * Per-role model settings (from env or yaml, under any runtime override). [effort] is the Messages
  * API `output_config.effort` (one of [EFFORTS]); [cacheTtl] is `5m` or `1h`; [compaction] turns on
- * server-side compaction (only the long-lived lead thread needs it); [compactAtTokens] is when.
+ * compaction (only the long-lived lead thread needs it: server-side on Anthropic, client-side on
+ * OpenRouter); [compactAtTokens] is when.
  */
 data class RoleConfig(
     val model: String,
@@ -65,7 +65,11 @@ data class RoleConfig(
     val maxTokens: Long = 32_000,
     val cacheTtl: String = "5m",
     val compaction: Boolean = false,
-    /** Compact once the prompt reaches this many tokens (at least 50K). Smaller is cheaper per turn but forgets sooner. */
+    /**
+     * Compact once the prompt reaches this many tokens (at least 50K). Smaller is cheaper per turn but
+     * forgets sooner. On OpenRouter (client-side compaction, no prompt cache) it is the main cost
+     * lever: each turn resends everything since the last summary at the full input price.
+     */
     val compactAtTokens: Long = 150_000,
     /**
      * Also compact while the person is away ([net.robog.clarity.backend.agent.LeadAgent.compactIfIdle]). Off: a

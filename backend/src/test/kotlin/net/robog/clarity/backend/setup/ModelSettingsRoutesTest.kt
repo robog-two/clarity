@@ -113,6 +113,17 @@ class ModelSettingsRoutesTest : FunSpec({
         }
     }
 
+    test("the lead can move to OpenRouter") {
+        val runtime = rig()
+        testApplication {
+            val client = setup(runtime)
+            val saved = client.putRole("lead", RoleModelOverride(provider = "openrouter", model = "anthropic/claude-opus-5.5"))
+            saved.status shouldBe HttpStatusCode.OK
+            saved.body<ModelSettingsView>().roles.single { it.role == "lead" }.effective.provider shouldBe "openrouter"
+            runtime.bind(AgentRole.LEAD)!!.config.provider.name shouldBe "OPENROUTER"
+        }
+    }
+
     test("refused changes are 422 problems naming each field; an unknown role is 404") {
         testApplication {
             val client = setup(rig(openRouterKey = null))
@@ -120,7 +131,7 @@ class ModelSettingsRoutesTest : FunSpec({
             lead.status shouldBe HttpStatusCode.UnprocessableEntity
             val problem = ClarityJson.decodeFromString(Problem.serializer(), lead.bodyAsText())
             problem.errors!!.single().field shouldBe "provider"
-            problem.errors!!.single().message shouldContain "lead"
+            problem.errors!!.single().message shouldContain "OPENROUTER_API_KEY"
 
             val noKey = ClarityJson.decodeFromString(
                 Problem.serializer(),
