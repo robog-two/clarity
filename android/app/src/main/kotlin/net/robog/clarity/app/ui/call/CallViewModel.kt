@@ -26,6 +26,7 @@ import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.SessionsRepository
 import net.robog.clarity.app.data.SettingsRepository
 import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.voice.MicChipState
@@ -91,6 +92,7 @@ class CallViewModel(
     private val notifier: CallNotifier,
     speech: SpeechInput,
     private val clock: AppClock,
+    private val connection: ConnectionHolder,
 ) : ViewModel() {
     private val _state = MutableStateFlow(CallUiState())
     val state: StateFlow<CallUiState> = _state.asStateFlow()
@@ -256,8 +258,11 @@ class CallViewModel(
         }
     }
 
-    /** Keeps the cache current while the call screen is in front. */
-    suspend fun keepInSync() = feed.sync()
+    /**
+     * Keeps the cache current while the call screen is in front. Holds the feed connection that the
+     * main app and the push service share, so the phone never has two streams open at once.
+     */
+    suspend fun keepInSync() = connection.holdFeed()
 
     override fun onCleared() {
         voice.stop()

@@ -89,7 +89,6 @@ class ScreenFeed : FeedRepository {
         return decideResult
     }
 
-    override suspend fun sync() = Unit
 }
 
 class ScreenSpeech : SpeechInput {
