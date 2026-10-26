@@ -14,6 +14,7 @@ import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.shared.governance.RuleDraft
 import net.robog.clarity.shared.governance.Urgency
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -62,6 +63,14 @@ class HeldActionStore(private val database: Database, private val clock: Clock) 
             it[HeldActions.failure] = failure
         }
         HeldActions.selectAll().where { HeldActions.idempotencyKey eq action.idempotencyKey }.single().toHeld()
+    }
+
+    /** Stores the drafted "approve automatically" line; only while the action is still waiting. */
+    suspend fun setRuleDraft(id: HeldActionId, draft: RuleDraft): Boolean {
+        val uuid = parseHeldId(id.value) ?: return false
+        return database.tx {
+            HeldActions.update({ (HeldActions.id eq uuid) and (HeldActions.status inList PENDING_STATUSES.map { it.wire() }) }) { it[ruleDraft] = draft } > 0
+        }
     }
 
     suspend fun findByKey(key: String): HeldAction? = database.tx {
@@ -120,4 +129,5 @@ internal fun ResultRow.toHeld(): HeldAction = HeldAction(
     urgency = parseWire<Urgency>(this[HeldActions.urgency]) ?: Urgency.NORMAL,
     status = parseWire<HeldAction.Status>(this[HeldActions.status]) ?: HeldAction.Status.HELD,
     decidedAt = this[HeldActions.decidedAt],
+    ruleDraft = this[HeldActions.ruleDraft],
 )

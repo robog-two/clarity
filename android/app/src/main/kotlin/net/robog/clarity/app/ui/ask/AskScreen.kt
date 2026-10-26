@@ -62,6 +62,7 @@ fun AskScreen(modifier: Modifier = Modifier, onReview: (HeldActionId) -> Unit = 
         onSuggest = viewModel::suggest,
         onDecision = viewModel::decide,
         onReview = onReview,
+        onAlways = viewModel::approveAlways,
         modifier = modifier,
     )
 }
@@ -77,8 +78,9 @@ fun AskContent(
     onDecision: (HeldActionId, HeldDecision) -> Unit,
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = {},
+    onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview)
+    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message)
     val listState = rememberLazyListState()
     LaunchedEffect(state.items.size, state.items.lastOrNull()?.cards?.size, state.live) {
         val count = listState.layoutInfo.totalItemsCount

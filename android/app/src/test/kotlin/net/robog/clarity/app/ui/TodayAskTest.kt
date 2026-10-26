@@ -11,6 +11,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.testutil.FakeAmendments
 import net.robog.clarity.app.testutil.FakeToday
 import net.robog.clarity.app.testutil.FixedClock
 import net.robog.clarity.app.testutil.RecordingGate
@@ -169,7 +170,7 @@ class AskViewModelTest {
         val feed = ScreenFeed()
         val speech = ScreenSpeech()
         val gate = RecordingGate()
-        val vm = AskViewModel(feed, gate, speech)
+        val vm = AskViewModel(feed, gate, speech, net.robog.clarity.app.ui.held.AlwaysAllow(FakeAmendments()))
         val state get() = vm.state.value
     }
 

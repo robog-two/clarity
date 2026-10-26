@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.feed.SyncState
+import net.robog.clarity.app.ui.held.AlwaysAllow
 import net.robog.clarity.app.ui.held.ApprovalGate
 import net.robog.clarity.app.ui.held.ApprovalInput
 import net.robog.clarity.app.ui.held.ApprovalResult
@@ -70,6 +71,7 @@ class AskViewModel(
     private val feed: FeedRepository,
     private val gate: ApprovalGate,
     speech: SpeechInput,
+    private val alwaysAllow: AlwaysAllow,
 ) : ViewModel() {
     private val _state = MutableStateFlow(AskUiState())
     val state: StateFlow<AskUiState> = _state.asStateFlow()
@@ -130,6 +132,25 @@ class AskViewModel(
             when (val r = feed.decideHeld(id, decision)) {
                 is ApiResult.Success -> _state.update { it.copy(message = null) }
                 is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence()) }
+            }
+        }
+    }
+
+    /** "approve automatically from now on": asks the gate, saves the (edited) rule, then approves this one. */
+    fun approveAlways(id: HeldActionId, text: String, because: String) {
+        viewModelScope.launch {
+            val held = _state.value.held[id] ?: return@launch
+            val r = gate.authorize(held, ApprovalInput())
+            if (r is ApprovalResult.Denied) { _state.update { it.copy(message = r.message) }; return@launch }
+            (alwaysAllow.save(held, text, because) as? ApiResult.Failure)?.let { failed ->
+                _state.update { it.copy(message = "The rule wasn’t saved: ${failed.error.sentence()}") }
+                if (r == ApprovalResult.Proceed) return@launch
+            }
+            if (r == ApprovalResult.Proceed) {
+                when (val d = feed.decideHeld(id, HeldDecision.Approve())) {
+                    is ApiResult.Success -> _state.update { it.copy(message = null) }
+                    is ApiResult.Failure -> _state.update { it.copy(message = d.error.sentence()) }
+                }
             }
         }
     }

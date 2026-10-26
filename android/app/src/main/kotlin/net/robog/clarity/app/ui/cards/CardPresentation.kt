@@ -16,6 +16,9 @@ fun taskStatusLabel(status: AgentTask.Status): String = when (status) {
 }
 
 /** Label of the confirming button on a proposal. */
+/** "slide to add to calendar" */
+fun slideLabel(kind: ActionKind): String = "slide to " + approveLabel(kind)
+
 fun approveLabel(kind: ActionKind): String = when (kind) {
     ActionKind.MOVE_EVENT -> "send update"
     ActionKind.SEND_EMAIL -> "send"

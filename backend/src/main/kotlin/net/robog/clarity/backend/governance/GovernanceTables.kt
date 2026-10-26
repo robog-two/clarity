@@ -8,6 +8,7 @@ import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.Line
 import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.shared.governance.RuleDraft
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.json.jsonb
@@ -34,6 +35,7 @@ object HeldActions : Table("held_action") {
     val status = text("status")
     val decidedAt = timestamp("decided_at").nullable()
     val failure = text("failure").nullable()
+    val ruleDraft = jsonb<RuleDraft>("rule_draft", ClarityJson).nullable()
     override val primaryKey = PrimaryKey(id)
 }
 

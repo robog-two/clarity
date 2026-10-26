@@ -12,6 +12,15 @@ import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.testutil.FakeAmendments
+import net.robog.clarity.app.ui.held.AlwaysAllow
+import net.robog.clarity.app.ui.held.alwaysAllowAmendment
+import net.robog.clarity.app.ui.held.canAlwaysAllow
+import net.robog.clarity.app.ui.held.startingRule
+import net.robog.clarity.app.ui.components.slideConfirms
+import net.robog.clarity.shared.governance.AutonomyChange
+import net.robog.clarity.shared.governance.AutonomyTier
+import net.robog.clarity.shared.governance.RuleDraft
+import net.robog.clarity.shared.governance.Section
 import net.robog.clarity.app.testutil.FakeHeldRepo
 import net.robog.clarity.app.testutil.RecordingGate
 import net.robog.clarity.app.testutil.ScreenFeed
@@ -125,6 +134,32 @@ class HeldRulesTest {
         assertFalse(rows.getValue("f").review, "a settled row has nothing to approve")
     }
 
+    @Test fun approveAutomaticallyIsOfferedExceptForMoneyLoginsAndBrowserSteps() {
+        val event = heldAction("e", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
+        assertTrue(canAlwaysAllow(event))
+        assertFalse(canAlwaysAllow(event.copy(status = HeldAction.Status.DECLINED)))
+        val click = heldAction("b", action = ProposedAction.ExternalTool("k3", "Click Sign in", "browser", "click_by_uid", kotlinx.serialization.json.JsonObject(emptyMap())))
+        assertFalse(canAlwaysAllow(click))
+    }
+
+    @Test fun theRuleEditorOpensWithTheDraftOrAPlainLine() {
+        val event = heldAction("e", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
+        assertEquals("\"create event\" is okay without asking: do it, then tell me.", startingRule(event).text)
+        val drafted = event.copy(ruleDraft = RuleDraft("Adding events is fine: do it, then tell me.", "it saves time"))
+        assertEquals("Adding events is fine: do it, then tell me.", startingRule(drafted).text)
+        val request = alwaysAllowAmendment(drafted, "  Edited.  ", "because", "amended-1")
+        assertEquals("Edited.", request.proposed.text)
+        assertNull(request.lineId)
+        assertEquals(AutonomyChange(ActionKind.CREATE_EVENT, AutonomyTier.DO_THEN_TELL), request.autonomy)
+    }
+
+    @Test fun theSliderConfirmsOnlyNearTheEnd() {
+        assertFalse(slideConfirms(50f, 100f))
+        assertFalse(slideConfirms(84f, 100f))
+        assertTrue(slideConfirms(85f, 100f))
+        assertFalse(slideConfirms(0f, 0f))
+    }
+
     @Test fun checkedLineCountsTheLinesThatApply() {
         assertEquals("checked against your lines · 1 apply", checkedLine(heldAction()))
         assertEquals("checked against your lines · none apply", checkedLine(heldAction(lines = emptyList())))
@@ -188,7 +223,8 @@ private class DraftRig(held: HeldAction = heldAction()) {
     val sessions = ScriptedSessions()
     val gate = RecordingGate()
     val speech = ScreenSpeech()
-    val vm = DraftReviewViewModel(feed, repo, sessions, gate, speech)
+    val amendments = FakeAmendments()
+    val vm = DraftReviewViewModel(feed, repo, sessions, gate, speech, AlwaysAllow(amendments))
     val state get() = vm.state.value
     init { vm.load(held.id) }
 }
@@ -204,13 +240,13 @@ class DraftReviewViewModelTest {
     @Test fun fallsBackToTheServerWhenNotCached() = withMain {
         val held = heldAction("h9")
         val feed = ScreenFeed()
-        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf("h9" to held)), ScriptedSessions(), RecordingGate(), ScreenSpeech())
+        val vm = DraftReviewViewModel(feed, FakeHeldRepo(mapOf("h9" to held)), ScriptedSessions(), RecordingGate(), ScreenSpeech(), AlwaysAllow(FakeAmendments()))
         vm.load(held.id)
         assertEquals(held, vm.state.value.held)
     }
 
     @Test fun unknownItemShowsAMessage() = withMain {
-        val vm = DraftReviewViewModel(ScreenFeed(), FakeHeldRepo(), ScriptedSessions(), RecordingGate(), ScreenSpeech())
+        val vm = DraftReviewViewModel(ScreenFeed(), FakeHeldRepo(), ScriptedSessions(), RecordingGate(), ScreenSpeech(), AlwaysAllow(FakeAmendments()))
         vm.load(HeldActionId("nope"))
         assertNull(vm.state.value.held)
         assertNotNull(vm.state.value.message)
@@ -222,6 +258,28 @@ class DraftReviewViewModelTest {
         r.vm.approve()
         assertEquals(decided(HeldActionId("h1") to HeldDecision.Approve()), r.feed.decisions)
         assertTrue(r.state.finished)
+    }
+
+    @Test fun approveAutomaticallySavesTheEditedRuleThenApproves() = withMain {
+        val event = heldAction("h1", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
+        val r = DraftRig(event)
+        r.vm.approveAlways("Adding events is fine: do it, then tell me.", "it saves time")
+        val request = r.amendments.requests.single()
+        assertEquals("Adding events is fine: do it, then tell me.", request.proposed.text)
+        assertEquals(Section.AUTONOMY, request.proposed.section)
+        assertEquals(AutonomyChange(ActionKind.CREATE_EVENT, AutonomyTier.DO_THEN_TELL), request.autonomy)
+        assertEquals(1, r.amendments.saved.size)
+        assertEquals(decided(HeldActionId("h1") to HeldDecision.Approve()), r.feed.decisions)
+        assertTrue(r.state.finished)
+    }
+
+    @Test fun aRuleThatFailsToSaveApprovesNothing() = withMain {
+        val r = DraftRig()
+        r.amendments.saveFailure = ApiError.NotFound(null)
+        r.vm.approveAlways("x", "y")
+        assertTrue(r.feed.decisions.isEmpty())
+        assertNotNull(r.state.message)
+        assertFalse(r.state.finished)
     }
 
     @Test fun sendingAnEditedDraftApprovesTheEditedAction() = withMain {
