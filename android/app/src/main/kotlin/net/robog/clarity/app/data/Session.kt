@@ -46,16 +46,30 @@ class DataStoreSessionStore(private val store: DataStore<Preferences>) : Session
 interface OnboardingFlagStore {
     val done: Flow<Boolean>
     suspend fun markDone()
+
+    /** "redo onboarding" in settings: show the onboarding flow again although setup is complete. */
+    val redo: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(false)
+    suspend fun startRedo() = Unit
 }
 
 class DataStoreOnboardingFlagStore(private val store: DataStore<Preferences>) : OnboardingFlagStore {
     override val done: Flow<Boolean> = store.data.map { it[DONE] == true }
 
+    override val redo: Flow<Boolean> = store.data.map { it[REDO] == true }
+
     override suspend fun markDone() {
-        store.edit { it[DONE] = true }
+        store.edit {
+            it[DONE] = true
+            it[REDO] = false
+        }
+    }
+
+    override suspend fun startRedo() {
+        store.edit { it[REDO] = true }
     }
 
     private companion object {
         val DONE = booleanPreferencesKey("onboarding_done")
+        val REDO = booleanPreferencesKey("onboarding_redo")
     }
 }

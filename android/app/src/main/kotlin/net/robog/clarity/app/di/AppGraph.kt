@@ -16,7 +16,38 @@ import net.robog.clarity.app.AppConfig
 import androidx.room.Room
 import net.robog.clarity.app.connector.AndroidPhonePermissions
 import net.robog.clarity.app.connector.ConfigSealer
-import net.robog.clarity.app.connector.NoOpPhoneConnector
+import net.robog.clarity.app.call.AndroidCallAlarms
+import net.robog.clarity.app.call.AndroidCallNotifier
+import net.robog.clarity.app.call.CallAlarmHandler
+import net.robog.clarity.app.call.CallAlarms
+import net.robog.clarity.app.call.CallNotifier
+import net.robog.clarity.app.call.CallScheduler
+import net.robog.clarity.app.call.CallService
+import net.robog.clarity.app.call.CallSettingsCache
+import net.robog.clarity.app.call.DataStoreCallSettingsCache
+import net.robog.clarity.app.connector.AndroidDndAlarms
+import net.robog.clarity.app.connector.AndroidDndController
+import net.robog.clarity.app.connector.AndroidSmsSource
+import net.robog.clarity.app.connector.ConnectorWork
+import net.robog.clarity.app.connector.DataStoreDndStateStore
+import net.robog.clarity.app.connector.DataStoreSmsCursorStore
+import net.robog.clarity.app.connector.DefaultPhoneConnector
+import net.robog.clarity.app.connector.DndActionHandler
+import net.robog.clarity.app.connector.SmsCursorStore
+import net.robog.clarity.app.connector.SmsSource
+import net.robog.clarity.app.connector.WorkManagerConnectorWork
+import net.robog.clarity.app.data.AmendmentsRepository
+import net.robog.clarity.app.data.DefaultAmendmentsRepository
+import net.robog.clarity.app.data.DefaultHeldRepository
+import net.robog.clarity.app.data.DefaultTodayRepository
+import net.robog.clarity.app.data.HeldRepository
+import net.robog.clarity.app.data.TodayRepository
+import net.robog.clarity.app.device.AndroidDeviceCapabilities
+import net.robog.clarity.app.device.DeviceCapabilities
+import net.robog.clarity.app.net.IngestApi
+import net.robog.clarity.app.ui.Toasts
+import net.robog.clarity.app.ui.held.AlwaysApprove
+import net.robog.clarity.app.ui.held.ApprovalGate
 import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.connector.TinkConfigSealer
 import net.robog.clarity.app.data.AppClock
@@ -87,7 +118,11 @@ interface AppGraph : ViewModelGraph {
         createHttpClient(DeviceJwtSigner(key), sessions)
 
     @Provides @SingleIn(AppScope::class)
-    fun api(client: HttpClient, sessions: SessionStore): ClarityApi = KtorClarityApi(client, sessions)
+    fun ktorApi(client: HttpClient, sessions: SessionStore): KtorClarityApi = KtorClarityApi(client, sessions)
+
+    @Provides fun api(api: KtorClarityApi): ClarityApi = api
+
+    @Provides fun ingestApi(api: KtorClarityApi): IngestApi = api
 
     @Provides fun enrollmentRepository(api: ClarityApi, key: DeviceKey, sessions: SessionStore): EnrollmentRepository =
         DefaultEnrollmentRepository(api, key, sessions)
@@ -139,7 +174,76 @@ interface AppGraph : ViewModelGraph {
 
     @Provides fun instanceRepository(api: ClarityApi): InstanceRepository = DefaultInstanceRepository(api)
 
-    @Provides fun phoneConnector(): PhoneConnector = NoOpPhoneConnector()
+    @Provides fun todayRepository(api: ClarityApi): TodayRepository = DefaultTodayRepository(api)
+    @Provides fun heldRepository(api: ClarityApi): HeldRepository = DefaultHeldRepository(api)
+    @Provides fun amendmentsRepository(api: ClarityApi): AmendmentsRepository = DefaultAmendmentsRepository(api)
+
+    @Provides @SingleIn(AppScope::class)
+    fun toasts(): Toasts = Toasts()
+
+    /** Replaced by the vault workstream with a biometric gate for credential approvals. */
+    @Provides fun approvalGate(): ApprovalGate = AlwaysApprove
+
+    // --- device and morning call ---
+
+    @Provides @SingleIn(AppScope::class)
+    fun deviceCapabilities(context: Context): DeviceCapabilities = AndroidDeviceCapabilities(context)
+
+    @Provides @SingleIn(AppScope::class)
+    fun callAlarms(context: Context): CallAlarms = AndroidCallAlarms(context)
+
+    @Provides @SingleIn(AppScope::class)
+    fun callSettingsCache(store: DataStore<Preferences>): CallSettingsCache = DataStoreCallSettingsCache(store)
+
+    @Provides @SingleIn(AppScope::class)
+    fun callScheduler(settings: SettingsRepository, cache: CallSettingsCache, alarms: CallAlarms, clock: AppClock): CallScheduler =
+        CallScheduler(settings, cache, alarms, clock)
+
+    @Provides @SingleIn(AppScope::class)
+    fun callNotifier(context: Context): CallNotifier = AndroidCallNotifier(context)
+
+    @Provides fun callService(sessions: SessionsRepository, scheduler: CallScheduler, notifier: CallNotifier): CallService =
+        CallService(sessions, scheduler, notifier)
+
+    @Provides fun callAlarmHandler(
+        cache: CallSettingsCache,
+        feed: FeedStore,
+        notifier: CallNotifier,
+        capabilities: DeviceCapabilities,
+        scheduler: CallScheduler,
+        clock: AppClock,
+    ): CallAlarmHandler = CallAlarmHandler(cache, feed, notifier, capabilities, scheduler, clock)
+
+    // --- the phone connector ---
+
+    @Provides fun smsSource(context: Context): SmsSource = AndroidSmsSource(context)
+    @Provides fun smsCursor(store: DataStore<Preferences>): SmsCursorStore = DataStoreSmsCursorStore(store)
+
+    @Provides @SingleIn(AppScope::class)
+    fun dndActions(context: Context, store: DataStore<Preferences>, clock: AppClock): DndActionHandler =
+        DndActionHandler(AndroidDndController(context), DataStoreDndStateStore(store), AndroidDndAlarms(context), clock)
+
+    @Provides fun connectorWork(context: Context): ConnectorWork = WorkManagerConnectorWork(context)
+
+    @Provides @SingleIn(AppScope::class)
+    fun phoneConnector(
+        ingest: IngestApi,
+        sms: SmsSource,
+        cursor: SmsCursorStore,
+        capabilities: DeviceCapabilities,
+        sessions: SessionStore,
+        dnd: DndActionHandler,
+        clock: AppClock,
+        work: ConnectorWork,
+    ): PhoneConnector = DefaultPhoneConnector(ingest, sms, cursor, capabilities, sessions, dnd, clock, work)
+
+    // Entry points for receivers and workers, which are not created by the graph.
+    val callAlarmHandler: CallAlarmHandler
+    val callService: CallService
+    val callScheduler: CallScheduler
+    val phoneConnector: PhoneConnector
+    val dndActions: DndActionHandler
+    val sessionStore: SessionStore
 
     @DependencyGraph.Factory
     fun interface Factory {
