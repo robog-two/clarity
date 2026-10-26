@@ -30,14 +30,14 @@ import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
 
-/** "● listening" / "● mic on" / "○ muted" (`.lis`, idle variant when not hearing). */
+/** "● Listening" / "● Mic on" / "○ Muted" (`.lis`, idle variant when not hearing). */
 @Composable
 fun MicStateChip(state: MicChipState, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     val (label, container, content) = when (state) {
-        MicChipState.Listening -> Triple("● listening", scheme.tertiaryContainer, scheme.onTertiaryContainer)
-        MicChipState.MicOn -> Triple("● mic on", scheme.surfaceContainer, scheme.onSurfaceVariant)
-        MicChipState.Muted -> Triple("○ muted", scheme.surfaceContainer, scheme.onSurfaceVariant)
+        MicChipState.Listening -> Triple("● Listening", scheme.tertiaryContainer, scheme.onTertiaryContainer)
+        MicChipState.MicOn -> Triple("● Mic on", scheme.surfaceContainer, scheme.onSurfaceVariant)
+        MicChipState.Muted -> Triple("○ Muted", scheme.surfaceContainer, scheme.onSurfaceVariant)
         MicChipState.Off -> return
     }
     Text(

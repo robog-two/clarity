@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.today
 
+import net.robog.clarity.app.ui.components.alignListItemToContent
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -61,7 +63,7 @@ fun TodayContent(
 ) {
     PullToRefreshBox(isRefreshing = state.refreshing, onRefresh = onRefresh, modifier = modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
@@ -89,14 +91,13 @@ fun TodayContent(
                     } else if (!today.called) {
                         Hint("No plan yet. It appears here after your morning call.")
                     }
-                    if (state.doing.isNotEmpty()) {
-                        SectionTitle("I’m doing")
-                        Column {
+                    Column {
+                        if (state.doing.isNotEmpty()) {
+                            SectionTitle("I’m doing", Modifier.padding(bottom = 14.dp))
                             state.doing.forEach { DoingRowView(it, onReview) }
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
+                        HeldRow(state.heldWaiting, onOpenHeld, topDivider = true)
                     }
-                    HeldRow(state.heldWaiting, onOpenHeld)
                     today.parked.let { parkedLine(it) }?.let { line ->
                         SectionTitle("Parked")
                         Hint(line)
@@ -116,6 +117,7 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 private fun DoingRowView(row: DoingRow, onReview: (HeldActionId) -> Unit) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     ListItem(
+        modifier = Modifier.alignListItemToContent(),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         headlineContent = { Text(row.task.title, style = MaterialTheme.clarityText.chat) },
         supportingContent = { Text(sentenceCase(row.task.detail), style = MaterialTheme.clarityText.chatSmall) },
@@ -130,10 +132,11 @@ private fun DoingRowView(row: DoingRow, onReview: (HeldActionId) -> Unit) {
 }
 
 @Composable
-private fun HeldRow(waiting: Int, onOpenHeld: () -> Unit) {
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+private fun HeldRow(waiting: Int, onOpenHeld: () -> Unit, topDivider: Boolean) {
+    // Right under the "I'm doing" list, whose last divider already separates them.
+    if (topDivider) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     ListItem(
-        modifier = Modifier.clickable(onClick = onOpenHeld),
+        modifier = Modifier.alignListItemToContent().clickable(onClick = onOpenHeld),
         colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         headlineContent = { Text("Held for you", style = MaterialTheme.clarityText.chat) },
         supportingContent = { Text(sentenceCase(heldLine(waiting)), style = MaterialTheme.clarityText.chatSmall) },

@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -70,7 +71,7 @@ fun ScheduleContent(
     StepScaffold(
         step = OnboardingStep.Schedule,
         title = "When should I call?",
-        footer = { PrimaryButton("finish →", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading && !state.saving) },
+        footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading && !state.saving) },
     ) {
         Hint("Eight minutes. You talk, I take notes, then I set things up.")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -133,7 +134,7 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = ScreenGutter)
             .padding(top = 72.dp, bottom = 20.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {

@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.settings
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -158,15 +159,17 @@ fun SettingsContent(
     val settings = state.settings
 
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ScreenTitle("Settings")
-        state.message?.let { ErrorBox(it) }
-        if (state.localOnly) Hint("Your server can’t store settings yet, so changes stay on this phone for now.")
-        if (settings == null) {
-            Hint("Loading…")
-        } else {
+        // One state at a time: a problem outranks the local-only note, and either outranks "Loading…".
+        when {
+            state.message != null -> ErrorBox(state.message)
+            state.localOnly -> Hint("Your server can’t store settings yet, so changes stay on this phone for now.")
+            settings == null -> Hint("Loading…")
+        }
+        if (settings != null) {
             SectionTitle("Morning call")
             Column {
                 SelectRow("time", callTimeSummary(settings.morningCall), "change", { pickingTime = TIME_CALL })

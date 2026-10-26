@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.components.alignListItemToContent
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -46,7 +48,7 @@ fun HeldContent(
     onReview: (HeldActionId) -> Unit = onOpen,
 ) {
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 24.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Kicker(state.kicker)
@@ -56,7 +58,7 @@ fun HeldContent(
             if (state.rows.isEmpty()) Hint("Nothing is held right now.")
             state.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                HeldRowView(row, onClick = { if (row.review) onReview(row.id) else onOpen(row.id) })
+                HeldRowView(row, onClick = { if (row.review) onReview(row.id) else onOpen(row.id) }, Modifier.alignListItemToContent())
             }
             if (state.rows.isNotEmpty()) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }

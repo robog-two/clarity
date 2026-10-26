@@ -563,7 +563,7 @@ class NotRunningTest {
         vm.syncAll()
         assertEquals(listOf("files"), repo.tested, "it is not tested")
         assertTrue(vm.state.value.allSynced, "continue is offered")
-        assertEquals("all 2 synced", vm.state.value.summaryLine)
+        assertEquals("all 2 synced · 1 not running", vm.state.value.summaryLine)
     }
 
     @Test fun deviceConnectorsAreHiddenInOnboarding() = withMain {
@@ -579,7 +579,8 @@ class NotRunningTest {
         val s = vm.state.value
         assertTrue(s.notRunning)
         assertTrue(s.form.fields.isEmpty())
-        assertTrue("compose profile" in s.blurb && "`dav`" in s.blurb, s.blurb)
+        assertFalse("compose" in s.blurb || "`" in s.blurb, "the person sees no deployment jargon: ${s.blurb}")
+        assertTrue(s.adminHint.orEmpty().contains("“dav”"), "the admin detail is kept behind How to fix")
         assertFalse(s.canSave)
     }
 

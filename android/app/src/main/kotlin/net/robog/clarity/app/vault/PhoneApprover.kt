@@ -78,7 +78,7 @@ class PhoneApprover(
 
         val code = (action as? ProposedAction.AskCode)?.let {
             val typed = input.code?.trim().orEmpty()
-            Validators.otp(typed)?.let { problem -> return ApprovalResult.Denied(problem) }
+            Validators.otp(typed)?.let { problem -> return ApprovalResult.Denied(problem.curlyApostrophes()) }
             typed
         }
         val envelope = (action as? ProposedAction.UseCredential)?.let {

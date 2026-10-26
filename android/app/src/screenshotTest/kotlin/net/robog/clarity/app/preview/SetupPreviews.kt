@@ -157,7 +157,7 @@ fun SetupConnectorsList() = Frame {
             items = listOf(
                 ConnectorItem(server("mail", "Mail"), saved = true, test = TestState.Ok("4,218 messages")),
                 ConnectorItem(server("dav", "Calendar and Contacts", "caldav"), saved = true, test = TestState.Failed("Personal: password rejected by caldav.icloud.com (401)")),
-                ConnectorItem(server("files", "Files"), saved = false, test = null),
+                ConnectorItem(server("files", "Files", "webdav"), saved = false, test = null),
                 ConnectorItem(server("tasks", null), saved = false, test = null),
                 ConnectorItem(ConnectorRow.Phone(PhoneConnectorKind.Messages), saved = true, test = TestState.Ok("86 threads")),
             ),
@@ -168,7 +168,7 @@ fun SetupConnectorsList() = Frame {
 
 @PreviewTest @Screen @Composable
 fun SetupConnectorsEmptyError() = Frame {
-    ConnectorsContent(ConnectorsState(loading = false, error = ApiError.Unreachable("timeout"), unavailable = true), {}, {}, {}, {})
+    ConnectorsContent(ConnectorsState(loading = false, error = ApiError.Unreachable("timeout")), {}, {}, {}, {})
 }
 
 private val SCHEMA = Json.parseToJsonElement(
@@ -202,7 +202,7 @@ private fun mailState(editing: Boolean = false, choosing: Boolean = false, newIt
     )
     val editValues = if (newItem) itemForm.initialValues() else values.items("accounts").first().values
     return ConnectorSetupState(
-        key = "mail", title = "Mail", proto = "imap · on your server", blurb = "I read your inbox and save drafts.",
+        key = "mail", title = "Mail", proto = "IMAP · on your server", blurb = "I read your inbox and save drafts.",
         form = form, values = values, lastTest = TestLine("Work: 4,218 messages · Personal: password rejected", ok = false),
         editor = if (editing) ItemEdit("accounts", if (newItem) "new1" else "k3j9x2p1", newItem, editValues, hint = if (newItem) "Use an app-specific password from account.apple.com" else null, showErrors = true) else null,
         choosing = if (choosing) "accounts" else null,
@@ -227,8 +227,9 @@ fun SetupConnectorPresets() = Frame { ConnectorSetupContent(mailState(choosing =
 fun SetupConnectorNotRunning() = Frame {
     ConnectorSetupContent(
         ConnectorSetupState(
-            key = "dav", title = "dav", proto = NOT_RUNNING, notRunning = true,
-            blurb = "Dav is not running on your server yet. Start its container (the `dav` compose profile), then come back and check again.",
+            key = "dav", title = "Dav", proto = NOT_RUNNING, notRunning = true,
+            blurb = "Dav hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.",
+            adminHint = "Whoever runs your server can start it: it’s the “dav” profile in the server’s compose setup.",
         ),
         SetupActions(), step = null, backLabel = "← settings",
     )
@@ -244,7 +245,7 @@ fun SetupConnectorPhone() = Frame {
 
 @PreviewTest @Screen @Composable
 fun SetupConnectorMissing() = Frame {
-    ConnectorSetupContent(ConnectorSetupState(key = "files", title = "files", missing = true), SetupActions(), step = null, backLabel = "← settings")
+    ConnectorSetupContent(ConnectorSetupState(key = "files", title = "Files", missing = true), SetupActions(), step = null, backLabel = "← settings")
 }
 
 @PreviewTest @Screen @Composable
@@ -261,7 +262,7 @@ fun SetupValuesInterview() = Frame {
         ValuesState(
             phase = InterviewPhase.Active, index = 1, count = 7,
             question = "Now a time help made things worse. What crossed the line?",
-            said = "A scheduling tool accepted a meeting in my focus block, then emailed my whole team about it before I'd even seen it.",
+            said = "A scheduling tool accepted a meeting in my focus block, then emailed my whole team about it before I’d even seen it.",
             captured = hardLine, mic = MicChipState.Listening,
         ),
         {}, {}, {}, {}, {}, {}, {}, {},
@@ -330,7 +331,15 @@ fun SetupSettingsMiddle() = Slice(850.dp) { SettingsFull() }
 fun SetupSettingsBottom() = Slice(1700.dp) { SettingsFull() }
 
 @PreviewTest @Screen @Composable
-fun SetupSettingsLoading() = Frame { SettingsContent(SettingsUiState(message = "Could not reach your server. Changes will be saved when you’re back online.", localOnly = true), SettingsActions()) }
+fun SetupSettingsLoading() = Frame { SettingsContent(SettingsUiState(), SettingsActions()) }
+
+@PreviewTest @Screen @Composable
+fun SetupSettingsOffline() = Frame {
+    SettingsContent(
+        settingsState.copy(settings = Settings(), message = "Could not reach your server. Changes will be saved when you’re back online.", localOnly = true),
+        SettingsActions(),
+    )
+}
 
 @PreviewTest @Part @Composable
 fun SetupVaultEmptyInvalidated() = Frame {

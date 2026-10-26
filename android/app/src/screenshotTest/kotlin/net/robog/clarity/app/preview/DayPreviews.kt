@@ -94,7 +94,7 @@ private fun task(id: String, title: String, detail: String, status: AgentTask.St
 
 private val todayFull = TodayUiState(
     loading = false,
-    kicker = "monday · oct 26",
+    kicker = "monday, October 26 · 2:04 pm",
     today = Today(
         date = LocalDate(2026, 10, 26),
         plan = listOf(
@@ -116,7 +116,7 @@ private val todayFull = TodayUiState(
 @Composable private fun TodayFull(dark: Boolean) = Screen(dark) { TodayContent(todayFull, {}, {}, {}) }
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
-    TodayContent(TodayUiState(loading = false, kicker = "monday · oct 26", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
+    TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
 }
 
 @Composable private fun TodayError(dark: Boolean) = Screen(dark) {

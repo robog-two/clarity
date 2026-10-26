@@ -70,6 +70,8 @@ import net.robog.clarity.app.ui.onboarding.TestState
 import net.robog.clarity.app.ui.onboarding.ValuesStepViewModel
 import net.robog.clarity.app.ui.onboarding.callTimeChoices
 import net.robog.clarity.app.ui.onboarding.connectorsSummaryLine
+import net.robog.clarity.app.ui.onboarding.connectorDisplayName
+import net.robog.clarity.app.ui.onboarding.protocolLabel
 import net.robog.clarity.app.ui.onboarding.constitutionSections
 import net.robog.clarity.app.ui.onboarding.deriveInterview
 import net.robog.clarity.app.ui.onboarding.doneLine
@@ -302,6 +304,12 @@ class OnboardingStepTest {
         assertEquals("testing and syncing…", connectorsSummaryLine(6, 6, 1, syncing = true, anyFailed = false))
         assertEquals("5 of 6 synced · tap the failed one to fix it", connectorsSummaryLine(6, 6, 5, syncing = false, anyFailed = true))
         assertEquals("all 6 synced", connectorsSummaryLine(6, 6, 6, syncing = false, anyFailed = false))
+        assertEquals("2 of 4 synced · 1 not running · tap the failed one to fix it", connectorsSummaryLine(4, 4, 2, syncing = false, anyFailed = true, notRunning = 1))
+        assertEquals("Dav", connectorDisplayName("dav"))
+        assertEquals("IMAP", protocolLabel("imap"))
+        assertEquals("iCloud", net.robog.clarity.app.ui.components.sentenceCase("iCloud"))
+        assertEquals("v3 · 14 lines", net.robog.clarity.app.ui.components.sentenceCase("v3 · 14 lines"))
+        assertEquals("Not now", net.robog.clarity.app.ui.components.sentenceCase("not now"))
     }
 
     @Test fun aConnectorIsSetUpWhenEveryProducedNounIsGranted() {
@@ -535,7 +543,7 @@ class ConnectorsStepViewModelTest {
         assertEquals(listOf("mail", "cal", "phone-messages"), items.map { it.row.key })
         assertEquals(listOf(true, false, true), items.map { it.saved })
         assertEquals(listOf("ready", "set up →", "ready"), items.map { it.status })
-        assertEquals("imap · on your server", items[0].row.proto)
+        assertEquals("IMAP · on your server", items[0].row.proto)
         assertEquals("allowed · on this phone", items[2].caption)
         assertFalse(vm.state.value.canSync, "every connector must be set up first")
         assertEquals("2 of 3 set up", vm.state.value.summaryLine)

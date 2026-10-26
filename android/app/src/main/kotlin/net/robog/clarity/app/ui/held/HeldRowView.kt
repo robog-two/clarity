@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.components.sentenceCase
 import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -32,13 +33,13 @@ fun HeldRowView(row: HeldRow, onClick: () -> Unit, modifier: Modifier = Modifier
                 tint = if (row.waiting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        overlineContent = { Text(if (row.waiting) "needs your ok · ${row.whenText}" else row.whenText) },
+        overlineContent = { Text(sentenceCase(if (row.waiting) "needs your ok · ${row.whenText}" else row.whenText)) },
         headlineContent = { Text(row.title, style = MaterialTheme.clarityText.chat, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
             if (row.waiting) {
                 Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = "review", tint = MaterialTheme.colorScheme.primary)
             } else {
-                Text(row.status, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(sentenceCase(row.status), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
     )

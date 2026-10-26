@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.ask
 
+import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -88,7 +89,7 @@ fun AskContent(
     }
     Column(modifier.fillMaxSize().imePadding()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -100,7 +101,7 @@ fun AskContent(
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             state = listState,
-            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+            contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (state.items.isEmpty() && state.live == null) {
@@ -124,15 +125,15 @@ fun AskContent(
             }
         }
         if (state.sync == SyncState.Unauthorized) {
-            ErrorBox("Your server doesn’t accept this phone", "Set it up again in settings.", Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            ErrorBox("Your server doesn’t accept this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
-        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) }
+        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp)) }
         if (mic.refused && !mic.granted) {
-            MicRationale(mic.refused, mic.request, mic.openSettings, Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
+            MicRationale(mic.refused, mic.request, mic.openSettings, Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            Modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -140,7 +141,7 @@ fun AskContent(
                 value = state.draft,
                 onValueChange = onDraft,
                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { contentDescription = "ask anything" },
-                placeholder = { Text("type, or tap talk", style = MaterialTheme.clarityText.chat) },
+                placeholder = { Text("Type, or tap talk", style = MaterialTheme.clarityText.chat) },
                 textStyle = MaterialTheme.clarityText.chat,
                 shape = MaterialTheme.shapes.extraLarge,
                 colors = TextFieldDefaults.colors(

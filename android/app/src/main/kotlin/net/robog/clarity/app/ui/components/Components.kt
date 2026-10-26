@@ -35,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -42,8 +44,26 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.theme.clarityText
 
-/** Pure: sentence case for UI labels ("not now" → "Not now"); the rest of the text is kept. */
-fun sentenceCase(text: String): String = text.replaceFirstChar { it.titlecase() }
+/** The one horizontal margin of content screens (the call screens keep their own, roomier layout). */
+val ScreenGutter = 20.dp
+
+/** Material's ListItem pads its content by 16dp; this widens it so its text lines up with the content edge. */
+fun Modifier.alignListItemToContent(): Modifier = layout { measurable, constraints ->
+    val inset = 16.dp.roundToPx()
+    val wide = if (constraints.hasBoundedWidth) constraints.maxWidth + inset * 2 else constraints.maxWidth
+    val placeable = measurable.measure(constraints.copy(minWidth = wide, maxWidth = wide))
+    layout(constraints.constrainWidth(placeable.width - inset * 2), placeable.height) { placeable.place(-inset, 0) }
+}
+
+/**
+ * Pure: sentence case for UI labels ("not now" → "Not now"); the rest of the text is kept. A first
+ * word that is already mixed case or carries a digit is a name or a code ("iCloud", "v3") and stays as it is.
+ */
+fun sentenceCase(text: String): String {
+    val first = text.substringBefore(' ')
+    if (first.drop(1).any { it.isUpperCase() } || first.any { it.isDigit() }) return text
+    return text.replaceFirstChar { it.titlecase() }
+}
 
 /** `.k`: the small caption line. */
 @Composable
@@ -161,7 +181,7 @@ fun InfoBox(
 
 /** `.err`: the red message box. */
 @Composable
-fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifier) {
+fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifier, raw: String? = null) {
     Column(
         modifier
             .fillMaxWidth()
@@ -171,6 +191,15 @@ fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifie
     ) {
         Text(title, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
         if (detail != null) Hint(detail, color = MaterialTheme.colorScheme.onErrorContainer)
+        // The server's own words, small, for whoever has to debug it.
+        if (raw != null) {
+            Text(
+                raw,
+                Modifier.padding(top = 2.dp),
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.72f),
+                style = MaterialTheme.typography.labelSmall,
+            )
+        }
     }
 }
 
