@@ -50,7 +50,7 @@ class BrowserGateTest : FunSpec({
     val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
     val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
 
-    class Rig {
+    class Rig(purpose: String? = null) {
         val clock = StepClock()
         val browser = FakeBrowser()
         val vault = MemoryVault(listOf(login, card))
@@ -59,7 +59,7 @@ class BrowserGateTest : FunSpec({
         var triage = TriageVerdict(true, "ordinary")
         val triaged = CopyOnWriteArrayList<TriageStep>()
         val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock)
-        val scope = RunScope("run-1", isLead = true)
+        val scope = RunScope("run-1", isLead = true, purpose = purpose)
         val tools: Map<String, Tool> = gate.wrap(scope, browser.tools).associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue("browser__$name").invoke(input)
@@ -225,6 +225,35 @@ class BrowserGateTest : FunSpec({
         rig.clock.advance(6.minutes)
         rig.call("click_by_uid", args("uid" to "1_3"))
         rig.triaged.size shouldBe 2
+    }
+
+    test("the triage is told the run's task and what the element is, including where a link goes") {
+        val rig = Rig(purpose = "Find open haircut slots at the nearest salon")
+        rig.browser.snapshot = """
+            uid=e1 RootWebArea "Hair salon"
+              uid=e260 a "Book an appointment" href="https://beautyservices.ulta..." text="Book an appointment"
+              uid=e336 button "I Understand" text="I Understand"
+        """.trimIndent()
+        rig.snapshot()
+        rig.call("click_by_uid", args("uid" to "e336"))
+        val step = rig.triaged.single()
+        step.task shouldBe "Find open haircut slots at the nearest salon"
+        step.target shouldBe "button \"I Understand\""
+        // A link to another page is browsing: it passes the rules without a triage.
+        rig.call("click_by_uid", args("uid" to "e260")) shouldBe ToolResult.Ok("clicked e260")
+        rig.triaged.size shouldBe 1
+    }
+
+    test("a snapshot of part of the page adds to the known elements instead of replacing them") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.browser.snapshot = "uid=9_1 button \"Close\""
+        rig.call("take_snapshot", args("selector" to "dialog"))
+        rig.call("click_by_uid", args("uid" to "1_3"))
+        rig.triaged.single().target shouldBe "button \"Next\""
+        rig.call("take_snapshot", JsonObject(emptyMap()))
+        rig.call("click_by_uid", args("uid" to "1_3"))
+        rig.triaged.size shouldBe 1 // cached
     }
 
     test("when the triage says ask, the step is held with its reason") {

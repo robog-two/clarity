@@ -51,6 +51,20 @@ class BrowserRulesTest : FunSpec({
             parsed["1_7"] shouldBe Element("button", "Say \"hi\"")
         }
 
+        test("reads where a link goes from the browser's snapshot lines") {
+            val parsed = parseSnapshot(
+                """
+                uid=e260 a "Book an appointment" href="https://beautyservices.ulta..." text="Book an appointment"
+                uid=e261 a "Top" href="#top"
+                uid=e336 button "I Understand" text="I Understand"
+                """.trimIndent(),
+            )
+            parsed["e260"] shouldBe Element("a", "Book an appointment", "https://beautyservices.ulta...")
+            parsed["e261"]?.href shouldBe "#top"
+            parsed["e336"] shouldBe Element("button", "I Understand")
+            parsed.getValue("e260").detail("e260") shouldBe "a \"Book an appointment\" linking to https://beautyservices.ulta..."
+        }
+
         test("reads the selected tab's url from list_pages") {
             parseSelectedUrl("2 pages (selected: 1)\n [0] Home (https://a.com/)\n>[1] Pay (now) (https://shop.example.com/checkout?x=(1))") shouldBe
                 "https://shop.example.com/checkout?x=(1)"
@@ -101,6 +115,19 @@ class BrowserRulesTest : FunSpec({
             click("tab", "Reviews") shouldBe StepVerdict.Pass
             click("link", "Delete my account").shouldBeInstanceOf<StepVerdict.Ask>()
             click("link", "Checkout").shouldBeInstanceOf<StepVerdict.Ask>()
+        }
+
+        test("an <a> link that opens a booking or shop page is browsing; only the final step commits") {
+            fun link(name: String, href: String?, url: String = "https://www.ulta.com/beautyservices/hair-salon") =
+                stepVerdict("click_by_uid", obj("uid" to "e1"), listOf(Element("a", name, href)), url)
+            link("Book an appointment", "https://beautyservices.ulta...") shouldBe StepVerdict.Pass
+            link("Book an appointment", null) shouldBe StepVerdict.Pass
+            link("Book now", "https://beautyservices.ulta.com/") shouldBe StepVerdict.Triage
+            link("Unsubscribe", "https://news.example.com/u?id=1").shouldBeInstanceOf<StepVerdict.Ask>() // acts on a plain GET
+            link("Buy now", "https://shop.example.com/p/1").shouldBeInstanceOf<StepVerdict.Ask>()
+            link("Book now", "#").shouldBeInstanceOf<StepVerdict.Ask>()
+            link("Show times", "javascript:void(0)") shouldBe StepVerdict.Triage
+            link("Book now", "https://shop.example.com/x", "https://shop.example.com/checkout").shouldBeInstanceOf<StepVerdict.Ask>()
         }
 
         test("an unremarkable button goes to the triage") {
