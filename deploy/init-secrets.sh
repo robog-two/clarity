@@ -60,6 +60,15 @@ else
 fi
 chmod 600 "$dir/anthropic_api_key"
 
+# Optional: OpenRouter, for roles set to CLARITY_AGENT_<ROLE>_PROVIDER=openrouter. Empty means unused.
+if [ ! -e "$dir/openrouter_api_key" ]; then
+    (umask 077 && : >"$dir/openrouter_api_key")
+    echo "created openrouter_api_key (EMPTY: only needed for roles that run on OpenRouter)"
+else
+    echo "keep    openrouter_api_key"
+fi
+chmod 600 "$dir/openrouter_api_key"
+
 # Your own TLS certificates: each <name>.pem with a matching <name>.key becomes the bundle
 # tls/<name>.pem, which Caddy loads (deploy/caddy/Caddyfile). Bundles whose pair is gone are removed.
 mkdir -p "$dir/tls"

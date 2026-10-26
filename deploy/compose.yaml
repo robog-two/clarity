@@ -77,7 +77,7 @@ services:
       # OpenRouter for the one-shot roles (empty = unused). The egress proxy must allow it:
       # CLARITY_BACKEND_EGRESS_ALLOW=openrouter.ai. The key can also be a file (OPENROUTER_API_KEY_FILE).
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENROUTER_API_KEY_FILE: ${OPENROUTER_API_KEY_FILE:-}
+      OPENROUTER_API_KEY_FILE: ${OPENROUTER_API_KEY_FILE:-/run/secrets/openrouter_api_key}
       CLARITY_AGENT_GUARD_PROVIDER: ${CLARITY_AGENT_GUARD_PROVIDER:-}
       CLARITY_AGENT_GUARD_MODEL: ${CLARITY_AGENT_GUARD_MODEL:-}
       CLARITY_AGENT_TRIAGE_PROVIDER: ${CLARITY_AGENT_TRIAGE_PROVIDER:-}
@@ -91,6 +91,7 @@ services:
     secrets:
       - postgres_password
       - anthropic_api_key
+      - openrouter_api_key   # empty unless a role runs on OpenRouter
       - connector_example_key
       - connector_mail_key
       - connector_dav_key
@@ -361,6 +362,8 @@ secrets:
   postgres_password:
     external: true
   anthropic_api_key:
+    external: true
+  openrouter_api_key:
     external: true
   connector_example_key:
     external: true
