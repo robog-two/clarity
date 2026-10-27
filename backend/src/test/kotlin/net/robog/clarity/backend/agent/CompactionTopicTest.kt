@@ -17,11 +17,11 @@ class CompactionTopicTest : FunSpec({
         request.maxTokens shouldBe TOPIC_MAX_TOKENS
         request.tools shouldBe emptyList()
         request.cache shouldBe null
-        request.effort shouldBe null
+        request.effort shouldBe "low"
         val input = (request.messages.single().content.single() as Block.Text).text
         input shouldEndWith "Friday.</summary>"
         (input.length <= TOPIC_INPUT_CHARS + "<summary></summary>".length) shouldBe true
-        OpenRouterModelGateway.buildBody(request)["max_tokens"]!!.jsonPrimitive.content shouldBe "16"
+        OpenRouterModelGateway.buildBody(request)["max_tokens"]!!.jsonPrimitive.content shouldBe "400"
     }
 
     test("answers are trimmed to at most four plain words") {
