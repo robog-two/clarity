@@ -238,6 +238,8 @@ class GateStep(
     val pages: Tool?,
     val targets: List<Pair<String, Element?>>? = null,
     val jev: (suspend (description: String) -> JevCheck)? = null,
+    /** Checked before every try (after waiting for the person too): a result here stops the call (the pilot's lease). */
+    val guard: (suspend () -> ToolResult?)? = null,
     val execute: suspend (JsonObject) -> ToolResult,
 )
 
@@ -271,6 +273,8 @@ class BrowserGate(
     private val waiters: HeldWaiters,
     /** How long a fill waits for a two-factor code the person has not typed yet ([CODE_WAIT]). */
     private val codeWait: Duration = CODE_WAIT,
+    /** How long a helper waits for the person to answer a held step ([WAIT_FOR_PERSON]). */
+    private val personWait: Duration = WAIT_FOR_PERSON,
 ) {
     /** What the gate believes about the shared browser (the pilot reads it for the secret rules). */
     val state = BrowserState()
@@ -325,6 +329,7 @@ class BrowserGate(
         }
 
         override suspend fun invoke(input: JsonObject): ToolResult {
+            if (scope.isLead) return ToolResult.Error(LEAD_REFUSED)
             if (kind == BrowserKind.CAPTURE) {
                 return scrubbed(withBrowser { capture(inner, input, pages) })
             }
@@ -337,15 +342,17 @@ class BrowserGate(
      * substitutes, gates and runs it. The result is always scrubbed.
      */
     suspend fun perform(scope: RunScope, step: GateStep): ToolResult {
+        // The lead never browses: it hands that work to a helper. Fail closed whatever tools it was given.
+        if (scope.isLead) return ToolResult.Error(LEAD_REFUSED)
         awaitCodes(scope, step)?.let { return scrubbed(it) }
         var attempt = once(scope, step)
         repeat(MAX_RESUMES) {
             val heldId = attempt.waitingOn ?: return scrubbed(attempt.result)
-            if (scope.isLead) return scrubbed(attempt.result)
+            val asked = (attempt.result as? ToolResult.Ok)?.content.orEmpty()
             // Wait outside the browser lock, so other runs can use the browser meanwhile.
             waiters.waiting(heldId, scope.runId)
             val status = try {
-                governance.awaitDecision(heldId, WAIT_FOR_PERSON)
+                governance.awaitDecision(heldId, personWait)
             } finally {
                 waiters.resumed(heldId)
             }
@@ -353,7 +360,8 @@ class BrowserGate(
                 HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED -> attempt = once(scope, step)
                 null -> return scrubbed(
                     ToolResult.Ok(
-                        "I waited ${WAIT_FOR_PERSON.inWholeMinutes} minutes and the person has not answered \"${heldId.value}\" yet. " +
+                        (if (asked.isBlank()) "" else "$asked\n") +
+                            "I waited ${personWait.inWholeMinutes} minutes and the person has not answered \"${heldId.value}\" yet. " +
                             "Finish now: report what you found so far and what is waiting for them. Do not ask for it again.",
                     ),
                 )
@@ -396,6 +404,7 @@ class BrowserGate(
     }
 
     private suspend fun run(scope: RunScope, step: GateStep): Attempt {
+        step.guard?.invoke()?.let { return Attempt(it) }
         val remote = step.remote
         val kind = step.kind
         val input = step.input
@@ -594,6 +603,7 @@ class BrowserGate(
 
     companion object {
         const val PREFIX = "browser__"
+        const val LEAD_REFUSED = "Refused: the lead never uses the browser. Delegate browsing to a helper."
         private val TRIAGE_CACHE = 5.minutes
 
         /** How long a helper waits for the person to answer a held step, login or code before it reports back. */

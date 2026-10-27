@@ -264,6 +264,9 @@ private class Lookup(
                     textGrounding = bool("CLARITY_BROWSER_TEXT_GROUNDING", "agent.browser.textGrounding", false),
                     maxActions = int("CLARITY_BROWSER_MAX_ACTIONS", "agent.browser.maxActions", 25),
                     frameRetention = duration("CLARITY_BROWSER_FRAME_RETENTION", "agent.browser.frameRetention", Duration.parse("30d")),
+                    leaseWait = duration("CLARITY_BROWSER_LEASE_WAIT", "agent.browser.leaseWait", Duration.parse("30m")),
+                    leaseIdle = duration("CLARITY_BROWSER_LEASE_IDLE", "agent.browser.leaseIdle", Duration.parse("10m")),
+                    leaseStale = duration("CLARITY_BROWSER_LEASE_STALE", "agent.browser.leaseStale", Duration.parse("2m")),
                 ),
             ),
         )

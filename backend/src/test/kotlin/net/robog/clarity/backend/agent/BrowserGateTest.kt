@@ -57,7 +57,7 @@ class BrowserGateTest : FunSpec({
     val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
     val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
 
-    class Rig(purpose: String? = null, lead: Boolean = true, codeWait: Duration = 200.milliseconds) {
+    class Rig(purpose: String? = null, lead: Boolean = false, codeWait: Duration = 200.milliseconds) {
         val clock = StepClock()
         val browser = FakeBrowser()
         val vault = MemoryVault(listOf(login, card))
@@ -66,7 +66,7 @@ class BrowserGateTest : FunSpec({
         var triage = TriageVerdict(true, "ordinary")
         val triaged = CopyOnWriteArrayList<TriageStep>()
         val waiters = HeldWaiters(clock)
-        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters, codeWait)
+        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters, codeWait, personWait = Duration.ZERO)
         val scope = RunScope("run-1", isLead = lead, purpose = purpose)
         val tools: Map<String, Tool> = gate.gatedTools(scope, browser.tools).associateBy { it.name }
 
@@ -337,12 +337,13 @@ class BrowserGateTest : FunSpec({
         silent.browser.calls("click_by_uid").shouldBeEmpty()
     }
 
-    test("the lead never waits on a held step") {
+    test("the lead is refused every browser call, reads and screenshots included, and nothing reaches the browser") {
         val rig = Rig(lead = true)
-        rig.snapshot()
-        rig.governance.decision = HeldAction.Status.APPROVED
-        (rig.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok).content shouldContain "Waiting"
-        rig.governance.awaited.shouldBeEmpty()
+        for (tool in listOf("take_snapshot", "click_by_uid", "fill_by_uid", "navigate_page", "screenshot_page", "list_pages")) {
+            rig.call(tool, args("uid" to "1_4", "value" to "x", "url" to "https://bank.example.com/")) shouldBe ToolResult.Error(BrowserGate.LEAD_REFUSED)
+        }
+        rig.browser.received.shouldBeEmpty()
+        rig.governance.steps.shouldBeEmpty()
     }
 
     test("a snapshot of part of the page adds to the known elements instead of replacing them") {

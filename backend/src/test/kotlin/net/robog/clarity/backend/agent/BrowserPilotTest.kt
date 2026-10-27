@@ -156,7 +156,7 @@ class BrowserPilotTest : FunSpec({
     }
 
     test("with jevMayApprove off, Jev's sure 'browse' cannot pass a step the triage would ask about") {
-        val rig = PilotRig(lead = true)
+        val rig = PilotRig()
         rig.jev.step = { "browse" to 0.99 }
         rig.triage = TriageVerdict(false, "it may submit something")
         rig.act("the Details button", "details") shouldContain "Waiting for the person"
@@ -166,7 +166,7 @@ class BrowserPilotTest : FunSpec({
     }
 
     test("with jevMayApprove on, a sure 'browse' passes a step the rules leave open without the triage") {
-        val rig = PilotRig(settings = BrowserPilotConfig(jevMayApprove = true), lead = true)
+        val rig = PilotRig(settings = BrowserPilotConfig(jevMayApprove = true))
         rig.jev.step = { "browse" to 0.95 }
         rig.triage = TriageVerdict(false, "would ask")
         rig.act("the Details button", "details")
@@ -175,7 +175,7 @@ class BrowserPilotTest : FunSpec({
     }
 
     test("Jev can make a step the rules pass stricter: not sure it is browsing goes to the triage, a commit to the person") {
-        val rig = PilotRig(lead = true)
+        val rig = PilotRig()
         rig.site.open(rig.site.signin(false))
         rig.jev.step = { "unsure" to 0.6 }
         rig.act("the Continue button", "next page")
@@ -187,7 +187,7 @@ class BrowserPilotTest : FunSpec({
     }
 
     test("deterministic rules beat Jev: a risky button is held even when Jev is sure it is browsing and may approve") {
-        val rig = PilotRig(settings = BrowserPilotConfig(jevMayApprove = true), lead = true)
+        val rig = PilotRig(settings = BrowserPilotConfig(jevMayApprove = true))
         rig.jev.step = { "browse" to 0.99 }
         rig.act("the Send money button", "money sent") shouldContain "Waiting for the person"
         rig.governance.steps.single().summary shouldContain "Send money"
@@ -196,7 +196,7 @@ class BrowserPilotTest : FunSpec({
     }
 
     test("Jev errors fail closed: no grounding means no click; a failed step check asks the person") {
-        val rig = PilotRig(lead = true)
+        val rig = PilotRig()
         rig.jev.fail = DecisionError.Unreachable("timeout")
         rig.act("the Sign in link", "the sign-in page") shouldContain "I could not check the screen"
         rig.site.clicked.shouldBeEmpty()

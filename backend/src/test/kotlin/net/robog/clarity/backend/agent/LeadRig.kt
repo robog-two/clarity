@@ -151,7 +151,8 @@ class LeadRig(
     val vaultService = VaultService(vaultStore, grants, heldStore, events, inbox)
     var triageVerdict = TriageVerdict(true, "ordinary")
     val heldWaiters = HeldWaiters(clock)
-    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters, codeWait = kotlin.time.Duration.parse("1s"))
+    // No wait for the person here: the tests answer held items themselves.
+    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters, codeWait = kotlin.time.Duration.parse("1s"), personWait = kotlin.time.Duration.ZERO)
     val browserPilot = BrowserPilot(browserGate, FakeBrowserModels(null, null), MemoryBrowserAudit(), vaultStore, vaultHolds, config, clock, UtcPersonZone())
 
     lateinit var helpers: HelperManager

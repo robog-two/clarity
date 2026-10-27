@@ -256,14 +256,16 @@ class LiveBrowserPilotTest : FunSpec({
     test("the raw snapshot misses the deep login fields; look lists them (no model calls)") {
         siteJson("/__reset")
         val raw = mcp.tools().associateBy { it.name }
-        raw.getValue("browser__navigate_page").invoke(buildJsonObject { put("url", "https://login.clarity.test/signin") })
-        val snapshot = (raw.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap())) as net.robog.clarity.harness.ToolResult.Ok).content
         val clock = Clock.System
         val grants = GrantStore(clock)
         val person = SimulatedPerson(grants, listOf("246810"))
         val gate = BrowserGate(MemoryVault(listOf(login)), grants, person, { TriageVerdict(true, "ok") }, clock, HeldWaiters(clock))
         val pilot = BrowserPilot(gate, models, MemoryBrowserAudit(), MemoryVault(listOf(login)), person, AgentConfig(reviewInterval = Duration.parse("2h")), clock, { TimeZone.UTC })
-        val look = pilot.wrap(RunScope("live-look", isLead = false), raw.values.toList()).first { it.name == "browser__look" }.invoke(JsonObject(emptyMap()))
+        val tools = pilot.wrap(RunScope("live-look", isLead = false), raw.values.toList()).associateBy { it.name }
+        // The first call takes the browser lease (a fresh, empty tab), then opens the form.
+        tools.getValue("browser__go").invoke(buildJsonObject { put("url", "https://login.clarity.test/signin") })
+        val snapshot = (raw.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap())) as net.robog.clarity.harness.ToolResult.Ok).content
+        val look = tools.getValue("browser__look").invoke(JsonObject(emptyMap()))
         outDir.mkdirs()
         File(outDir, "deep-form.txt").writeText("take_snapshot (raw):\n$snapshot\n\nlook:\n${(look as net.robog.clarity.harness.ToolResult.Ok).content}")
         snapshot shouldNotContain "Email address"

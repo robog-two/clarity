@@ -351,6 +351,25 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
   `frames_dropped_at` (V21). The rows stay, and nothing else is deleted.
 - **Fails closed.** With no decision model, an error or a refusal, the step is not taken ("I never
   click blind") or it goes to the person.
+- **The lead never browses.** `BrowserGate` and the pilot refuse every call from a lead scope, and
+  the lead's tool set has no `browser__*` tools and neither `ask_code` nor `list_credentials`.
+- **One run at a time (the lease).** The browser is shared, so a run holds a lease while it uses it
+  (`agent/BrowserLease.kt`, V22). The lease is a single `browser_lease` row changed under `FOR UPDATE`,
+  with a FIFO `browser_lease_queue`.
+  - A run asks for the lease on its first browser call, not when it is spawned. While it waits, an
+    audit step says "waiting for the browser – another task is using it". After
+    `CLARITY_BROWSER_LEASE_WAIT` (30 minutes) it is told to report back.
+  - A new lease starts fresh: every tab is closed, one `about:blank` tab is opened, and the run's
+    code guard, sign-in state and change history are reset. Cookies and logins stay.
+  - The lease is released when the run finishes, fails or is cancelled. It is also released after
+    `CLARITY_BROWSER_LEASE_IDLE` (10 minutes) without a browser call, which includes waiting for a
+    person or a code. The run then queues again on its next call, starts fresh and is told so; a
+    step approved after the lease lapsed is not taken. A heartbeat older than
+    `CLARITY_BROWSER_LEASE_STALE` (2 minutes) also releases it, which covers crashes. At boot, leases
+    and queue places of runs that are no longer running are cleared.
+  - On release the run's last address and title are kept in `browser_resume`, with one line on where
+    it was in a sign-in. The first `look` of a later run of the same task (the same task text)
+    shows them; they are never reopened.
 
 Follow-ups. The harness keeps tool results append-only, because the prompt cache depends on it, so
 older `look` results are not collapsed. The screenshot is always of the selected tab: the MCP has

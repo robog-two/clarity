@@ -156,6 +156,8 @@ class HelperManager(
             } finally {
                 jobs.remove(run.id)
                 live.remove(run.id)
+                // Finished, failed or cancelled: the browser goes to the next run.
+                withContext(NonCancellable) { runCatching { toolbox.value.runEnded(run.id) } }
             }
         }
     }

@@ -97,6 +97,12 @@ data class BrowserPilotConfig(
     val maxActions: Int = 25,
     /** How long step screenshots are kept in the audit trail (`CLARITY_BROWSER_FRAME_RETENTION`); the rows stay. */
     val frameRetention: kotlin.time.Duration = kotlin.time.Duration.parse("30d"),
+    /** One run holds the browser at a time: how long another waits for it (`CLARITY_BROWSER_LEASE_WAIT`). */
+    val leaseWait: kotlin.time.Duration = kotlin.time.Duration.parse("30m"),
+    /** A holder with no browser call for this long loses the lease (`CLARITY_BROWSER_LEASE_IDLE`), waiting for a person included. */
+    val leaseIdle: kotlin.time.Duration = kotlin.time.Duration.parse("10m"),
+    /** A holder whose heartbeat is this old is gone (a crash or restart; `CLARITY_BROWSER_LEASE_STALE`). */
+    val leaseStale: kotlin.time.Duration = kotlin.time.Duration.parse("2m"),
 )
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */

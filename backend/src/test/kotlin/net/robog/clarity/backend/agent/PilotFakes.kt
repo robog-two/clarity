@@ -226,6 +226,7 @@ class FakeSite(val popup: Boolean = false) {
         tool("close_page") { val i = (it["pageIdx"] as JsonPrimitive).content.toInt(); tabs.removeAt(i); if (selected >= tabs.size) selected = tabs.size - 1; ToolResult.Ok("closed [$i]") },
         tool("navigate_page") { val u = (it["url"] as JsonPrimitive).content; open(if ("login" in u) signin(false) else shop().copy(url = u)); ToolResult.Ok("[$selected] → $u") },
         tool("navigate_history") { open(shop()); ToolResult.Ok("back") },
+        tool("new_page") { tabs += Page((it["url"] as JsonPrimitive).content, "New Tab", emptyList()); selected = tabs.lastIndex; ToolResult.Ok("new page [${tabs.lastIndex}]") },
         tool("take_snapshot") { input ->
             val sel = (input["selector"] as? JsonPrimitive)?.content.orEmpty()
             val token = Regex("""data-clarity-ref="([^"]+)"""").find(sel)?.groupValues?.get(1)
@@ -319,6 +320,8 @@ class PilotRig(
     settings: BrowserPilotConfig = BrowserPilotConfig(),
     lead: Boolean = false,
     codeWait: Duration = 300.milliseconds,
+    /** Who holds the browser; share one between rigs to model two runs on one browser. */
+    val leases: MemoryBrowserLeases = MemoryBrowserLeases(),
 ) {
     val clock = StepClock()
     val site = FakeSite(popup)
@@ -332,14 +335,27 @@ class PilotRig(
     var triage = TriageVerdict(true, "ordinary")
     val triaged = CopyOnWriteArrayList<TriageStep>()
     val waiters = HeldWaiters(clock)
-    val gate = BrowserGate(vault, grants, governance, { s -> triaged += s; triage }, clock, waiters, codeWait)
+    val gate = BrowserGate(vault, grants, governance, { s -> triaged += s; triage }, clock, waiters, codeWait, personWait = Duration.ZERO)
     val jev = FakeJev(site)
     val audit = MemoryBrowserAudit()
     val pilot = BrowserPilot(
-        gate, FakeBrowserModels(jev), audit, vault, governance, AgentConfig(reviewInterval = 2.hours, browser = settings), clock, { TimeZone.UTC }, settle = 1.milliseconds,
+        gate, FakeBrowserModels(jev), audit, vault, governance, AgentConfig(reviewInterval = 2.hours, browser = settings), clock, { TimeZone.UTC }, leases, settle = 1.milliseconds, leasePoll = 5.milliseconds,
     )
     val scope = RunScope("run-p", isLead = lead, purpose = "Check my orders at the garden shop")
     val tools: Map<String, Tool> = pilot.wrap(scope, site.tools).associateBy { it.name }
+
+    init {
+        // The first browser call takes the lease and resets the browser (one empty tab); tests start from the shop.
+        if (!lead) kotlinx.coroutines.runBlocking { tools.getValue("browser__tabs").invoke(JsonObject(emptyMap())) }
+        site.tabs.clear()
+        site.tabs += site.shop()
+        site.selected = 0
+        site.calls.clear()
+    }
+
+    /** Another run on the same pilot and browser (its own scope). */
+    fun run(runId: String, purpose: String = "Check my orders at the garden shop", lead: Boolean = false): Map<String, Tool> =
+        pilot.wrap(RunScope(runId, isLead = lead, purpose = purpose), site.tools).associateBy { it.name }
 
     suspend fun call(name: String, input: JsonObject = JsonObject(emptyMap())): ToolResult = tools.getValue("browser__$name").invoke(input)
     suspend fun act(intent: String, expect: String = "something happens", value: String? = null): String =

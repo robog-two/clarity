@@ -118,7 +118,8 @@ class AgentToolbox(
         addAll(domain.all)
         addAll(external.all(scope))
         add(results.readResultTool())
-        addAll(vault.all(scope))
+        // A code or a saved login is only ever typed into a page, and the lead never browses.
+        addAll(vault.all(scope).filter { !forLead || it.name !in BROWSER_COMPANIONS })
         with(memory) {
             addAll(listOf(searchMemory(), readMemory(), openCollection()))
             if (forLead) addAll(listOf(saveNote(), manageCollection()))
@@ -151,6 +152,9 @@ class AgentToolbox(
         return HelperToolSet(ToolSet(chosen.sortedBy { it.name }), unknown)
 
     }
+
+    /** A helper run finished, failed or was cancelled: it lets go of the browser. */
+    suspend fun runEnded(runId: String) = browser.runEnded(runId)
 
     private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile(), memory.saveNote(), memory.manageCollection()))
 }

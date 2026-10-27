@@ -152,7 +152,7 @@ class VaultFlowTest : FunSpec({
         rig = LeadRig(database)
         rig.reset()
         heldService = HeldActionService(database, Clock.System, rig.heldStore, rig.constitutions, rig.outbox, ConnectorRouter(database, NoConnectorPreferences()), rig.events, rig.vaultStore)
-        browserTools = rig.browserGate.gatedTools(RunScope("lead", isLead = true), browser.tools).associateBy { it.name }
+        browserTools = rig.browserGate.gatedTools(RunScope("helper-run", isLead = false), browser.tools).associateBy { it.name }
     }
     afterSpec { postgres.stop() }
 

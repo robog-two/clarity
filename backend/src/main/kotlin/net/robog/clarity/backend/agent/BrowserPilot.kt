@@ -63,8 +63,12 @@ class BrowserPilot(
     config: AgentConfig,
     private val clock: Clock,
     private val zone: PersonZone,
+    /** Who holds the shared browser: one run at a time. */
+    private val leases: BrowserLeases = MemoryBrowserLeases(),
     /** How long a step is given to take effect before the change report is built. */
     private val settle: Duration = 700.milliseconds,
+    /** How often a run waiting for the browser asks again. */
+    private val leasePoll: Duration = 1.seconds,
 ) {
     private val settings: BrowserPilotConfig = config.browser
 
@@ -75,6 +79,12 @@ class BrowserPilot(
         var mustLook = false
         var seq = 0
         val signIn = ConcurrentHashMap<String, SignInState>()
+        /** This run has held the lease before (losing it means a fresh start it is told about). */
+        var hadLease = false
+        var shownResume = false
+        var lastUrl: String? = null
+        var lastTitle: String? = null
+        var taskKey: String? = null
     }
 
     private val runs = ConcurrentHashMap<String, RunState>()
@@ -210,13 +220,102 @@ class BrowserPilot(
             ) { guarded { gate.scrubbed(gate.withBrowser { mcp("list_downloads") }) } },
         )
 
-        private suspend fun guarded(block: suspend () -> ToolResult): ToolResult = try {
-            block()
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log.warn(e) { "browser pilot step failed" }
-            ToolResult.Error("The browser step failed: ${gate.scrub(e.message ?: e::class.simpleName.orEmpty())}")
+        /** Every tool: never for the lead, only under the browser lease, never throwing. */
+        private suspend fun guarded(block: suspend () -> ToolResult): ToolResult {
+            // The lead never browses: fail closed even if it was handed these tools.
+            if (scope.isLead) return ToolResult.Error(BrowserGate.LEAD_REFUSED)
+            if (state.taskKey == null) state.taskKey = taskKey(scope.purpose)
+            val note = when (val lease = takeLease()) {
+                is Lease.Refused -> return lease.result
+                is Lease.Held -> lease.note
+            }
+            val result = try {
+                block()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn(e) { "browser pilot step failed" }
+                ToolResult.Error("The browser step failed: ${gate.scrub(e.message ?: e::class.simpleName.orEmpty())}")
+            }
+            leases.touch(scope.runId, clock.now())
+            return if (note == null) result else when (result) {
+                is ToolResult.Ok -> ToolResult.Ok(note + "\n\n" + result.content, result.images)
+                is ToolResult.Error -> ToolResult.Error(note + "\n\n" + result.message)
+            }
+        }
+
+        /**
+         * The browser lease for this run: held already, or got now (the browser is reset for it), or
+         * waited for up to `leaseWait` while another run uses the browser (that wait is an audit step).
+         */
+        private suspend fun takeLease(): Lease {
+            val started = TimeSource.Monotonic.markNow()
+            var waiting = false
+            while (true) {
+                when (val t = leases.tryAcquire(scope.runId, clock.now(), settings.leaseIdle, settings.leaseStale)) {
+                    is LeaseTry.Granted -> {
+                        if (!t.fresh) return Lease.Held(null)
+                        val lapsed = state.hadLease
+                        state.hadLease = true
+                        freshStart()
+                        if (waiting) record("lease_wait", null, null, null, null, null, null, "granted", null, null, "got the browser after ${started.elapsedNow().inWholeSeconds} s")
+                        return Lease.Held(if (lapsed) LEASE_LAPSED else null)
+                    }
+                    is LeaseTry.Waiting -> {
+                        if (!waiting) {
+                            waiting = true
+                            record("lease_wait", null, null, null, null, null, null, "waiting", null, null, LEASE_WAITING + if (t.ahead > 0) " (${t.ahead} ahead in the queue)" else "")
+                        }
+                        if (started.elapsedNow() >= settings.leaseWait) {
+                            leases.leaveQueue(scope.runId)
+                            record("lease_wait", null, null, null, null, null, null, "timed_out", null, null, "gave up waiting for the browser after ${settings.leaseWait}")
+                            return Lease.Refused(
+                                ToolResult.Ok(
+                                    "The browser has been in use by another task for ${settings.leaseWait.inWholeMinutes} minutes. Stop and report back that " +
+                                        "the browser was busy and what is left to do; do not try again now.",
+                                ),
+                            )
+                        }
+                        delay(leasePoll)
+                    }
+                }
+            }
+        }
+
+        /** Before every try of a step (also after waiting for the person): the run must still hold the browser. */
+        private val leaseGuard: suspend () -> ToolResult? = {
+            if (leases.holder() == scope.runId) null
+            else ToolResult.Ok("$LEASE_LAPSED This step was not taken. Call look (it gets the browser again) and start over from the page you need.")
+        }
+
+        /** A new lease: every tab closed, one empty tab, and this run's browser state reset. Cookies and logins stay. */
+        private suspend fun freshStart() {
+            openers = emptyMap()
+            secretRefs = "" to emptySet()
+            state.signIn.clear()
+            state.noChange = 0
+            state.mustLook = false
+            gate.withBrowser {
+                if (raw["new_page"] != null) mcp("new_page", buildJsonObject { put("url", "about:blank") })
+                else mcp("navigate_page", buildJsonObject { put("url", "about:blank") })
+                val tabs = listTabs(lock = false)
+                val keep = if (raw["new_page"] != null) tabs.lastOrNull()?.index else tabs.firstOrNull { it.selected }?.index
+                tabs.sortedByDescending { it.index }.filter { it.index != keep }.forEach { mcp("close_page", buildJsonObject { put("pageIdx", it.index) }) }
+                selectTab(0, lock = false)
+            }
+            gate.state.navigated("about:blank")
+            lastTabs = listTabs()
+        }
+
+        /** Once per run, in the first look: where an earlier run of the same task left the browser. Never reopened. */
+        private suspend fun resumeHint(): String? {
+            if (state.shownResume) return null
+            state.shownResume = true
+            val key = state.taskKey ?: return null
+            val last = leases.lastResume(key, scope.runId) ?: return null
+            if (last.url == null || isBlankPage(last.url)) return null
+            return "Last time this task was on ${last.url}" + (last.title?.let { " (\"${it.take(60)}\")" } ?: "") +
+                (last.where?.let { ", $it" } ?: "") + ". It is not reopened: go there if it helps."
         }
 
         // ---- browser access -------------------------------------------------------------------
@@ -242,7 +341,10 @@ class BrowserPilot(
         }
 
         private suspend fun page(op: String = "look", extra: Map<String, Any?> = emptyMap(), lock: Boolean = true): PageObservation? =
-            decodeObservation<PageObservation>(observe(op, extra, lock))
+            decodeObservation<PageObservation>(observe(op, extra, lock))?.also {
+                // Where the run is, for the resume note when it lets the browser go.
+                if ((op == "look" || op == "changes") && it.url.isNotBlank()) { state.lastUrl = it.url; state.lastTitle = it.title }
+            }
 
         private suspend fun listTabs(lock: Boolean = true): List<Tab> =
             ((if (lock) locked("list_pages") else mcp("list_pages")) as? ToolResult.Ok)?.content?.let(::parseTabs).orEmpty()
@@ -310,7 +412,8 @@ class BrowserPilot(
             state.mustLook = false
             updatePhase(obs)
             val header = header(obs)
-            return ToolResult.Ok(gate.scrub((notes.joinToString("\n").let { if (it.isEmpty()) "" else "$it\n" }) + formatLook(obs, header, scoped = scopeRef != null)))
+            val hint = resumeHint()?.let { "$it\n" }.orEmpty()
+            return ToolResult.Ok(gate.scrub(hint + (notes.joinToString("\n").let { if (it.isEmpty()) "" else "$it\n" }) + formatLook(obs, header, scoped = scopeRef != null)))
         }
 
         suspend fun read(scopeRef: String?): ToolResult {
@@ -361,7 +464,7 @@ class BrowserPilot(
 
         private suspend fun navigate(tool: String, remote: String, input: JsonObject, url: String?): ToolResult {
             val before = page("look")
-            val result = gate.perform(scope, GateStep(remote, input, BrowserKind.NAVIGATE, pages) { mcp(remote, it) })
+            val result = gate.perform(scope, GateStep(remote, input, BrowserKind.NAVIGATE, pages, guard = leaseGuard) { mcp(remote, it) })
             if (result is ToolResult.Error) return result
             delay(settle)
             val after = page("changes") ?: before
@@ -459,7 +562,7 @@ class BrowserPilot(
             val tabsBefore = listTabs()
             val input = buildJsonObject { put("key", key) }
             var ran = false
-            val result = gate.perform(scope, GateStep("press_key", input, BrowserKind.ACT, pages) { ran = true; mcp("press_key", it) })
+            val result = gate.perform(scope, GateStep("press_key", input, BrowserKind.ACT, pages, guard = leaseGuard) { ran = true; mcp("press_key", it) })
             if (!ran) return result
             return report("act", intent, expect, before, null, null, tabsBefore, token, trail, notes, "press_key $key", result)
         }
@@ -597,7 +700,7 @@ class BrowserPilot(
             var ran = false
             val result = gate.perform(
                 scope,
-                GateStep(remote, input, BrowserKind.ACT, pages, targets = listOf(id to element.element()), jev = jev) { sent ->
+                GateStep(remote, input, BrowserKind.ACT, pages, targets = listOf(id to element.element()), jev = jev, guard = leaseGuard) { sent ->
                     ran = true
                     send(element, uid, sent)
                 },
@@ -789,7 +892,7 @@ class BrowserPilot(
             var ran = false
             val result = gate.perform(
                 scope,
-                GateStep("fill_by_uid", buildJsonObject { put("uid", id); put("value", value) }, BrowserKind.ACT, pages, targets = listOf(id to field.element())) { sent ->
+                GateStep("fill_by_uid", buildJsonObject { put("uid", id); put("value", value) }, BrowserKind.ACT, pages, targets = listOf(id to field.element()), guard = leaseGuard) { sent ->
                     ran = true
                     send(field, uid, sent)
                 },
@@ -809,12 +912,12 @@ class BrowserPilot(
                 val target = page("target", mapOf("ref" to button.ref, "scroll" to true))
                 val uid = target?.token?.let { snapshotUid(it) }
                 val id = uid ?: button.ref
-                gate.perform(scope, GateStep("click_by_uid", buildJsonObject { put("uid", id) }, BrowserKind.ACT, pages, targets = listOf(id to button.element())) { sent ->
+                gate.perform(scope, GateStep("click_by_uid", buildJsonObject { put("uid", id) }, BrowserKind.ACT, pages, targets = listOf(id to button.element()), guard = leaseGuard) { sent ->
                     ran = true
                     send(button, uid, sent)
                 })
             } else {
-                gate.perform(scope, GateStep("press_key", buildJsonObject { put("key", "Enter") }, BrowserKind.ACT, pages) { ran = true; mcp("press_key", it) })
+                gate.perform(scope, GateStep("press_key", buildJsonObject { put("key", "Enter") }, BrowserKind.ACT, pages, guard = leaseGuard) { ran = true; mcp("press_key", it) })
             }
             return when {
                 !ran -> (result as? ToolResult.Ok)?.content ?: (result as ToolResult.Error).message
@@ -917,7 +1020,59 @@ class BrowserPilot(
 
     private fun newToken(): String = "s" + kotlin.random.Random.nextLong().toULong().toString(36)
 
+    /** What a run got when it asked for the browser. */
+    private sealed interface Lease {
+        /** It holds the browser; [note] tells the helper something first (a lapsed lease). */
+        data class Held(val note: String?) : Lease
+
+        data class Refused(val result: ToolResult) : Lease
+    }
+
+    /** Run [runId] finished, failed or was cancelled: it gives the browser back (keeping where it was) and leaves the queue. */
+    suspend fun runEnded(runId: String) {
+        val state = runs[runId]
+        if (leases.holder() == runId) saveResume(runId, state)
+        leases.release(runId)
+        runs.remove(runId)
+    }
+
+    /**
+     * The lease keeper's tick: heartbeats a holder whose run is alive here, and releases a holder
+     * that has been idle (or gone) too long, keeping where it was. That run starts fresh next time.
+     */
+    suspend fun maintainLease() {
+        val now = clock.now()
+        val holder = leases.holder() ?: return
+        if (runs[holder]?.hadLease == true) leases.heartbeat(holder, now)
+        val released = leases.releaseExpired(now, settings.leaseIdle, settings.leaseStale) ?: return
+        log.info { "browser lease of $released released after ${settings.leaseIdle} without browser activity" }
+        saveResume(released, runs[released])
+    }
+
+    private suspend fun saveResume(runId: String, state: RunState?) {
+        state ?: return
+        val url = state.lastUrl ?: return
+        val domain = Sites.registrableDomain(url)
+        val where = domain?.let { state.signIn[it] }?.let { whereLine(it.phase, domain) }
+        leases.saveResume(BrowserResume(runId, state.taskKey, url, state.lastTitle, where, clock.now()))
+    }
+
     companion object {
+        const val LEASE_WAITING = "Waiting for the browser – another task is using it."
+        const val LEASE_LAPSED =
+            "The browser lease lapsed (no browser activity for a while, or waiting for the person) and another task may have used the browser. " +
+                "You start fresh: one empty tab, and this task's sign-in steps and code count are reset (cookies and logins stay)."
+
+        /** Pure: one line on where a run was in a site's sign-in, for the resume note. */
+        fun whereLine(phase: SignInPhase, domain: String): String? = when (phase) {
+            SignInPhase.CODE_SENT -> "on the code page of $domain (a code had been sent)"
+            SignInPhase.CHOOSE_METHOD -> "choosing where $domain sends its sign-in code"
+            SignInPhase.LOGIN -> "on the $domain sign-in form"
+            SignInPhase.SIGNED_IN -> "signed in to $domain"
+            SignInPhase.ERROR -> "looking at an error on $domain"
+            SignInPhase.UNKNOWN -> null
+        }
+
         /** The raw tools the pilot works through; without them the helper gets the gated raw tools. */
         val REQUIRED = setOf("list_pages", "evaluate_script", "screenshot_page", "take_snapshot", "click_by_uid", "fill_by_uid", "type_text", "press_key", "navigate_page", "select_page")
         private val FILLABLE = setOf("textbox", "searchbox", "combobox", "spinbutton", "listbox", "slider")
