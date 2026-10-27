@@ -38,6 +38,8 @@ data class RunRequest(
     val cache: CachePolicy? = CachePolicy(),
     /** Truncates and stores oversized tool results. */
     val resultSink: ToolResultSink? = null,
+    /** Warn near [maxTurns] and, when the steps run out, ask for a report in one last call that runs no tools. Null: just stop. */
+    val outOfSteps: OutOfSteps? = null,
 ) {
     constructor(
         model: String,
@@ -213,17 +215,7 @@ class Harness(
             if (calls == null) {
                 turn++
                 send(HarnessEvent.TurnStarted(turn))
-                val modelRequest = ModelRequest(
-                    model = request.model,
-                    system = request.system,
-                    messages = wireOrder(sinceSummary(history)),
-                    tools = plan.tools.map { it.definition },
-                    maxTokens = request.maxTokens,
-                    effort = request.effort,
-                    cache = request.cache,
-                )
-
-                when (val outcome = callModel(modelRequest, pending)) {
+                when (val outcome = callModel(modelRequest(request, plan, history), pending)) {
                     is CallOutcome.Interrupted -> {
                         turn--
                         val messages = foldInterrupts(history.lastOrNull()?.role, listOf(outcome.first) + drain())
@@ -254,6 +246,27 @@ class Harness(
                                     append(foldInterrupts(Role.ASSISTANT, late))
                                     continue
                                 }
+                                val steps = request.outOfSteps
+                                if (decision.reason == FinishReason.MAX_TURNS && steps != null) {
+                                    // The requested tools never run; one last call (whose tools never run either) says where it got to.
+                                    val notRun = response.toolUses.map { Block.Result(it.id, steps.notRun, isError = true) }
+                                    append(mergeIntoResults(notRun + Block.Text(steps.report), late))
+                                    turn++
+                                    send(HarnessEvent.TurnStarted(turn))
+                                    var report = ""
+                                    val last = callModel(modelRequest(request, plan, history), Channel())
+                                    if (last is CallOutcome.Done) {
+                                        usage += last.response.usage
+                                        send(HarnessEvent.Called(turn, last.response.usage))
+                                        append(listOf(Message(Role.ASSISTANT, journalStable(last.response.content))))
+                                        if (last.response.text.isNotEmpty()) send(HarnessEvent.AssistantText(last.response.text))
+                                        val ignored = last.response.toolUses.map { Block.Result(it.id, steps.notRun, isError = true) }
+                                        if (ignored.isNotEmpty()) append(listOf(Message(Role.USER, ignored)))
+                                        report = last.response.text
+                                    }
+                                    send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
+                                    return
+                                }
                                 send(HarnessEvent.Finished(RunResult(decision.reason, usage, history, response.text)))
                                 return
                             }
@@ -267,9 +280,20 @@ class Harness(
             val toRun = calls ?: continue
             calls = null
             val results = executeAll(runId, toRun, plan, request)
-            append(mergeIntoResults(results, drain()))
+            val note = stepsLeftNote(turn, request.maxTurns, request.outOfSteps)?.let { listOf(Block.Text(it)) }.orEmpty()
+            append(mergeIntoResults(results + note, drain()))
         }
     }
+
+    private fun modelRequest(request: RunRequest, plan: ToolPlan, history: List<Message>) = ModelRequest(
+        model = request.model,
+        system = request.system,
+        messages = wireOrder(sinceSummary(history)),
+        tools = plan.tools.map { it.definition },
+        maxTokens = request.maxTokens,
+        effort = request.effort,
+        cache = request.cache,
+    )
 
     private sealed interface CallOutcome {
         data class Done(val response: ModelResponse) : CallOutcome

@@ -26,11 +26,19 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.lifecycle.BackgroundService
+import net.robog.clarity.backend.vault.GrantStore
 import net.robog.clarity.harness.FinishReason
 import net.robog.clarity.harness.HarnessEvent
+import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
+import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
 import net.robog.clarity.shared.time.LocalTimes
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 private val log = KotlinLogging.logger {}
 
@@ -51,7 +59,7 @@ fun helperOwesResult(event: HarnessEvent.Terminal?): Boolean =
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
     is HarnessEvent.Finished -> when (event.reason) {
         FinishReason.END_TURN -> true to event.result.finalText.ifBlank { "(the helper finished without a result)" }
-        FinishReason.MAX_TURNS -> false to "The helper ran out of steps. Last words: ${event.result.finalText.ifBlank { "(none)" }}"
+        FinishReason.MAX_TURNS -> false to "The helper ran out of steps. Its report: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.MAX_TOKENS -> false to "The helper's answer was cut off: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.REFUSAL -> false to "The model declined to do this task."
         FinishReason.OTHER -> false to "The helper stopped unexpectedly. Last words: ${event.result.finalText.ifBlank { "(none)" }}"
@@ -79,6 +87,8 @@ class HelperManager(
     private val large: LargeResults,
     private val clock: Clock,
     private val settings: SettingsProvider = SettingsProvider { net.robog.clarity.shared.session.Settings() },
+    /** Scrubs released secret values out of the saved transcript. */
+    private val grants: GrantStore = GrantStore(clock),
 ) : BackgroundService {
     override val name = "helpers"
 
@@ -100,15 +110,20 @@ class HelperManager(
     suspend fun delegate(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, String> {
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
-        val granted = toolbox.value.helperTools(RunScope("probe", isLead = false), tools)
+        val probe = RunScope("probe", isLead = false)
+        val chosen = if (tools == null) null else {
+            val defaults = toolbox.value.helperTools(probe, null).tools
+            completeHelperTools(tools, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
+        }
+        val granted = toolbox.value.helperTools(probe, chosen)
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
         val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
-        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, tools, clock.now())
+        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, chosen, clock.now())
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
-        return delegatedText(id, roleName, tools, granted.tools.tools.map { it.name }).right()
+        return delegatedText(id, roleName, chosen, granted.tools.tools.map { it.name }).right()
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
@@ -162,9 +177,9 @@ class HelperManager(
                 system = helperSystemBlocks(),
                 messages = listOf(Message.user(helperPrompt(run.task, clock.now(), settings.homeZone()))),
                 tools = set.tools,
-                maxTurns = config.maxTurns,
+                maxTurns = config.helperMaxTurns,
                 sink = large.sink,
-            )
+            ).copy(outOfSteps = OutOfSteps())
             val harness = runtime.harness(journal, bound)
             harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
                 if (event is HarnessEvent.Terminal) terminal = event
@@ -186,6 +201,9 @@ class HelperManager(
             val now = clock.now()
             val current = runs.get(run.id)
             if (current != null && current.status in RunStatus.OPEN) {
+                // A copy of the journal for diagnosis; only placeholders, never a released value.
+                runCatching { runs.saveTranscript(run.id, helperTranscript(journal.load(run.id), grants::scrub)) }
+                    .onFailure { log.warn { "helper ${run.id}: transcript not saved (${it::class.simpleName})" } }
                 runs.finish(run.id, if (ok) RunStatus.DONE else RunStatus.FAILED, text, terminal?.usage, if (ok) null else text, now)
                 inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text), dedupKey = "helper:${run.id}")
             }
@@ -199,5 +217,42 @@ fun delegatedText(id: String, role: String, requested: List<String>?, granted: L
     if (requested != null) {
         append(" It has only: ").append(granted.sorted().joinToString().ifEmpty { "no tools" }).append('.')
         if (granted.none { it.startsWith(BrowserGate.PREFIX) }) append(" It has no browser; omit `tools` to give it the defaults.")
+    }
+}
+
+/**
+ * Pure: a run's [messages] as the JSON saved in `agent_run.transcript`, every string in it passed
+ * through [scrub] (which replaces released secret values by their placeholders).
+ */
+fun helperTranscript(messages: List<Message>, scrub: (String) -> String): JsonElement =
+    scrubStrings(HarnessJson.encodeToJsonElement(ListSerializer(Message.serializer()), messages), scrub)
+
+private fun scrubStrings(element: JsonElement, scrub: (String) -> String): JsonElement = when (element) {
+    is JsonObject -> JsonObject(element.mapValues { scrubStrings(it.value, scrub) })
+    is JsonArray -> JsonArray(element.map { scrubStrings(it, scrub) })
+    is JsonPrimitive -> if (element.isString) JsonPrimitive(scrub(element.content)) else element
+    else -> element
+}
+
+/** The tools that only make sense next to the browser: a code or a saved login is typed into a page. */
+val BROWSER_COMPANIONS: List<String> = listOf("ask_code", "list_credentials")
+
+/**
+ * Pure: the tool list a helper gets when the lead names [requested], given the tool names that
+ * exist now ([available]). The browser and [BROWSER_COMPANIONS] come together: any browser tool
+ * brings them, and a companion asked for without any browser tool brings every browser tool. Left
+ * (the delegation fails) when a companion is asked for and there is no browser to use it in.
+ */
+fun completeHelperTools(requested: List<String>, available: Set<String>): Either<String, List<String>> {
+    val browser = available.filter { it.startsWith(BrowserGate.PREFIX) }.sorted()
+    val companions = BROWSER_COMPANIONS.filter { it in available }
+    return when {
+        requested.any { it.startsWith(BrowserGate.PREFIX) } -> (requested + companions).distinct().right()
+        requested.none { it in BROWSER_COMPANIONS } -> requested.right()
+        browser.isEmpty() -> (
+            "Not started: ${requested.filter { it in BROWSER_COMPANIONS }.joinToString()} only works together with the browser, " +
+                "and no browser tools are available right now (the browser may be down). Tell the person, or try again later."
+            ).left()
+        else -> (requested + browser + companions).distinct().right()
     }
 }

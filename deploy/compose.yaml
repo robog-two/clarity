@@ -91,6 +91,9 @@ services:
       CLARITY_AGENT_HELPER_MODEL: ${CLARITY_AGENT_HELPER_MODEL:-}
       CLARITY_AGENT_GUARD_MODEL: ${CLARITY_AGENT_GUARD_MODEL:-}
       CLARITY_AGENT_TRIAGE_MODEL: ${CLARITY_AGENT_TRIAGE_MODEL:-}
+      # Step limits: the lead's turns, and a helper's (browsing takes many small steps).
+      CLARITY_AGENT_MAX_TURNS: ${CLARITY_AGENT_MAX_TURNS:-30}
+      CLARITY_AGENT_HELPER_MAX_TURNS: ${CLARITY_AGENT_HELPER_MAX_TURNS:-60}
       # Semantic memory search: embeddings through OpenRouter (on whenever it has a key; false = full-text only).
       CLARITY_MEMORY_EMBEDDINGS: ${CLARITY_MEMORY_EMBEDDINGS:-}
       CLARITY_MEMORY_EMBEDDINGS_MODEL: ${CLARITY_MEMORY_EMBEDDINGS_MODEL:-}

@@ -117,7 +117,7 @@ class VaultTools(
             if (id == null) ToolResult.Error(wait.text)
             else ToolResult.Ok(
                 "Asked the person for the code. Once they type it, use [secret:code_${id.value}] in the browser (on ${Sites.registrableDomain(input.site)} only). " +
-                    "If the browser says it has not been entered yet, wait and try again. Do not ask twice.",
+                    "Write it into the code field right away: the fill waits for the person to type it (up to a few minutes). Do not ask twice.",
             )
         }
     }

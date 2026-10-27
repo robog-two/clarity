@@ -7,9 +7,13 @@ import dev.zacsweers.metro.SingleIn
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
@@ -243,6 +247,8 @@ class BrowserGate(
     private val triage: BrowserTriage,
     private val clock: Clock,
     private val waiters: HeldWaiters,
+    /** How long a fill waits for a two-factor code the person has not typed yet ([CODE_WAIT]). */
+    private val codeWait: Duration = CODE_WAIT,
 ) {
     private val state = BrowserState()
 
@@ -285,6 +291,7 @@ class BrowserGate(
         }
 
         override suspend fun invoke(input: JsonObject): ToolResult {
+            awaitCodes(input)?.let { return scrubbed(it) }
             var attempt = once(input)
             repeat(MAX_RESUMES) {
                 val heldId = attempt.waitingOn ?: return scrubbed(attempt.result)
@@ -310,6 +317,27 @@ class BrowserGate(
                 }
             }
             return scrubbed(attempt.result)
+        }
+
+        /**
+         * A code placeholder whose code the person has not typed yet: wait for it here, outside the
+         * browser lock, polling the code store, up to [codeWait]. Null once every code is there.
+         */
+        private suspend fun awaitCodes(input: JsonObject): ToolResult? {
+            if (remote !in TEXT_ENTRY_TOOLS) return null
+            val missing = Placeholders.tokens(input).mapNotNull(Placeholders::codeId).distinct().filter { grants.findCode(it) == null }
+            if (missing.isEmpty()) return null
+            val held = missing.mapNotNull { runCatching { HeldActionId(it) }.getOrNull() }
+            if (!scope.isLead) held.forEach { waiters.waiting(it, scope.runId) }
+            val arrived = try {
+                withTimeoutOrNull(codeWait) {
+                    while (missing.any { grants.findCode(it) == null }) delay(CODE_POLL)
+                    true
+                } ?: false
+            } finally {
+                if (!scope.isLead) held.forEach { waiters.resumed(it) }
+            }
+            return if (arrived) null else ToolResult.Ok(codeNotTyped(codeWait))
         }
 
         private suspend fun once(input: JsonObject): Attempt = try {
@@ -353,12 +381,35 @@ class BrowserGate(
             }
 
             if (substituted) state.noteSecretTargets(secretTargets(input))
-            val result = inner.invoke(send)
+            val result = try {
+                inner.invoke(send)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (kind != BrowserKind.ACT && kind != BrowserKind.NAVIGATE || !looksCutOff(e.message.orEmpty())) throw e
+                ToolResult.Error(e.message.orEmpty())
+            }
+            if (result is ToolResult.Error && (kind == BrowserKind.ACT || kind == BrowserKind.NAVIGATE) && looksCutOff(result.message)) {
+                return Attempt(recheck(url, substituted))
+            }
             if (result is ToolResult.Ok) {
                 afterSuccess(input, result.content, url, substituted)
                 lostPage(result.content)?.let { return Attempt(ToolResult.Ok(result.content + "\n\n" + it)) }
             }
             return Attempt(result)
+        }
+
+        /**
+         * The step was sent but its reply came back empty or cut off, which is what a click that
+         * navigates does to the response. Treat the step as taken, forget the old page's elements,
+         * and say where the browser is now instead of a JSON error.
+         */
+        private suspend fun recheck(before: String?, substituted: Boolean): ToolResult {
+            state.noteAction()
+            if (substituted) state.noteSecretTyped(Sites.host(before.orEmpty()))
+            val now = currentUrl()
+            state.elements = emptyMap()
+            return ToolResult.Ok(cutOffNote(remote, before, now))
         }
 
         /** A note when the selected tab turns out empty though the agent was on a page (see [lostPageNote]). */
@@ -410,11 +461,8 @@ class BrowserGate(
                 }
                 val codeId = Placeholders.codeId(token)
                 if (codeId != null) {
-                    val grant = grants.findCode(codeId)
-                        ?: return Substitution.Stop(
-                            ToolResult.Ok("The person has not entered that code yet. Wait a little (do other work) and try the same call again. Do not ask for it again."),
-                            runCatching { HeldActionId(codeId) }.getOrNull(),
-                        )
+                    // [awaitCodes] already waited for it.
+                    val grant = grants.findCode(codeId) ?: return Substitution.Stop(ToolResult.Ok(codeNotTyped(codeWait)))
                     if (grant.domain != domain) return Substitution.Stop(ToolResult.Error("That code was asked for ${grant.domain}, not $domain."))
                     values[token] = grant.value(codeId) ?: return Substitution.Stop(ToolResult.Error("That code is no longer available; ask again with ask_code."))
                     continue
@@ -504,6 +552,10 @@ class BrowserGate(
 
         /** How long a helper waits for the person to answer a held step, login or code before it reports back. */
         val WAIT_FOR_PERSON = 15.minutes
+
+        /** How long a fill waits for the person to type a two-factor code before it reports back. */
+        val CODE_WAIT = 3.minutes
+        private val CODE_POLL = 1.seconds
 
         /** Approvals in a row one call waits through (a login, then the code it leads to). */
         private const val MAX_RESUMES = 3

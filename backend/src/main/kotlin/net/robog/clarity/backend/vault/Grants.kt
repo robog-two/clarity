@@ -84,13 +84,64 @@ private fun jsonEscape(value: String): String = buildString {
     }
 }
 
-/** Pure: replaces every pattern of every `(value to placeholder)` in [text], longest values first. */
+/**
+ * Pure: replaces every pattern of every `(value to placeholder)` in [text], longest values first;
+ * then every run of [FRAGMENT_MIN] or more characters that is part of a value of at least
+ * [FRAGMENT_MIN_VALUE] characters (not a digit string) by `[part of secret:…]`. A fill that went
+ * into the wrong field, or a field holding half a password, never shows the part it has.
+ */
 fun scrubText(text: String, replacements: List<Pair<String, String>>): String {
     var out = text
-    for ((value, placeholder) in replacements.sortedByDescending { it.first.length }) {
+    val ordered = replacements.sortedByDescending { it.first.length }
+    for ((value, placeholder) in ordered) {
         for (pattern in scrubPatterns(value)) out = pattern.replace(out, java.util.regex.Matcher.quoteReplacement(placeholder))
     }
+    for ((value, placeholder) in ordered) {
+        if (value.length < FRAGMENT_MIN_VALUE || value.all { it.isDigit() }) continue
+        val marker = "[part of " + placeholder.removePrefix("[")
+        out = outsideMarkers(out) { scrubFragments(it, value, marker) }
+    }
     return out
+}
+
+/** Runs this long that are part of a secret are hidden ([scrubText]). */
+const val FRAGMENT_MIN = 6
+
+/** Only values at least this long have their parts hidden; shorter ones are matched whole. */
+const val FRAGMENT_MIN_VALUE = 8
+
+private val MARKER = Regex("""\[(?:part of )?secret[:,][^\]]*]""")
+
+/** Applies [f] to the text between placeholders and markers, leaving those as they are. */
+private fun outsideMarkers(text: String, f: (String) -> String): String {
+    val out = StringBuilder()
+    var at = 0
+    for (m in MARKER.findAll(text)) {
+        out.append(f(text.substring(at, m.range.first))).append(m.value)
+        at = m.range.last + 1
+    }
+    return out.append(f(text.substring(at))).toString()
+}
+
+/** Pure: [text] with each maximal run of at least [FRAGMENT_MIN] characters that occurs in [value] (any case) replaced by [marker]. */
+internal fun scrubFragments(text: String, value: String, marker: String): String {
+    if (text.length < FRAGMENT_MIN) return text
+    val hay = value.lowercase()
+    val lower = text.lowercase()
+    val out = StringBuilder()
+    var i = 0
+    while (i < text.length) {
+        if (i + FRAGMENT_MIN <= text.length && hay.contains(lower.substring(i, i + FRAGMENT_MIN))) {
+            var end = i + FRAGMENT_MIN
+            while (end < text.length && hay.contains(lower.substring(i, end + 1))) end++
+            out.append(marker)
+            i = end
+        } else {
+            out.append(text[i])
+            i++
+        }
+    }
+    return out.toString()
 }
 
 /**

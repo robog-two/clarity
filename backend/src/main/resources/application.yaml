@@ -52,6 +52,7 @@ clarity:
         compaction: false
     reviewInterval: 2h
     maxTurns: 30
+    helperMaxTurns: 60
     maxConcurrentRuns: 2
     mcpServers: ""
     openRouterBaseUrl: https://openrouter.ai/api/v1

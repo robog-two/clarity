@@ -349,3 +349,29 @@ fun describeStep(tool: String, input: JsonObject, elements: List<Pair<String, El
 /** Pure: a JSON value is a string that is exactly one placeholder (used by tests and rules). */
 fun isOnlyPlaceholder(element: JsonElement): Boolean =
     element is JsonPrimitive && element.isString && Placeholders.tokens(element.content).size == 1 && Placeholders.replace(element.content) { "" }.isEmpty()
+
+/** Pure: what a fill says when the person has not typed the code it needs after [waited]. */
+fun codeNotTyped(waited: kotlin.time.Duration): String =
+    "I waited ${waited.inWholeMinutes} minutes and the person has not typed that code yet. Do not try the same call again " +
+        "or ask for the code again: report back what you found so far and that the code step is waiting for them."
+
+private val CUT_OFF = listOf(
+    "unexpected end of the input", "unexpected json token", "cannot read json element", "end of input", "unterminated", "empty response", "cut off",
+)
+
+/** Pure: does a tool error read like a reply that came back empty or cut off (not like the browser refusing the step)? */
+fun looksCutOff(message: String): Boolean {
+    val m = message.lowercase()
+    return m.isBlank() || CUT_OFF.any { it in m }
+}
+
+/** Pure: what the agent is told after a step whose reply was cut off, given the page before and after. */
+fun cutOffNote(remote: String, before: String?, after: String?): String = buildString {
+    append("The ").append(remote).append(" step was sent, but the browser's reply came back cut off (this happens when the page navigates). ")
+    when {
+        after == null -> append("I could not tell which page is open now. ")
+        after != before -> append("The page changed: the selected tab is now ").append(after).append(". ")
+        else -> append("The selected tab is still ").append(after).append(". ")
+    }
+    append("Take a snapshot to see where you are before the next step; do not repeat this one blindly.")
+}

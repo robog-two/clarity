@@ -10,6 +10,8 @@ data class AgentConfig(
      */
     val openRouterApiKey: String? = null,
     val maxTurns: Int = 30,
+    /** A helper's step limit (`CLARITY_AGENT_HELPER_MAX_TURNS`): browsing takes many small steps. */
+    val helperMaxTurns: Int = 60,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
