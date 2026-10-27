@@ -56,6 +56,12 @@ interface VaultKeys {
 
     /** Deletes both keys and makes new ones (after a biometric change). Credentials sealed to the old key are lost. */
     fun reset()
+
+    /**
+     * Deletes both keys without making new ones (the server was forgotten: what it sealed to them
+     * is gone, and a new server gets new keys, made on first use, so the two cannot be linked).
+     */
+    fun delete() {}
 }
 
 class AndroidVaultKeys : VaultKeys {
@@ -136,6 +142,13 @@ class AndroidVaultKeys : VaultKeys {
         ks.deleteEntry(APPROVAL_ALIAS)
         ensureVault()
         ensureApproval()
+    }
+
+    @Synchronized
+    override fun delete() {
+        val ks = keyStore()
+        ks.deleteEntry(VAULT_ALIAS)
+        ks.deleteEntry(APPROVAL_ALIAS)
     }
 
     companion object {

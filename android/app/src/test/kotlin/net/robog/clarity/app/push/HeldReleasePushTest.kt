@@ -38,7 +38,7 @@ class HeldReleasePushTest {
         val sync = FeedSync(backend, FakeEventSource(emptyList()), store)
         val ledger = Ledger()
         val notifier = RecordingPushNotifier()
-        fun listener() = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0 + 1.minutes), notifier, ledger)
+        fun listener() = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0 + 1.minutes), notifier, ledger, sync.caughtUp, { store.notifiable() })
         val service = listener()
 
         fun fallback(running: Boolean = false) = PushFallback(
@@ -46,7 +46,7 @@ class HeldReleasePushTest {
             serviceRunning = { running },
             feedLive = { false },
             catchUp = sync::catchUp,
-            deliver = listener()::deliver,
+            deliver = listener()::deliverMissed,
             reconnect = {},
             canStartService = { false },
             startService = {},
@@ -98,6 +98,9 @@ class HeldReleasePushTest {
         // The service saw the hold and a later item, then was killed before the release.
         rig.sync.apply(FeedEvent.ItemAppended(held))
         rig.sync.apply(FeedEvent.ItemAppended(agentItem(8, "later").copy(notify = "in_app")))
+        // ...and claimed both, as the running service does.
+        rig.ledger.claim(Arrival.Item(held))
+        rig.ledger.claim(Arrival.Item(agentItem(8, "later").copy(notify = "in_app")))
         rig.backend.all = listOf(released, agentItem(8, "later").copy(notify = "in_app"))
 
         assertEquals(1, rig.fallback().run().posted, "seq 7 is re-fetched although seq 8 is cached")

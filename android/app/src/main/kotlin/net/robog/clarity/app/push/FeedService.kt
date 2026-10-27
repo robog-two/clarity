@@ -236,6 +236,14 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         manager.cancel(MESSAGE_ID)
     }
 
+    override fun clearAll() {
+        synchronized(conversation) {
+            conversation.clear()
+            lastMessage = null
+        }
+        manager.cancelAll()
+    }
+
     /** One chat-style notification with the recent messages and a reply box. */
     private fun postConversation(alert: Boolean) {
         val (plan, lines) = synchronized(conversation) {

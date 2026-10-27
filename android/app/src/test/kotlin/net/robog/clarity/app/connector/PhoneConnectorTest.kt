@@ -72,11 +72,24 @@ class SmsMappingTest {
         assertEquals(listOf(Handle.phone("+15550101")), payload.recipients)
     }
 
-    @Test fun idempotencyKeyIsTheSmsRowId() {
+    @Test fun idempotencyKeyIsStablePerTextNotPerRowId() {
         val record = smsToRecord(sms(42), account, T0)!!
-        assertEquals(SourceId("sms:42"), record.sourceId)
+        val date = T0.toEpochMilliseconds() + 42_000
+        assertEquals(SourceId("sms:v2:$date:${smsFingerprint(sms(42))}"), record.sourceId)
+        assertEquals(16, smsFingerprint(sms(42)).length)
         assertEquals("1", record.sourceVersion)
         assertEquals(T0, record.observedAt)
+        // A restore renumbers the row: the same text keeps its id.
+        assertEquals(record.sourceId, smsToRecord(sms(42).copy(id = 3), account, T0)!!.sourceId)
+        assertEquals(SourceId("sms:42"), legacySmsSourceId(sms(42)), "what v1 uploaded")
+    }
+
+    @Test fun aDifferentTextUnderTheSameRowIdGetsItsOwnId() {
+        val before = smsSourceId(sms(9))
+        assertTrue(before != smsSourceId(sms(9, body = "something else")))
+        assertTrue(before != smsSourceId(sms(9, type = SMS_SENT)), "sent and received are different texts")
+        assertTrue(before != smsSourceId(sms(9, address = "+15550199")))
+        assertTrue(before != smsSourceId(sms(9).copy(dateMillis = 1)), "the same words another time")
     }
 
     @Test fun alphanumericSendersKeepTheirName() {
@@ -98,7 +111,7 @@ class SmsMappingTest {
         val rows = (1L..1203L).map { sms(it) }.shuffled()
         val batches = smsBatches(rows, account, T0)
         assertEquals(listOf(500, 500, 203), batches.map { it.first.records.size })
-        assertEquals(listOf(500L, 1000L, 1203L), batches.map { it.second })
+        assertEquals(listOf(500L, 1000L, 1203L), batches.map { it.second.id })
     }
 
     @Test fun cursorStaysPutOnlyWhenEverythingWasRefused() {
@@ -161,14 +174,21 @@ private class FakeSmsSource(var rows: List<SmsRow>) : SmsSource {
     override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> {
         failure?.let { throw it }
         reads++
-        return rows.filter { it.id > afterId }.sortedBy { it.id }.take(limit)
+        return rows.filter { it.id > afterId && it.type in setOf(SMS_INBOX, SMS_SENT) }.sortedBy { it.id }.take(limit)
     }
+    override suspend fun rowAt(id: Long) = rows.firstOrNull { it.id == id && it.type in setOf(SMS_INBOX, SMS_SENT) }
+    override suspend fun maxId() = rows.maxOfOrNull { it.id }
 }
 
-private class MemoryCursor(var id: Long = 0) : SmsCursorStore {
+private class MemoryCursor(var id: Long = 0, var anchor: SmsAnchor? = null) : SmsCursorStore {
     val state = MutableStateFlow(SmsSyncStatus())
+    var restarts = 0
     override suspend fun lastId() = id
-    override suspend fun advance(to: Long, sent: Int) { id = to; state.value = state.value.copy(sent = state.value.sent + sent) }
+    override suspend fun anchor() = anchor
+    override suspend fun adopt(anchor: SmsAnchor) { this.anchor = anchor }
+    override suspend fun restart() { restarts++; id = 0; anchor = null }
+    override suspend fun clear() { id = 0; anchor = null; state.value = SmsSyncStatus() }
+    override suspend fun advance(to: Long, sent: Int, anchor: SmsAnchor?) { id = to; this.anchor = anchor; state.value = state.value.copy(sent = state.value.sent + sent) }
     override suspend fun finish(at: Instant, problem: SmsSyncProblem?) {
         state.value = state.value.copy(lastAttemptAt = at, problem = problem, lastSyncAt = if (problem == null) at else state.value.lastSyncAt)
     }
@@ -323,8 +343,8 @@ class PhoneConnectorTest {
         val r = ConnectorRig((1L..5L).map { sms(it) })
         r.cursor.id = 3
         r.connector.syncOnce()
-        val sent = r.ingest.batches.single().records.map { (it as IngestRecord.Upsert).sourceId.value }
-        assertEquals(listOf("sms:4", "sms:5"), sent)
+        val sent = r.ingest.batches.single().records.map { (it as IngestRecord.Upsert).sourceId }
+        assertEquals(listOf(smsSourceId(sms(4)), smsSourceId(sms(5))), sent)
     }
 
     @Test fun failedPushKeepsTheCursorSoItRetries() = runBlocking {
@@ -496,5 +516,118 @@ class DataStoreSmsCursorStoreTest {
             scope.cancel()
             dir.deleteRecursively()
         }
+    }
+
+    @Test fun keepsTheAnchorRestartsAndForgetsEverythingOnClear() = runBlocking {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "sms-anchor-${System.nanoTime()}").apply { mkdirs() }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val store = DataStoreSmsCursorStore(
+                PreferenceDataStoreFactory.create(scope = scope) { java.io.File(dir, "c.preferences_pb") },
+            )
+            val anchor = anchorOf(sms(9))
+            assertNull(store.anchor())
+            store.advance(9, 9, anchor)
+            store.finish(T0, null)
+            assertEquals(anchor, store.anchor())
+            store.restart()
+            assertEquals(0L, store.lastId())
+            assertNull(store.anchor())
+            assertEquals(SmsSyncStatus(lastSyncAt = T0, lastAttemptAt = T0, sent = 9), store.status.first(), "a rescan keeps the status")
+            store.advance(3, 3, anchorOf(sms(3)))
+            store.finish(T0 + 1.hours, SmsSyncProblem.UNREACHABLE)
+            store.clear()
+            assertEquals(0L, store.lastId())
+            assertNull(store.anchor())
+            assertEquals(SmsSyncStatus(), store.status.first(), "forgetting the server resets the sync status")
+        } finally {
+            scope.cancel()
+            dir.deleteRecursively()
+        }
+    }
+}
+
+/** A backup restore or a new phone renumbers the SMS store; the sync must neither skip nor drop texts. */
+class SmsRenumberingTest {
+    private val anchor9 = anchorOf(sms(9))
+
+    @Test fun theCursorIsCheckedAgainstTheTextItStandsOn() {
+        assertEquals(CursorCheck.Keep, checkCursor(0, null, null, null), "nothing synced yet")
+        assertEquals(CursorCheck.Keep, checkCursor(9, anchor9, sms(9), 12))
+        assertEquals(CursorCheck.Rescan, checkCursor(9, anchor9, sms(5), 5), "the highest id is below the cursor")
+        assertEquals(CursorCheck.Rescan, checkCursor(9, anchor9, sms(9, body = "another text"), 40), "same id, different text")
+        assertEquals(CursorCheck.Rescan, checkCursor(9, anchor9, null, 40), "the text is gone")
+        // A cursor from before anchors: adopt the row, unless the store clearly shrank below it.
+        assertEquals(CursorCheck.Adopt(anchor9), checkCursor(9, null, sms(9), 9))
+        assertEquals(CursorCheck.Keep, checkCursor(9, null, null, 30))
+        assertEquals(CursorCheck.Rescan, checkCursor(9, null, null, 4))
+    }
+
+    @Test fun theCursorRemembersItsText() = runBlocking {
+        val r = ConnectorRig((1L..3L).map { sms(it) })
+        r.connector.syncOnce()
+        assertEquals(anchorOf(sms(3)), r.cursor.anchor)
+    }
+
+    @Test fun aRestoreWithLowerIdsIsRescannedAndNothingIsSkipped() = runBlocking {
+        val before = (1L..1819L).map { sms(it) }
+        val r = ConnectorRig(before)
+        assertEquals(1819, r.connector.syncOnce())
+        val uploaded = r.ingest.batches.flatMap { b -> b.records.map { it.sourceId } }.toSet()
+
+        // Restored onto a new phone: the last 600 texts, numbered 1..600, then two new ones.
+        val restored = before.takeLast(600).mapIndexed { i, row -> row.copy(id = i + 1L) }
+        val fresh = listOf(sms(601, body = "after the restore"), sms(602, body = "and another"))
+        r.source.rows = restored + fresh
+        r.ingest.batches.clear()
+
+        r.connector.syncOnce()
+        val sent = r.ingest.batches.flatMap { b -> b.records.map { it.sourceId } }
+        assertEquals(602, sent.size, "everything is read again from the start")
+        assertEquals(600, sent.count { it in uploaded }, "restored texts keep their ids: replays on the server, not duplicates")
+        assertTrue(fresh.all { smsSourceId(it) in sent })
+        assertEquals(602L, r.cursor.id)
+        assertEquals(1, r.cursor.restarts)
+
+        // Settled: nothing more next time.
+        r.ingest.batches.clear()
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(1, r.cursor.restarts)
+    }
+
+    @Test fun aDifferentTextUnderTheCursorIdIsNotTakenForTheOldOne() = runBlocking {
+        val r = ConnectorRig((1L..5L).map { sms(it) })
+        r.connector.syncOnce()
+        // Renumbered so that id 5 is now another text, with more after it.
+        r.source.rows = (1L..8L).map { sms(it, body = "restored $it") }
+        r.ingest.batches.clear()
+        r.connector.syncOnce()
+        assertEquals(8, r.ingest.batches.sumOf { it.records.size }, "ids 1..5 are other texts now and are sent too")
+        assertEquals(1, r.cursor.restarts)
+    }
+
+    @Test fun anUpgradedCursorIsAdoptedWithoutResendingEverything() = runBlocking {
+        val r = ConnectorRig((1L..6L).map { sms(it) })
+        r.cursor.id = 4 // stored by the first version, without an anchor
+        r.connector.syncOnce()
+        assertEquals(listOf(smsSourceId(sms(5)), smsSourceId(sms(6))), r.ingest.batches.single().records.map { it.sourceId })
+        assertEquals(0, r.cursor.restarts)
+        assertEquals(anchorOf(sms(6)), r.cursor.anchor)
+    }
+
+    @Test fun theSameTextTwiceInOneBatchIsSentOnce() {
+        val twice = listOf(sms(1), sms(1).copy(id = 2))
+        assertEquals(1, smsBatches(twice, account, T0).single().first.records.size)
+    }
+
+    @Test fun aForgottenServerHearsTheManifestAgainFromTheNextOne() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)))
+        r.connector.syncOnce()
+        val announced = r.ingest.manifests.size
+        r.connector.syncOnce()
+        assertEquals(announced, r.ingest.manifests.size, "announced once per server")
+        r.connector.forgetServer()
+        r.connector.syncOnce()
+        assertEquals(announced + 1, r.ingest.manifests.size)
     }
 }
