@@ -7,7 +7,7 @@ wired with least-privilege networks and Podman secrets. Rootless Podman is the r
 
 ```sh
 ./deploy/init-secrets.sh                          # generates deploy/secrets/* and loads them as Podman secrets (idempotent)
-echo -n 'sk-ant-...' > deploy/secrets/anthropic_api_key   # optional: or paste the key in the app (see "Secrets")
+echo -n 'sk-or-...' > deploy/secrets/openrouter_api_key  # required: every model runs on OpenRouter
 ./deploy/init-secrets.sh                          # re-run to load the key
 cp deploy/.env.example deploy/.env                # optional overrides
 
@@ -24,10 +24,8 @@ use `up -d --build` (the `build:` sections use `deploy/container/jvm-app.Contain
 1. Start the stack (above) and make the backend reachable from the phone through Caddy (see "TLS").
 2. Open the app and enter the server address. If the instance is in the default `tofu` mode the first device
    enrolls without a code; otherwise enter the enrollment token (see "Enrolling the phone").
-3. Paste the Anthropic API key, unless you put it in `deploy/secrets/anthropic_api_key`. The app validates it
-   against the API, stores it in the backend's data volume (mode 0600) and starts the agents without a restart.
-   A key from the secret file wins: the app then refuses to replace it. With no key the stack runs and the agent
-   says it cannot work yet.
+3. The app checks that the server has its OpenRouter key (`deploy/secrets/openrouter_api_key` or
+   `OPENROUTER_API_KEY`). The key is never entered on the phone; the backend does not start without it.
 4. Connect sources: the connectors you started (`--profile mail`, `dav`) show up in the app with a settings form;
    approve the nouns they may push. Calendar, reminders and messages on the phone itself are a connector inside the app.
 5. Do the values interview (it becomes constitution v1) and set the morning call time.
@@ -41,7 +39,7 @@ source of truth for backups) and loads each into Podman's secret store under the
 | Secret | Used by | Notes |
 |---|---|---|
 | `postgres_password` | postgres, backend | generated |
-| `anthropic_api_key` | backend | yours; empty = no key yet (can be set in the app instead) |
+| `openrouter_api_key` | backend | yours; required (an empty file falls back to `OPENROUTER_API_KEY`). Every model call goes to OpenRouter, zero data retention |
 | `connector_<id>_key` | backend and that connector | generated; the backend registers every one it finds. `example`, `mail`, `dav` always |
 | `sandbox_key`, `browser_key` | backend and the matching computer | bearer keys for the `computers` profile |
 
@@ -126,7 +124,7 @@ proxy (Alpine, pinned; non-root, read-only rootfs, 128 MB) that enforces the pol
 | From | Can reach | Everything else |
 |---|---|---|
 | `browser` (network `browser-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
-| `backend` (network `backend-proxy`) | `api.anthropic.com` and hosts in `CLARITY_BACKEND_EGRESS_ALLOW` (443) | refused with 403 |
+| `backend` (network `backend-proxy`) | `openrouter.ai` and hosts in `CLARITY_BACKEND_EGRESS_ALLOW` (443) | refused with 403 |
 | `sandbox` (network `sandbox-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
 | connectors, `caddy` | their own egress networks (connectors usually talk to servers on your LAN) | |
 
@@ -251,7 +249,8 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 - With `CLARITY_MCP_SERVERS` set, the backend log lists each tool server's tools at boot
   (`MCP server 'sandbox': N tools (...)`) or warns that it is unreachable.
 - `e2e/run.sh` does all of this for you on a throwaway copy of the stack: its own compose project (`clarity-e2e`),
-  throwaway `e2e_*` secrets, loopback port 18080 and no Anthropic key. It enrolls a device, reads the setup status,
+  throwaway `e2e_*` secrets (a throwaway OpenRouter key, with `OPENROUTER_BASE_URL` on a closed loopback port so no model
+  call leaves the machine), loopback port 18080. It enrolls a device, reads the setup status,
   registers and grants the example connector and checks the record arrives, reads the feed over SSE, checks the
   sandbox and browser tool listings and that the egress proxy refuses LAN addresses from the browser's network,
   then removes everything. It does not touch a running `clarity` stack, and does not start Caddy. It is the `e2e`
