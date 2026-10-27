@@ -85,27 +85,35 @@ class OwnStateTools(
         when {
             input.cards.isEmpty() -> ToolResult.Error("`cards` must not be empty")
             input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal or tasks")
-            else -> {
-                val now = clock.now()
-                val constitution = constitutions.current() ?: emptyConstitution(now)
-                val about = input.about.map(::parseHandle)
-                val decision = notifyDecision(input.urgency, about, constitution, settings.current(), now)
-                // Keyed by the tool call, so a call re-run after a crash does not post twice.
-                val call = coroutineContext[ToolCallContext]
-                feed.append(
-                    FeedDraft(
-                        author = FeedItem.Author.AGENT,
-                        cards = input.cards,
-                        sessionId = input.sessionId?.let(::SessionId),
-                        clientInputId = call?.let { ClientInputId("tool:${it.runId}:${it.toolUseId}") },
-                        notify = decision.wire(),
-                        batchPending = decision is NotifyDecision.EveningBatch,
-                        about = if (decision is NotifyDecision.HoldUntil) about else emptyList(),
-                    ),
-                )
-                ToolResult.Ok(decision.describe(settings.homeZone()))
-            }
+            input.cards.any { it is Card.Report } -> ToolResult.Error("Show a report with present_report, which checks it exists and lists its formats.")
+            else -> post(input.cards, input.urgency, input.sessionId, input.about)
         }
+    }
+
+    /**
+     * Posts [cards] to the person's feed the way `send_to_user` does: the notification policy decides
+     * from [urgency], the constitution and settings, and the post is keyed by the tool call so a call
+     * re-run after a crash does not post twice. `present_report` goes through here too.
+     */
+    suspend fun post(cards: List<Card>, urgency: Urgency, sessionId: String?, about: List<String>): ToolResult {
+        val now = clock.now()
+        val constitution = constitutions.current() ?: emptyConstitution(now)
+        val handles = about.map(::parseHandle)
+        val decision = notifyDecision(urgency, handles, constitution, settings.current(), now)
+        // Keyed by the tool call, so a call re-run after a crash does not post twice.
+        val call = coroutineContext[ToolCallContext]
+        feed.append(
+            FeedDraft(
+                author = FeedItem.Author.AGENT,
+                cards = cards,
+                sessionId = sessionId?.let(::SessionId),
+                clientInputId = call?.let { ClientInputId("tool:${it.runId}:${it.toolUseId}") },
+                notify = decision.wire(),
+                batchPending = decision is NotifyDecision.EveningBatch,
+                about = if (decision is NotifyDecision.HoldUntil) handles else emptyList(),
+            ),
+        )
+        return ToolResult.Ok(decision.describe(settings.homeZone()))
     }
 
     @Serializable

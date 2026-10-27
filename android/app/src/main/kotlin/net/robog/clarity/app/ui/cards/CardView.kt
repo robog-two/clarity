@@ -81,6 +81,8 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier, env.onReview, env.onAlways, env.resetKey)
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
+        // No document viewer yet: say what is ready (downloads come with the viewer).
+        is Card.Report -> NoteBox(card.fallbackText, modifier)
     }
 }
 

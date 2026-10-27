@@ -47,6 +47,22 @@ data class AppConfig(
     val enrollment: EnrollmentConfig,
     val connectors: ConnectorsConfig,
     val agent: AgentConfig,
+    /** Reports: the render service and the rendition cache. */
+    val reports: ReportsConfig = ReportsConfig(),
 ) {
     companion object
 }
+
+/**
+ * Reports (documents the agent writes). [renderUrl] is the `render` service (pandoc + Typst, no
+ * network but the backend's), [renderKeyFile] its bearer key; each render times out after
+ * [renderTimeout]. Rendered files are a cache under `<dataDir>/reports`: once they pass
+ * [cacheMaxBytes] the least recently downloaded go first ([sweepInterval]); revisions are never touched.
+ */
+data class ReportsConfig(
+    val renderUrl: String = "http://render:8950",
+    val renderKeyFile: String? = "/run/secrets/render_key",
+    val renderTimeout: kotlin.time.Duration = kotlin.time.Duration.parse("60s"),
+    val cacheMaxBytes: Long = 500L * 1024 * 1024,
+    val sweepInterval: kotlin.time.Duration = kotlin.time.Duration.parse("1h"),
+)

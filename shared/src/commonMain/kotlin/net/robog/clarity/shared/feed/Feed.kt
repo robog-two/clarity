@@ -97,6 +97,17 @@ sealed interface Card {
     /** A form asking the person to enter a credential; the client fetches the request via `GET /api/v1/vault/requests/{id}`. */
     @Serializable @SerialName("credential_request")
     data class CredentialRequest(val requestId: net.robog.clarity.shared.vault.CredentialRequestId) : Card
+
+    /**
+     * A finished document the agent made (`present_report`). The client fetches it with
+     * `GET /api/v1/reports/{reportId}` and downloads a format with `…/download/{format}`. [formats]
+     * are wire names (`pdf`, `docx`, `odt`, `txt`, `md`), kept as strings so a newer format never
+     * breaks an older app. Until an app has a viewer it shows [fallbackText].
+     */
+    @Serializable @SerialName("report")
+    data class Report(val reportId: String, val title: String, val formats: List<String>) : Card {
+        val fallbackText: String get() = "📄 $title. Ready to download as ${formats.joinToString(", ")}."
+    }
 }
 
 @Serializable

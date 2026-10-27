@@ -158,13 +158,16 @@ class LeadRig(
     val nudges = ExposedNudgeStore(database, clock)
     val nudgeTools = NudgeTools(nudges, tasks, settingsProvider, clock)
 
+    val reportStore = net.robog.clarity.backend.reports.ExposedReportStore(database, clock)
+    val reportTools = net.robog.clarity.backend.reports.ReportTools(reportStore, own, journal, settingsProvider, clock)
+
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
     val lead: LeadAgent
 
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks)
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
@@ -178,7 +181,7 @@ class LeadRig(
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
-                    "agent_session, day_plan, settings, nudge " +
+                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source " +
                     "RESTART IDENTITY CASCADE",
             )
         }

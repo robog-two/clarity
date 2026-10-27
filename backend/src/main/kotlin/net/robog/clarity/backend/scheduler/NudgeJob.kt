@@ -118,6 +118,7 @@ fun cardText(card: Card): String? = when (card) {
     is Card.Note -> card.text
     is Card.Chips -> "${card.label}: " + card.items.joinToString("; ") { it.text }
     is Card.Plan -> card.items.joinToString(" ") { it.sentence() }
+    is Card.Report -> card.fallbackText
     else -> null
 }
 

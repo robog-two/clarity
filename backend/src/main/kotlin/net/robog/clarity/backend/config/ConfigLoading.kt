@@ -201,6 +201,54 @@ private class Lookup(
         )
     }
 
+    /**
+     * `CLARITY_WEB_SEARCH` (default true), `CLARITY_WEB_SEARCH_ENGINE` (parallel), `CLARITY_WEB_SEARCH_MODE`
+     * (fast; blank: the engine's default), `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10 per helper run),
+     * `CLARITY_WEB_SEARCH_MAX_RESULTS` (5 per search), `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` (comma list).
+     * Yaml `agent.webSearch.*`. Firecrawl is refused: OpenRouter rejects it under zero data retention.
+     */
+    context(_: Raise<ConfigError>)
+    fun webSearch(): WebSearchConfig {
+        val defaults = WebSearchConfig()
+        val engine = (string("CLARITY_WEB_SEARCH_ENGINE", "agent.webSearch.engine") ?: defaults.engine).trim().lowercase()
+        if (engine !in WebSearchConfig.ENGINES) {
+            raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_ENGINE", engine, "expected one of ${WebSearchConfig.ENGINES.joinToString()} (firecrawl is not allowed under zero data retention)"))
+        }
+        val modeRaw = stringOrBlank("CLARITY_WEB_SEARCH_MODE", "agent.webSearch.mode")
+        val mode = when {
+            modeRaw == null -> defaults.mode
+            modeRaw.isBlank() -> null
+            else -> modeRaw.trim().lowercase()
+        }
+        val maxResults = int("CLARITY_WEB_SEARCH_MAX_RESULTS", "agent.webSearch.maxResults", defaults.maxResults)
+        if (maxResults > 25) raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_MAX_RESULTS", maxResults.toString(), "expected 1 to 25"))
+        return WebSearchConfig(
+            enabled = bool("CLARITY_WEB_SEARCH", "agent.webSearch.enabled", defaults.enabled),
+            engine = engine,
+            mode = mode,
+            maxSearchesPerRun = int("CLARITY_WEB_SEARCH_MAX_SEARCHES", "agent.webSearch.maxSearchesPerRun", defaults.maxSearchesPerRun),
+            maxResults = maxResults,
+            excludedDomains = string("CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS", "agent.webSearch.excludedDomains")
+                ?.split(',')?.map { it.trim().lowercase() }?.filter(String::isNotEmpty).orEmpty(),
+        )
+    }
+
+    /**
+     * Reports: the render service (`CLARITY_RENDER_URL`, `CLARITY_RENDER_KEY_FILE`, `CLARITY_RENDER_TIMEOUT`)
+     * and the rendition cache's size cap (`CLARITY_REPORTS_CACHE_MAX_MB`, default 500).
+     */
+    context(_: Raise<ConfigError>)
+    fun reports(): ReportsConfig {
+        val defaults = ReportsConfig()
+        return ReportsConfig(
+            renderUrl = string("CLARITY_RENDER_URL", "reports.renderUrl") ?: defaults.renderUrl,
+            renderKeyFile = string("CLARITY_RENDER_KEY_FILE", "reports.renderKeyFile") ?: defaults.renderKeyFile,
+            renderTimeout = duration("CLARITY_RENDER_TIMEOUT", "reports.renderTimeout", defaults.renderTimeout),
+            cacheMaxBytes = int("CLARITY_REPORTS_CACHE_MAX_MB", "reports.cacheMaxMb", (defaults.cacheMaxBytes / MB).toInt()).toLong() * MB,
+            sweepInterval = duration("CLARITY_REPORTS_SWEEP_INTERVAL", "reports.sweepInterval", defaults.sweepInterval),
+        )
+    }
+
     context(_: Raise<ConfigError>)
     fun appConfig(): AppConfig {
         val mode = string("CLARITY_ENROLLMENT_MODE", "enrollment.mode").let { raw ->
@@ -268,10 +316,14 @@ private class Lookup(
                     leaseIdle = duration("CLARITY_BROWSER_LEASE_IDLE", "agent.browser.leaseIdle", Duration.parse("10m")),
                     leaseStale = duration("CLARITY_BROWSER_LEASE_STALE", "agent.browser.leaseStale", Duration.parse("2m")),
                 ),
+                webSearch = webSearch(),
             ),
+            reports = reports(),
         )
     }
 }
+
+private const val MB = 1024L * 1024L
 
 /**
  * Parses `name=url[;keyFile=/path],name2=url2` (the `CLARITY_MCP_SERVERS` format). Entries without

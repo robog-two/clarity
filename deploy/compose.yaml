@@ -1,7 +1,7 @@
 # Clarity: single-tenant stack for Podman (rootless works).
 #
 #   ./deploy/init-secrets.sh
-#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS)
+#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS) + render (reports)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
 #   podman compose -f deploy/compose.yaml --profile mail --profile dav up -d   # + email (IMAP/SMTP), calendar/contacts/files (DAV)
 #   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
@@ -108,6 +108,17 @@ services:
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}
+      # Reports: the render service (pandoc + Typst) on the internal `render` network, and the size cap
+      # of the rendered-file cache under /data/reports (rebuildable; revisions are never swept).
+      CLARITY_RENDER_URL: http://render:8950
+      CLARITY_RENDER_KEY_FILE: /run/secrets/render_key
+      CLARITY_RENDER_TIMEOUT: ${CLARITY_RENDER_TIMEOUT:-60s}
+      CLARITY_REPORTS_CACHE_MAX_MB: ${CLARITY_REPORTS_CACHE_MAX_MB:-500}
+      # Web search for helpers the lead grants it (OpenRouter's openrouter:web_search; never the lead). Blank = default.
+      CLARITY_WEB_SEARCH: ${CLARITY_WEB_SEARCH:-}
+      CLARITY_WEB_SEARCH_ENGINE: ${CLARITY_WEB_SEARCH_ENGINE:-}
+      CLARITY_WEB_SEARCH_MAX_SEARCHES: ${CLARITY_WEB_SEARCH_MAX_SEARCHES:-}
+      CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS: ${CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS:-}
     # The backend registers every /run/secrets/connector_<id>_key as a provisioned connector,
     # so each connector's key secret is mounted here AND into that connector.
     secrets:
@@ -118,6 +129,7 @@ services:
       - connector_dav_key
       - sandbox_key      # bearer keys for the `computers` profile (CLARITY_MCP_SERVERS keyFile=...)
       - browser_key
+      - render_key       # bearer key for the render service
     volumes:
       - backend-data:/data
     depends_on:
@@ -132,7 +144,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    networks: [db, ingest, tools, proxy, backend-proxy]
+    networks: [db, ingest, tools, proxy, backend-proxy, render]
     mem_limit: 1g
     cpus: 2.0
 
@@ -284,6 +296,36 @@ services:
     mem_limit: 512m
     cpus: 0.5
 
+  render:
+    <<: *hardened
+    # renderd: report revisions (Markdown + style) to PDF, Word, OpenDocument and plain text with pandoc
+    # and Typst (computers/render). Only on the internal `render` network: it reaches nothing, and only
+    # the backend reaches it. Stateless; the backend caches what it renders.
+    image: ghcr.io/robog-two/clarity-render:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/render.Containerfile
+    user: "10001:10001"
+    environment:
+      RENDER_PORT: "8950"
+      RENDER_KEY_FILE: /run/secrets/render_key
+      # Seconds per render; the backend waits a little longer (CLARITY_RENDER_TIMEOUT).
+      RENDER_TIMEOUT: "60"
+    secrets:
+      - render_key
+    tmpfs:
+      - /tmp:rw,nosuid,size=256m   # each render's working files, deleted after it
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8950/healthz', timeout=2).status == 200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    networks: [render]
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 128
+
   sandbox:
     <<: *hardened
     profiles: [computers]
@@ -365,6 +407,7 @@ networks:
   db:       { internal: true }   # postgres <-> backend
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
+  render:   { internal: true }   # backend <-> render (pandoc); the renderer reaches nothing else
   proxy:    { internal: true }   # caddy <-> backend
   # The proxy's client networks: browser, sandbox and backend, each <-> egress.
   browser-proxy: { internal: true }
@@ -395,6 +438,8 @@ secrets:
   sandbox_key:
     external: true
   browser_key:
+    external: true
+  render_key:
     external: true
 
 volumes:

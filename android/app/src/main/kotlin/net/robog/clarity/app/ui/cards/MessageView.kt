@@ -225,6 +225,7 @@ internal fun attachmentTitle(card: Card): String = when (card) {
     is Card.Plan -> "Your plan"
     is Card.Tasks -> card.label
     is Card.CredentialRequest -> "A login to save"
+    is Card.Report -> card.title
     else -> ""
 }.replaceFirstChar { it.uppercase() }
 
@@ -244,6 +245,7 @@ internal fun attachmentSummary(cards: List<Card>): String = when {
         is Card.Chips -> c.items.joinToString(" · ") { it.text }
         is Card.Plan -> c.items.joinToString(" · ") { it.action }
         is Card.Tasks -> "${c.taskIds.size} tasks"
+        is Card.Report -> c.formats.joinToString(" · ")
         else -> ""
     }
 }
@@ -358,6 +360,7 @@ private fun AttachmentPage(card: Card, tasks: Map<TaskId, AgentTask>) {
             )
         }
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, Modifier.padding(horizontal = 8.dp))
+        is Card.Report -> ListItem(colors = clear, headlineContent = { Text(card.fallbackText, style = MaterialTheme.clarityText.chat) })
         else -> Unit
     }
 }

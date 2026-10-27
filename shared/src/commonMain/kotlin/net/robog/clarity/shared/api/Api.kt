@@ -36,6 +36,11 @@ object ApiPaths {
     const val RUNS = "$APP/runs"
     /** `GET`: pending nudges and the timeline of resolved ones (`?since=<ISO instant>`, default the last 7 days). */
     const val NUDGES = "$APP/nudges"
+    /**
+     * `GET` lists reports; `GET {id}` is one with its revisions and sources; `GET {id}/source?rev=` its
+     * Markdown; `GET {id}/download/{format}?rev=` the rendered file (pdf, docx, odt, txt, md).
+     */
+    const val REPORTS = "$APP/reports"
 
     // Vault (under APP)
     const val VAULT = "$APP/vault"

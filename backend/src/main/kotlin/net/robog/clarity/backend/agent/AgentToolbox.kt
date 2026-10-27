@@ -4,6 +4,9 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.serialization.Serializable
+import net.robog.clarity.backend.reports.CITE_SOURCES
+import net.robog.clarity.backend.reports.REPORT_TOOLS
+import net.robog.clarity.backend.reports.ReportTools
 import net.robog.clarity.backend.vault.VaultTools
 import net.robog.clarity.harness.Description
 import net.robog.clarity.harness.Tool
@@ -16,12 +19,34 @@ import net.robog.clarity.shared.feed.TaskId
 /** The tools of a run, sorted by name; all of them are sent with every request. */
 data class ToolSet(val tools: List<Tool>)
 
-/** What a helper may use unless the lead narrows it: reads and the gated external tools. */
+/** What a helper may use unless the lead narrows it: reads, the gated external tools and the report tools. */
 val HELPER_BASE = setOf(
     "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
     "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
     "request_credential", "list_credentials", "ask_code",
-)
+) + REPORT_TOOLS
+
+/**
+ * The name the lead puts in `delegate`'s tools to give a helper OpenRouter's web search. It is not a
+ * tool of ours (the search runs on OpenRouter's side), never a default, and never the lead's.
+ */
+const val WEB_SEARCH = "web_search"
+
+/** MCP tools of the sandbox (`sandbox__shell`, ...). */
+const val SANDBOX_PREFIX = "sandbox__"
+
+/**
+ * Pure: the tools a helper with web search keeps from [requested]: only the sandbox and the report
+ * tools (always all of them, plus `cite_sources`). Everything that reads personal data or reaches
+ * outside (mail, contacts, calendar, memory, journal, profile, drafts and other guarded actions, the
+ * browser, the vault and credentials, saved results) is dropped, so a search query can only carry
+ * what the task says. Returns (kept, dropped); `web_search` itself is neither.
+ */
+fun researchTools(requested: List<String>): Pair<List<String>, List<String>> {
+    val asked = requested.filter { it != WEB_SEARCH }.distinct()
+    val (kept, dropped) = asked.partition { it.startsWith(SANDBOX_PREFIX) || it in REPORT_TOOLS || it == CITE_SOURCES }
+    return (kept + REPORT_TOOLS + CITE_SOURCES).distinct() to dropped
+}
 
 /** The memory clean-up helper's tools. */
 val MEMORY_GC_TOOLS = listOf(
@@ -36,7 +61,7 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
         val task: String,
-        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions and the vault tools (ask_code, list_credentials). A list REPLACES the defaults: only the tools named, so a browsing helper needs every browser__ tool it uses. Never includes send_to_user.")
+        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named, so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task.")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
         @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
@@ -128,6 +153,7 @@ class AgentToolbox(
     private val vault: VaultTools,
     private val browser: BrowserPilot,
     private val nudges: NudgeTools,
+    private val reports: ReportTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -149,6 +175,7 @@ class AgentToolbox(
             addAll(listOf(readJournal(), readProfile()))
             if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask(scope)))
         }
+        addAll(if (forLead) reports.leadTools(scope) else reports.helperTools(scope))
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
         if (forLead) addAll(nudges.all())
@@ -166,7 +193,7 @@ class AgentToolbox(
      */
     suspend fun helperTools(scope: RunScope, requested: List<String>?): HelperToolSet {
         val mcpAll = mcpTools(scope)
-        val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS } + gcOnly(scope) + mcpAll)
+        val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS || it.name == CITE_SOURCES } + gcOnly(scope) + mcpAll)
             .distinctBy { it.name }
         val chosen = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }
         else candidates.filter { it.name in requested }

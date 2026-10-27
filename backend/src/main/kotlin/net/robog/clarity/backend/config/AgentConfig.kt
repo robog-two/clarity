@@ -26,6 +26,8 @@ data class AgentConfig(
     val decisions: DecisionConfig = DecisionConfig(),
     /** The helper's browser: Jev grounding, gate and thresholds (`CLARITY_JEV_*`, `CLARITY_BROWSER_*`). */
     val browser: BrowserPilotConfig = BrowserPilotConfig(),
+    /** OpenRouter web search for helpers the lead grants it (`CLARITY_WEB_SEARCH*`). */
+    val webSearch: WebSearchConfig = WebSearchConfig(),
 ) {
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
@@ -104,6 +106,36 @@ data class BrowserPilotConfig(
     /** A holder whose heartbeat is this old is gone (a crash or restart; `CLARITY_BROWSER_LEASE_STALE`). */
     val leaseStale: kotlin.time.Duration = kotlin.time.Duration.parse("2m"),
 )
+
+/**
+ * OpenRouter's web search server tool (`openrouter:web_search`). Only a helper whose `delegate` call
+ * names `web_search` gets it, never the lead, and such a helper loses every personal-data and
+ * outbound tool. [engine] is OpenRouter's search engine (`parallel` by default, its `fast` [mode]
+ * costs about $0.001 a search); `firecrawl` is refused because OpenRouter rejects it under zero data
+ * retention. [maxSearchesPerRun] caps one helper run, [maxResults] each search, and
+ * [excludedDomains] is passed as the engine's block list. [enabled] false grants no search at all.
+ */
+data class WebSearchConfig(
+    val enabled: Boolean = true,
+    val engine: String = "parallel",
+    val mode: String? = "fast",
+    val maxSearchesPerRun: Int = 10,
+    val maxResults: Int = 5,
+    val excludedDomains: List<String> = emptyList(),
+) {
+    /** The server tool a granted helper's run carries; null when search is off. */
+    fun tool(): net.robog.clarity.harness.WebSearchTool? = if (!enabled) null else net.robog.clarity.harness.WebSearchTool(
+        engine = engine,
+        mode = mode,
+        maxResults = maxResults,
+        maxSearches = maxSearchesPerRun,
+        excludedDomains = excludedDomains,
+    )
+
+    companion object {
+        val ENGINES = listOf("parallel", "exa", "perplexity", "native", "auto")
+    }
+}
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */
 const val DEFAULT_JEV_MODEL = "typesafe/jev-1.14-20261014"

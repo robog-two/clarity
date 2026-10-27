@@ -186,6 +186,9 @@ class OpenRouterModelGateway(
         /** Prefix of a tool result the tool reported as failed (the wire has no `is_error`). */
         const val ERROR_PREFIX = "[error] "
 
+        /** The `type` of OpenRouter's web search server tool. */
+        const val WEB_SEARCH_TYPE = "openrouter:web_search"
+
         /** [Block.Raw.type] of the `reasoning_details` kept from a response, tagged with the provider and [REASONING_MODEL]. */
         const val REASONING_TYPE = "openrouter_reasoning"
 
@@ -217,10 +220,13 @@ class OpenRouterModelGateway(
                     routing.allowFallbacks?.let { put("allow_fallbacks", it) }
                 }
                 effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it, request.model)) } }
-                if (request.tools.isNotEmpty()) {
-                    put("tools", JsonArray(request.tools.map { it.toWire() }))
+                val search = request.webSearch
+                if (request.tools.isNotEmpty() || search != null) {
+                    put("tools", JsonArray(request.tools.map { it.toWire() } + listOfNotNull(search?.toWire())))
                     put("tool_choice", "auto")
                 }
+                // Bounds the server-tool steps of this request (web search is the only server tool sent).
+                search?.let { put("max_tool_calls", it.maxSearches) }
                 request.structuredOutput?.let { schema ->
                     putJsonObject("response_format") {
                         put("type", "json_schema")
@@ -255,6 +261,18 @@ class OpenRouterModelGateway(
             put("type", "text")
             put("text", text)
             cache?.let { put("cache_control", cacheControl(it)) }
+        }
+
+        /** OpenRouter's web search server tool (server tools guide): engine, mode and result caps. */
+        internal fun WebSearchTool.toWire(): JsonObject = buildJsonObject {
+            put("type", WEB_SEARCH_TYPE)
+            putJsonObject("parameters") {
+                put("engine", engine)
+                mode?.let { put("mode", it) }
+                put("max_results", maxResults)
+                put("max_total_results", maxTotalResults ?: (maxResults * maxSearches))
+                if (excludedDomains.isNotEmpty()) put("excluded_domains", JsonArray(excludedDomains.map(::JsonPrimitive)))
+            }
         }
 
         private fun ToolDefinition.toWire(): JsonObject = buildJsonObject {
@@ -414,13 +432,29 @@ class OpenRouterModelGateway(
             val cached = details.long("cached_tokens")
             val written = details.long("cache_write_tokens")
             val cost = (usage["cost"] as? JsonPrimitive)?.doubleOrNull
+            val searches = (usage["server_tool_use"] as? JsonObject)?.long("web_search_requests") ?: 0
             return Usage(
                 inputTokens = (usage.long("prompt_tokens") - cached - written).coerceAtLeast(0),
                 outputTokens = usage.long("completion_tokens"),
                 cacheCreationInputTokens = written,
                 cacheReadInputTokens = cached,
                 reportedCostMicros = cost?.let { (it * 1_000_000).roundToLong() },
+                webSearchRequests = searches,
             )
+        }
+
+        /**
+         * Pure: the `url_citation` annotations in [annotations] (a message's or a delta's
+         * `annotations`). Takes the nested shape (`{"type": "url_citation", "url_citation": {...}}`)
+         * and a flat one; anything else is skipped. `content` is the cited excerpt, when sent.
+         */
+        internal fun urlCitations(annotations: JsonArray?): List<UrlCitation> = annotations.orEmpty().mapNotNull { element ->
+            val annotation = element as? JsonObject ?: return@mapNotNull null
+            if ((annotation["type"] as? JsonPrimitive)?.contentOrNull != "url_citation") return@mapNotNull null
+            val body = annotation["url_citation"] as? JsonObject ?: annotation
+            fun field(name: String) = (body[name] as? JsonPrimitive)?.contentOrNull?.takeIf { it.isNotBlank() }
+            val url = field("url") ?: return@mapNotNull null
+            UrlCitation(url, field("title"), field("content"))
         }
     }
 
@@ -429,6 +463,7 @@ class OpenRouterModelGateway(
         private val text = StringBuilder()
         private val reasoning = sortedMapOf<Int, MutableMap<String, JsonElement>>()
         private val calls = sortedMapOf<Int, Call>()
+        private val citations = LinkedHashMap<String, UrlCitation>()
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
 
@@ -449,6 +484,10 @@ class OpenRouterModelGateway(
             (chunk["provider"] as? JsonPrimitive)?.contentOrNull?.let { provider = it }
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             val delta = choice["delta"] as? JsonObject
+            // Web search citations: streamed in a delta, or on the message of a non-streamed answer.
+            for (holder in listOf(delta, choice["message"] as? JsonObject)) {
+                urlCitations(holder?.get("annotations") as? JsonArray).forEach { citations.putIfAbsent(it.url, it) }
+            }
             ((delta?.get("content") as? JsonPrimitive)?.contentOrNull)?.takeIf { it.isNotEmpty() }?.let {
                 text.append(it)
                 onTextDelta(it)
@@ -487,7 +526,9 @@ class OpenRouterModelGateway(
             val answer = (if (text.isEmpty()) emptyList() else listOf(Block.Text(text.toString()))) + uses
             // Reasoning is kept only beside an answer, so no assistant turn is reasoning alone.
             val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
-            return ModelResponse(kept + answer, stopReason(finish, uses.isNotEmpty()), usage)
+            // Citations likewise, after the answer; the request builder never sends them back.
+            val cited = if (answer.isEmpty() || citations.isEmpty()) emptyList() else listOf(citationsBlock(citations.values.toList()))
+            return ModelResponse(kept + answer + cited, stopReason(finish, uses.isNotEmpty()), usage)
         }
 
         private companion object {

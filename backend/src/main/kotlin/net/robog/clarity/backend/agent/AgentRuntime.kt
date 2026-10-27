@@ -20,6 +20,7 @@ import net.robog.clarity.harness.SystemBlock
 import net.robog.clarity.harness.Tool
 import net.robog.clarity.harness.ToolPolicy
 import net.robog.clarity.harness.ToolResultSink
+import net.robog.clarity.harness.WebSearchTool
 import net.robog.clarity.harness.contextSince
 import net.robog.clarity.harness.definition
 import net.robog.clarity.harness.planTools
@@ -110,7 +111,8 @@ fun cachePolicy(role: RoleConfig): CachePolicy? = if (usesCacheBreakpoints(role.
 /**
  * Pure: the harness request for a role, a function of the role's configuration alone. The caller
  * passes the settings bound at the start of the run, so a run never switches models halfway. A long
- * thread compacts client-side ([shouldCompactClientSide]).
+ * thread compacts client-side ([shouldCompactClientSide]). [webSearch] is only ever passed for a
+ * helper the lead granted `web_search` ([HelperManager]); the lead's request never has it.
  */
 fun roleRequest(
     role: RoleConfig,
@@ -120,6 +122,7 @@ fun roleRequest(
     tools: List<Tool>,
     maxTurns: Int,
     sink: ToolResultSink?,
+    webSearch: WebSearchTool? = null,
 ): RunRequest {
     val cache = cachePolicy(role)
     return RunRequest(
@@ -135,6 +138,7 @@ fun roleRequest(
         runId = runId,
         cache = cache,
         resultSink = sink,
+        webSearch = webSearch,
     )
 }
 
