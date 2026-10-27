@@ -17,6 +17,8 @@ data class AgentConfig(
     val openRouterApiKey: String? = null,
     /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
     val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
+    /** `OPENROUTER_ZDR`, `OPENROUTER_QUANTIZATIONS`, `OPENROUTER_SORT`: which OpenRouter endpoints may serve a request. */
+    val openRouterRouting: net.robog.clarity.harness.OpenRouterRouting = net.robog.clarity.harness.OpenRouterRouting(),
 ) {
     /** The providers some boot-time role runs on; the live set comes from [net.robog.clarity.backend.agent.ModelSettings]. */
     val providersInUse: Set<ModelProvider> get() = roles.providersInUse
