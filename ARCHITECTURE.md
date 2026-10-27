@@ -108,7 +108,7 @@ net.robog.clarity.backend
 ├── dedup/                  pure: per-noun normalization + DedupKey
 ├── connectors/             registry, manifests, grants, config, action outbox (app + connector APIs)
 ├── triggers/               pure RecordQuery evaluator + trigger store + matcher on ingest events
-├── scheduler/              durable in-process jobs (morning call prep, evening batch, review)
+├── scheduler/              durable in-process jobs (morning call prep, evening batch, review, nudges)
 ├── agent/                  lead agent, inbox, journal, helpers, memory, domain tools, prompts
 ├── governance/             constitution store, guard, held actions, action executor, notify policy
 ├── feed/                   the app's feed: messages + cards, sequence numbers, SSE fan-out
@@ -140,6 +140,7 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/constitution` · `POST …/amendments` | device | current constitution, history, amend |
 | `GET /api/v1/held` · `POST /api/v1/held/{id}/decision` | device | held actions; approve (optionally edited), decline, talk |
 | `GET /api/v1/activity` | device | actions taken alone ("see allowed actions") |
+| `GET /api/v1/nudges?since={iso}` | device | pending nudges and the timeline of fired/skipped/missed/cancelled ones |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |
@@ -275,6 +276,137 @@ since the last review, skipped windows included. Each call is a `model_call` row
 `decision`; each verdict is one info log line. The model has no tools, so injected text can at
 most flip the answer. That is why it is never used for the constitution guard.
 
+### The helper's browser (pilot)
+
+A helper does not see the browser MCP's raw tools. It gets a small planner surface
+(`agent/BrowserPilot.kt`): `look(scope?)`, `act(intent, expect, value?)`, `read(scope?)`,
+`tabs(select?|close?)`, `go(url)`, `back()`, `wait(text|seconds)`, `sign_in(credential)`,
+`screenshot` and `downloads`. The text model plans in words; **Jev** (`CLARITY_JEV_MODEL`, default
+the dated `typesafe/jev-1.14-20261014`, the same decisions endpoint and zero-data-retention
+preferences as the review gate) grounds, double-checks and verifies each step on a screenshot. What
+Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny print never reach it.
+
+- **look** runs Clarity's observation script (`resources/browser/observe.js`, `evaluate_script` in
+  the isolated `clarity` sandbox realm) instead of the MCP snapshot, which stops at DOM depth 10.
+  It walks every element, open shadow roots and same-origin frames. It keeps visible controls,
+  headings and short text with role, name (80 chars), value or state, autocomplete and link
+  target, stamps a stable ref on each, and stays within about 1.5k tokens ("N more – narrow with
+  scope"). Its header shows the tabs with their openers, any dialog, the page, and the sign-in
+  state of each site in the run (phase, codes sent and when). It never returns password values or
+  the values of fields Clarity typed a secret into.
+- **act** takes one screenshot and makes one Jev call: a `noul` "is <intent> visible?" and a `box`.
+  A box always comes back, so the noul decides. The target is the element under the box centre
+  (`elementFromPoint`, through shadow roots). In live runs, targets that were on the page scored
+  0.84–1.0, absent ones 0.03–0.04, and a link drawn as a button 0.51–0.59, so
+  `CLARITY_JEV_VISIBLE_THRESHOLD` is 0.7, with a second step. When p is below it, or the box hit
+  something that fits the words worse than a control the text view names (a box between "Accept
+  all" and "Reject all"), Jev is asked once more about "the control labelled "<name>"". The step
+  goes ahead only if that box lands on the named element, or covers at least a quarter of it while
+  the element is on top at its own centre, so a field behind a dialog is never typed into.
+  Otherwise the answer is "not found" plus the text view, and nothing is clicked. With `CLARITY_BROWSER_TEXT_GROUNDING`,
+  the text decision model can confirm an exact name match from the text view instead (a Decision-1
+  `choice` over up to 20 refs); the screenshot path stays the default. The target is clicked or
+  filled with trusted input: by the snapshot uid of a one-time `data-clarity-ref` token, or, in a
+  shadow root or frame the selector cannot reach, by focusing it and sending keys.
+- **Gate.** Every pilot step goes through `BrowserGate.perform`. Placeholders, the deterministic
+  rules (`BrowserRules`), held approvals, never-alone payments, code waits and scrubbing work as
+  before. Jev adds a `choice` of `browse | sign_in | commit | unsure`, asked on the screenshot with
+  the target outlined in red (`combineVerdict`). Rules that ask always win. A Jev error asks the
+  person, and so does a commit (p ≥ 0.5). A step the rules pass also needs Jev to be sure
+  (p ≥ 0.9) that it is `browse` (or `sign_in` under a released login); otherwise it goes to the
+  triage. With `CLARITY_JEV_MAY_APPROVE` (default false), a sure `browse` also passes steps the
+  rules leave to the triage.
+- **Change report.** Built in code after every step: address and title, tabs opened or closed (a
+  `list_pages` diff), dialogs, new visible text (from a MutationObserver the script installs), the
+  target's new state, a code field appearing, and Jev's `noul` "did this happen: <expect>?" on the
+  after-screenshot. It says "No visible change" outright. After two of those in a row, `act`
+  refuses until the helper calls `look`. A helper's browser task stops after
+  `CLARITY_BROWSER_MAX_ACTIONS` (25) actions.
+- **Tabs.** A tab that a step opens is selected at once ("Opened tab 1 (opener 0)"). When a popup
+  closes, its opener is selected again. While a popup that a tab opened is still open, `go` and
+  `back` in that tab are refused ("finish or close the sign-in tab first").
+- **Code guard.** Kept per run and site: the codes sent, when, the labels that sent them, and the
+  phase. Once a code was sent, a step is refused for 10 minutes ("a code was sent at HH:MM – use
+  ask_code") when the rules flag it (a resend-like label, or a label that already sent a code) or
+  Jev does (a `noul` "would this send another code or restart sign-in?" with p ≥
+  `CLARITY_JEV_RESEND_THRESHOLD`, 0.3). After two codes for a site such a step is refused for good,
+  and the helper hands back to the person.
+- **sign_in** fills the fields it finds by autocomplete and type with the credential's
+  placeholders, submits, and asks Jev where the sign-in stands (`signed_in | needs_code |
+  choose_method | needs_login | error | other`). On a code page it asks the person through
+  `ask_code`, types the code placeholder (the fill waits for the person) and verifies. If the code
+  page is still there afterwards, the site did not take the code. The next `sign_in` asks the person
+  to type it again and never asks the site for a new code; after three rejected codes it hands back.
+  Its own steps go through the rules and the triage without a Jev step check.
+- **Secrets on screen.** For 8 actions on a site after a secret was typed (the screenshot quiet
+  period), `screenshot` is still refused to the model. Jev gets those frames with the
+  secret-filled fields painted black, and they are never stored.
+- **Audit trail** (`browser_step`, V20). Per step: the run, sequence, page, intent and expect, the
+  before screenshot and Jev's box, the element hit, every Jev and Decision answer with its
+  probabilities, latency and cost, the gate outcome, the action sent (placeholders only), the after
+  screenshot and the change report. Frames from the quiet period are not stored (`*_withheld`). The
+  app can read it, read-only and device-authenticated: `GET /api/v1/browser/steps?run=<id>`,
+  `GET …/{id}/before.png`, `…/{id}/after.png`. Each Jev and Decision call is also a `model_call`
+  row (role `decision`). The `browser-frame-retention` job (every 6 hours) clears the two
+  screenshot columns of steps older than `CLARITY_BROWSER_FRAME_RETENTION` (30 days) and sets
+  `frames_dropped_at` (V21). The rows stay, and nothing else is deleted.
+- **Fails closed.** With no decision model, an error or a refusal, the step is not taken ("I never
+  click blind") or it goes to the person.
+- **The lead never browses.** `BrowserGate` and the pilot refuse every call from a lead scope, and
+  the lead's tool set has no `browser__*` tools and neither `ask_code` nor `list_credentials`.
+- **One run at a time (the lease).** The browser is shared, so a run holds a lease while it uses it
+  (`agent/BrowserLease.kt`, V22). The lease is a single `browser_lease` row changed under `FOR UPDATE`,
+  with a FIFO `browser_lease_queue`.
+  - A run asks for the lease on its first browser call, not when it is spawned. While it waits, an
+    audit step says "waiting for the browser – another task is using it". After
+    `CLARITY_BROWSER_LEASE_WAIT` (30 minutes) it is told to report back.
+  - A new lease starts fresh: every tab is closed, one `about:blank` tab is opened, and the run's
+    code guard, sign-in state and change history are reset. Cookies and logins stay.
+  - The lease is released when the run finishes, fails or is cancelled. It is also released after
+    `CLARITY_BROWSER_LEASE_IDLE` (10 minutes) without a browser call, which includes waiting for a
+    person or a code. The run then queues again on its next call, starts fresh and is told so; a
+    step approved after the lease lapsed is not taken. A heartbeat older than
+    `CLARITY_BROWSER_LEASE_STALE` (2 minutes) also releases it, which covers crashes. At boot, leases
+    and queue places of runs that are no longer running are cleared.
+  - On release the run's last address and title are kept in `browser_resume`, with one line on where
+    it was in a sign-in. The first `look` of a later run of the same task (the same task text)
+    shows them; they are never reopened.
+
+Follow-ups. The harness keeps tool results append-only, because the prompt cache depends on it, so
+older `look` results are not collapsed. The screenshot is always of the selected tab: the MCP has
+no per-tab capture and no coordinate click, and `send_bidi_command` is not in its default tool
+preset.
+
+### Nudges (check-ins the lead schedules for itself)
+
+Triggers only fire on new data, and `create_reminder` only alerts the person's phone. A **nudge**
+wakes Clarity itself at a time, so it can ask how something is going ("nudge me throughout the
+day…"). Lead-only tools (`agent/Nudges.kt`):
+
+- `nudge(at, note, taskId?)`: `at` is the person's local time (ISO, or `HH:MM` for today); `note`
+  says what to ask. Refused when it is not in the future, more than 7 days ahead, 10 are already
+  pending, its day already has 12, or one for the same task (or, with no task, the same note) is
+  within 10 minutes. A task that is already done or cancelled is refused too.
+- `list_nudges`, `cancel_nudge(id)`.
+
+Each nudge is a row in `nudge` (`V24`): `due_at`, `note`, `task_id`, `status`
+(`pending` → `fired` | `skipped` | `missed` | `cancelled`), `reason`, `resolved_at`. The
+`nudges` job (every 30 s, `scheduler/NudgeJob.kt`) runs a pass in the background: it claims due
+pending rows with `FOR UPDATE SKIP LOCKED` and resolves each in the same transaction, so two
+instances never resolve one twice. Per nudge, in code and without a model call: more than 2 h late
+(the backend was down) → `missed`; linked task done or cancelled → `skipped`; 12 already fired
+today → `skipped`. When the person wrote in the last 20 minutes or a session is live, one
+Decision-1 question ("has the person already given the update this check-in asks for?", the
+conversation since the nudge was set under `untrusted`) skips it at p ≥ 0.8; any failure fires it.
+Otherwise it **fires**: a `nudge_due` inbox item (normal priority, dedup key `nudge:<id>`) tells
+the lead "Nudge you set at <time>: <note>" plus the task's title and status. A fired nudge posts
+nothing by itself; the lead decides whether to ask one short question through `send_to_user`, so
+the notify policy and protected-time holds apply as for anything else.
+
+Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
+returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
+an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
+
 ### Durability (journal instead of a workflow engine)
 
 Temporal is the textbook answer, but for one person on one box it adds a server and a schema
@@ -400,8 +532,8 @@ Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remembe
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls. External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
-plus acting browser tools (click, type, fill, …), which pass a fast guard check with page
-context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
+plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
+Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
 network, no credentials).
 
 ## Governance
@@ -477,8 +609,9 @@ The agent can log in and pay for things without ever seeing a password or card n
   forms nobody fills in close after 7 days (`expired`); the app sees them as cancelled with a
   `closedReason`.
 - **Using a credential.** The agent never sees a secret. It writes placeholders such as
-  `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g. "type
-  `[secret:bank_login_password]` into uid e12". The backend's browser tool wrapper finds the
+  `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g.
+  `act(intent="the password field", value="[secret:bank_login_password]")`, or lets `sign_in`
+  write them. The backend's browser tool wrapper finds the
   placeholders, checks there is a live **grant**, substitutes the values, and calls the browser
   MCP; the model's tool call, the journal and logs only ever hold the placeholder.
   A grant is created by an approval: the first placeholder for a credential on a site makes a
@@ -532,10 +665,22 @@ Two containers on the internal `tools` network, each an MCP server the backend c
 - **browser** (`computers/browser`): Firefox ESR (its password manager and form autofill off;
   credentials come only from the vault), headless, with uBlock Origin and Privacy
   Badger preinstalled in a fixed profile (ad/tracker blocking makes pages lighter and the
-  accessibility snapshot shorter), driven by Mozilla's Firefox DevTools MCP server over WebDriver
+  accessibility snapshot shorter). Fewer obstacles: Firefox's own cookie-banner handling rejects
+  banners it has rules for (`cookiebanners.service.mode` 1, including its generic rules for common
+  consent managers such as OneTrust), and uBlock Origin runs its default lists plus four
+  cookie-notice lists, set by enterprise policy (`3rdparty` → `toOverwrite.filterLists`):
+  `adguard-cookies`, `ublock-cookies-adguard`, `fanboy-cookiemonster` and `ublock-cookies-easylist`.
+  The image build serves pinned, sha256-checked copies of those lists to uBO during the prewarm run,
+  so they work from the first page after a cold start; uBO updates them itself through the egress
+  proxy afterwards. The annoyance lists (uBO Annoyances, EasyList Annoyances, AdGuard Popup
+  Overlays and Other Annoyances, Social Widgets) are left out on purpose. They hide sites'
+  login modals and Google's sign-in prompt, and AdGuard Popup Overlays blocks Google's
+  sign-in script on some sites. The browser is driven by Mozilla's Firefox DevTools MCP server over WebDriver
   BiDi; exposed as streamable HTTP. Reaches the public internet only through the egress proxy;
-  no access to other internal networks. Page reading order: accessibility/DOM snapshot with element uids first, screenshot
-  only when needed. Screenshots and long pages go to a helper, not the lead.
+  no access to other internal networks. Only helpers browse, through the pilot (see "The
+  helper's browser"): Clarity's observation script for text, screenshots for Jev. The lead never
+  browses. `computers/browser/pilot-e2e/` starts a throwaway copy with a test login site for the
+  pilot's live test.
 
 The cheapest-first ladder in the system prompt: what the agent already knows → domain tools →
 web search/fetch (server tools) → browser → sandbox → ask the person.

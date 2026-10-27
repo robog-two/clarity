@@ -24,6 +24,8 @@ data class AgentConfig(
     val openRouterRouting: net.robog.clarity.harness.OpenRouterRouting = net.robog.clarity.harness.OpenRouterRouting(),
     /** The decision model and the periodic review's gate (`CLARITY_DECISION*`, `CLARITY_REVIEW_GATE*`). */
     val decisions: DecisionConfig = DecisionConfig(),
+    /** The helper's browser: Jev grounding, gate and thresholds (`CLARITY_JEV_*`, `CLARITY_BROWSER_*`). */
+    val browser: BrowserPilotConfig = BrowserPilotConfig(),
 ) {
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
@@ -73,6 +75,38 @@ data class DecisionConfig(
 )
 
 const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
+
+/**
+ * The helper's browser ([net.robog.clarity.backend.agent.BrowserPilot]). Jev ([jevModel], a pinned
+ * dated id) finds the element an action names on a screenshot, double-checks the step and verifies
+ * the outcome. An element counts as found at [visibleThreshold] (0.7: in live runs
+ * present targets scored 0.84-1.0, absent ones 0.03-0.04, and a link drawn as a button 0.53-0.59;
+ * below it the pilot asks once more by the element's own name before giving up); a step is ordinary browsing for Jev
+ * at [approveThreshold], and with [jevMayApprove] off (the default) Jev can only make a step stricter.
+ * Once a sign-in code was sent, a step Jev rates at [resendThreshold] or more as sending another is
+ * refused. [textGrounding] lets an exact name match in the text view be confirmed by the text decision
+ * model instead of a screenshot. A browser task stops after [maxActions] actions.
+ */
+data class BrowserPilotConfig(
+    val jevModel: String = DEFAULT_JEV_MODEL,
+    val visibleThreshold: Double = 0.7,
+    val approveThreshold: Double = 0.9,
+    val resendThreshold: Double = 0.3,
+    val jevMayApprove: Boolean = false,
+    val textGrounding: Boolean = false,
+    val maxActions: Int = 25,
+    /** How long step screenshots are kept in the audit trail (`CLARITY_BROWSER_FRAME_RETENTION`); the rows stay. */
+    val frameRetention: kotlin.time.Duration = kotlin.time.Duration.parse("30d"),
+    /** One run holds the browser at a time: how long another waits for it (`CLARITY_BROWSER_LEASE_WAIT`). */
+    val leaseWait: kotlin.time.Duration = kotlin.time.Duration.parse("30m"),
+    /** A holder with no browser call for this long loses the lease (`CLARITY_BROWSER_LEASE_IDLE`), waiting for a person included. */
+    val leaseIdle: kotlin.time.Duration = kotlin.time.Duration.parse("10m"),
+    /** A holder whose heartbeat is this old is gone (a crash or restart; `CLARITY_BROWSER_LEASE_STALE`). */
+    val leaseStale: kotlin.time.Duration = kotlin.time.Duration.parse("2m"),
+)
+
+/** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */
+const val DEFAULT_JEV_MODEL = "typesafe/jev-1.14-20261014"
 
 
 /**

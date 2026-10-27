@@ -44,9 +44,13 @@ class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = fals
     fun taint() = untrustedFlag.set(true)
     fun userAsked() = requestedFlag.set(true)
 
+    /** The lead's current turn: the tasks it touched and the helpers it started (for linking them). */
+    val turn = TurnTasks()
+
     fun startTurn(untrusted: Boolean, requestedByUser: Boolean) {
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
+        turn.reset()
     }
 
     fun provenance() = Provenance(runId, untrustedInput = untrusted, requestedByUser = requestedByUser)

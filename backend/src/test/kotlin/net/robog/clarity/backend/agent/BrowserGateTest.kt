@@ -57,7 +57,7 @@ class BrowserGateTest : FunSpec({
     val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
     val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
 
-    class Rig(purpose: String? = null, lead: Boolean = true, codeWait: Duration = 200.milliseconds) {
+    class Rig(purpose: String? = null, lead: Boolean = false, codeWait: Duration = 200.milliseconds) {
         val clock = StepClock()
         val browser = FakeBrowser()
         val vault = MemoryVault(listOf(login, card))
@@ -66,9 +66,9 @@ class BrowserGateTest : FunSpec({
         var triage = TriageVerdict(true, "ordinary")
         val triaged = CopyOnWriteArrayList<TriageStep>()
         val waiters = HeldWaiters(clock)
-        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters, codeWait)
+        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters, codeWait, personWait = Duration.ZERO)
         val scope = RunScope("run-1", isLead = lead, purpose = purpose)
-        val tools: Map<String, Tool> = gate.wrap(scope, browser.tools).associateBy { it.name }
+        val tools: Map<String, Tool> = gate.gatedTools(scope, browser.tools).associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue("browser__$name").invoke(input)
         suspend fun snapshot() = call("take_snapshot", JsonObject(emptyMap()))
@@ -337,12 +337,13 @@ class BrowserGateTest : FunSpec({
         silent.browser.calls("click_by_uid").shouldBeEmpty()
     }
 
-    test("the lead never waits on a held step") {
+    test("the lead is refused every browser call, reads and screenshots included, and nothing reaches the browser") {
         val rig = Rig(lead = true)
-        rig.snapshot()
-        rig.governance.decision = HeldAction.Status.APPROVED
-        (rig.call("click_by_uid", args("uid" to "1_4")) as ToolResult.Ok).content shouldContain "Waiting"
-        rig.governance.awaited.shouldBeEmpty()
+        for (tool in listOf("take_snapshot", "click_by_uid", "fill_by_uid", "navigate_page", "screenshot_page", "list_pages")) {
+            rig.call(tool, args("uid" to "1_4", "value" to "x", "url" to "https://bank.example.com/")) shouldBe ToolResult.Error(BrowserGate.LEAD_REFUSED)
+        }
+        rig.browser.received.shouldBeEmpty()
+        rig.governance.steps.shouldBeEmpty()
     }
 
     test("a snapshot of part of the page adds to the known elements instead of replacing them") {
@@ -398,7 +399,7 @@ class BrowserGateTest : FunSpec({
             override val effect = ToolEffect.EXTERNAL
             override suspend fun invoke(input: JsonObject): ToolResult = error("driver said hunter2!")
         }
-        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__type_text" } + boom).associateBy { it.name }
+        val tools = rig.gate.gatedTools(rig.scope, rig.browser.tools.filter { it.name != "browser__type_text" } + boom).associateBy { it.name }
         val result = tools.getValue("browser__type_text").invoke(args("text" to "hello"))
         result.shouldBeInstanceOf<ToolResult.Error>().message shouldBe "Browser tool type_text failed: driver said [secret:bank_login_password]"
     }
@@ -421,7 +422,7 @@ class BrowserGateTest : FunSpec({
                 return ToolResult.Ok("filled")
             }
         }
-        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__fill_by_uid" } + slow).associateBy { it.name }
+        val tools = rig.gate.gatedTools(rig.scope, rig.browser.tools.filter { it.name != "browser__fill_by_uid" } + slow).associateBy { it.name }
         tools.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap()))
         kotlinx.coroutines.coroutineScope {
             listOf("1_1" to "[secret:bank_login_username]", "1_2" to "[secret:bank_login_password]").map { (uid, value) ->
@@ -477,7 +478,7 @@ class BrowserGateTest : FunSpec({
                 return ToolResult.Error("The tool's reply was cut off or unreadable (click_by_uid): Cannot read Json element because of unexpected end of the input at path: \$")
             }
         }
-        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + cutOff).associateBy { it.name }
+        val tools = rig.gate.gatedTools(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + cutOff).associateBy { it.name }
         tools.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap()))
         val result = tools.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Ok>().content
         result shouldContain "the selected tab is now https://bank.example.com/verify"
@@ -487,13 +488,13 @@ class BrowserGateTest : FunSpec({
         val throwing = object : Tool by cutOff {
             override suspend fun invoke(input: JsonObject): ToolResult = throw kotlinx.serialization.SerializationException("Unexpected JSON token at offset 0")
         }
-        val tools2 = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + throwing).associateBy { it.name }
+        val tools2 = rig.gate.gatedTools(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + throwing).associateBy { it.name }
         tools2.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "still https://bank.example.com/verify"
         // an ordinary refusal stays an error
         val refused = object : Tool by cutOff {
             override suspend fun invoke(input: JsonObject): ToolResult = ToolResult.Error("e9 stale/invalid. Call take_snapshot first.")
         }
-        val tools3 = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + refused).associateBy { it.name }
+        val tools3 = rig.gate.gatedTools(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + refused).associateBy { it.name }
         tools3.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Error>()
     }
 

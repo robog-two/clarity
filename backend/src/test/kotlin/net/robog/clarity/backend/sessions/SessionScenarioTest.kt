@@ -240,7 +240,7 @@ class SessionScenarioTest : FunSpec({
         r.model.requests.first().tools.map { it.name }.toSet().containsAll(SESSION_TOOL_NAMES) shouldBe true
 
         // --- Today reflects the call
-        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.settingsProvider, r.clock).today()
+        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.settingsProvider, r.clock).today()
         today.called shouldBe true
         today.priorities.map { it.text } shouldBe listOf("onboarding spec", "Dana’s contract")
         today.priorities.map { it.sub } shouldBe listOf("important", "due today")
@@ -279,6 +279,15 @@ class SessionScenarioTest : FunSpec({
         val interview = r.sessionService.start(StartSession(SessionKind.VALUES_INTERVIEW)).ok()
         r.sessionService.active().map { it.id } shouldBe listOf(interview.id)
         r.sessionService.recent().count { it.state == Session.State.ENDED } shouldBe 1
+    }
+
+    test("set_priorities decodes an object parameter the model sent as a JSON string (seen in production)") {
+        val r = rig()
+        val production = """{"important": "{\"text\": \"Finish ML midterm (data mining report)\", \"note\": \"needs to be done\"}"}"""
+        val tool = r.sessionTools.all().first { it.name == "set_priorities" }
+        val out = tool.invoke(ClarityJson.parseToJsonElement(production) as JsonObject).shouldBeInstanceOf<ToolResult.Error>()
+        // past decoding: it reaches the session check instead of failing as invalid input
+        out.message shouldContain "active"
     }
 
     test("a values interview: seven kept lines become constitution v1 with tiers, people and protected times") {

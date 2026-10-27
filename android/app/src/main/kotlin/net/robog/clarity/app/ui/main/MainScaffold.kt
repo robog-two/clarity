@@ -59,6 +59,8 @@ fun MainScaffold(
     tab: MainTab,
     onTab: (MainTab) -> Unit,
     onReview: (HeldActionId) -> Unit,
+    /** A task on Today tapped: its thread. */
+    onOpenTask: (net.robog.clarity.shared.feed.TaskId) -> Unit = {},
     onOpenHeldItem: (HeldActionId) -> Unit,
     onOpenConstitution: () -> Unit,
     onOpenConnector: (String) -> Unit,
@@ -108,7 +110,7 @@ fun MainScaffold(
     ) { padding ->
         val content = Modifier.padding(padding)
         when (tab) {
-            MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content)
+            MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content, onOpenTask = onOpenTask)
             MainTab.Ask -> AskScreen(content, onReview = onReview)
             MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
             MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content)

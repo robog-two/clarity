@@ -128,6 +128,10 @@ class LeadPureTest : FunSpec({
             AgentPrompts.LEAD_SYSTEM shouldContain "<untrusted"
             AgentPrompts.LEAD_SYSTEM shouldContain "Cheapest first"
             AgentPrompts.HELPER_SYSTEM shouldContain "cannot talk to the person"
+            // Clarity is "it", in what the lead writes and what a helper says about it.
+            AgentPrompts.LEAD_SYSTEM shouldContain "Clarity is \"it\""
+            AgentPrompts.LEAD_SYSTEM shouldContain "tell it where the report stands"
+            AgentPrompts.HELPER_SYSTEM shouldContain "Clarity is \"it\""
         }
         test("role requests follow the role config and never switch models") {
             val roles = AgentRoles()

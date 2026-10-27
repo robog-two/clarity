@@ -255,6 +255,19 @@ private class Lookup(
                     reviewThreshold = fraction("CLARITY_REVIEW_GATE_THRESHOLD", "agent.decisions.reviewThreshold", 0.3),
                     reviewMaxQuiet = duration("CLARITY_REVIEW_MAX_QUIET", "agent.decisions.reviewMaxQuiet", Duration.parse("8h")),
                 ),
+                browser = BrowserPilotConfig(
+                    jevModel = string("CLARITY_JEV_MODEL", "agent.browser.jevModel") ?: DEFAULT_JEV_MODEL,
+                    visibleThreshold = fraction("CLARITY_JEV_VISIBLE_THRESHOLD", "agent.browser.visibleThreshold", 0.7),
+                    approveThreshold = fraction("CLARITY_JEV_APPROVE_THRESHOLD", "agent.browser.approveThreshold", 0.9),
+                    resendThreshold = fraction("CLARITY_JEV_RESEND_THRESHOLD", "agent.browser.resendThreshold", 0.3),
+                    jevMayApprove = bool("CLARITY_JEV_MAY_APPROVE", "agent.browser.jevMayApprove", false),
+                    textGrounding = bool("CLARITY_BROWSER_TEXT_GROUNDING", "agent.browser.textGrounding", false),
+                    maxActions = int("CLARITY_BROWSER_MAX_ACTIONS", "agent.browser.maxActions", 25),
+                    frameRetention = duration("CLARITY_BROWSER_FRAME_RETENTION", "agent.browser.frameRetention", Duration.parse("30d")),
+                    leaseWait = duration("CLARITY_BROWSER_LEASE_WAIT", "agent.browser.leaseWait", Duration.parse("30m")),
+                    leaseIdle = duration("CLARITY_BROWSER_LEASE_IDLE", "agent.browser.leaseIdle", Duration.parse("10m")),
+                    leaseStale = duration("CLARITY_BROWSER_LEASE_STALE", "agent.browser.leaseStale", Duration.parse("2m")),
+                ),
             ),
         )
     }

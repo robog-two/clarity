@@ -28,6 +28,14 @@ object ApiPaths {
     const val CONSTITUTION = "$APP/constitution"
     const val HELD = "$APP/held"
     const val ACTIVITY = "$APP/activity"
+    /** `GET ?run=<id>` lists a helper run's browser steps (the audit trail); `GET {id}/before.png` and `{id}/after.png` are its screenshots. */
+    const val BROWSER_STEPS = "$APP/browser/steps"
+    /** `GET {id}/path?from=&limit=`: a task's Agent's Path (its lead turns and every helper run linked to it). */
+    const val TASKS = "$APP/tasks"
+    /** `GET {id}/path?from=&limit=`: one helper run's Agent's Path. */
+    const val RUNS = "$APP/runs"
+    /** `GET`: pending nudges and the timeline of resolved ones (`?since=<ISO instant>`, default the last 7 days). */
+    const val NUDGES = "$APP/nudges"
 
     // Vault (under APP)
     const val VAULT = "$APP/vault"

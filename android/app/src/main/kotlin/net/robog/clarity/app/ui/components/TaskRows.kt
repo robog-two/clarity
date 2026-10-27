@@ -89,11 +89,20 @@ fun TaskRow(
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun CompactTaskRow(title: String, detail: String, status: String, shape: Shape, mark: RoundedPolygon, markFill: Color, modifier: Modifier = Modifier) {
+fun CompactTaskRow(
+    title: String,
+    detail: String,
+    status: String,
+    shape: Shape,
+    mark: RoundedPolygon,
+    markFill: Color,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
     val colors = MaterialTheme.colorScheme
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainerLow, contentColor = colors.onSurfaceVariant, shape = shape) {
         Row(
-            Modifier.heightIn(min = 48.dp).padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 48.dp).padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

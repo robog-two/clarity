@@ -6,6 +6,7 @@ import io.ktor.client.request.header
 import io.modelcontextprotocol.kotlin.sdk.client.Client
 import io.modelcontextprotocol.kotlin.sdk.client.StreamableHttpClientTransport
 import io.modelcontextprotocol.kotlin.sdk.client.mcpStreamableHttpTransport
+import io.modelcontextprotocol.kotlin.sdk.types.ImageContent
 import io.modelcontextprotocol.kotlin.sdk.types.Implementation
 import io.modelcontextprotocol.kotlin.sdk.types.ListToolsRequest
 import io.modelcontextprotocol.kotlin.sdk.types.PaginatedRequestParams
@@ -139,7 +140,8 @@ class McpToolProvider(
                 val text = result.content.joinToString("\n") { block ->
                     if (block is TextContent) block.text else "[${block::class.simpleName ?: "content"} omitted]"
                 }
-                return if (result.isError == true) ToolResult.Error(text) else ToolResult.Ok(text)
+                val images = result.content.filterIsInstance<ImageContent>().map { ToolImage(it.mimeType, it.data) }
+                return if (result.isError == true) ToolResult.Error(text) else ToolResult.Ok(text, images)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

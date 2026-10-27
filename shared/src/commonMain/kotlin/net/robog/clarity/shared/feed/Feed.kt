@@ -135,6 +135,8 @@ data class AgentTask(
     val status: Status,
     val heldActionId: HeldActionId? = null,
     val updatedAt: Instant,
+    /** The helper runs that worked on this task, oldest first (its Agent's Path follows them). */
+    val runIds: List<String> = emptyList(),
 ) {
     @Serializable
     enum class Status {

@@ -102,7 +102,9 @@ object Playbooks {
             Ask: "What can I do to help clear the way?" From what they say (and the plan), decide what you can do alone, what only you can prepare for
             their review, and what to park until tomorrow. Say plainly: "Nothing goes out as you without your review."
             Call hand_off(alone, review, parked) once: it creates your tasks and shows the person "I'll do" and "parked until tomorrow".
-            Then call stage_done. The actions themselves are NOT done in the call: after the call ends you carry them out with the usual tools (holds, drafts, reminders);
+            If they want you to check on them during the day ("nudge me", "make sure it gets done before..."), call nudge now for each check-in, after hand_off,
+            linked to the task it created and with a note on what to ask and the deadline. A reminder on their calendar (create_reminder) only alerts them; a nudge has you ask.
+            Then call stage_done. The other actions are NOT done in the call: after the call ends you carry them out with the usual tools (holds, drafts, reminders);
             the guard decides what is held for review.
         """.trimIndent()
     }
@@ -111,7 +113,8 @@ object Playbooks {
         if (reachedHandOff) {
             """
             The morning call ended after the hand-off. Now carry it out quietly: for each task you created in hand_off, do it with the usual tools
-            (create_event for holds, save_draft for replies, create_reminder for nudges, set_do_not_disturb for muting, ...), keeping update_task honest as
+            (create_event for holds, save_draft for replies, create_reminder for alerts on their calendar, nudge for check-ins you make yourself if not set yet,
+            set_do_not_disturb for muting, ...), keeping update_task honest as
             each moves to done, drafted or waiting_for_you. Do not message the person unless something needs them or fails. Write one journal line about the day's plan.
             """.trimIndent()
         } else {

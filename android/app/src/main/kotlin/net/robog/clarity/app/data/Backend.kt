@@ -25,6 +25,8 @@ import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.InputSource
+import net.robog.clarity.shared.feed.TaskId
+import net.robog.clarity.shared.path.AgentPath
 import net.robog.clarity.shared.feed.UserInput
 import net.robog.clarity.shared.governance.ActivityEntry
 import net.robog.clarity.shared.governance.Amendment
@@ -240,6 +242,30 @@ class DefaultAmendmentsRepository(private val api: ClarityApi) : AmendmentsRepos
     override suspend fun discard(id: AmendmentId) = api.discardAmendment(id)
     override suspend fun propose(request: ProposeAmendment) = api.proposeAmendment(request)
 }
+
+// --- the Agent's Path ---
+
+/** A task's or a helper run's path, page by page, and where its screenshots are. */
+interface PathRepository {
+    suspend fun task(id: TaskId, from: Int = 0, limit: Int = PATH_PAGE): ApiResult<AgentPath>
+    suspend fun run(id: String, from: Int = 0, limit: Int = PATH_PAGE): ApiResult<AgentPath>
+
+    /** The instance's address, the base of the screenshot URLs ([frameUrl]); null before the app is set up. */
+    suspend fun base(): String?
+}
+
+/** How many path items one request asks for. */
+const val PATH_PAGE = 100
+
+class DefaultPathRepository(private val api: net.robog.clarity.app.net.PathApi) : PathRepository {
+    override suspend fun task(id: TaskId, from: Int, limit: Int) = api.taskPath(id, from, limit)
+    override suspend fun run(id: String, from: Int, limit: Int) = api.runPath(id, from, limit)
+    override suspend fun base(): String? = api.baseUrl()
+}
+
+/** Pure: where step [stepId]'s screenshot is on the instance at [base]. */
+fun frameUrl(base: String, stepId: Long, after: Boolean): String =
+    base.trimEnd('/') + net.robog.clarity.shared.api.ApiPaths.BROWSER_STEPS + "/$stepId/" + if (after) "after.png" else "before.png"
 
 // --- feed ---
 

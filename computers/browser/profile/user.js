@@ -101,3 +101,10 @@ user_pref("network.proxy.no_proxies_on", "");
 user_pref("network.proxy.failover_timeout", 5);
 // WebRTC off so nothing (STUN/ICE) goes around the proxy.
 user_pref("media.peerconnection.enabled", false);
+// Cookie banners: Firefox rejects them itself where it has a rule, including its generic rules for
+// common consent managers (1 = reject; 2 would accept when rejecting is not offered, which we never
+// want). uBlock Origin's cookie-notice lists (policies.json) hide the rest.
+user_pref("cookiebanners.service.mode", 1);
+user_pref("cookiebanners.service.mode.privateBrowsing", 1);
+user_pref("cookiebanners.service.enableGlobalRules", true);
+user_pref("cookiebanners.service.enableGlobalRules.subFrames", true);

@@ -80,6 +80,18 @@ sealed interface InboxItem {
         override val summary get() = "Scheduled job \"$job\" is due. $instruction"
     }
 
+    /**
+     * A nudge the lead set for itself came due. [at] is its due time already on the person's clock;
+     * [task] is the linked task's title and status, if any. All of it is the lead's own text.
+     */
+    @Serializable @SerialName("nudge_due")
+    data class NudgeDue(val nudgeId: String, val at: String, val note: String, val task: String? = null) : InboxItem {
+        override val priority get() = Priority.NORMAL
+        override val summary get() = "Nudge you set at $at: $note" + (task?.let { " Task: $it." } ?: "") +
+            " If it still helps, ask the person one short, specific question with send_to_user (urgency urgent: a check-in they asked for; " +
+            "protected time still holds it). If it no longer applies, send nothing."
+    }
+
     /** A helper finished. Its output was derived from whatever it read, so it is quoted as untrusted. */
     @Serializable @SerialName("helper_result")
     data class HelperResult(val runId: String, val task: String, val ok: Boolean, val result: String) : InboxItem {

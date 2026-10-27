@@ -11,6 +11,7 @@ import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.feed.TaskId
 
 /** The tools of a run, sorted by name; all of them are sent with every request. */
 data class ToolSet(val tools: List<Tool>)
@@ -30,7 +31,7 @@ val MEMORY_GC_TOOLS = listOf(
 /** The helper-control tools of the lead. */
 @Inject
 @SingleIn(AppScope::class)
-class HelperTools(private val helpers: Lazy<HelperManager>) {
+class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: TaskStore) {
     @Serializable
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
@@ -38,6 +39,8 @@ class HelperTools(private val helpers: Lazy<HelperManager>) {
         @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions and the vault tools (ask_code, list_credentials). A list REPLACES the defaults: only the tools named, so a browsing helper needs every browser__ tool it uses. Never includes send_to_user.")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
+        @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
+        val taskId: String? = null,
     )
 
     @Serializable
@@ -52,6 +55,16 @@ class HelperTools(private val helpers: Lazy<HelperManager>) {
     @Serializable
     class CancelHelperInput(val id: String)
 
+    /** Links a new helper to [taskId], or to the one task the lead's turn touched ([TurnTasks]). */
+    private suspend fun linkHelper(scope: RunScope, runId: String, taskId: TaskId?) {
+        if (taskId != null) {
+            tasks.link(taskId, runId, TaskLink.EXPLICIT)
+            scope.turn.touched(taskId.value).forEach { tasks.link(taskId, it, TaskLink.INFERRED) }
+        } else {
+            scope.turn.started(runId)?.let { tasks.link(TaskId(it), runId, TaskLink.INFERRED) }
+        }
+    }
+
     fun all(scope: RunScope): List<Tool> = listOf(
         tool<DelegateInput>(
             name = "delegate",
@@ -60,8 +73,15 @@ class HelperTools(private val helpers: Lazy<HelperManager>) {
             effect = ToolEffect.WRITE,
             json = ClarityJson,
         ) { input ->
-            if (input.task.isBlank()) ToolResult.Error("`task` must not be empty")
-            else helpers.value.delegate(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+            val taskId = input.taskId?.trim()?.ifEmpty { null }?.let(::TaskId)
+            when {
+                input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
+                taskId != null && tasks.get(taskId) == null -> ToolResult.Error("No task with id $taskId; create it with update_task first, or omit `taskId`.")
+                else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
+                    linkHelper(scope, started.id, taskId)
+                    ToolResult.Ok(started.text)
+                }
+            }
         },
         tool<ListHelpersInput>(
             name = "list_helpers",
@@ -106,7 +126,8 @@ class AgentToolbox(
     private val mcp: McpToolSources,
     private val session: SessionTools,
     private val vault: VaultTools,
-    private val browser: BrowserGate,
+    private val browser: BrowserPilot,
+    private val nudges: NudgeTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -118,17 +139,19 @@ class AgentToolbox(
         addAll(domain.all)
         addAll(external.all(scope))
         add(results.readResultTool())
-        addAll(vault.all(scope))
+        // A code or a saved login is only ever typed into a page, and the lead never browses.
+        addAll(vault.all(scope).filter { !forLead || it.name !in BROWSER_COMPANIONS })
         with(memory) {
             addAll(listOf(searchMemory(), readMemory(), openCollection()))
             if (forLead) addAll(listOf(saveNote(), manageCollection()))
         }
         with(own) {
             addAll(listOf(readJournal(), readProfile()))
-            if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask()))
+            if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask(scope)))
         }
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
+        if (forLead) addAll(nudges.all())
     }.let { guarded(scope, it) }
 
     /**
@@ -151,6 +174,9 @@ class AgentToolbox(
         return HelperToolSet(ToolSet(chosen.sortedBy { it.name }), unknown)
 
     }
+
+    /** A helper run finished, failed or was cancelled: it lets go of the browser. */
+    suspend fun runEnded(runId: String) = browser.runEnded(runId)
 
     private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile(), memory.saveNote(), memory.manageCollection()))
 }

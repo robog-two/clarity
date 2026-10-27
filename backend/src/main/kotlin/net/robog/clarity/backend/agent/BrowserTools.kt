@@ -223,20 +223,44 @@ private sealed interface Substitution {
 private class Attempt(val result: ToolResult, val waitingOn: HeldActionId? = null)
 
 /**
- * Wraps the browser MCP tools (`browser__*`) for an agent run:
+ * One call the gate sends to the browser for a run: a wrapped raw tool, or a step of the pilot.
  *
- * - raw-script and other unclassified tools are hidden ([classifyBrowserTool]);
+ * [remote] is the MCP tool the rules judge it as (`click_by_uid`, `fill_by_uid`, ...), [input] the
+ * call as the agent wrote it (placeholders, never values). [targets] are the elements it acts on
+ * (id to element); null means "look them up in the last snapshot by uid". [jev] is the pilot's Jev
+ * check of the step, asked only when the rules leave the step open. [execute] runs the call with
+ * the substituted input; [pages] is the browser's `list_pages`, for the current address.
+ */
+class GateStep(
+    val remote: String,
+    val input: JsonObject,
+    val kind: BrowserKind,
+    val pages: Tool?,
+    val targets: List<Pair<String, Element?>>? = null,
+    val jev: (suspend (description: String) -> JevCheck)? = null,
+    /** Checked before every try (after waiting for the person too): a result here stops the call (the pilot's lease). */
+    val guard: (suspend () -> ToolResult?)? = null,
+    val execute: suspend (JsonObject) -> ToolResult,
+)
+
+/**
+ * Wraps the browser MCP tools for an agent run. The helper itself sees the pilot's tools
+ * ([BrowserPilot]); every step they take reaches the browser through [perform]:
+ *
  * - `[secret:<credential>_<field>]` placeholders in text-entry inputs are replaced by values only
  *   under a live grant for that credential on the page's registrable domain (https only); without
  *   one the person is asked, on the phone, and the call does not run;
- * - acting tools (click, type, fill, press key, upload, drag) are checked first: deterministic
- *   rules ([stepVerdict]), then the cheap triage model, and anything risky is held through the
- *   guard; one approval lets the identical call through once;
+ * - acting steps (click, type, fill, press key, upload, drag) are checked first: deterministic
+ *   rules ([stepVerdict]), then Jev's view of the step when the pilot asked it ([combineVerdict]),
+ *   then the cheap triage model, and anything risky is held through the guard; one approval lets
+ *   the identical call through once;
  * - a helper whose call is held (a step, a login or a code) waits for the person's answer, up to
  *   [WAIT_FOR_PERSON], and then runs the same call again itself, on the same page;
  * - every result, success or error, is scrubbed of released values before anything sees it.
  *
- * The model's call, the journal and every database row only ever hold the placeholders.
+ * [gatedTools] is the same gate over the raw `browser__*` tools (raw-script and unclassified tools
+ * hidden, [classifyBrowserTool]); the helper no longer gets them, the tests still drive the gate
+ * through them. The model's call, the journal and every database row only ever hold the placeholders.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -249,8 +273,11 @@ class BrowserGate(
     private val waiters: HeldWaiters,
     /** How long a fill waits for a two-factor code the person has not typed yet ([CODE_WAIT]). */
     private val codeWait: Duration = CODE_WAIT,
+    /** How long a helper waits for the person to answer a held step ([WAIT_FOR_PERSON]). */
+    private val personWait: Duration = WAIT_FOR_PERSON,
 ) {
-    private val state = BrowserState()
+    /** What the gate believes about the shared browser (the pilot reads it for the secret rules). */
+    val state = BrowserState()
 
     /**
      * There is one browser, shared by every run. Calls go to it one at a time: two fills sent in
@@ -259,8 +286,19 @@ class BrowserGate(
     private val browser = Mutex()
     private val triageCache = ConcurrentHashMap<String, Pair<TriageVerdict, Instant>>()
 
-    /** [tools] with every `browser__*` tool wrapped or hidden; other tools untouched. */
-    fun wrap(scope: RunScope, tools: List<Tool>): List<Tool> {
+    /** Runs [block] holding the browser, for the pilot's own reads (observation scripts, screenshots). */
+    suspend fun <T> withBrowser(block: suspend () -> T): T = browser.withLock { block() }
+
+    /** [text] with released values and filled secret fields hidden. */
+    fun scrub(text: String): String = hideFilledValues(grants.scrub(text), state.secretUids)
+
+    fun scrubbed(result: ToolResult): ToolResult = when (result) {
+        is ToolResult.Ok -> ToolResult.Ok(scrub(result.content))
+        is ToolResult.Error -> ToolResult.Error(scrub(result.message))
+    }
+
+    /** [tools] with every `browser__*` tool gated or hidden; other tools untouched. */
+    fun gatedTools(scope: RunScope, tools: List<Tool>): List<Tool> {
         val browser = tools.filter { it.name.startsWith(PREFIX) }
         val byRemote = browser.associateBy { it.name.removePrefix(PREFIX) }
         return tools.mapNotNull { tool ->
@@ -291,263 +329,281 @@ class BrowserGate(
         }
 
         override suspend fun invoke(input: JsonObject): ToolResult {
-            awaitCodes(input)?.let { return scrubbed(it) }
-            var attempt = once(input)
-            repeat(MAX_RESUMES) {
-                val heldId = attempt.waitingOn ?: return scrubbed(attempt.result)
-                if (scope.isLead) return scrubbed(attempt.result)
-                // Wait outside the browser lock, so other runs can use the browser meanwhile.
-                waiters.waiting(heldId, scope.runId)
-                val status = try {
-                    governance.awaitDecision(heldId, WAIT_FOR_PERSON)
-                } finally {
-                    waiters.resumed(heldId)
-                }
-                when (status) {
-                    HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED -> attempt = once(input)
-                    null -> return scrubbed(
-                        ToolResult.Ok(
-                            "I waited ${WAIT_FOR_PERSON.inWholeMinutes} minutes and the person has not answered \"${heldId.value}\" yet. " +
-                                "Finish now: report what you found so far and what is waiting for them. Do not ask for it again.",
-                        ),
-                    )
-                    else -> return scrubbed(
-                        ToolResult.Ok("The person did not approve this (${status.name.lowercase()}). Do not try it again; report what you could not do."),
-                    )
-                }
+            if (scope.isLead) return ToolResult.Error(LEAD_REFUSED)
+            if (kind == BrowserKind.CAPTURE) {
+                return scrubbed(withBrowser { capture(inner, input, pages) })
             }
-            return scrubbed(attempt.result)
+            return perform(scope, GateStep(remote, input, kind, pages) { inner.invoke(it) })
         }
+    }
 
-        /**
-         * A code placeholder whose code the person has not typed yet: wait for it here, outside the
-         * browser lock, polling the code store, up to [codeWait]. Null once every code is there.
-         */
-        private suspend fun awaitCodes(input: JsonObject): ToolResult? {
-            if (remote !in TEXT_ENTRY_TOOLS) return null
-            val missing = Placeholders.tokens(input).mapNotNull(Placeholders::codeId).distinct().filter { grants.findCode(it) == null }
-            if (missing.isEmpty()) return null
-            val held = missing.mapNotNull { runCatching { HeldActionId(it) }.getOrNull() }
-            if (!scope.isLead) held.forEach { waiters.waiting(it, scope.runId) }
-            val arrived = try {
-                withTimeoutOrNull(codeWait) {
-                    while (missing.any { grants.findCode(it) == null }) delay(CODE_POLL)
-                    true
-                } ?: false
+    /**
+     * Sends [step] for [scope]: waits for codes and for the person outside the browser lock, then
+     * substitutes, gates and runs it. The result is always scrubbed.
+     */
+    suspend fun perform(scope: RunScope, step: GateStep): ToolResult {
+        // The lead never browses: it hands that work to a helper. Fail closed whatever tools it was given.
+        if (scope.isLead) return ToolResult.Error(LEAD_REFUSED)
+        awaitCodes(scope, step)?.let { return scrubbed(it) }
+        var attempt = once(scope, step)
+        repeat(MAX_RESUMES) {
+            val heldId = attempt.waitingOn ?: return scrubbed(attempt.result)
+            val asked = (attempt.result as? ToolResult.Ok)?.content.orEmpty()
+            // Wait outside the browser lock, so other runs can use the browser meanwhile.
+            waiters.waiting(heldId, scope.runId)
+            val status = try {
+                governance.awaitDecision(heldId, personWait)
             } finally {
-                if (!scope.isLead) held.forEach { waiters.resumed(it) }
+                waiters.resumed(heldId)
             }
-            return if (arrived) null else ToolResult.Ok(codeNotTyped(codeWait))
+            when (status) {
+                HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED -> attempt = once(scope, step)
+                null -> return scrubbed(
+                    ToolResult.Ok(
+                        (if (asked.isBlank()) "" else "$asked\n") +
+                            "I waited ${personWait.inWholeMinutes} minutes and the person has not answered \"${heldId.value}\" yet. " +
+                            "Finish now: report what you found so far and what is waiting for them. Do not ask for it again.",
+                    ),
+                )
+                else -> return scrubbed(
+                    ToolResult.Ok("The person did not approve this (${status.name.lowercase()}). Do not try it again; report what you could not do."),
+                )
+            }
+        }
+        return scrubbed(attempt.result)
+    }
+
+    /**
+     * A code placeholder whose code the person has not typed yet: wait for it here, outside the
+     * browser lock, polling the code store, up to [codeWait]. Null once every code is there.
+     */
+    private suspend fun awaitCodes(scope: RunScope, step: GateStep): ToolResult? {
+        if (step.remote !in TEXT_ENTRY_TOOLS) return null
+        val missing = Placeholders.tokens(step.input).mapNotNull(Placeholders::codeId).distinct().filter { grants.findCode(it) == null }
+        if (missing.isEmpty()) return null
+        val held = missing.mapNotNull { runCatching { HeldActionId(it) }.getOrNull() }
+        if (!scope.isLead) held.forEach { waiters.waiting(it, scope.runId) }
+        val arrived = try {
+            withTimeoutOrNull(codeWait) {
+                while (missing.any { grants.findCode(it) == null }) delay(CODE_POLL)
+                true
+            } ?: false
+        } finally {
+            if (!scope.isLead) held.forEach { waiters.resumed(it) }
+        }
+        return if (arrived) null else ToolResult.Ok(codeNotTyped(codeWait))
+    }
+
+    private suspend fun once(scope: RunScope, step: GateStep): Attempt = try {
+        browser.withLock { run(scope, step) }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn { "browser tool ${step.remote} failed: ${e::class.simpleName}" }
+        Attempt(ToolResult.Error("Browser tool ${step.remote} failed: ${e.message ?: e::class.simpleName}"))
+    }
+
+    private suspend fun run(scope: RunScope, step: GateStep): Attempt {
+        step.guard?.invoke()?.let { return Attempt(it) }
+        val remote = step.remote
+        val kind = step.kind
+        val input = step.input
+        val tokens = Placeholders.tokens(input)
+        if (tokens.isNotEmpty() && remote !in TEXT_ENTRY_TOOLS) {
+            return Attempt(ToolResult.Error("Secret placeholders only work in ${TEXT_ENTRY_TOOLS.sorted().joinToString()}; `$remote` does not take them."))
         }
 
-        private suspend fun once(input: JsonObject): Attempt = try {
-            browser.withLock { run(input) }
+        val needsPage = tokens.isNotEmpty() || kind == BrowserKind.ACT
+        val url = if (needsPage) currentUrl(step.pages) else null
+
+        var send = input
+        var substituted = false
+        if (tokens.isNotEmpty()) {
+            when (val sub = substitute(scope, input, tokens, url)) {
+                is Substitution.Ready -> { send = sub.input; substituted = true }
+                is Substitution.Stop -> return Attempt(sub.result, sub.heldId)
+            }
+        }
+
+        if (kind == BrowserKind.ACT) {
+            gate(scope, step, url)?.let { return it }
+        }
+
+        if (substituted) state.noteSecretTargets(step.targets?.map { it.first } ?: secretTargets(input))
+        val result = try {
+            step.execute(send)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn { "browser tool $remote failed: ${e::class.simpleName}" }
-            Attempt(ToolResult.Error("Browser tool $remote failed: ${e.message ?: e::class.simpleName}"))
+            if (kind != BrowserKind.ACT && kind != BrowserKind.NAVIGATE || !looksCutOff(e.message.orEmpty())) throw e
+            ToolResult.Error(e.message.orEmpty())
         }
-
-        private fun scrubbed(result: ToolResult): ToolResult {
-            val hidden = state.secretUids
-            return when (result) {
-                is ToolResult.Ok -> ToolResult.Ok(hideFilledValues(grants.scrub(result.content), hidden))
-                is ToolResult.Error -> ToolResult.Error(hideFilledValues(grants.scrub(result.message), hidden))
-            }
+        if (result is ToolResult.Error && (kind == BrowserKind.ACT || kind == BrowserKind.NAVIGATE) && looksCutOff(result.message)) {
+            return Attempt(recheck(remote, url, substituted, step.pages))
         }
-
-        private suspend fun run(input: JsonObject): Attempt {
-            val tokens = Placeholders.tokens(input)
-            if (tokens.isNotEmpty() && remote !in TEXT_ENTRY_TOOLS) {
-                return Attempt(ToolResult.Error("Secret placeholders only work in ${TEXT_ENTRY_TOOLS.sorted().joinToString()}; `$remote` does not take them."))
-            }
-            if (kind == BrowserKind.CAPTURE) return Attempt(capture(input))
-
-            val needsPage = tokens.isNotEmpty() || kind == BrowserKind.ACT
-            val url = if (needsPage) currentUrl() else null
-
-            var send = input
-            var substituted = false
-            if (tokens.isNotEmpty()) {
-                when (val sub = substitute(input, tokens, url)) {
-                    is Substitution.Ready -> { send = sub.input; substituted = true }
-                    is Substitution.Stop -> return Attempt(sub.result, sub.heldId)
-                }
-            }
-
-            if (kind == BrowserKind.ACT) {
-                gate(input, url)?.let { return it }
-            }
-
-            if (substituted) state.noteSecretTargets(secretTargets(input))
-            val result = try {
-                inner.invoke(send)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (kind != BrowserKind.ACT && kind != BrowserKind.NAVIGATE || !looksCutOff(e.message.orEmpty())) throw e
-                ToolResult.Error(e.message.orEmpty())
-            }
-            if (result is ToolResult.Error && (kind == BrowserKind.ACT || kind == BrowserKind.NAVIGATE) && looksCutOff(result.message)) {
-                return Attempt(recheck(url, substituted))
-            }
-            if (result is ToolResult.Ok) {
-                afterSuccess(input, result.content, url, substituted)
-                lostPage(result.content)?.let { return Attempt(ToolResult.Ok(result.content + "\n\n" + it)) }
-            }
-            return Attempt(result)
+        if (result is ToolResult.Ok) {
+            afterSuccess(remote, kind, input, result.content, url, substituted)
+            lostPage(remote, result.content, step.pages)?.let { return Attempt(ToolResult.Ok(result.content + "\n\n" + it)) }
         }
+        return Attempt(result)
+    }
 
-        /**
-         * The step was sent but its reply came back empty or cut off, which is what a click that
-         * navigates does to the response. Treat the step as taken, forget the old page's elements,
-         * and say where the browser is now instead of a JSON error.
-         */
-        private suspend fun recheck(before: String?, substituted: Boolean): ToolResult {
-            state.noteAction()
-            if (substituted) state.noteSecretTyped(Sites.host(before.orEmpty()))
-            val now = currentUrl()
-            state.elements = emptyMap()
-            return ToolResult.Ok(cutOffNote(remote, before, now))
+    /**
+     * The step was sent but its reply came back empty or cut off, which is what a click that
+     * navigates does to the response. Treat the step as taken, forget the old page's elements,
+     * and say where the browser is now instead of a JSON error.
+     */
+    private suspend fun recheck(remote: String, before: String?, substituted: Boolean, pages: Tool?): ToolResult {
+        state.noteAction()
+        if (substituted) state.noteSecretTyped(Sites.host(before.orEmpty()))
+        val now = currentUrl(pages)
+        state.elements = emptyMap()
+        return ToolResult.Ok(cutOffNote(remote, before, now))
+    }
+
+    /** A note when the selected tab turns out empty though the agent was on a page (see [lostPageNote]). */
+    private suspend fun lostPage(remote: String, content: String, pages: Tool?): String? {
+        val last = state.lastPage ?: return null
+        val selected = when {
+            remote == "list_pages" -> parseSelectedUrl(content)
+            looksEmpty(remote, content) -> currentUrl(pages).let { state.url }
+            else -> return null
         }
+        return lostPageNote(selected, last)
+    }
 
-        /** A note when the selected tab turns out empty though the agent was on a page (see [lostPageNote]). */
-        private suspend fun lostPage(content: String): String? {
-            val last = state.lastPage ?: return null
-            val selected = when {
-                remote == "list_pages" -> parseSelectedUrl(content)
-                looksEmpty(remote, content) -> currentUrl().let { state.url }
-                else -> return null
-            }
-            return lostPageNote(selected, last)
-        }
-
-        private suspend fun capture(input: JsonObject): ToolResult {
-            val host = Sites.host(currentUrl().orEmpty())
-            if (state.secretMayBeVisible(host)) {
-                return ToolResult.Error(
-                    "Refused: a secret was typed into this page a moment ago and may still be visible. " +
-                        "Use take_snapshot or get_page_text (they never show it) instead of a picture.",
-                )
-            }
-            return inner.invoke(input)
-        }
-
-        /** The selected tab's address, asked of the browser (a redirect may have moved it); the last known one if it cannot say. */
-        private suspend fun currentUrl(): String? {
-            val fresh = pages?.let { runCatching { (it.invoke(JsonObject(emptyMap())) as? ToolResult.Ok)?.content }.getOrNull() }?.let(::parseSelectedUrl)
-            if (fresh != null) state.url = fresh
-            return state.url
-        }
-
-        private suspend fun substitute(input: JsonObject, tokens: List<String>, url: String?): Substitution {
-            if (url == null) return Substitution.Stop(ToolResult.Error("No page is open, so there is nowhere to type a secret. Open the site first."))
-            if (!Sites.isHttps(url)) return Substitution.Stop(ToolResult.Error("Secrets are only typed into https pages; this page is not."))
-            val domain = Sites.registrableDomain(url) ?: return Substitution.Stop(ToolResult.Error("Cannot tell which site this page is."))
-
-            val credentials = vault.list()
-            val known = credentials.associate { it.name to it.fields.map { f -> f.name }.toSet() }
-            val values = HashMap<String, String>()
-            val waiting = LinkedHashMap<String, CredentialMeta>()
-            for (token in tokens.distinct()) {
-                val ref = Placeholders.resolve(token, known)
-                if (ref != null) {
-                    val meta = credentials.first { it.name == ref.credential }
-                    val grant = grants.find(ref.credential, domain)
-                    val value = grant?.value(ref.field)
-                    if (value != null) values[token] = value else waiting[meta.name] = meta
-                    continue
-                }
-                val codeId = Placeholders.codeId(token)
-                if (codeId != null) {
-                    // [awaitCodes] already waited for it.
-                    val grant = grants.findCode(codeId) ?: return Substitution.Stop(ToolResult.Ok(codeNotTyped(codeWait)))
-                    if (grant.domain != domain) return Substitution.Stop(ToolResult.Error("That code was asked for ${grant.domain}, not $domain."))
-                    values[token] = grant.value(codeId) ?: return Substitution.Stop(ToolResult.Error("That code is no longer available; ask again with ask_code."))
-                    continue
-                }
-                val names = credentials.joinToString { it.name }.ifEmpty { "none saved" }
-                return Substitution.Stop(ToolResult.Error("Unknown placeholder [secret:$token]. Saved credentials: $names (see list_credentials)."))
-            }
-
-            if (waiting.isNotEmpty()) {
-                val holds = waiting.values.map { meta -> governance.useCredential(meta, domain, url, scope.provenance(), "Needed to continue on $domain.") }
-                val texts = holds.map { hold ->
-                    when (hold) {
-                        is Hold.Wait -> hold.text
-                        Hold.Proceed -> "Approved."
-                    }
-                }
-                return Substitution.Stop(ToolResult.Ok(texts.joinToString("\n")), holds.firstNotNullOfOrNull { (it as? Hold.Wait)?.heldId })
-            }
-            credentials.filter { c -> tokens.any { Placeholders.resolve(it, known)?.credential == c.name } }.forEach { vault.touch(it.id) }
-            return Substitution.Ready(Placeholders.replace(input) { values[it] } as JsonObject)
-        }
-
-        /** Null to go ahead, else what to give the agent instead of running the call. */
-        private suspend fun gate(input: JsonObject, url: String?): Attempt? {
-            val uids = targetUids(input)
-            val elements = uids.map { it to state.elements[it] }
-            // The person released a saved login for this site: the sign-in page's own steps are part of what they approved.
-            val signingIn = url != null && Sites.registrableDomain(url)?.let { grants.hasLiveLogin(it) } == true
-            val verdict = stepVerdict(remote, input, elements.map { it.second }, url, signingIn)
-            val description = describeStep(remote, input, elements, url)
-            val reason: String
-            val neverAlone: Boolean
-            when (verdict) {
-                StepVerdict.Pass -> return null
-                is StepVerdict.Ask -> { reason = verdict.reason; neverAlone = verdict.neverAlone }
-                StepVerdict.Triage -> {
-                    val cached = triageCache[triageKey(url, uids)]?.takeIf { it.second > clock.now() }?.first
-                    val target = elements.joinToString("; ") { (uid, e) -> e?.detail(uid) ?: "element $uid (not in the last snapshot)" }
-                    val review = cached ?: triage.review(TriageStep(description, url, scope.untrusted, target, scope.purpose)).also {
-                        triageCache[triageKey(url, uids)] = it to (clock.now() + TRIAGE_CACHE)
-                    }
-                    if (review.ok) return null
-                    reason = review.reason.ifBlank { "it may send, buy or change something" }
-                    neverAlone = false
-                }
-            }
-            val action = ProposedAction.ExternalTool(
-                idempotencyKey = "browser:pending",
-                summary = description,
-                server = BROWSER_SERVER,
-                tool = remote,
-                input = input,
+    /** A screenshot through [inner], refused while a filled secret may be on screen. Call holding the browser. */
+    suspend fun capture(inner: Tool, input: JsonObject, pages: Tool?): ToolResult {
+        val host = Sites.host(currentUrl(pages).orEmpty())
+        if (state.secretMayBeVisible(host)) {
+            return ToolResult.Error(
+                "Refused: a secret was typed into this page a moment ago and may still be visible. " +
+                    "Use look or read (they never show it) instead of a picture.",
             )
-            val context = listOfNotNull(url?.let { ContextItem("page", it) }, ContextItem("why I'm asking", reason + if (neverAlone) " (payment or card details)" else ""))
-            return when (val hold = governance.browserStep(action, scope.provenance(), "I want to do this on the page: $description.", context)) {
-                Hold.Proceed -> null
-                is Hold.Wait -> Attempt(ToolResult.Ok(hold.text), hold.heldId)
+        }
+        return inner.invoke(input)
+    }
+
+    /** The selected tab's address, asked of the browser (a redirect may have moved it); the last known one if it cannot say. */
+    suspend fun currentUrl(pages: Tool?): String? {
+        val fresh = pages?.let { runCatching { (it.invoke(JsonObject(emptyMap())) as? ToolResult.Ok)?.content }.getOrNull() }?.let(::parseSelectedUrl)
+        if (fresh != null) state.url = fresh
+        return state.url
+    }
+
+    private suspend fun substitute(scope: RunScope, input: JsonObject, tokens: List<String>, url: String?): Substitution {
+        if (url == null) return Substitution.Stop(ToolResult.Error("No page is open, so there is nowhere to type a secret. Open the site first."))
+        if (!Sites.isHttps(url)) return Substitution.Stop(ToolResult.Error("Secrets are only typed into https pages; this page is not."))
+        val domain = Sites.registrableDomain(url) ?: return Substitution.Stop(ToolResult.Error("Cannot tell which site this page is."))
+
+        val credentials = vault.list()
+        val known = credentials.associate { it.name to it.fields.map { f -> f.name }.toSet() }
+        val values = HashMap<String, String>()
+        val waiting = LinkedHashMap<String, CredentialMeta>()
+        for (token in tokens.distinct()) {
+            val ref = Placeholders.resolve(token, known)
+            if (ref != null) {
+                val meta = credentials.first { it.name == ref.credential }
+                val grant = grants.find(ref.credential, domain)
+                val value = grant?.value(ref.field)
+                if (value != null) values[token] = value else waiting[meta.name] = meta
+                continue
             }
+            val codeId = Placeholders.codeId(token)
+            if (codeId != null) {
+                // [awaitCodes] already waited for it.
+                val grant = grants.findCode(codeId) ?: return Substitution.Stop(ToolResult.Ok(codeNotTyped(codeWait)))
+                if (grant.domain != domain) return Substitution.Stop(ToolResult.Error("That code was asked for ${grant.domain}, not $domain."))
+                values[token] = grant.value(codeId) ?: return Substitution.Stop(ToolResult.Error("That code is no longer available; ask again with ask_code."))
+                continue
+            }
+            val names = credentials.joinToString { it.name }.ifEmpty { "none saved" }
+            return Substitution.Stop(ToolResult.Error("Unknown placeholder [secret:$token]. Saved credentials: $names (see list_credentials)."))
         }
 
-        private fun triageKey(url: String?, uids: List<String>) = "$url|$remote|${uids.joinToString(",")}"
+        if (waiting.isNotEmpty()) {
+            val holds = waiting.values.map { meta -> governance.useCredential(meta, domain, url, scope.provenance(), "Needed to continue on $domain.") }
+            val texts = holds.map { hold ->
+                when (hold) {
+                    is Hold.Wait -> hold.text
+                    Hold.Proceed -> "Approved."
+                }
+            }
+            return Substitution.Stop(ToolResult.Ok(texts.joinToString("\n")), holds.firstNotNullOfOrNull { (it as? Hold.Wait)?.heldId })
+        }
+        credentials.filter { c -> tokens.any { Placeholders.resolve(it, known)?.credential == c.name } }.forEach { vault.touch(it.id) }
+        return Substitution.Ready(Placeholders.replace(input) { values[it] } as JsonObject)
+    }
 
-        private fun afterSuccess(input: JsonObject, content: String, url: String?, substituted: Boolean) {
-            when (kind) {
-                BrowserKind.NAVIGATE -> state.navigated(
-                    when (remote) {
-                        "navigate_page", "new_page" -> input["url"]?.jsonPrimitive?.contentOrNull
-                        else -> null
-                    },
-                )
-                BrowserKind.ACT -> {
-                    state.noteAction()
-                    if (substituted) state.noteSecretTyped(Sites.host(url.orEmpty()))
+    /** The person released a saved login for the site of [url]: the sign-in page's own steps are part of what they approved. */
+    fun signingIn(url: String?): Boolean = url != null && Sites.registrableDomain(url)?.let { grants.hasLiveLogin(it) } == true
+
+    /** Null to go ahead, else what to give the agent instead of running the call. */
+    private suspend fun gate(scope: RunScope, step: GateStep, url: String?): Attempt? {
+        val remote = step.remote
+        val input = step.input
+        val elements = step.targets ?: targetUids(input).map { it to state.elements[it] }
+        val ids = elements.map { it.first }
+        val signingIn = signingIn(url)
+        val rules = stepVerdict(remote, input, elements.map { it.second }, url, signingIn)
+        val description = describeStep(remote, input, elements, url)
+        val verdict = if (rules is StepVerdict.Ask || step.jev == null) rules else combineVerdict(rules, step.jev.invoke(description), signingIn)
+        val reason: String
+        val neverAlone: Boolean
+        when (verdict) {
+            StepVerdict.Pass -> return null
+            is StepVerdict.Ask -> { reason = verdict.reason; neverAlone = verdict.neverAlone }
+            StepVerdict.Triage -> {
+                val key = triageKey(url, remote, ids)
+                val cached = triageCache[key]?.takeIf { it.second > clock.now() }?.first
+                val target = elements.joinToString("; ") { (uid, e) -> e?.detail(uid) ?: "element $uid (not in the last snapshot)" }
+                val review = cached ?: triage.review(TriageStep(description, url, scope.untrusted, target, scope.purpose)).also {
+                    triageCache[key] = it to (clock.now() + TRIAGE_CACHE)
                 }
-                // A snapshot of part of the page (a dialog) adds to what is known; a full one replaces it.
-                else -> if (remote == "take_snapshot") {
-                    val parsed = parseSnapshot(content)
-                    state.elements = if (input["selector"] != null) state.elements + parsed else parsed
-                }
+                if (review.ok) return null
+                reason = review.reason.ifBlank { "it may send, buy or change something" }
+                neverAlone = false
+            }
+        }
+        val action = ProposedAction.ExternalTool(
+            idempotencyKey = "browser:pending",
+            summary = description,
+            server = BROWSER_SERVER,
+            tool = remote,
+            input = input,
+        )
+        val context = listOfNotNull(url?.let { ContextItem("page", it) }, ContextItem("why I'm asking", reason + if (neverAlone) " (payment or card details)" else ""))
+        return when (val hold = governance.browserStep(action, scope.provenance(), "I want to do this on the page: $description.", context)) {
+            Hold.Proceed -> null
+            is Hold.Wait -> Attempt(ToolResult.Ok(hold.text), hold.heldId)
+        }
+    }
+
+    private fun triageKey(url: String?, remote: String, uids: List<String>) = "$url|$remote|${uids.joinToString(",")}"
+
+    private fun afterSuccess(remote: String, kind: BrowserKind, input: JsonObject, content: String, url: String?, substituted: Boolean) {
+        when (kind) {
+            BrowserKind.NAVIGATE -> state.navigated(
+                when (remote) {
+                    "navigate_page", "new_page" -> input["url"]?.jsonPrimitive?.contentOrNull
+                    else -> null
+                },
+            )
+            BrowserKind.ACT -> {
+                state.noteAction()
+                if (substituted) state.noteSecretTyped(Sites.host(url.orEmpty()))
+            }
+            // A snapshot of part of the page (a dialog) adds to what is known; a full one replaces it.
+            else -> if (remote == "take_snapshot") {
+                val parsed = parseSnapshot(content)
+                state.elements = if (input["selector"] != null) state.elements + parsed else parsed
             }
         }
     }
 
     companion object {
         const val PREFIX = "browser__"
+        const val LEAD_REFUSED = "Refused: the lead never uses the browser. Delegate browsing to a helper."
         private val TRIAGE_CACHE = 5.minutes
 
         /** How long a helper waits for the person to answer a held step, login or code before it reports back. */
@@ -569,5 +625,45 @@ class BrowserGate(
                 "select_page it, or navigate_page to it again if it is gone. Never assume you are still where you were."
         const val PLACEHOLDER_HINT =
             "To enter a saved secret write a placeholder such as [secret:bank_login_password] (see list_credentials); the real value is filled in for you after the person approves, and you never see it."
+    }
+}
+
+/** What Jev made of a step: [step] with probability [p], or [failed] when it could not say. */
+data class JevView(val step: JevStep?, val p: Double, val failed: String? = null) {
+    fun confident(s: JevStep, threshold: Double): Boolean = failed == null && step == s && p >= threshold
+}
+
+/** Jev's answer to "what does this step do": its four options. */
+enum class JevStep(val wire: String) {
+    BROWSE("browse"), SIGN_IN("sign_in"), COMMIT("commit"), UNSURE("unsure");
+
+    companion object {
+        fun of(wire: String): JevStep? = entries.firstOrNull { it.wire == wire }
+    }
+}
+
+/** Jev's view of a step plus how far it may be trusted ([mayApprove], [threshold]). */
+data class JevCheck(val view: JevView, val mayApprove: Boolean, val threshold: Double)
+
+/** How sure Jev must be that a step commits the person before it goes straight to them. */
+const val JEV_COMMIT_ASK = 0.5
+
+/**
+ * Pure: the rules' verdict with Jev's view of the step folded in. The rules always win when they
+ * ask. Jev failing asks the person (fail closed). Jev seeing a commit asks the person. Otherwise
+ * Jev can only send a step the rules passed on to the triage, unless it is sure the step is
+ * browsing (or, under a released login, signing in); with [JevCheck.mayApprove] its sure "browse"
+ * also passes a step the rules left to the triage.
+ */
+fun combineVerdict(rules: StepVerdict, check: JevCheck, signingIn: Boolean): StepVerdict {
+    val jev = check.view
+    val sure = { s: JevStep -> jev.confident(s, check.threshold) }
+    return when {
+        rules is StepVerdict.Ask -> rules
+        jev.failed != null -> StepVerdict.Ask("I couldn't double-check this step on the screen (${jev.failed}), so I'm asking you", neverAlone = false)
+        jev.step == JevStep.COMMIT && jev.p >= JEV_COMMIT_ASK -> StepVerdict.Ask("on the screen it looks like this step sends, buys or changes something", neverAlone = false)
+        rules == StepVerdict.Pass -> if (sure(JevStep.BROWSE) || (signingIn && sure(JevStep.SIGN_IN))) StepVerdict.Pass else StepVerdict.Triage
+        check.mayApprove && sure(JevStep.BROWSE) -> StepVerdict.Pass
+        else -> StepVerdict.Triage
     }
 }

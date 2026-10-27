@@ -59,6 +59,13 @@ sealed interface DecisionQuestion {
     data class Choice(override val instructions: String, val criteria: Map<String, String>) : DecisionQuestion {
         init { require(criteria.isNotEmpty()) { "a choice needs options" } }
     }
+
+    /**
+     * Where [instructions] (a description of the target, naming the image) is in an image in the
+     * state: Jev 1.14 only. It always answers with a box, even when the target is absent, so ask a
+     * [Noul] about whether it is there in the same request.
+     */
+    data class Box(override val instructions: String) : DecisionQuestion
 }
 
 sealed interface DecisionAnswer {
@@ -66,6 +73,9 @@ sealed interface DecisionAnswer {
     data class Noul(val probability: Double) : DecisionAnswer
 
     data class Choice(val choice: String, val probabilities: Map<String, Double>, val confidence: Double?) : DecisionAnswer
+
+    /** Edges as fractions of the image: [left]/[right] of its width, [top]/[bottom] of its height, from the top-left corner. */
+    data class Box(val top: Double, val bottom: Double, val left: Double, val right: Double, val confidence: Double?) : DecisionAnswer
 
     /** The model declined to answer this question. */
     data object Refusal : DecisionAnswer
@@ -135,6 +145,10 @@ fun decisionRequestBody(model: String, state: JsonElement, questions: Map<String
                             put("instructions", q.instructions)
                             putJsonObject("criteria") { q.criteria.forEach { (k, v) -> put(k, v) } }
                         }
+                        is DecisionQuestion.Box -> {
+                            put("type", "box")
+                            put("instructions", q.instructions)
+                        }
                     }
                 }
             }
@@ -177,6 +191,11 @@ fun parseDecisionResponse(text: String, questions: Map<String, DecisionQuestion>
                     .mapNotNull { (k, v) -> (v as? JsonPrimitive)?.doubleOrNull?.let { k to it } }.toMap()
                 DecisionAnswer.Choice(choice, probabilities, (a["confidence"] as? JsonPrimitive)?.doubleOrNull)
             }
+            "box" -> {
+                if (q !is DecisionQuestion.Box) return DecisionError.Malformed("'$id' answered as box").left()
+                parseBox(a["box"] as? JsonObject, (a["confidence"] as? JsonPrimitive)?.doubleOrNull)
+                    ?: return DecisionError.Malformed("'$id' has no usable box").left()
+            }
             else -> return DecisionError.Malformed("'$id' has answer type $type").left()
         }
     }
@@ -191,6 +210,18 @@ fun parseDecisionResponse(text: String, questions: Map<String, DecisionQuestion>
             costMicros = (usage?.get("cost") as? JsonPrimitive)?.doubleOrNull?.let { (it * 1_000_000).roundToLong() },
         ),
     ).right()
+}
+
+/** Pure: a box answer's edges, each a fraction in 0..1 with top <= bottom and left <= right; null otherwise. */
+fun parseBox(box: JsonObject?, confidence: Double?): DecisionAnswer.Box? {
+    box ?: return null
+    fun edge(k: String) = (box[k] as? JsonPrimitive)?.doubleOrNull?.takeIf { it in 0.0..1.0 }
+    val top = edge("top") ?: return null
+    val bottom = edge("bottom") ?: return null
+    val left = edge("left") ?: return null
+    val right = edge("right") ?: return null
+    if (top > bottom || left > right) return null
+    return DecisionAnswer.Box(top, bottom, left, right, confidence)
 }
 
 private fun JsonObject.string(key: String): String? = (get(key) as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
@@ -306,29 +337,34 @@ class Decisions(config: AgentConfig, factory: DecisionClientFactory, private val
         return result
     }
 
-    private suspend fun record(result: DecisionResult) {
-        try {
-            database.tx {
-                ModelCalls.insert {
-                    it[at] = clock.now()
-                    it[ModelCalls.model] = this@Decisions.model
-                    it[inputTokens] = result.usage.inputTokens
-                    it[outputTokens] = result.usage.outputTokens
-                    it[cacheReadTokens] = 0
-                    it[cacheWrite5mTokens] = 0
-                    it[cacheWrite1hTokens] = 0
-                    it[costMicros] = result.usage.costMicros
-                    it[role] = DECISION_ROLE
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            log.warn { "could not record decision usage: ${e.message}" }
-        }
-    }
+    private suspend fun record(result: DecisionResult) = recordDecisionCall(database, clock, model, result.usage)
 
     companion object {
         const val DECISION_ROLE = "decision"
+    }
+}
+
+/** Records one decision call's usage in `model_call` as role `decision`; a failed record is logged, never thrown. */
+suspend fun recordDecisionCall(database: Database, clock: Clock, model: String, usage: DecisionUsage) {
+    try {
+        val run = net.robog.clarity.harness.currentRunId()
+        database.tx {
+            ModelCalls.insert {
+                it[at] = clock.now()
+                it[ModelCalls.model] = model
+                it[inputTokens] = usage.inputTokens
+                it[outputTokens] = usage.outputTokens
+                it[cacheReadTokens] = 0
+                it[cacheWrite5mTokens] = 0
+                it[cacheWrite1hTokens] = 0
+                it[costMicros] = usage.costMicros
+                it[role] = Decisions.DECISION_ROLE
+                it[runId] = run
+            }
+        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn { "could not record decision usage: ${e.message}" }
     }
 }
