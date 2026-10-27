@@ -615,7 +615,17 @@ Two containers on the internal `tools` network, each an MCP server the backend c
 - **browser** (`computers/browser`): Firefox ESR (its password manager and form autofill off;
   credentials come only from the vault), headless, with uBlock Origin and Privacy
   Badger preinstalled in a fixed profile (ad/tracker blocking makes pages lighter and the
-  accessibility snapshot shorter), driven by Mozilla's Firefox DevTools MCP server over WebDriver
+  accessibility snapshot shorter). Fewer obstacles: Firefox's own cookie-banner handling rejects
+  banners it has rules for (`cookiebanners.service.mode` 1, including its generic rules for common
+  consent managers such as OneTrust), and uBlock Origin runs its default lists plus four
+  cookie-notice lists, set by enterprise policy (`3rdparty` → `toOverwrite.filterLists`):
+  `adguard-cookies`, `ublock-cookies-adguard`, `fanboy-cookiemonster` and `ublock-cookies-easylist`.
+  The image build serves pinned, sha256-checked copies of those lists to uBO during the prewarm run,
+  so they work from the first page after a cold start; uBO updates them itself through the egress
+  proxy afterwards. The annoyance lists (uBO Annoyances, EasyList Annoyances, AdGuard Popup
+  Overlays and Other Annoyances, Social Widgets) are left out on purpose. They hide sites'
+  login modals and Google's sign-in prompt, and AdGuard Popup Overlays blocks Google's
+  sign-in script on some sites. The browser is driven by Mozilla's Firefox DevTools MCP server over WebDriver
   BiDi; exposed as streamable HTTP. Reaches the public internet only through the egress proxy;
   no access to other internal networks. Only helpers browse, through the pilot (see "The
   helper's browser"): Clarity's observation script for text, screenshots for Jev. The lead never

@@ -12,6 +12,23 @@ mkdir -p "$HOME"
 export MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_GPU_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1 \
        MOZ_DISABLE_SOCKET_PROCESS_SANDBOX=1 MOZ_DISABLE_GMP_SANDBOX=1 MOZ_CRASHREPORTER_DISABLE=1
 
+# uBlock Origin's cookie-notice lists: served from the pinned copies (prewarm-lists.mjs) through a
+# build-only proxy that only this run trusts, so the template carries them from the first start.
+lists_dir="${PREWARM_LISTS:-/tmp/prewarm}"
+policies=/opt/firefox/distribution/policies.json
+srv=""
+if [ -f "$lists_dir/prewarm-lists.mjs" ]; then
+  node "$lists_dir/prewarm-lists.mjs" "$lists_dir/lists" "$lists_dir/tls" >/tmp/prewarm-lists.log 2>&1 &
+  srv=$!
+  cp "$profile/user.js" /tmp/prewarm-user.js
+  cp "$policies" /tmp/prewarm-policies.json
+  sed -e 's/"network.proxy.http", "egress"/"network.proxy.http", "127.0.0.1"/' -e 's/"network.proxy.ssl", "egress"/"network.proxy.ssl", "127.0.0.1"/' \
+      -e 's/"network.proxy.http_port", 3128/"network.proxy.http_port", 3199/' -e 's/"network.proxy.ssl_port", 3128/"network.proxy.ssl_port", 3199/' \
+      /tmp/prewarm-user.js >"$profile/user.js"
+  node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1])); p.policies.Certificates={Install:[process.argv[2]]}; fs.writeFileSync(process.argv[1], JSON.stringify(p));' \
+    "$policies" "$lists_dir/tls/ca.pem"
+fi
+
 /opt/firefox/firefox -headless --profile "$profile" about:blank >/tmp/prewarm.log 2>&1 &
 pid=$!
 
@@ -24,6 +41,19 @@ sleep 3
 kill -TERM "$pid"
 for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
 kill -KILL "$pid" 2>/dev/null || true
+
+if [ -n "$srv" ]; then
+  kill "$srv" 2>/dev/null || true
+  cp /tmp/prewarm-user.js "$profile/user.js"
+  cp /tmp/prewarm-policies.json "$policies"
+  # The build-only CA went into the profile's certificate store: drop the store (Firefox makes a new one).
+  rm -f "$profile/cert9.db" "$profile/key4.db" /tmp/prewarm-user.js /tmp/prewarm-policies.json
+  for list in annoyances-cookies.txt easylist-cookies.txt adguard-18.txt; do
+    grep -q "^200 $list " /tmp/prewarm-lists.log || { echo "prewarm: uBlock Origin did not fetch $list" >&2; cat /tmp/prewarm-lists.log >&2; grep -i "ublock\|uBlock0\|cert" /tmp/prewarm.log | tail -20 >&2; exit 1; }
+  done
+  echo "prewarm: uBlock Origin lists served:"; grep '^200' /tmp/prewarm-lists.log | sort | uniq -c
+  rm -f /tmp/prewarm-lists.log
+fi
 
 # Leave only what a clean start should inherit.
 cd "$profile"

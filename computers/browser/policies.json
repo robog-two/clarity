@@ -11,6 +11,30 @@
     "PasswordManagerEnabled": false,
     "OfferToSaveLogins": false,
     "DisableFirefoxAccounts": true,
-    "DisableProfileImport": true
+    "DisableProfileImport": true,
+    "3rdparty": {
+      "Extensions": {
+        "uBlock0@raymondhill.net": {
+          "toOverwrite": {
+            "filterLists": [
+              "user-filters",
+              "ublock-filters",
+              "ublock-badware",
+              "ublock-privacy",
+              "ublock-unbreak",
+              "ublock-quick-fixes",
+              "easylist",
+              "easyprivacy",
+              "urlhaus-1",
+              "plowe-0",
+              "adguard-cookies",
+              "ublock-cookies-adguard",
+              "fanboy-cookiemonster",
+              "ublock-cookies-easylist"
+            ]
+          }
+        }
+      }
+    }
   }
 }

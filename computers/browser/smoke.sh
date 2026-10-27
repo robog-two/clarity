@@ -128,6 +128,17 @@ fetch('http://127.0.0.1:3128/fixtures.json').then(r => r.json()).then(f => {
 call 60 navigate_page "{\"url\":\"$site/\"}" >/dev/null
 snap="$(call 61 take_snapshot '{}')"
 echo "$snap" | grep -q 'Download the report' || fail "download page did not load through the proxy: $snap"
+
+# Cookie notices: the cookie-notice lists (policies.json) are selected and baked into the profile, so
+# uBlock Origin hides a OneTrust banner on the first page, with no list download (this run is offline).
+# Firefox's own cookie-banner handling is set to reject.
+for list in adguard-cookies ublock-cookies-adguard fanboy-cookiemonster ublock-cookies-easylist easylist ublock-filters; do
+  podman exec "$name" grep -q "\"$list\"" /opt/firefox/distribution/policies.json || fail "policies.json does not select $list"
+done
+podman exec "$name" grep -q 'cookiebanners.service.mode", 1' /tmp/profile/firefox_devtools_mcp_profile/user.js || fail "cookie-banner rejection is not set"
+banner="$(call 80 evaluate_script '{"function":"async () => { const d = document.createElement(\"div\"); d.id = \"onetrust-consent-sdk\"; d.textContent = \"We value your privacy\"; document.body.appendChild(d); await new Promise((r) => setTimeout(r, 1500)); return getComputedStyle(d).display; }"}')"
+echo "$banner" | grep -q 'none' || fail "uBlock Origin's cookie-notice lists did not hide a OneTrust banner: $banner"
+echo "cookie-notice lists ok"
 uid="$(uid_of "$snap" 'Download the report')"
 [ -n "$uid" ] || fail "no uid for the report link: $snap"
 call 62 click_by_uid "{\"uid\":\"$uid\"}" >/dev/null

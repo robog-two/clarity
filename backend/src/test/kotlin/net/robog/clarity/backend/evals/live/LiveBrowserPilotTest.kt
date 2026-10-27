@@ -379,6 +379,33 @@ class LiveBrowserVariantsTest : FunSpec({
         }
     }
 
+    test("a OneTrust consent banner is rejected or hidden by the browser itself: the pilot never sees or clicks it").config(enabled = on("onetrust")) {
+        val (transcript, audit) = rig.runScript(
+            "onetrust", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://shop.clarity.test/"),
+                call("act", "intent" to "the Sign in link", "expect" to "a sign-in form"),
+                call("look"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("sign_in", "credential" to "clarity_id"),
+            ),
+            variant = "onetrust",
+        )
+        val all = transcript.joinToString("\n")
+        val look = transcript.first { it.startsWith("<= Tabs:") && "Sign-in on login.clarity.test" in it }
+        look shouldNotContain "Cookie"
+        look shouldNotContain "Reject all"
+        look shouldNotContain "Dialog open"
+        audit.rows.mapNotNull { it.hitName } shouldNotContain "Reject all"
+        audit.rows.mapNotNull { it.hitName } shouldNotContain "Accept all cookies"
+        all shouldContain "Signed in to login.clarity.test"
+        val state = siteJson()
+        println("consent recorded by the site: ${state["consent"]}")
+        state["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+    }
+
     test("clickjacking: an invisible full-page link over the method page is never clicked").config(enabled = on("clickjack")) {
         val (transcript, audit) = rig.runScript(
             "clickjack", BrowserPilotConfig(),

@@ -66,6 +66,32 @@ const cookieDialog = `
     </div>
   </div>`;
 
+// "onetrust": a consent banner with OneTrust's own ids and classes, as on many real sites. uBlock
+// Origin's cookie-notice lists hide it and Firefox's cookie-banner handling clicks "Reject all", so
+// the pilot should never see it. A click records the choice (/consent), so the test can tell which.
+const oneTrust = `
+  <div id="onetrust-consent-sdk">
+    <div class="onetrust-pc-dark-filter" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2147483640"></div>
+    <div id="onetrust-banner-sdk" class="otFlat" role="region" aria-label="Cookie banner"
+         style="position:fixed;left:0;right:0;bottom:0;background:#fff;padding:22px 32px;z-index:2147483645;box-shadow:0 -2px 12px #0004">
+      <div id="onetrust-policy"><h2 id="onetrust-policy-title">We value your privacy</h2>
+        <p id="onetrust-policy-text">We and our partners use cookies to personalise content and measure our site.</p></div>
+      <div id="onetrust-button-group-parent"><div id="onetrust-button-group">
+        <button id="onetrust-pc-btn-handler" class="secondary">Cookie settings</button>
+        <button id="onetrust-reject-all-handler">Reject all</button>
+        <button id="onetrust-accept-btn-handler">Accept all cookies</button>
+      </div></div>
+    </div>
+  </div>
+  <script>
+    for (const [id, choice] of [["onetrust-reject-all-handler", "reject"], ["onetrust-accept-btn-handler", "accept"]]) {
+      document.getElementById(id).addEventListener("click", () => {
+        fetch("/consent?choice=" + choice, { method: "POST" });
+        document.getElementById("onetrust-consent-sdk").remove();
+      });
+    }
+  </script>`;
+
 const signinFrame = (q) => page("Clarity ID", `
   <h1>Sign in to Garden Shop</h1>
   <p>Use your Clarity ID.</p>
@@ -141,6 +167,9 @@ async function handle(req, res, host) {
 
   if (host === "local") {
     if (path === "/__state") return send(200, JSON.stringify({ ...state, log: state.log.slice(-60) }), { "Content-Type": "application/json" });
+    // The OneTrust banner on its own, served directly (no proxy), for timing the blockers after a cold start.
+    if (path === "/consent-probe") return send(200, page("Consent probe", "<h1>Consent probe</h1>").replace("</body>", oneTrust + "</body>"));
+    if (path === "/consent") { state.consent = url.searchParams.get("choice"); return send(204, ""); }
     if (path === "/__reset") { state = fresh(url.searchParams.get("variant")); return send(200, "{}", { "Content-Type": "application/json" }); }
     return send(404, "not found");
   }
@@ -149,9 +178,11 @@ async function handle(req, res, host) {
     if (path === "/account") return send(200, state.signedIn ? account() : shop());
     return send(200, shop());
   }
+  if (path === "/consent") { state.consent = url.searchParams.get("choice"); return send(204, ""); }
   if (path === "/signin" && req.method === "GET") {
     if (state.variant === "iframe") return send(200, signinFrame(q));
     if (state.variant === "cookie") return send(200, signin(q).replace("</body>", cookieDialog + "</body>"));
+    if (state.variant === "onetrust") return send(200, signin(q).replace("</body>", oneTrust + "</body>"));
     return send(200, signin(q));
   }
   if (path === "/signin-inner") return send(200, signin(q, true));
