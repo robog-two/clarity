@@ -10,6 +10,7 @@ import java.nio.file.Path
 import kotlin.io.path.Path
 import kotlin.io.path.readText
 import kotlin.time.Duration
+import net.robog.clarity.harness.OpenRouterRouting
 
 /** Why configuration could not be loaded. */
 sealed interface ConfigError {
@@ -58,6 +59,10 @@ private class Lookup(
     fun string(envName: String, path: String): String? =
         env[envName]?.takeIf(String::isNotBlank)
             ?: yaml.propertyOrNull("clarity.$path")?.getString()?.takeIf(String::isNotBlank)
+
+    /** Like [string], but a value set to blank is kept as "" (an explicit "none"), not taken as unset. */
+    fun stringOrBlank(envName: String, path: String): String? =
+        env[envName] ?: yaml.propertyOrNull("clarity.$path")?.getString()
 
     context(_: Raise<ConfigError>)
     fun secret(envName: String, path: String): String? {
@@ -149,6 +154,39 @@ private class Lookup(
         )
     }
 
+    /**
+     * OpenRouter provider routing: `OPENROUTER_ZDR` (default true), `OPENROUTER_QUANTIZATIONS` (comma
+     * list, default fp8,bf16,fp16; blank: any), `OPENROUTER_SORT` (price | throughput | latency,
+     * default price; blank: OpenRouter's own balancing), `OPENROUTER_PROVIDER_ORDER` (comma list of
+     * providers to try first, e.g. DeepInfra,Novita), `OPENROUTER_ALLOW_FALLBACKS` (default: OpenRouter's,
+     * true). Yaml `agent.openRouter.zdr|quantizations|sort|order|allowFallbacks`.
+     */
+    context(_: Raise<ConfigError>)
+    fun openRouterRouting(): OpenRouterRouting {
+        val defaults = OpenRouterRouting()
+        val quantizations = stringOrBlank("OPENROUTER_QUANTIZATIONS", "agent.openRouter.quantizations")
+            ?.split(',')?.map { it.trim().lowercase() }?.filter(String::isNotEmpty)
+            ?: defaults.quantizations
+        val sortRaw = stringOrBlank("OPENROUTER_SORT", "agent.openRouter.sort")
+        val sort = when (val v = sortRaw?.trim()?.lowercase()) {
+            null -> defaults.sort
+            "" -> null
+            "price", "throughput", "latency" -> v
+            else -> raise(ConfigError.Invalid("OPENROUTER_SORT", sortRaw, "expected price, throughput, latency or blank"))
+        }
+        val order = string("OPENROUTER_PROVIDER_ORDER", "agent.openRouter.order")
+            ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty()
+        val fallbacks = string("OPENROUTER_ALLOW_FALLBACKS", "agent.openRouter.allowFallbacks")
+            ?.let { bool("OPENROUTER_ALLOW_FALLBACKS", "agent.openRouter.allowFallbacks", true) }
+        return OpenRouterRouting(
+            zdr = bool("OPENROUTER_ZDR", "agent.openRouter.zdr", defaults.zdr),
+            quantizations = quantizations,
+            sort = sort,
+            order = order,
+            allowFallbacks = fallbacks,
+        )
+    }
+
     context(_: Raise<ConfigError>)
     fun appConfig(): AppConfig {
         val mode = string("CLARITY_ENROLLMENT_MODE", "enrollment.mode").let { raw ->
@@ -199,6 +237,7 @@ private class Lookup(
                     embeddingsModel = string("CLARITY_MEMORY_EMBEDDINGS_MODEL", "agent.memory.embeddingsModel") ?: DEFAULT_EMBEDDINGS_MODEL,
                     embeddingDimensions = int("CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS", "agent.memory.embeddingDimensions", 1024, min = 0),
                 ),
+                openRouterRouting = openRouterRouting(),
             ),
         )
     }

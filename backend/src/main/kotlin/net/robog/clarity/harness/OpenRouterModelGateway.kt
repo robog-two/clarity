@@ -38,6 +38,26 @@ private val log = KotlinLogging.logger {}
 class OpenRouterException(val status: Int?, message: String) : RuntimeException(message)
 
 /**
+ * OpenRouter's provider routing (`provider` in the request). `data_collection: deny` is always sent.
+ * [zdr] keeps the request on zero-data-retention endpoints only; [quantizations] (empty: any) keeps
+ * it off low-precision endpoints (fp4/int4 hurt tool calling); [sort] (null: OpenRouter's own
+ * balancing) orders the endpoints left, `price` cheapest first. [order] (empty: none) pins the
+ * providers to try first, in order (one provider keeps its prompt cache warm); [allowFallbacks]
+ * false allows no other provider (null: OpenRouter's default, true).
+ */
+data class OpenRouterRouting(
+    val zdr: Boolean = true,
+    val quantizations: List<String> = DEFAULT_QUANTIZATIONS,
+    val sort: String? = "price",
+    val order: List<String> = emptyList(),
+    val allowFallbacks: Boolean? = null,
+) {
+    companion object {
+        val DEFAULT_QUANTIZATIONS = listOf("fp8", "bf16", "fp16")
+    }
+}
+
+/**
  * [ModelGateway] over OpenRouter's OpenAI-compatible Chat Completions API, with the JDK's own
  * `java.net.http` client (no extra dependency) and kotlinx.serialization.
  *
@@ -54,7 +74,8 @@ class OpenRouterException(val status: Int?, message: String) : RuntimeException(
  *  - `reasoning.effort` is the effort in effect for this request: that of the last effort-only
  *    message since the latest compaction point, else [ModelRequest.effort] ([effortIn]);
  *    `response_format: json_schema` from [ModelRequest.structuredOutput], and always `provider.data_collection: deny` (no provider that
- *    keeps or trains on prompts) and `usage.include` (the response carries its cost).
+ *    keeps or trains on prompts), the rest of `provider` from [OpenRouterRouting] (zero data retention,
+ *    quantizations, sort) and `usage.include` (the response carries its cost).
  * Not supported: server tools (rejected), prompt-cache breakpoints, refusal fallbacks and
  * server-side compaction (all ignored). A long thread (the lead) compacts client-side instead
  * (`LeadAgent`, a [Message.summary] in its journal).
@@ -68,6 +89,9 @@ class OpenRouterModelGateway(
     baseUrl: String = DEFAULT_BASE_URL,
     proxy: Proxy? = null,
     private val retryDelays: List<Duration> = listOf(500.milliseconds, 2.seconds),
+    private val routing: OpenRouterRouting = OpenRouterRouting(),
+    /** Told which upstream provider served each response (the stream's `provider`), when it says. */
+    private val onServed: (provider: String) -> Unit = {},
 ) : ModelGateway {
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
@@ -83,7 +107,7 @@ class OpenRouterModelGateway(
         if (request.compaction != null && compactionWarned.compareAndSet(false, true)) {
             log.warn { "OpenRouter has no server-side compaction; ${request.model} runs without it (compact client-side)" }
         }
-        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request))
+        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing))
         val call = HttpRequest.newBuilder(endpoint)
             .timeout(RESPONSE_TIMEOUT.toJavaDuration())
             .header("Authorization", "Bearer $apiKey")
@@ -130,6 +154,7 @@ class OpenRouterModelGateway(
             }
             val accumulator = StreamAccumulator(model, onTextDelta)
             stream.bufferedReader().useLines { lines -> parseSse(lines, accumulator::accept) }
+            accumulator.provider?.let(onServed)
             return accumulator.response()
         }
     }
@@ -170,7 +195,7 @@ class OpenRouterModelGateway(
         const val UNREADABLE_SUMMARY = "(The earlier conversation was summarized, but the summary can't be read here.)"
 
         /** The request body exactly as it goes over the wire; for tests and debugging. */
-        internal fun buildBody(request: ModelRequest): JsonObject {
+        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting()): JsonObject {
             require(request.serverTools.isEmpty()) { "OpenRouter does not run server tools (${request.serverTools.joinToString { it.wireName }})" }
             // request.fallbacks: OpenRouter's own fallbacks (`models: [primary, ...]`) would need a configured
             // fallback list; there is none, so nothing is sent.
@@ -181,7 +206,14 @@ class OpenRouterModelGateway(
                 put("stream", true)
                 putJsonObject("stream_options") { put("include_usage", true) }
                 putJsonObject("usage") { put("include", true) }
-                putJsonObject("provider") { put("data_collection", "deny") }
+                putJsonObject("provider") {
+                    put("data_collection", "deny")
+                    if (routing.zdr) put("zdr", true)
+                    if (routing.quantizations.isNotEmpty()) put("quantizations", JsonArray(routing.quantizations.map(::JsonPrimitive)))
+                    routing.sort?.let { put("sort", it) }
+                    if (routing.order.isNotEmpty()) put("order", JsonArray(routing.order.map(::JsonPrimitive)))
+                    routing.allowFallbacks?.let { put("allow_fallbacks", it) }
+                }
                 effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it)) } }
                 val tools = request.tools + request.deferredTools
                 if (tools.isNotEmpty()) {
@@ -363,6 +395,10 @@ class OpenRouterModelGateway(
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
 
+        /** The upstream provider that served the stream, from its chunks' `provider`. */
+        var provider: String? = null
+            private set
+
         private class Call(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder())
 
         /** Takes one chunk; returns true to keep reading. Throws on an `error` chunk. */
@@ -373,6 +409,7 @@ class OpenRouterModelGateway(
                 throw OpenRouterException(null, "OpenRouter stream failed: ${message.take(300)}")
             }
             (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it) }
+            (chunk["provider"] as? JsonPrimitive)?.contentOrNull?.let { provider = it }
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             val delta = choice["delta"] as? JsonObject
             ((delta?.get("content") as? JsonPrimitive)?.contentOrNull)?.takeIf { it.isNotEmpty() }?.let {

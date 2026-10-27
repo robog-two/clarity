@@ -6,6 +6,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.server.config.MapApplicationConfig
 import kotlin.io.path.Path
+import net.robog.clarity.harness.OpenRouterRouting
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
@@ -111,6 +112,16 @@ class ConfigLoadingTest : FunSpec({
         net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(
             load(mapOf("OPENROUTER_API_KEY" to "sk-or", "CLARITY_MEMORY_EMBEDDINGS" to "false")).getOrNull()!!.agent,
         ).create() shouldBe null
+    }
+
+    test("OpenRouter routing: zdr, fp8 or better and cheapest first by default; blank turns a filter off") {
+        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, listOf("fp8", "bf16", "fp16"), "price")
+        load(mapOf("OPENROUTER_ZDR" to "false", "OPENROUTER_QUANTIZATIONS" to " BF16, fp16 ,", "OPENROUTER_SORT" to "Latency"))
+            .getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(false, listOf("bf16", "fp16"), "latency")
+        load(mapOf("OPENROUTER_QUANTIZATIONS" to "", "OPENROUTER_SORT" to " ")).getOrNull()!!.agent.openRouterRouting shouldBe
+            OpenRouterRouting(true, emptyList(), null)
+        load(mapOf("OPENROUTER_SORT" to "fastest")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
+        load(mapOf("OPENROUTER_ZDR" to "maybe")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
     }
 
     test("environment overrides yaml") {
