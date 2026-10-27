@@ -41,12 +41,16 @@ class OpenRouterException(val status: Int?, message: String) : RuntimeException(
  * OpenRouter's provider routing (`provider` in the request). `data_collection: deny` is always sent.
  * [zdr] keeps the request on zero-data-retention endpoints only; [quantizations] (empty: any) keeps
  * it off low-precision endpoints (fp4/int4 hurt tool calling); [sort] (null: OpenRouter's own
- * balancing) orders the endpoints left, `price` cheapest first.
+ * balancing) orders the endpoints left, `price` cheapest first. [order] (empty: none) pins the
+ * providers to try first, in order (one provider keeps its prompt cache warm); [allowFallbacks]
+ * false allows no other provider (null: OpenRouter's default, true).
  */
 data class OpenRouterRouting(
     val zdr: Boolean = true,
     val quantizations: List<String> = DEFAULT_QUANTIZATIONS,
     val sort: String? = "price",
+    val order: List<String> = emptyList(),
+    val allowFallbacks: Boolean? = null,
 ) {
     companion object {
         val DEFAULT_QUANTIZATIONS = listOf("fp8", "bf16", "fp16")
@@ -86,6 +90,8 @@ class OpenRouterModelGateway(
     proxy: Proxy? = null,
     private val retryDelays: List<Duration> = listOf(500.milliseconds, 2.seconds),
     private val routing: OpenRouterRouting = OpenRouterRouting(),
+    /** Told which upstream provider served each response (the stream's `provider`), when it says. */
+    private val onServed: (provider: String) -> Unit = {},
 ) : ModelGateway {
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
@@ -148,6 +154,7 @@ class OpenRouterModelGateway(
             }
             val accumulator = StreamAccumulator(model, onTextDelta)
             stream.bufferedReader().useLines { lines -> parseSse(lines, accumulator::accept) }
+            accumulator.provider?.let(onServed)
             return accumulator.response()
         }
     }
@@ -204,6 +211,8 @@ class OpenRouterModelGateway(
                     if (routing.zdr) put("zdr", true)
                     if (routing.quantizations.isNotEmpty()) put("quantizations", JsonArray(routing.quantizations.map(::JsonPrimitive)))
                     routing.sort?.let { put("sort", it) }
+                    if (routing.order.isNotEmpty()) put("order", JsonArray(routing.order.map(::JsonPrimitive)))
+                    routing.allowFallbacks?.let { put("allow_fallbacks", it) }
                 }
                 effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it)) } }
                 val tools = request.tools + request.deferredTools
@@ -386,6 +395,10 @@ class OpenRouterModelGateway(
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
 
+        /** The upstream provider that served the stream, from its chunks' `provider`. */
+        var provider: String? = null
+            private set
+
         private class Call(var id: String? = null, var name: String = "", val arguments: StringBuilder = StringBuilder())
 
         /** Takes one chunk; returns true to keep reading. Throws on an `error` chunk. */
@@ -396,6 +409,7 @@ class OpenRouterModelGateway(
                 throw OpenRouterException(null, "OpenRouter stream failed: ${message.take(300)}")
             }
             (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it) }
+            (chunk["provider"] as? JsonPrimitive)?.contentOrNull?.let { provider = it }
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             val delta = choice["delta"] as? JsonObject
             ((delta?.get("content") as? JsonPrimitive)?.contentOrNull)?.takeIf { it.isNotEmpty() }?.let {

@@ -157,7 +157,9 @@ private class Lookup(
     /**
      * OpenRouter provider routing: `OPENROUTER_ZDR` (default true), `OPENROUTER_QUANTIZATIONS` (comma
      * list, default fp8,bf16,fp16; blank: any), `OPENROUTER_SORT` (price | throughput | latency,
-     * default price; blank: OpenRouter's own balancing). Yaml `agent.openRouter.zdr|quantizations|sort`.
+     * default price; blank: OpenRouter's own balancing), `OPENROUTER_PROVIDER_ORDER` (comma list of
+     * providers to try first, e.g. DeepInfra,Novita), `OPENROUTER_ALLOW_FALLBACKS` (default: OpenRouter's,
+     * true). Yaml `agent.openRouter.zdr|quantizations|sort|order|allowFallbacks`.
      */
     context(_: Raise<ConfigError>)
     fun openRouterRouting(): OpenRouterRouting {
@@ -172,10 +174,16 @@ private class Lookup(
             "price", "throughput", "latency" -> v
             else -> raise(ConfigError.Invalid("OPENROUTER_SORT", sortRaw, "expected price, throughput, latency or blank"))
         }
+        val order = string("OPENROUTER_PROVIDER_ORDER", "agent.openRouter.order")
+            ?.split(',')?.map(String::trim)?.filter(String::isNotEmpty).orEmpty()
+        val fallbacks = string("OPENROUTER_ALLOW_FALLBACKS", "agent.openRouter.allowFallbacks")
+            ?.let { bool("OPENROUTER_ALLOW_FALLBACKS", "agent.openRouter.allowFallbacks", true) }
         return OpenRouterRouting(
             zdr = bool("OPENROUTER_ZDR", "agent.openRouter.zdr", defaults.zdr),
             quantizations = quantizations,
             sort = sort,
+            order = order,
+            allowFallbacks = fallbacks,
         )
     }
 

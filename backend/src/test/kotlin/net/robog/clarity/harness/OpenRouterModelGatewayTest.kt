@@ -186,6 +186,9 @@ class OpenRouterModelGatewayTest : FunSpec({
                 put("quantizations", JsonArray(listOf(JsonPrimitive("bf16"))))
                 put("sort", "throughput")
             }
+        val pinned = OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(order = listOf("DeepInfra", "Novita"), allowFallbacks = false))["provider"]!!.jsonObject
+        pinned["order"] shouldBe JsonArray(listOf(JsonPrimitive("DeepInfra"), JsonPrimitive("Novita")))
+        pinned["allow_fallbacks"] shouldBe JsonPrimitive(false)
     }
 
     test("server tools are refused") {
