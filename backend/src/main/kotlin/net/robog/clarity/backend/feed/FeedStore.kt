@@ -17,6 +17,7 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.NOTIFY_IN_APP
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedPage
+import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.session.SessionId
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
@@ -28,6 +29,7 @@ import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
@@ -42,6 +44,8 @@ data class FeedDraft(
     /** The notification decision (`push_now`, `in_app`, `hold_until:<iso>`, `evening_batch:<iso>`). */
     val notify: String? = null,
     val batchPending: Boolean = false,
+    /** The people the item is about (send_to_user's `about`), kept so a later "gets through" change can release a hold. */
+    val about: List<Handle> = emptyList(),
 )
 
 data class Appended(val item: FeedItem, val created: Boolean)
@@ -68,6 +72,9 @@ interface FeedStore {
 
     /** Items whose notification is still held for protected time (`hold_until:`), oldest first. */
     suspend fun heldNotifications(): List<FeedItem>
+
+    /** The people each of [ids] is about (only items that recorded any). */
+    suspend fun aboutOf(ids: Collection<FeedItemId>): Map<FeedItemId, List<Handle>>
 
     /**
      * Replaces the notify decision of [id] with [to] only if it is still [from], so a second release
@@ -96,6 +103,7 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
             it[clientInputId] = draft.clientInputId?.value
             it[notify] = draft.notify
             it[batchState] = if (draft.batchPending) PENDING else null
+            it[notifyAbout] = draft.about.ifEmpty { null }
         }.insertedCount > 0
         if (inserted) {
             Appended(FeedItems.selectAll().where { FeedItems.id eq id }.single().toItem(), created = true)
@@ -146,6 +154,16 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
 
     override suspend fun heldNotifications(): List<FeedItem> = database.tx {
         FeedItems.selectAll().where { FeedItems.notify like "$HOLD_PREFIX%" }.orderBy(FeedItems.seq).map { it.toItem() }
+    }
+
+    override suspend fun aboutOf(ids: Collection<FeedItemId>): Map<FeedItemId, List<Handle>> {
+        val uuids = ids.mapNotNull { runCatching { Uuid.parse(it.value) }.getOrNull() }
+        if (uuids.isEmpty()) return emptyMap()
+        return database.tx {
+            FeedItems.select(FeedItems.id, FeedItems.notifyAbout).where { FeedItems.id inList uuids }
+                .mapNotNull { row -> row[FeedItems.notifyAbout]?.let { FeedItemId(row[FeedItems.id].toString()) to it } }
+                .toMap()
+        }
     }
 
     override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? {
