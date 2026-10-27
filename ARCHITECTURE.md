@@ -276,6 +276,19 @@ since the last review, skipped windows included. Each call is a `model_call` row
 `decision`; each verdict is one info log line. The model has no tools, so injected text can at
 most flip the answer. That is why it is never used for the constitution guard.
 
+**The failure gate** (`agent/FailureGate.kt`) keeps failure stories out of memory and helper
+briefs: guesses at why a task failed, saved as facts ("Ulta lookup still broken"), outlive the bug,
+and pasted into a brief as "known issues" they make a helper mistake a loading page for the glitch.
+Every durable memory write (`write_journal`, `remember_fact`, `set_scratch`, `save_note` text and
+new collection descriptions, `manage_collection` descriptions, the facts `replace_profile` adds)
+asks Jev one `noul`, "Is this text discussing a technical failure or glitch?", with the text under
+`untrusted`; at p ≥ `CLARITY_MEMORY_GATE_THRESHOLD` (0.6) the tool returns an error that says to
+record only the outcome. `delegate` and `message_helper` ask whether the brief gives workaround
+advice or explanations about earlier failures; at p ≥ `CLARITY_BRIEF_GATE_THRESHOLD` (0.6) the lead
+is told to resend only the goal, a short flow and the constraints. Texts under 40 characters are
+not checked. It fails open (`CLARITY_FAILURE_GATE=false`, decisions off, no key, an error) and logs
+every refusal; each call is a `model_call` row with role `decision` (about $0.00002).
+
 ### The helper's browser (pilot)
 
 A helper does not see the browser MCP's raw tools. It gets a small planner surface

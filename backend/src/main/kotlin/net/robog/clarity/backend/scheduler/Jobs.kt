@@ -163,6 +163,8 @@ fun memoryGcTask(from: LocalDate, until: LocalDate): String =
         "3. Journal: read entries from $from to $until with read_journal. File durable facts in them (people, places, projects, " +
         "preferences, how things are done) into the fitting collection with save_note, unless a note already says it; " +
         "create a collection only for a topic that clearly recurs. Leave passing events in the journal.\n" +
+        "Remove notes and facts about technical failures, glitches, their supposed causes or workarounds (\"site X is broken\"): they are " +
+        "guesses that go stale; do not copy them anywhere.\n" +
         "Never store passwords, codes, keys or tokens. Report in two or three lines what you changed."
 
 /**

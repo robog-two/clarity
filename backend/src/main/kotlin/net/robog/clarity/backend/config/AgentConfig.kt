@@ -72,6 +72,14 @@ data class DecisionConfig(
     val reviewGate: Boolean = true,
     val reviewThreshold: Double = 0.3,
     val reviewMaxQuiet: Duration = Duration.parse("8h"),
+    /**
+     * The failure gate ([net.robog.clarity.backend.agent.FailureGate]): Jev refuses a memory write
+     * that discusses a technical failure or glitch at [memoryGateThreshold], and a helper brief that
+     * carries workaround advice about earlier failures at [briefGateThreshold]. Fails open.
+     */
+    val failureGate: Boolean = true,
+    val memoryGateThreshold: Double = 0.6,
+    val briefGateThreshold: Double = 0.6,
 )
 
 const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
