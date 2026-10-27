@@ -20,6 +20,9 @@ clarity:
     # provider: anthropic or openrouter (OPENROUTER_API_KEY; model names are OpenRouter's then, e.g.
     # anthropic/claude-haiku-5.5). On OpenRouter the lead compacts its thread client-side at compactAtTokens
     # (there is no prompt cache there, so that threshold is the main cost lever).
+    # OpenRouter routing: OPENROUTER_ZDR (default true: zero data retention endpoints only),
+    # OPENROUTER_QUANTIZATIONS (default fp8,bf16,fp16; blank: any) and OPENROUTER_SORT (default price;
+    # blank: OpenRouter's balancing), or agent.openRouter.zdr / quantizations / sort here.
     # These are the defaults: the app's Settings can override provider, model and effort per role at runtime.
     roles:
       lead:

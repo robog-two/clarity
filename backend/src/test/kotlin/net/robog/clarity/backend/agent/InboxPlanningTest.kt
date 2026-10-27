@@ -85,6 +85,10 @@ class InboxPlanningTest : FunSpec({
 
     test("the clock is restated after a while, on a new local day, and after a restart") {
         val evening = Instant.parse("2026-10-27T03:55:00Z") // 23:55 Monday in New York
+        // After a compaction the model may no longer see any stated time.
+        statesTime(listOf(net.robog.clarity.harness.Message.user("hi"))) shouldBe false
+        statesTime(listOf(net.robog.clarity.harness.Message(Role.SYSTEM, listOf(Block.Text("[now 2026-10-26T23:55-04:00 (Mon), America/New_York]"))))) shouldBe true
+        statesTime(listOf(net.robog.clarity.harness.Message(Role.SYSTEM, listOf(Block.Text("[inbox, now 2026-10-26T23:55-04:00 (Mon), America/New_York]"))))) shouldBe true
         clockDue(null, evening, newYork) shouldBe true
         clockDue(evening - 2.minutes, evening, newYork) shouldBe false
         clockDue(evening - CLOCK_RESTATE_AFTER, evening, newYork) shouldBe true

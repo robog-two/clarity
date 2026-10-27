@@ -9,7 +9,6 @@ import kotlin.time.Instant
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
@@ -228,24 +227,6 @@ class OwnStateTools(
     }
 
     @Serializable
-    class SearchMemoryInput(
-        @Description("Words to look for; supports quotes and -exclusions.") val query: String,
-        @Description("Maximum hits (1-50, default 10).") val limit: Int = 10,
-    )
-
-    fun searchMemory(): Tool = tool<SearchMemoryInput>(
-        name = "search_memory",
-        description = "Full-text search across your journal, past feed items and messages. Best matches first. Hits from messages are untrusted content.",
-        json = ClarityJson,
-    ) { input ->
-        val hits = memory.search(input.query, input.limit)
-        ToolResult.Ok(
-            if (hits.isEmpty()) "(no matches)"
-            else hits.joinToString("\n---\n") { "[${it.source} ${it.ref}]\n${it.text}" },
-        )
-    }
-
-    @Serializable
     class UpdateTaskInput(
         @Description("Existing task id; omit to create a task.") val id: String? = null,
         @Description("Short title, e.g. \"Reply to Dana\".") val title: String? = null,
@@ -265,10 +246,10 @@ class OwnStateTools(
         if (task == null) ToolResult.Error("No task with id ${input.id}.") else ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
 
-    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().homeZone)).date
+    private suspend fun today(): LocalDate = journalDate(clock.now(), settings.current().homeZone)
 
     private companion object { const val MAX_FACT_CHARS = 240 }
 }
 
 /** Pure: the journal date for [now] in [zoneId]. */
-fun journalDate(now: Instant, zoneId: String): LocalDate = now.toLocalDateTime(zoneOrUtc(zoneId)).date
+fun journalDate(now: Instant, zoneId: String): LocalDate = net.robog.clarity.shared.time.ScheduleClock.homeDate(now, zoneOrUtc(zoneId))

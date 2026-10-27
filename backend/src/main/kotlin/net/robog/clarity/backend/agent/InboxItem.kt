@@ -163,6 +163,12 @@ fun clockDue(lastStated: Instant?, now: Instant, zone: TimeZone): Boolean =
     lastStated == null || now - lastStated >= CLOCK_RESTATE_AFTER ||
         ScheduleClock.homeDate(lastStated, zone) != ScheduleClock.homeDate(now, zone)
 
+/** Pure: whether [visible] (the context the model still reads) states the current time anywhere. */
+fun statesTime(visible: List<Message>): Boolean = visible.any { m ->
+    m.role == net.robog.clarity.harness.Role.SYSTEM &&
+        m.content.any { it is Block.Text && (it.text.startsWith("[now ") || it.text.startsWith("[inbox, now ")) }
+}
+
 /** One message handed to the lead and the inbox rows it carries (consumed once it is journaled). */
 data class Delivery(val seqs: List<Long>, val message: Message)
 

@@ -187,7 +187,7 @@ class LeadPureTest : FunSpec({
 
     context("memory") {
         val today = LocalDate(2026, 10, 25)
-        test("nothing to say renders nothing") { renderMemoryContext(today, emptyList(), emptyList()) shouldBe null }
+        test("nothing to say renders nothing") { renderMemoryContext(today, emptyList(), emptyList(), kotlinx.datetime.TimeZone.UTC) shouldBe null }
         test("today, yesterday and scratch") {
             val text = renderMemoryContext(
                 today,
@@ -197,6 +197,7 @@ class LeadPureTest : FunSpec({
                     JournalEntry(3, LocalDate(2026, 10, 1), "too old"),
                 ),
                 listOf(ScratchNote(1, "waiting on Dana", now + 2.hours)),
+                kotlinx.datetime.TimeZone.UTC,
             )!!
             text shouldContain "yesterday:\n- Decided to move the review"
             text shouldContain "today:\n- Morning call done"
