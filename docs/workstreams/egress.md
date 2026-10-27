@@ -19,7 +19,7 @@ and differ per engine. So egress goes through one small proxy that enforces the 
      names (`host.containers.internal`, `host.docker.internal`).
    - Allow only ports 80 and 443 (CONNECT to 443 only); no caching; no `X-Forwarded-For`/`Via`.
    - Two ACL'd listeners (or source-network ACLs): **browser** (any public host) and **backend**
-     (only `api.anthropic.com`, plus an optional `CLARITY_BACKEND_EGRESS_ALLOW` list).
+     (only `openrouter.ai`, plus an optional `CLARITY_BACKEND_EGRESS_ALLOW` list).
 2. **Compose**: new internal networks `browser-proxy` (browser ↔ egress) and `backend-proxy`
    (backend ↔ egress); `egress` is the only service on the non-internal `egress` network.
    Remove `browser-egress` and `backend-egress`. Connectors keep their own egress networks (their
@@ -28,8 +28,8 @@ and differ per engine. So egress goes through one small proxy that enforces the 
    `network.proxy.share_proxy_settings`, `network.proxy.socks_remote_dns`, no proxy bypass list,
    `network.dns.disabled=true` is not needed since there is no route without the proxy; WebRTC off
    (`media.peerconnection.enabled=false`) so nothing leaks around the proxy.
-4. **Backend**: the Anthropic client (and MCP clients if they ever leave the internal networks)
-   honors `CLARITY_HTTPS_PROXY` (anthropic-java OkHttp proxy setting).
+4. **Backend**: the OpenRouter clients (chat, embeddings, decisions; and MCP clients if they ever leave the internal networks)
+   honor `CLARITY_HTTPS_PROXY` (the JDK HTTP client's proxy selector).
 5. **Docs**: what is reachable from where, and how to allow a LAN host deliberately if ever needed.
 
 ## Tests
