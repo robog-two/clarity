@@ -161,6 +161,14 @@ class ConfiguredBrowserTriage(private val runtime: AgentRuntime) : BrowserTriage
  */
 class BrowserState {
     @Volatile var url: String? = null
+        set(value) {
+            field = value
+            if (!isBlankPage(value)) lastPage = value
+        }
+
+    /** The last real page (not an empty tab) the wrapper saw, kept when the tab turns up empty. */
+    @Volatile var lastPage: String? = null
+        private set
     @Volatile var elements: Map<String, Element> = emptyMap()
     @Volatile private var fillHost: String? = null
     @Volatile private var actionsSinceFill: Int = Int.MAX_VALUE
@@ -272,6 +280,7 @@ class BrowserGate(
         override val description: String = when (remote) {
             in TEXT_ENTRY_TOOLS -> inner.description + " " + PLACEHOLDER_HINT
             in DOWNLOAD_TOOLS -> inner.description + " " + DOWNLOAD_HINT
+            "list_pages" -> inner.description + " " + TABS_HINT
             else -> inner.description
         }
 
@@ -345,8 +354,22 @@ class BrowserGate(
 
             if (substituted) state.noteSecretTargets(secretTargets(input))
             val result = inner.invoke(send)
-            if (result is ToolResult.Ok) afterSuccess(input, result.content, url, substituted)
+            if (result is ToolResult.Ok) {
+                afterSuccess(input, result.content, url, substituted)
+                lostPage(result.content)?.let { return Attempt(ToolResult.Ok(result.content + "\n\n" + it)) }
+            }
             return Attempt(result)
+        }
+
+        /** A note when the selected tab turns out empty though the agent was on a page (see [lostPageNote]). */
+        private suspend fun lostPage(content: String): String? {
+            val last = state.lastPage ?: return null
+            val selected = when {
+                remote == "list_pages" -> parseSelectedUrl(content)
+                looksEmpty(remote, content) -> currentUrl().let { state.url }
+                else -> return null
+            }
+            return lostPageNote(selected, last)
         }
 
         private suspend fun capture(input: JsonObject): ToolResult {
@@ -488,6 +511,9 @@ class BrowserGate(
         val DOWNLOAD_TOOLS = setOf("click_by_uid", "navigate_page", "new_page")
         const val DOWNLOAD_HINT =
             "A file this downloads (a PDF, CSV, ZIP...) is saved without asking and shows up in the sandbox at /workspace/downloads, read-only, for the shell to work on."
+        const val TABS_HINT =
+            "Tabs survive a browser restart, but then an empty tab is selected: if the page you expect is not the selected one, " +
+                "select_page it, or navigate_page to it again if it is gone. Never assume you are still where you were."
         const val PLACEHOLDER_HINT =
             "To enter a saved secret write a placeholder such as [secret:bank_login_password] (see list_credentials); the real value is filled in for you after the person approves, and you never see it."
     }

@@ -38,10 +38,10 @@ podman run -d --name "$egress" --user 10001:10001 --read-only --cap-drop ALL --s
   --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_sandbox:alias=egress-sandbox" --network "$net_out" \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
-  podman exec "$egress" nc -z 127.0.0.1 3130 >/dev/null 2>&1 && break
+  podman exec "$egress" egress-health >/dev/null 2>&1 && break
   sleep 1
 done
-podman exec "$egress" nc -z 127.0.0.1 3130 || fail "proxy did not start"
+podman exec "$egress" egress-health || fail "proxy did not start"
 
 # A client container on one internal network. Prints the HTTP status curl saw, or the proxy's reply
 # to CONNECT when the tunnel was refused (curl reports 000 for the status then), or 000 for no connection.
@@ -70,6 +70,11 @@ for url in http://10.0.0.1/ http://192.168.1.1/ http://172.16.0.1/ http://169.25
 done
 expect "browser: CONNECT to non-443 port refused" 403 "$(via_browser https://example.com:8443/)"
 expect "browser: plain HTTP to non-80 port refused" 403 "$(via_browser http://example.com:8080/)"
+headers="$(podman run --rm --network "$net_browser" --read-only --cap-drop ALL "$curl_image" \
+  -s -D - -o /dev/null --max-time 20 -x http://egress-browser:3128 http://example.com/ 2>/dev/null || true)"
+printf '%s' "$headers" | grep -q '^HTTP/' || fail "browser: plain HTTP to example.com failed"
+if printf '%s' "$headers" | grep -qi '^via:'; then fail "the proxy announced itself with a Via header"; fi
+echo "ok   browser: plain HTTP carries no Via header"
 
 # --- sandbox listener: the browser's policy ------------------------------------------------------
 expect "sandbox: public HTTPS (example.com)" 200 "$(via_sandbox https://example.com/)"
@@ -113,4 +118,10 @@ fi
 
 # --- the proxy logged the refusals ---------------------------------------------------------------
 podman logs "$egress" 2>&1 | grep -q 'TCP_DENIED' || fail "no denials in the access log"
+# --- a clean config and a quiet healthcheck ------------------------------------------------------
+for _ in 1 2 3; do podman exec "$egress" egress-health || fail "healthcheck failed"; done
+if podman logs "$egress" 2>&1 | grep -E 'ERROR|WARNING|transaction-end-before-headers| 127\.0\.0\.1 '; then
+  fail "config errors/warnings or healthcheck lines in the log"
+fi
+echo "ok   no config warnings, healthchecks not in the access log"
 echo "egress smoke OK"

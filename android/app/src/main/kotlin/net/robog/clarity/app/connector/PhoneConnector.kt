@@ -63,6 +63,9 @@ interface PhoneConnector {
     /** (Re)schedules the periodic background pass. */
     fun schedule()
 
+    /** The server was forgotten: the next one has not heard of this phone yet (the manifest goes again). */
+    fun forgetServer() {}
+
     /** When SMS last reached the server, how many, and why the last try failed. */
     val status: Flow<SmsSyncStatus>
 }
@@ -126,6 +129,13 @@ class DefaultPhoneConnector(
         // The manifest is what makes the server allow (grant) messages from this phone.
         if (!announced) announce()?.let { return SyncOutcome(0, it) }
         val account = phoneAccount(deviceId)
+        try {
+            checkCursorFirst()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return SyncOutcome(0, SmsSyncProblem.READ_FAILED)
+        }
         var sent = 0
         repeat(MAX_READS) {
             val rows = try {
@@ -151,12 +161,27 @@ class DefaultPhoneConnector(
                     accepted = acceptedCount(response.results)
                 }
                 sent += accepted
-                cursor.advance(newest, accepted)
+                cursor.advance(newest.id, accepted, anchorOf(newest))
             }
             if (rows.size < READ_SIZE) return SyncOutcome(sent, null)
         }
         // More is left (a very large inbox): the next pass carries on from the cursor.
         return SyncOutcome(sent, null)
+    }
+
+    /** A restore or a new phone renumbers the SMS store: start over rather than skip texts (see [checkCursor]). */
+    private suspend fun checkCursorFirst() {
+        val last = cursor.lastId()
+        if (last <= 0) return
+        when (val check = checkCursor(last, cursor.anchor(), sms.rowAt(last), sms.maxId())) {
+            CursorCheck.Keep -> Unit
+            is CursorCheck.Adopt -> cursor.adopt(check.anchor)
+            CursorCheck.Rescan -> cursor.restart()
+        }
+    }
+
+    override fun forgetServer() {
+        announced = false
     }
 
     override suspend fun actionPass(waitSeconds: Int): Int {
@@ -196,6 +221,9 @@ class DefaultPhoneConnector(
 /** The WorkManager side, behind an interface so the connector is testable. */
 interface ConnectorWork {
     fun schedule()
+
+    /** Stops the periodic pass (the server was forgotten). */
+    fun cancel() {}
 }
 
 class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
@@ -204,6 +232,10 @@ class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
+
+    override fun cancel() {
+        WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
     }
 
     private companion object { const val UNIQUE_NAME = "phone-connector" }

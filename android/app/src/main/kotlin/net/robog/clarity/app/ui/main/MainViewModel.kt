@@ -18,6 +18,7 @@ import net.robog.clarity.app.data.FeedRepository
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.push.PushController
+import net.robog.clarity.app.push.SeenOnScreen
 import net.robog.clarity.app.ui.Toasts
 import net.robog.clarity.app.ui.held.heldOutcomeToasts
 import net.robog.clarity.shared.governance.HeldAction
@@ -49,6 +50,7 @@ class MainViewModel(
     private val phone: PhoneConnector,
     private val connection: ConnectionHolder,
     private val push: PushController,
+    private val seen: SeenOnScreen,
 ) : ViewModel() {
     /** Confirmations to show above the tab bar. */
     val messages = toasts.messages
@@ -83,5 +85,7 @@ class MainViewModel(
         }
         // In front is the one moment the system lets a foreground service start.
         launch { push.reconcile() }
+        // What the person reads here must not notify later.
+        launch { seen.track() }
     }
 }

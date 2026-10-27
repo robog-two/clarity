@@ -88,7 +88,8 @@ class OwnStateTools(
             else -> {
                 val now = clock.now()
                 val constitution = constitutions.current() ?: emptyConstitution(now)
-                val decision = notifyDecision(input.urgency, input.about.map(::parseHandle), constitution, settings.current(), now)
+                val about = input.about.map(::parseHandle)
+                val decision = notifyDecision(input.urgency, about, constitution, settings.current(), now)
                 // Keyed by the tool call, so a call re-run after a crash does not post twice.
                 val call = coroutineContext[ToolCallContext]
                 feed.append(
@@ -99,6 +100,7 @@ class OwnStateTools(
                         clientInputId = call?.let { ClientInputId("tool:${it.runId}:${it.toolUseId}") },
                         notify = decision.wire(),
                         batchPending = decision is NotifyDecision.EveningBatch,
+                        about = if (decision is NotifyDecision.HoldUntil) about else emptyList(),
                     ),
                 )
                 ToolResult.Ok(decision.describe(settings.homeZone()))

@@ -87,6 +87,8 @@ COPY computers/browser/profile/user.js /opt/profile-template/user.js
 COPY --chmod=0644 computers/browser/policies.json /opt/firefox/distribution/policies.json
 COPY --from=deps /opt/mcp /opt/mcp
 COPY --chmod=0755 computers/browser/entrypoint.sh /usr/local/bin/clarity-browser
+COPY --chmod=0644 computers/browser/session-prep.mjs /opt/clarity-browser/session-prep.mjs
+COPY --chmod=0755 computers/browser/firefox-wrapper.sh /opt/clarity-browser/firefox
 COPY computers/browser/prewarm.sh /tmp/prewarm.sh
 
 # Run Firefox once so the add-ons are installed and past their first-run logic (see prewarm.sh).

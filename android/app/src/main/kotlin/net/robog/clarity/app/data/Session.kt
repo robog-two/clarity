@@ -32,8 +32,16 @@ class DataStoreSessionStore(private val store: DataStore<Preferences>) : Session
         }
     }
 
+    /**
+     * Removes the session only. The file is shared with every other store, and wiping all of it
+     * also lost state that is not the server's, such as the do-not-disturb setting to go back to;
+     * forgetting the server clears each per-server store explicitly (see [ServerScopedState]).
+     */
     override suspend fun clear() {
-        store.edit { it.clear() }
+        store.edit {
+            it.remove(URL)
+            it.remove(DEVICE_ID)
+        }
     }
 
     private companion object {
@@ -50,6 +58,12 @@ interface OnboardingFlagStore {
     /** "redo onboarding" in settings: show the onboarding flow again although setup is complete. */
     val redo: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(false)
     suspend fun startRedo() = Unit
+
+    /**
+     * The server was forgotten: not set up any more, and the next pairing walks through setup
+     * again, even with a server that reports its setup complete (which otherwise skips the flow).
+     */
+    suspend fun forgetServer() = Unit
 }
 
 class DataStoreOnboardingFlagStore(private val store: DataStore<Preferences>) : OnboardingFlagStore {
@@ -66,6 +80,13 @@ class DataStoreOnboardingFlagStore(private val store: DataStore<Preferences>) : 
 
     override suspend fun startRedo() {
         store.edit { it[REDO] = true }
+    }
+
+    override suspend fun forgetServer() {
+        store.edit {
+            it[DONE] = false
+            it[REDO] = true
+        }
     }
 
     private companion object {

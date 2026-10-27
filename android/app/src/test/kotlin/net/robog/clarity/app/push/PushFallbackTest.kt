@@ -174,7 +174,7 @@ class PushFallbackTest {
         val sync = FeedSync(backend, FakeEventSource(emptyList()), store)
         val ledger = MemoryLedger()
         val notifier = RecordingPushNotifier()
-        val listener = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0), notifier, ledger)
+        val listener = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0), notifier, ledger, cached = { store.notifiable() })
         val work = RecordingWork()
         var reconnects = 0
         var starts = 0
@@ -184,7 +184,7 @@ class PushFallbackTest {
             serviceRunning = { running },
             feedLive = { live },
             catchUp = { catchUps++; sync.catchUp() },
-            deliver = listener::deliver,
+            deliver = listener::deliverMissed,
             reconnect = { reconnects++ },
             canStartService = { mayStart },
             startService = { starts++ },

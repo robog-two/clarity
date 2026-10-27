@@ -47,11 +47,18 @@ class DefaultSessionRepository(
     private val sessions: SessionStore,
     private val key: DeviceKey,
     private val cache: net.robog.clarity.app.data.feed.FeedStore,
+    private val perServer: List<ServerScopedState> = emptyList(),
 ) : SessionRepository {
     override val session: Flow<Session?> = sessions.session
 
+    /**
+     * Forgets the server: the session first (the push service, the workers and the screens all
+     * follow it, so nothing new starts for that server), then everything else kept for it
+     * ([perServerState]), the cached feed and the device key. Pairing again starts from nothing.
+     */
     override suspend fun forget() {
         sessions.clear()
+        forgetAll(perServer)
         cache.clear()
         key.delete()
     }
