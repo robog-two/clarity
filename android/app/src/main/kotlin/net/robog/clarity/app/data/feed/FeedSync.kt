@@ -95,6 +95,14 @@ class FeedSync(
     /** New feed items (once complete), released holds and newly held actions, once each; the push service and its fallback listen. */
     val arrivals: SharedFlow<Arrival> = _arrivals.asSharedFlow()
 
+    private val _caughtUp = MutableSharedFlow<List<Arrival>>(extraBufferCapacity = 8)
+    /**
+     * What one (re)connect's gap fill and held reload brought, in one list instead of one by one on
+     * [arrivals]: after a long gap these are things missed, which notify as such (a summary rather
+     * than a burst; see `decideMissed`).
+     */
+    val caughtUp: SharedFlow<List<Arrival>> = _caughtUp.asSharedFlow()
+
     private val nudges = Channel<Unit>(Channel.CONFLATED)
 
     /**
@@ -103,6 +111,12 @@ class FeedSync(
      */
     fun reconnectNow() {
         nudges.trySend(Unit)
+    }
+
+    /** The server was forgotten: what was known about its connection does not carry over. */
+    fun forgetServer() {
+        _busy.value = false
+        _state.value = SyncState.Connecting
     }
 
     private class NetworkChanged : Exception()
@@ -127,8 +141,14 @@ class FeedSync(
             currentCoroutineContext().ensureActive()
             _state.value = SyncState.Connecting
             try {
-                fillGap()
-                refreshHeld()
+                val missed = mutableListOf<Arrival>()
+                try {
+                    fillGap(missed::add)
+                    refreshHeld(missed::add)
+                } finally {
+                    // Also what arrived before a failure part way: it is cached now, so it would not come again.
+                    if (missed.isNotEmpty()) _caughtUp.tryEmit(missed.toList())
+                }
                 coroutineScope {
                     val watcher = launch { nudges.receive(); throw NetworkChanged() }
                     try {
@@ -171,8 +191,8 @@ class FeedSync(
 
     /**
      * One pass without the stream, for the background fallback: fills the gap and reloads the held
-     * list. The arrivals also go out on [arrivals] as usual; they are returned so that the caller
-     * sees every one even with nobody collecting. A failure part way keeps what already arrived.
+     * list. The arrivals are returned (not sent on [arrivals]): the caller notifies them as missed.
+     * A failure part way keeps what already arrived.
      */
     suspend fun catchUp(): CatchUp {
         val arrived = mutableListOf<Arrival>()
@@ -192,7 +212,7 @@ class FeedSync(
      * before a cached item that is still streaming, or still held, fetches its final version or its
      * release if it was missed (the fallback has no stream to hear them on).
      */
-    suspend fun fillGap(onArrival: (Arrival) -> Unit = {}) {
+    suspend fun fillGap(onArrival: ((Arrival) -> Unit)? = null) {
         var after = resumePoint()
         while (true) {
             when (val result = backend.feed(after)) {
@@ -227,7 +247,7 @@ class FeedSync(
      * first seen already final, or a streaming copy being finished. Partials never arrive. A held
      * item arrives a second time, once, when the server releases it.
      */
-    private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: (Arrival) -> Unit = {}) {
+    private suspend fun storeItem(item: FeedItem, final: Boolean, onArrival: ((Arrival) -> Unit)? = null) {
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
@@ -235,13 +255,13 @@ class FeedSync(
         }
     }
 
-    private fun arrive(arrival: Arrival, onArrival: (Arrival) -> Unit) {
-        _arrivals.tryEmit(arrival)
-        onArrival(arrival)
+    /** Live on [arrivals], or to [onArrival] when a gap fill or catch-up gathers them. */
+    private fun arrive(arrival: Arrival, onArrival: ((Arrival) -> Unit)?) {
+        if (onArrival != null) onArrival(arrival) else _arrivals.tryEmit(arrival)
     }
 
     /** Reloads the held list; actions that are waiting and new to this phone arrive once. */
-    private suspend fun refreshHeld(onArrival: (Arrival) -> Unit = {}) {
+    private suspend fun refreshHeld(onArrival: ((Arrival) -> Unit)? = null) {
         val fresh = (backend.held() as? ApiResult.Success)?.value ?: return
         val known = store.held.first().filter { it.status == HeldAction.Status.HELD }.map { it.id }.toSet()
         store.replaceHeld(fresh)

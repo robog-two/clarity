@@ -123,6 +123,9 @@ import net.robog.clarity.app.push.PushFallbackWork
 import net.robog.clarity.app.push.WorkManagerPushFallbackWork
 import net.robog.clarity.app.push.canStartServiceNow
 import net.robog.clarity.app.push.pushConditions
+import net.robog.clarity.app.push.SeenOnScreen
+import net.robog.clarity.app.push.notifiable
+import net.robog.clarity.app.data.perServerState
 import net.robog.clarity.app.data.feed.SyncState
 import kotlinx.coroutines.flow.first
 
@@ -159,8 +162,24 @@ interface AppGraph : ViewModelGraph {
     @Provides fun enrollmentRepository(api: ClarityApi, key: DeviceKey, sessions: SessionStore): EnrollmentRepository =
         DefaultEnrollmentRepository(api, key, sessions)
 
-    @Provides fun sessionRepository(sessions: SessionStore, key: DeviceKey, cache: FeedStore): SessionRepository =
-        DefaultSessionRepository(sessions, key, cache)
+    @Provides fun sessionRepository(
+        sessions: SessionStore,
+        key: DeviceKey,
+        cache: FeedStore,
+        sync: FeedSync,
+        pushWork: PushFallbackWork,
+        connectorWork: ConnectorWork,
+        callScheduler: CallScheduler,
+        dnd: DndActionHandler,
+        notifier: PushNotifier,
+        flag: OnboardingFlagStore,
+        ledger: NotifiedLedger,
+        smsCursor: SmsCursorStore,
+        vaultKeys: VaultKeys,
+    ): SessionRepository = DefaultSessionRepository(
+        sessions, key, cache,
+        perServerState(sync, pushWork, connectorWork, callScheduler, dnd, notifier, flag, ledger, smsCursor, vaultKeys),
+    )
 
     @Provides @SingleIn(AppScope::class)
     fun database(context: Context): ClarityDatabase =
@@ -307,8 +326,12 @@ interface AppGraph : ViewModelGraph {
 
     /** What the service and the fallback have already notified. */
     @Provides @SingleIn(AppScope::class)
-    fun notifiedLedger(store: DataStore<Preferences>, sessions: SessionStore): NotifiedLedger =
-        DataStoreNotifiedLedger(store, sessions)
+    fun notifiedLedger(store: DataStore<Preferences>, sessions: SessionStore, clock: AppClock): NotifiedLedger =
+        DataStoreNotifiedLedger(store, sessions, clock)
+
+    /** Marks what the person reads in the app as seen, so it never notifies afterwards. */
+    @Provides fun seenOnScreen(front: FrontScreen, store: FeedStore, ledger: NotifiedLedger): SeenOnScreen =
+        SeenOnScreen(front.front, store, ledger)
 
     /** The app in front and the push service share one feed connection and one action loop. */
     @Provides @SingleIn(AppScope::class)
@@ -326,7 +349,12 @@ interface AppGraph : ViewModelGraph {
         clock: AppClock,
         notifier: PushNotifier,
         ledger: NotifiedLedger,
-    ): PushListener = PushListener(sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier, ledger)
+        store: FeedStore,
+    ): PushListener = PushListener(
+        sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier, ledger,
+        batches = sync.caughtUp,
+        cached = { store.notifiable() },
+    )
 
     /** The periodic catch-up for when the service is not running. */
     @Provides fun pushFallback(
@@ -343,7 +371,7 @@ interface AppGraph : ViewModelGraph {
         serviceRunning = FeedService::isRunning,
         feedLive = { sync.state.value == SyncState.Live },
         catchUp = sync::catchUp,
-        deliver = listener::deliver,
+        deliver = listener::deliverMissed,
         reconnect = sync::reconnectNow,
         canStartService = { canStartServiceNow(capabilities.batteryUnrestricted()) },
         // Reconcile starts it when the conditions hold, and copes with a refusal.

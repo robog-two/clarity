@@ -170,6 +170,17 @@ class DndActionHandler(
         }
     }
 
+    /**
+     * The server that asked for do not disturb was forgotten: give the person their own setting
+     * back now rather than leave the phone silenced until a window nobody manages any more.
+     */
+    suspend fun endNow() {
+        val current = state.load() ?: return
+        if (controller.hasAccess()) controller.restore(current.previousFilter)
+        state.clear()
+        alarms.cancelEnd()
+    }
+
     /** Called by the end alarm, after boot, and on every connector pass. */
     suspend fun endIfDue() {
         val current = state.load() ?: return

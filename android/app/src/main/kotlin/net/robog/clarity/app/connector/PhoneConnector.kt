@@ -77,6 +77,7 @@ class DefaultPhoneConnector(
         if (!capabilities.smsGranted()) return 0
         val deviceId = sessions.session.first()?.deviceId?.value ?: return 0
         val account = phoneAccount(deviceId)
+        checkCursorFirst()
         var sent = 0
         repeat(MAX_READS) {
             val rows = sms.readAfter(cursor.lastId(), READ_SIZE)
@@ -90,11 +91,22 @@ class DefaultPhoneConnector(
                     if (!cursorMayAdvance(response.results)) return sent
                     sent += batch.records.size
                 }
-                cursor.advance(newest, clock.now())
+                cursor.advance(newest.id, clock.now(), anchorOf(newest))
             }
             if (rows.size < READ_SIZE) return sent
         }
         return sent
+    }
+
+    /** A restore or a new phone renumbers the SMS store: start over rather than skip texts (see [checkCursor]). */
+    private suspend fun checkCursorFirst() {
+        val last = cursor.lastId()
+        if (last <= 0) return
+        when (val check = checkCursor(last, cursor.anchor(), sms.rowAt(last), sms.maxId())) {
+            CursorCheck.Keep -> Unit
+            is CursorCheck.Adopt -> cursor.adopt(check.anchor)
+            CursorCheck.Rescan -> cursor.restart()
+        }
     }
 
     override suspend fun actionPass(waitSeconds: Int): Int {
@@ -134,6 +146,9 @@ class DefaultPhoneConnector(
 /** The WorkManager side, behind an interface so the connector is testable. */
 interface ConnectorWork {
     fun schedule()
+
+    /** Stops the periodic pass (the server was forgotten). */
+    fun cancel() {}
 }
 
 class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
@@ -142,6 +157,10 @@ class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
+
+    override fun cancel() {
+        WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
     }
 
     private companion object { const val UNIQUE_NAME = "phone-connector" }
