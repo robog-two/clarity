@@ -81,6 +81,31 @@ class LeadPureTest : FunSpec({
         (estimateTokens(sinceLastCompaction(listOf(old, compacted))) < 1_000) shouldBe true
     }
 
+    context("owing the person a reply") {
+        fun finished(reason: net.robog.clarity.harness.FinishReason, text: String = "") = net.robog.clarity.harness.HarnessEvent.Finished(
+            net.robog.clarity.harness.RunResult(reason, net.robog.clarity.harness.Usage.ZERO, emptyList(), text),
+        )
+        test("only a run that ended on its own, after the person wrote and got no reply, is nudged") {
+            owesReply(true, finished(net.robog.clarity.harness.FinishReason.END_TURN)) shouldBe true
+            owesReply(false, finished(net.robog.clarity.harness.FinishReason.END_TURN)) shouldBe false
+            owesReply(true, finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
+            owesReply(true, finished(net.robog.clarity.harness.FinishReason.REFUSAL)) shouldBe false
+            owesReply(true, finished(net.robog.clarity.harness.FinishReason.COMPACTED)) shouldBe false
+            owesReply(true, net.robog.clarity.harness.HarnessEvent.Failed("down", net.robog.clarity.harness.Usage.ZERO, emptyList())) shouldBe false
+            owesReply(true, null) shouldBe false
+            REPLY_NUDGE shouldContain "send_to_user"
+        }
+        test("a helper that finished with no text owes its result; one with text or that stopped otherwise does not") {
+            helperOwesResult(finished(net.robog.clarity.harness.FinishReason.END_TURN, "  ")) shouldBe true
+            helperOwesResult(finished(net.robog.clarity.harness.FinishReason.END_TURN, "found it")) shouldBe false
+            helperOwesResult(finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
+            helperOwesResult(null) shouldBe false
+        }
+        test("the lead prompt tells it to always answer the person, in the same turn") {
+            AgentPrompts.LEAD_SYSTEM shouldContain "When the person writes to you, always answer with send_to_user in the same turn"
+        }
+    }
+
     context("resuming") {
         val user = Message.user("hi")
         val toolCall = Message(Role.ASSISTANT, listOf(Block.ToolUse("t1", "send_to_user", buildJsonObject { })))

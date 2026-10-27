@@ -226,7 +226,12 @@ person managing a to-do list with a few assistants.
   data and can never authorize an action.
 - **Talking to the person.** The lead's only way to reach the person is the `send_to_user`
   tool (typed `Card`s, an `urgency`). The feed, the SSE stream and push notifications are all
-  driven by it. The client never interprets free text from the model.
+  driven by it. The client never interprets free text from the model. Plain assistant text is
+  only logged. When the person wrote during a turn and the model ends it without a successful
+  `send_to_user` (open models sometimes do the work and stop), the lead appends one operator
+  nudge at the end of the thread and runs once more; never twice, and never for turns made only
+  of events, where silence is fine. A helper that finishes with no result text is likewise asked
+  once for it.
 - **Should I bother them?** `send_to_user(urgency = …)` is filtered by the pure notification
   policy: `URGENT` respects "who gets through" and protected times from the constitution
   (push now or hold until the block ends); `NORMAL` shows in the feed without a push; `BATCH`

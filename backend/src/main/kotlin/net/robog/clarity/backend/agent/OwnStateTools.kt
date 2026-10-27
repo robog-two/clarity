@@ -79,7 +79,7 @@ class OwnStateTools(
     fun sendToUser(): Tool = tool<SendToUserInput>(
         name = "send_to_user",
         description = "The only way to reach the person. Shows typed cards in their feed; urgency decides whether it also notifies them. " +
-            "Silence is fine: send only what helps, short.",
+            "Always answer when the person wrote to you; otherwise silence is fine. Short.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->

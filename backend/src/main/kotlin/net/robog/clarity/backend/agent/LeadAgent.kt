@@ -6,6 +6,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -71,6 +72,30 @@ fun closeOpenToolCalls(history: List<Message>): Message? {
     return Message(Role.USER, open.map { Block.Result(it.id, "Not run: the turn ended before this call could run.", isError = true) })
 }
 
+/**
+ * The operator note appended when the person wrote and the lead ended its turn without answering
+ * through `send_to_user` (open models sometimes do the work and stop). Appended at the end of the
+ * thread, so the cached prefix is untouched.
+ */
+const val REPLY_NUDGE: String =
+    "[clarity] The person wrote to you and has had no reply: your plain text is not shown to them. " +
+        "Reply now with send_to_user (a short answer is fine)."
+
+/**
+ * Tools whose successful call shows the person something, so it counts as answering them:
+ * `send_to_user`, and the session tools that post their own card (in a live call the person sees
+ * "captured · N" or the plan appear; a nudge there would only add chatter).
+ */
+val ANSWERING_TOOLS: Set<String> = setOf("send_to_user", "capture", "set_priorities", "set_plan", "hand_off", "propose_line")
+
+/**
+ * Pure: whether a run that just ended still owes the person a reply: they wrote during this turn
+ * ([replyOwed]: no successful call of one of the [ANSWERING_TOOLS] since), and the model finished on its own (END_TURN).
+ * A run that failed, hit its turn limit, refused or compacted gets no nudge.
+ */
+fun owesReply(replyOwed: Boolean, terminal: HarnessEvent.Terminal?): Boolean =
+    replyOwed && terminal is HarnessEvent.Finished && terminal.reason == FinishReason.END_TURN
+
 /** How long after the person's last word the lead counts as "not idle" for low priority work. */
 val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
 
@@ -84,7 +109,10 @@ val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
  * (unanswered tool calls run again; external ones are idempotent through the action gate).
  * Inbox rows are marked consumed only when the message carrying them has been journaled.
  *
- * Plain assistant text is never shown to the person; `send_to_user` is the only way out.
+ * Plain assistant text is never shown to the person; `send_to_user` is the only way out. When the
+ * person wrote during a turn and the model ends it without a successful `send_to_user`, the lead
+ * appends [REPLY_NUDGE] and runs once more ([runTurn]); never more than once per turn. Turns made
+ * only of events (jobs, triggers, helper results) are never nudged: silence is fine there.
  *
  * Compaction: on Anthropic the API compacts the thread server-side. On OpenRouter the lead does it
  * itself after a turn ([compactClientSide]): one summarizing call, whose text is appended to the
@@ -118,6 +146,9 @@ class LeadAgent(
     private var lastMemoryContext: String? = null
     private var lastUserActivity: Instant? = null
     private var failures = 0
+
+    /** The person wrote during the current turn and nothing has answered them since ([ANSWERING_TOOLS]). */
+    private val replyOwed = AtomicBoolean(false)
 
     /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
     private var lastPromptTokens: Long? = null
@@ -172,10 +203,11 @@ class LeadAgent(
             log.info { "resuming the lead thread from its journal" }
             turnLock.withLock {
                 scope.startTurn(untrusted = true, requestedByUser = false)
+                replyOwed.set(false)
                 feed.publish(FeedEvent.Busy(true))
                 try {
                     val bound = runtime.bindOrFail(AgentRole.LEAD)
-                    runHarness(compactNow = false, bound)
+                    runTurn(bound)
                     threads.touchTurn(clock.now())
                     compactClientSide(bound)
                 } finally {
@@ -201,6 +233,7 @@ class LeadAgent(
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
+        replyOwed.set(userTurn)
         val deliveries = memoryDelivery(now) + renderDeliveries(items, now)
         if (userTurn) {
             lastUserActivity = now
@@ -223,7 +256,7 @@ class LeadAgent(
             )
             awaiting.addAll(deliveries.filter { it.seqs.isNotEmpty() })
             messages.forEach { trackedJournal.append(threadId, it) }
-            runHarness(compactNow = false, bound)
+            runTurn(bound)
             threads.touchTurn(clock.now())
             compactClientSide(bound)
         } finally {
@@ -246,11 +279,27 @@ class LeadAgent(
     }
 
     /**
-     * One lead turn on [bound]'s model. Thinking blocks from an earlier model stay in the journal and
+     * One lead turn: the harness run, and, when the person wrote and got no reply, ONE more run after
+     * [REPLY_NUDGE]. The nudge goes through the operator channel (a system message, after a
+     * placeholder user message since the thread ends with the assistant), appended at the end.
+     */
+    private suspend fun runTurn(bound: BoundRole) {
+        val first = runHarness(compactNow = false, bound)
+        if (!owesReply(replyOwed.get(), first)) return
+        log.info { "the person wrote and the lead ended without send_to_user: nudging once" }
+        foldInterrupts(Role.ASSISTANT, listOf(Message.system(REPLY_NUDGE))).forEach { trackedJournal.append(threadId, it) }
+        val second = runHarness(compactNow = false, bound)
+        if (owesReply(replyOwed.get(), second)) {
+            log.warn { "the lead still did not answer the person after the nudge; leaving it" }
+        }
+    }
+
+    /**
+     * One lead harness run on [bound]'s model. Thinking blocks from an earlier model stay in the journal and
      * are replayed as they are: the API leaves out, unbilled, any block the current model can't read,
      * and stripping them would be a history edit that breaks preserved thinking on the way back.
      */
-    private suspend fun runHarness(compactNow: Boolean, bound: BoundRole) = coroutineScope {
+    private suspend fun runHarness(compactNow: Boolean, bound: BoundRole): HarnessEvent.Terminal? = coroutineScope {
         val tools = toolbox.leadTools(scope)
         val request = roleRequest(
             role = bound.config,
@@ -272,6 +321,7 @@ class LeadAgent(
                     is HarnessEvent.AssistantText -> log.debug { "lead (not shown): ${event.text.take(200)}" }
                     is HarnessEvent.Called -> lastPromptTokens = event.usage.promptTokens
                     is HarnessEvent.CacheMiss -> log.warn { "prompt cache miss on lead turn ${event.turn}: ${event.usage}" }
+                    is HarnessEvent.ToolCompleted -> if (event.name in ANSWERING_TOOLS && !event.isError) replyOwed.set(false)
                     is HarnessEvent.Terminal -> terminal = event
                     else -> Unit
                 }
@@ -281,6 +331,7 @@ class LeadAgent(
             interrupts.close()
         }
         afterTurn(terminal)
+        terminal
     }
 
     private suspend fun systemBlocks() =
@@ -347,6 +398,7 @@ class LeadAgent(
             if (users.isNotEmpty()) {
                 val deliveries = renderDeliveries(users, clock.now())
                 scope.userAsked()
+                replyOwed.set(true)
                 lastUserActivity = clock.now()
                 awaiting.addAll(deliveries)
                 delivered += users.map { it.seq }
