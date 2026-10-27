@@ -93,5 +93,5 @@ private fun arrivalKey(arrival: Arrival): Any = when (arrival) {
  * urgent held actions still waiting. The ledger then says which were never claimed.
  */
 suspend fun FeedStore.notifiable(limit: Int = SEEN_LIMIT): List<Arrival> =
-    recentItems(limit).filter { it.author == FeedItem.Author.AGENT && !it.streaming }.map { Arrival.Item(it) } +
+    recentItems(limit).filter { it.author == FeedItem.Author.AGENT && !it.streaming && it.topic == null }.map { Arrival.Item(it) } +
         held.first().filter { it.status == HeldAction.Status.HELD && it.urgency == Urgency.URGENT }.map { Arrival.Held(it) }

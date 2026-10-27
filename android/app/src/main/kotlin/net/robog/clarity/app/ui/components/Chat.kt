@@ -20,8 +20,11 @@ import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconToggleButton
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -41,7 +44,7 @@ import net.robog.clarity.app.ui.cards.LiveBubble
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.feed.FeedItem
 
-/** One row of a chat transcript: a feed item, or a divider that marks where a session starts or ends. */
+/** One row of a chat transcript: a feed item, or a pill that names what follows (a meeting, a topic). */
 sealed interface ChatEntry {
     val key: String
 
@@ -49,8 +52,7 @@ sealed interface ChatEntry {
         override val key: String get() = "m${item.seq}"
     }
 
-    /** [label] is null for a plain line (back to the main conversation). */
-    data class Divider(override val key: String, val label: String?) : ChatEntry
+    data class Pill(override val key: String, val label: String) : ChatEntry
 }
 
 /** Items as plain messages, no dividers. */
@@ -84,27 +86,26 @@ fun ChatTranscript(
         items(entries.asReversed(), key = { it.key }) { entry ->
             when (entry) {
                 is ChatEntry.Message -> FeedItemView(entry.item, arrivingItem(), env = env)
-                is ChatEntry.Divider -> ChatDivider(entry.label, arrivingItem())
+                is ChatEntry.Pill -> ChatPill(entry.label, arrivingItem())
             }
         }
         oldest()
     }
 }
 
-/** A thin rule across the transcript, with a small label in the middle when there is one. */
+/** A small centred tonal pill, like a date chip in a messaging app. */
 @Composable
-fun ChatDivider(label: String?, modifier: Modifier = Modifier) {
-    val line = MaterialTheme.colorScheme.outlineVariant
-    Row(modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        HorizontalDivider(Modifier.weight(1f), color = line)
-        if (label != null) {
+fun ChatPill(label: String, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
             Text(
                 label,
-                Modifier.padding(horizontal = 12.dp),
+                Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
-            HorizontalDivider(Modifier.weight(1f), color = line)
         }
     }
 }

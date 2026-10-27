@@ -270,6 +270,9 @@ private class SessionsById(vararg sessions: Session) : SessionsRepository {
     override suspend fun active(kind: SessionKind): ApiResult<Session?> = ApiResult.Success(null)
 }
 
+private fun topicMarker(seq: Long, title: String) =
+    net.robog.clarity.shared.feed.FeedItem(net.robog.clarity.shared.feed.FeedItemId("i$seq"), seq, T0, net.robog.clarity.shared.feed.FeedItem.Author.AGENT, cards = emptyList(), topic = title)
+
 // T0 is 9:00 UTC.
 private val morning = callSession(id = "m1", state = Session.State.ENDED)
 
@@ -304,17 +307,16 @@ class AskRulesTest {
         assertEquals("Morning meeting · 5:00 am", sessionLabel(morning, TimeZone.of("America/New_York"), today))
     }
 
-    @Test fun aMeetingGetsAHeaderAndTheMainConversationALineAfter() {
+    @Test fun aMeetingGetsAPillAndTheMainChatResumesWithoutOne() {
         val sessions = mapOf(morning.id to morning)
         val items = askItems(listOf(userItem(0, "before"), agentItem(1, "call", morning.id), userItem(2, "call", morning.id), agentItem(3, "after")), sessions)
         val entries = askEntries(items, sessions, TimeZone.UTC, LocalDate(2026, 10, 26))
         assertEquals(
             listOf(
                 ChatEntry.Message(items[0]),
-                ChatEntry.Divider("start-m1-1", "Morning meeting · 9:00 am"),
+                ChatEntry.Pill("start-m1-1", "Morning meeting · 9:00 am"),
                 ChatEntry.Message(items[1]),
                 ChatEntry.Message(items[2]),
-                ChatEntry.Divider("end-m1-3", null),
                 ChatEntry.Message(items[3]),
             ),
             entries,
@@ -322,15 +324,37 @@ class AskRulesTest {
         assertEquals(entries.size, entries.map { it.key }.distinct().size, "keys are unique")
     }
 
-    @Test fun noDividersWithoutSessions() {
+    @Test fun noPillsWithoutSessionsOrTopics() {
         val items = listOf(userItem(0, "a"), agentItem(1, "b"))
         assertEquals(items.map { ChatEntry.Message(it) }, askEntries(items, emptyMap(), TimeZone.UTC, LocalDate(2026, 10, 26)))
     }
 
-    @Test fun aMeetingAtTheEndHasNoClosingLine() {
+    @Test fun aTopicPillHeadsTheStretchItTitles() {
         val sessions = mapOf(morning.id to morning)
-        val items = listOf(agentItem(0, "call", morning.id))
-        assertEquals(2, askEntries(items, sessions, TimeZone.UTC, LocalDate(2026, 10, 26)).size)
+        val items = listOf(
+            userItem(0, "book ulta"), agentItem(1, "booked"), topicMarker(2, "Ulta Hair Appt"),
+            agentItem(3, "call", morning.id), topicMarker(4, "Dana Contract"),
+            userItem(5, "not compacted yet"),
+        )
+        val entries = askEntries(askItems(items, sessions), sessions, TimeZone.UTC, LocalDate(2026, 10, 26))
+        assertEquals(
+            listOf(
+                ChatEntry.Pill("topic-2", "Ulta Hair Appt"),
+                ChatEntry.Message(items[0]),
+                ChatEntry.Message(items[1]),
+                ChatEntry.Pill("topic-4", "Dana Contract"),
+                ChatEntry.Pill("start-m1-3", "Morning meeting · 9:00 am"),
+                ChatEntry.Message(items[3]),
+                ChatEntry.Message(items[5]),
+            ),
+            entries,
+        )
+    }
+
+    @Test fun aTopicWithNothingBeforeItShowsNoPill() {
+        // Two compactions back to back, or a cache that starts at the marker.
+        val items = listOf(topicMarker(0, "Old"), topicMarker(1, "Older"), userItem(2, "hi"))
+        assertEquals(listOf(ChatEntry.Message(items[2])), askEntries(items, emptyMap(), TimeZone.UTC, LocalDate(2026, 10, 26)))
     }
 
     @Test fun suggestionsOnlyWhileEmptyAndQuiet() {
@@ -355,7 +379,7 @@ class AskViewModelTest {
         val r = Rig()
         r.feed.itemsFlow.value = listOf(userItem(0, "hi"), agentItem(1, "Morning.", morning.id))
         assertEquals(listOf(0L, 1L), r.state.items.map { it.seq })
-        assertEquals(ChatEntry.Divider("start-m1-1", "Morning meeting · 9:00 am"), r.state.entries[1])
+        assertEquals(ChatEntry.Pill("start-m1-1", "Morning meeting · 9:00 am"), r.state.entries[1])
     }
 
     @Test fun eachSessionIsLookedUpOnce() = withMain {

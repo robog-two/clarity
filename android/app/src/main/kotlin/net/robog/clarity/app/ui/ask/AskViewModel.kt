@@ -83,24 +83,32 @@ fun sessionLabel(session: Session, zone: TimeZone, today: LocalDate): String {
 }
 
 /**
- * [items] (from [askItems], oldest first) with a labelled divider where a session starts and a
- * plain one where the main conversation picks up again.
+ * [items] (from [askItems], oldest first) as the transcript: a pill where a session starts, and a
+ * topic pill at the start of each stretch that a compaction later titled. A topic marker
+ * ([FeedItem.topic]) closes its stretch, so its pill goes before the first message after the
+ * previous marker; the marker itself is not shown. The main chat picks up again without a pill.
  */
 fun askEntries(items: List<FeedItem>, sessions: Map<SessionId, Session>, zone: TimeZone, today: LocalDate): List<ChatEntry> {
     val entries = mutableListOf<ChatEntry>()
-    var current: SessionId? = null
-    for (item in items) {
-        val id = item.sessionId
-        if (id != current) {
-            val session = id?.let { sessions[it] }
-            when {
-                session != null -> entries += ChatEntry.Divider("start-$id-${item.seq}", sessionLabel(session, zone, today))
-                current != null -> entries += ChatEntry.Divider("end-$current-${item.seq}", null)
+    var stretch = mutableListOf<FeedItem>()
+    fun flush(marker: FeedItem?) {
+        if (stretch.isEmpty()) return
+        marker?.topic?.let { entries += ChatEntry.Pill("topic-${marker.seq}", it) }
+        var current: SessionId? = null
+        for (item in stretch) {
+            val id = item.sessionId
+            if (id != current) {
+                id?.let { sessions[it] }?.let { entries += ChatEntry.Pill("start-$id-${item.seq}", sessionLabel(it, zone, today)) }
+                current = id
             }
-            current = id
+            entries += ChatEntry.Message(item)
         }
-        entries += ChatEntry.Message(item)
+        stretch = mutableListOf()
     }
+    for (item in items) {
+        if (item.topic != null) flush(item) else stretch += item
+    }
+    flush(null)
     return entries
 }
 
