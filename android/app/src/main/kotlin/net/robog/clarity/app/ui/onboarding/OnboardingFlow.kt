@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -241,7 +240,7 @@ fun ServerContent(
             if (state.enrolled) {
                 PrimaryButton("next", onNext, Modifier.fillMaxWidth())
             } else {
-                PrimaryButton("check server", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck)
+                PrimaryButton("check server", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck, busy = state.checking)
             }
         },
     ) {
@@ -317,7 +316,7 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
             if (state.canContinue) {
                 PrimaryButton("next", onNext, Modifier.fillMaxWidth())
             } else {
-                PrimaryButton("check key", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck)
+                PrimaryButton("check key", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck, busy = state.checking)
             }
         },
     ) {
@@ -341,12 +340,7 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
             )
             ModelResult.ServerNotReady -> Hint("This server can’t take the key yet. You can continue and add it in settings later.")
             ModelResult.Failed -> ErrorBox("Could not check the key.", "Try again in a moment.")
-            null -> if (state.checking) {
-                androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.padding(4.dp), strokeWidth = 2.dp)
-                    StatusLine("Checking…")
-                }
-            }
+            null -> if (state.checking) StatusLine("Checking…")
         }
         Spacer(Modifier.height(1.dp))
     }

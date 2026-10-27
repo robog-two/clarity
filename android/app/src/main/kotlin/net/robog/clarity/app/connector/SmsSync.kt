@@ -9,7 +9,9 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.security.MessageDigest
 import kotlin.time.Instant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import net.robog.clarity.app.data.ApiError
@@ -172,17 +174,18 @@ interface SmsSource {
  * once; no `LIMIT` is put in the sort order, which strict providers may refuse.
  */
 class AndroidSmsSource(private val context: Context) : SmsSource {
+    // Provider reads block on I/O: keep them off the caller's thread (the app-open sync runs from the UI).
     override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> =
-        query("${Telephony.Sms._ID} > ?", afterId, limit)
+        withContext(Dispatchers.IO) { query("${Telephony.Sms._ID} > ?", afterId, limit) }
 
-    override suspend fun rowAt(id: Long): SmsRow? = query("${Telephony.Sms._ID} = ?", id, 1).firstOrNull()
+    override suspend fun rowAt(id: Long): SmsRow? =
+        withContext(Dispatchers.IO) { query("${Telephony.Sms._ID} = ?", id, 1).firstOrNull() }
 
-    override suspend fun maxId(): Long? {
+    override suspend fun maxId(): Long? = withContext(Dispatchers.IO) {
         // The first row of a descending sort, again without a LIMIT in the sort order.
-        val cursor = context.contentResolver.query(
+        context.contentResolver.query(
             Telephony.Sms.CONTENT_URI, arrayOf(Telephony.Sms._ID), null, null, "${Telephony.Sms._ID} DESC",
-        ) ?: return null
-        return cursor.use { if (it.moveToFirst()) it.getLong(0) else null }
+        )?.use { if (it.moveToFirst()) it.getLong(0) else null }
     }
 
     private fun query(idClause: String, id: Long, limit: Int): List<SmsRow> {

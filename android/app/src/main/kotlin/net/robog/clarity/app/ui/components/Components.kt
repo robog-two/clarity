@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -15,13 +16,22 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -36,7 +46,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
@@ -73,11 +85,11 @@ fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialT
 }
 
 /** The Material 3 Expressive loading indicator, centred in the width it is given. */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun LoadingSpinner(modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
-        androidx.compose.material3.LoadingIndicator()
+        LoadingIndicator()
     }
 }
 
@@ -106,28 +118,86 @@ fun ReadingText(text: String, modifier: Modifier = Modifier, color: Color = Colo
     Text(text, modifier, color = color, style = MaterialTheme.clarityText.reading)
 }
 
-/** Filled pill button (`.btn.pri`). */
+/**
+ * Filled pill button (`.btn.pri`). Pressing morphs the corners (Material 3 Expressive). While [busy]
+ * the label gives way to a loading indicator, the button keeps its size and further taps are ignored,
+ * so slow work shows progress instead of a dead, greyed-out button.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false) {
     Button(
-        onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        shape = MaterialTheme.shapes.extraLarge,
+        onClick = { if (!busy) onClick() },
+        modifier = modifier.heightIn(min = 48.dp).busySemantics(busy),
+        enabled = enabled || busy,
+        shapes = ButtonDefaults.shapes(),
         contentPadding = ButtonDefaults.ContentPadding,
-    ) { Text(sentenceCase(text), style = MaterialTheme.typography.labelLarge) }
+    ) { BusyLabel(text, busy) }
 }
 
-/** Outlined pill button (`.btn`). */
+/** Outlined pill button (`.btn`); presses and [busy] behave like [PrimaryButton]. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true, busy: Boolean = false) {
+    val active = enabled || busy
     OutlinedButton(
-        onClick = onClick,
-        modifier = modifier.heightIn(min = 48.dp),
-        enabled = enabled,
-        shape = MaterialTheme.shapes.extraLarge,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (enabled) 1f else 0.38f)),
-    ) { Text(sentenceCase(text), style = MaterialTheme.typography.labelLarge) }
+        onClick = { if (!busy) onClick() },
+        modifier = modifier.heightIn(min = 48.dp).busySemantics(busy),
+        enabled = active,
+        shapes = ButtonDefaults.shapes(),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = if (active) 1f else 0.38f)),
+    ) { BusyLabel(text, busy) }
+}
+
+/** The label and a loading indicator stacked, cross-fading, so the button never changes size. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun BusyLabel(text: String, busy: Boolean) {
+    val effects = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
+    val labelAlpha by animateFloatAsState(if (busy) 0f else 1f, effects, label = "label")
+    val spinnerAlpha by animateFloatAsState(if (busy) 1f else 0f, effects, label = "spinner")
+    Box(contentAlignment = Alignment.Center) {
+        Text(sentenceCase(text), Modifier.graphicsLayer { alpha = labelAlpha }, style = MaterialTheme.typography.labelLarge)
+        if (busy || spinnerAlpha > 0f) {
+            LoadingIndicator(Modifier.size(28.dp).graphicsLayer { alpha = spinnerAlpha }, color = LocalContentColor.current)
+        }
+    }
+}
+
+private fun Modifier.busySemantics(busy: Boolean): Modifier =
+    if (busy) semantics { stateDescription = "Working" } else this
+
+/**
+ * For a lazy list item: fades in as it arrives and glides when the items around it move, on the
+ * expressive motion scheme's springs, so new messages settle in instead of popping.
+ */
+@Composable
+fun LazyItemScope.arrivingItem(): Modifier = with(MaterialTheme.motionScheme) {
+    Modifier.animateItem(fadeInSpec = defaultEffectsSpec(), placementSpec = defaultSpatialSpec(), fadeOutSpec = fastEffectsSpec())
+}
+
+/**
+ * For a bottom-up chat list (`reverseLayout`, newest item first): when a new message arrives while
+ * the person has scrolled up, glide back down to it. The first load needs nothing, since a reversed
+ * list already starts at the bottom.
+ */
+@Composable
+fun FollowNewest(listState: LazyListState, count: Int) {
+    var seen by remember { mutableIntStateOf(count) }
+    LaunchedEffect(count) {
+        if (count > seen && seen > 0 && listState.firstVisibleItemIndex > 0) listState.animateScrollToItem(0)
+        seen = count
+    }
+}
+
+/** A small loading indicator beside a line of status text ("Checking…"), for work that has no button to live in. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun WorkingLine(text: String, modifier: Modifier = Modifier) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        LoadingIndicator(Modifier.size(32.dp))
+        Hint(text)
+    }
 }
 
 /** `.back`: the "← previous step" text button. */

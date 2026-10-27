@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -93,7 +94,7 @@ fun DraftReviewContent(
                 ErrorBox("Can’t open this one", state.message)
                 onRetry?.let { TextButton(onClick = it) { Text("Try again") } }
             } else {
-                Hint("Loading…")
+                LoadingSpinner(Modifier.padding(top = 48.dp))
             }
             return@Column
         }
@@ -155,6 +156,7 @@ fun DraftReviewContent(
                 onApprove,
                 enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
                 resetKey = state.message,
+                working = state.busy,
             )
             NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
         }

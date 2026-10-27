@@ -26,7 +26,10 @@ import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.util.AttributeKey
 import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
@@ -210,6 +213,11 @@ fun createHttpClient(
 class KtorClarityApi(
     private val client: HttpClient,
     private val sessions: SessionStore,
+    /**
+     * Where requests run. Each one signs a fresh device JWT with the Keystore key (slow on StrongBox)
+     * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
+     */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ClarityApi, IngestApi, VaultApi, ModelsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
@@ -458,32 +466,36 @@ class KtorClarityApi(
         return callUnit { block(session.instanceUrl) }
     }
 
-    private suspend inline fun <reified T> call(block: () -> HttpResponse): ApiResult<T> = try {
-        val response = block()
-        if (response.status.isSuccess()) {
-            ApiResult.Success(response.body<T>())
-        } else {
-            ApiResult.Failure(response.toError())
+    private suspend inline fun <reified T> call(crossinline block: suspend () -> HttpResponse): ApiResult<T> = withContext(io) {
+        try {
+            val response = block()
+            if (response.status.isSuccess()) {
+                ApiResult.Success(response.body<T>())
+            } else {
+                ApiResult.Failure(response.toError())
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: SerializationException) {
+            ApiResult.Failure(ApiError.Malformed(e.message))
+        } catch (e: ContentConvertException) {
+            ApiResult.Failure(ApiError.Malformed(e.message))
+        } catch (e: Exception) {
+            // IOException, timeouts, TLS and cleartext-blocked all land here.
+            ApiResult.Failure(ApiError.Unreachable(e.message))
         }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: SerializationException) {
-        ApiResult.Failure(ApiError.Malformed(e.message))
-    } catch (e: ContentConvertException) {
-        ApiResult.Failure(ApiError.Malformed(e.message))
-    } catch (e: Exception) {
-        // IOException, timeouts, TLS and cleartext-blocked all land here.
-        ApiResult.Failure(ApiError.Unreachable(e.message))
     }
 
     /** Like [call] but ignores the response body (endpoints whose reply we don't need). */
-    private suspend inline fun callUnit(block: () -> HttpResponse): ApiResult<Unit> = try {
-        val response = block()
-        if (response.status.isSuccess()) ApiResult.Success(Unit) else ApiResult.Failure(response.toError())
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        ApiResult.Failure(ApiError.Unreachable(e.message))
+    private suspend inline fun callUnit(crossinline block: suspend () -> HttpResponse): ApiResult<Unit> = withContext(io) {
+        try {
+            val response = block()
+            if (response.status.isSuccess()) ApiResult.Success(Unit) else ApiResult.Failure(response.toError())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ApiResult.Failure(ApiError.Unreachable(e.message))
+        }
     }
 }
 

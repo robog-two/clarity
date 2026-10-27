@@ -1,6 +1,9 @@
 package net.robog.clarity.app.vault
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.net.VaultApi
@@ -23,7 +26,7 @@ sealed interface SaveOutcome {
 
 /** The vault from the phone's point of view: keys, the form, the list. */
 interface VaultRepository {
-    fun keyStatus(): VaultKeyStatus
+    suspend fun keyStatus(): VaultKeyStatus
 
     /** Makes the keys if needed and tells the server about them. Safe to repeat. */
     suspend fun register(): ApiResult<Unit>
@@ -65,12 +68,16 @@ fun credentialHints(request: CredentialRequest, values: Map<String, String>): Ma
 class DefaultVaultRepository(
     private val api: VaultApi,
     private val keys: VaultKeys,
+    /** Keystore calls block (key generation on StrongBox can take a second), so they never run on the main thread. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : VaultRepository {
-    override fun keyStatus(): VaultKeyStatus = keys.status()
+    override suspend fun keyStatus(): VaultKeyStatus = withContext(io) { keys.status() }
 
     override suspend fun register(): ApiResult<Unit> {
-        if (keys.status() == VaultKeyStatus.INVALIDATED) return ApiResult.Failure(ApiError.Forbidden(null))
-        val request = RegisterVaultKey(publicKey = keys.vaultPublicKey(), approvalKey = keys.approvalPublicKey())
+        val request = withContext(io) {
+            if (keys.status() == VaultKeyStatus.INVALIDATED) return@withContext null
+            RegisterVaultKey(publicKey = keys.vaultPublicKey(), approvalKey = keys.approvalPublicKey())
+        } ?: return ApiResult.Failure(ApiError.Forbidden(null))
         return when (val r = api.registerVaultKeys(request)) {
             is ApiResult.Success -> ApiResult.Success(Unit)
             is ApiResult.Failure -> r
@@ -82,7 +89,7 @@ class DefaultVaultRepository(
     override suspend fun request(id: CredentialRequestId): ApiResult<CredentialRequest> = api.credentialRequest(id)
 
     override suspend fun save(request: CredentialRequest, values: Map<String, String>): SaveOutcome {
-        if (keys.status() == VaultKeyStatus.INVALIDATED) {
+        if (keyStatus() == VaultKeyStatus.INVALIDATED) {
             return SaveOutcome.Failed("This phone’s vault keys were reset. Open Settings → Vault first.")
         }
         (register() as? ApiResult.Failure)?.let { return SaveOutcome.Failed(it.error.sentence()) }
@@ -93,7 +100,7 @@ class DefaultVaultRepository(
         if (devices.isEmpty()) return SaveOutcome.Failed("No phone has a vault key yet.")
         val fields = request.fields.mapNotNull { f -> values[f.name]?.takeIf { it.isNotEmpty() }?.let { f.name to it } }.toMap()
         val envelopes = try {
-            devices.map { VaultCrypto.seal(it.deviceId, it.publicKey, request.id.value, fields) }
+            withContext(io) { devices.map { VaultCrypto.seal(it.deviceId, it.publicKey, request.id.value, fields) } }
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
@@ -107,7 +114,7 @@ class DefaultVaultRepository(
     }
 
     override suspend fun rekey(): ApiResult<Unit> {
-        keys.reset()
+        withContext(io) { keys.reset() }
         return register()
     }
 }

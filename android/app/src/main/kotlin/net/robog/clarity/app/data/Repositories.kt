@@ -1,7 +1,9 @@
 package net.robog.clarity.app.data
 
 import android.os.Build
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import net.robog.clarity.app.identity.DeviceKey
 import net.robog.clarity.app.net.ClarityApi
 import net.robog.clarity.shared.api.EnrollmentRequest
@@ -29,7 +31,8 @@ class DefaultEnrollmentRepository(
 ) : EnrollmentRepository {
     override suspend fun enroll(instanceUrl: String, enrollmentToken: String?): ApiResult<InstanceInfo> {
         val request = EnrollmentRequest(
-            publicKey = key.publicKeySpki(), // reuses the existing key if present
+            // Reuses the existing key if present; making one on StrongBox can take a second, so not on the main thread.
+            publicKey = withContext(Dispatchers.IO) { key.publicKeySpki() },
             deviceName = "${Build.MANUFACTURER} ${Build.MODEL}".trim(),
             enrollmentToken = enrollmentToken?.trim()?.takeIf { it.isNotEmpty() },
         )
@@ -60,7 +63,7 @@ class DefaultSessionRepository(
         sessions.clear()
         forgetAll(perServer)
         cache.clear()
-        key.delete()
+        withContext(Dispatchers.IO) { key.delete() }
     }
 }
 
