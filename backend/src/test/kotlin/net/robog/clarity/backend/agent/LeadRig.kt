@@ -159,7 +159,7 @@ class LeadRig(
     val lead: LeadAgent
 
     init {
-        val helperTools = HelperTools(lazy { helpers })
+        val helperTools = HelperTools(lazy { helpers }, tasks)
         toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
@@ -173,7 +173,7 @@ class LeadRig(
         database.tx {
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
-                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, scheduled_job, tool_result, message, " +
+                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
                     "agent_session, day_plan, settings " +
                     "RESTART IDENTITY CASCADE",
             )

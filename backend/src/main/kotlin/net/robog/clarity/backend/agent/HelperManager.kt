@@ -106,8 +106,12 @@ class HelperManager(
         }
     }
 
-    /** Starts a helper for [task]; returns its id, or the reason it could not start. */
-    suspend fun delegate(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, String> {
+    /** Starts a helper for [task]; returns what to tell the lead, or the reason it could not start. */
+    suspend fun delegate(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, String> =
+        start(task, tools, role, parent).map { it.text }
+
+    /** Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not start. */
+    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, Delegated> {
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
         val probe = RunScope("probe", isLead = false)
@@ -123,7 +127,7 @@ class HelperManager(
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
-        return delegatedText(id, roleName, chosen, granted.tools.tools.map { it.name }).right()
+        return Delegated(id, delegatedText(id, roleName, chosen, granted.tools.tools.map { it.name })).right()
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
@@ -210,6 +214,9 @@ class HelperManager(
         }
     }
 }
+
+/** A helper that started: its run id and what `delegate` tells the lead. */
+data class Delegated(val id: String, val text: String)
 
 /** Pure: what `delegate` tells the lead, naming the tools when it picked them, so a missing browser is plain. */
 fun delegatedText(id: String, role: String, requested: List<String>?, granted: List<String>): String = buildString {

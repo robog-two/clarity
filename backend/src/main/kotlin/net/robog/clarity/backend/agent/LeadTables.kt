@@ -69,6 +69,15 @@ object AgentTasks : Table("agent_task") {
     override val primaryKey = PrimaryKey(id)
 }
 
+/** V21: which helper runs worked on which task. */
+object AgentTaskRuns : Table("agent_task_run") {
+    val taskId = uuid("task_id")
+    val runId = uuid("run_id")
+    val how = text("how")
+    val createdAt = timestamp("created_at")
+    override val primaryKey = PrimaryKey(taskId, runId)
+}
+
 object MemoryJournal : Table("memory_journal") {
     val id = long("id").autoIncrement()
     val date = date("date")

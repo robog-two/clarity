@@ -237,7 +237,8 @@ class OwnStateTools(
         @Description("The held action this task waits on, if any.") val heldActionId: String? = null,
     )
 
-    fun updateTask(): Tool = tool<UpdateTaskInput>(
+    /** [scope]: the lead's run, whose turn remembers the task so a helper started in it is linked to it. */
+    fun updateTask(scope: RunScope? = null): Tool = tool<UpdateTaskInput>(
         name = "update_task",
         description = "Create or update an item on the person's \"what I'm doing\" list. Keep it honest: mark done or failed when it is.",
         effect = ToolEffect.WRITE,
@@ -245,7 +246,9 @@ class OwnStateTools(
     ) { input ->
         if (input.id == null && input.title.isNullOrBlank()) return@tool ToolResult.Error("A new task needs a `title`.")
         val task = tasks.upsert(input.id?.let(::TaskId), input.title, input.detail, input.status, input.heldActionId?.let(::HeldActionId))
-        if (task == null) ToolResult.Error("No task with id ${input.id}.") else ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
+        if (task == null) return@tool ToolResult.Error("No task with id ${input.id}.")
+        scope?.turn?.touched(task.id.value)?.forEach { tasks.link(task.id, it, TaskLink.INFERRED) }
+        ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
 
     private suspend fun today(): LocalDate = journalDate(clock.now(), settings.current().homeZone)

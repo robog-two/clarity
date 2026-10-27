@@ -22,6 +22,8 @@ import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
@@ -81,6 +83,53 @@ interface TaskStore {
 
     /** Newest first (by last update), so fresh work leads and stale tasks sink. */
     suspend fun list(includeFinished: Boolean = false): List<AgentTask>
+
+    suspend fun get(id: TaskId): AgentTask?
+
+    /**
+     * Records that helper [runId] works on task [id] ([how]: [TaskLink.EXPLICIT] or
+     * [TaskLink.INFERRED]); the first link of a pair wins and nothing is rewritten. The task, with
+     * its run ids, is pushed to the app. False when the task is unknown.
+     */
+    suspend fun link(id: TaskId, runId: String, how: String): Boolean
+
+    /** When task [id] was created (its Agent's Path starts there). */
+    suspend fun createdAt(id: TaskId): Instant?
+}
+
+/** How a helper run came to be linked to a task (`agent_task_run.how`). */
+object TaskLink {
+    const val EXPLICIT = "explicit"
+    const val INFERRED = "inferred"
+}
+
+/**
+ * The lead's current turn, for linking helpers to tasks without the lead naming one: the tasks it
+ * created or updated, and the helpers it started without a task. While the turn has touched exactly
+ * one task, helpers started in it belong to that task. Reset at every turn. Thread-safe.
+ */
+class TurnTasks {
+    private val tasks = LinkedHashSet<String>()
+    private val unlinked = mutableListOf<String>()
+
+    @Synchronized fun reset() {
+        tasks.clear()
+        unlinked.clear()
+    }
+
+    /** Notes that the turn touched [task]; returns the unlinked helpers that now belong to it. */
+    @Synchronized fun touched(task: String): List<String> {
+        tasks += task
+        if (tasks.size != 1) return emptyList()
+        return unlinked.toList().also { unlinked.clear() }
+    }
+
+    /** Notes a helper started without a task; returns the task it belongs to, if the turn has one. */
+    @Synchronized fun started(runId: String): String? {
+        val only = tasks.singleOrNull()
+        if (only == null) unlinked += runId
+        return only
+    }
 }
 
 private val FINISHED = listOf(AgentTask.Status.DONE, AgentTask.Status.FAILED, AgentTask.Status.CANCELLED)
@@ -133,15 +182,53 @@ class ExposedTaskStore(
     override suspend fun list(includeFinished: Boolean): List<AgentTask> = database.tx {
         val query = AgentTasks.selectAll()
         if (!includeFinished) query.where { AgentTasks.status inList listOf("working", "drafted", "waiting_for_you", "scheduled") }
-        query.orderBy(AgentTasks.updatedAt to SortOrder.DESC).map { it.toTask() }
+        val rows = query.orderBy(AgentTasks.updatedAt to SortOrder.DESC).toList()
+        val runs = runsOf(rows.map { it[AgentTasks.id] })
+        rows.map { it.toTask(runs[it[AgentTasks.id]].orEmpty()) }
+    }
+
+    override suspend fun get(id: TaskId): AgentTask? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx { AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask() }
+    }
+
+    override suspend fun createdAt(id: TaskId): Instant? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx { AgentTasks.select(AgentTasks.createdAt).where { AgentTasks.id eq uuid }.singleOrNull()?.get(AgentTasks.createdAt) }
+    }
+
+    override suspend fun link(id: TaskId, runId: String, how: String): Boolean {
+        val task = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return false
+        val run = runCatching { Uuid.parse(runId) }.getOrNull() ?: return false
+        val linked = database.tx {
+            if (AgentTasks.selectAll().where { AgentTasks.id eq task }.empty()) return@tx null
+            AgentTaskRuns.insertIgnore {
+                it[taskId] = task
+                it[AgentTaskRuns.runId] = run
+                it[AgentTaskRuns.how] = how
+                it[createdAt] = clock.now()
+            }
+            AgentTasks.selectAll().where { AgentTasks.id eq task }.single().toTask()
+        } ?: return false
+        feed.publish(FeedEvent.TaskChanged(linked))
+        return true
     }
 }
 
-private fun ResultRow.toTask() = AgentTask(
+/** The run ids linked to each of [tasks], oldest link first. Call inside a transaction. */
+private fun runsOf(tasks: List<Uuid>): Map<Uuid, List<String>> =
+    if (tasks.isEmpty()) emptyMap()
+    else AgentTaskRuns.selectAll().where { AgentTaskRuns.taskId inList tasks }
+        .orderBy(AgentTaskRuns.createdAt to SortOrder.ASC)
+        .groupBy({ it[AgentTaskRuns.taskId] }, { it[AgentTaskRuns.runId].toString() })
+
+/** A task row with its linked runs (looked up when not given). Call inside a transaction. */
+private fun ResultRow.toTask(runIds: List<String> = runsOf(listOf(this[AgentTasks.id]))[this[AgentTasks.id]].orEmpty()) = AgentTask(
     id = TaskId(this[AgentTasks.id].toString()),
     title = this[AgentTasks.title],
     detail = this[AgentTasks.detail],
     status = parseWire<AgentTask.Status>(this[AgentTasks.status]) ?: AgentTask.Status.WORKING,
     heldActionId = this[AgentTasks.heldActionId]?.let(::HeldActionId),
     updatedAt = this[AgentTasks.updatedAt],
+    runIds = runIds,
 )
