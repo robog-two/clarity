@@ -10,7 +10,6 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.roundToLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
@@ -59,26 +58,35 @@ data class OpenRouterRouting(
 
 /**
  * [ModelGateway] over OpenRouter's OpenAI-compatible Chat Completions API, with the JDK's own
- * `java.net.http` client (no extra dependency) and kotlinx.serialization.
+ * `java.net.http` client (no extra dependency) and kotlinx.serialization. OpenRouter is Clarity's
+ * only model provider; Claude models are reached through it (`anthropic/...`).
  *
  * Request shape:
- *  - only the context since the latest compaction point is sent ([contextSince]); an Anthropic
- *    `compaction` block there becomes a user message with its summary text, so a thread that
- *    moves here from Anthropic keeps what was summarized;
+ *  - only the context since the latest compaction point is sent ([contextSince]); a `compaction`
+ *    block from the Anthropic API (in journals from before OpenRouter was the only provider) becomes
+ *    a user message with its summary text ([UNREADABLE_SUMMARY] when it has none), so what it
+ *    summarized is kept;
  *  - the system blocks become one leading `system` message; mid-conversation system messages with
  *    text stay `system` messages in place, effort-only ones are dropped (effort is per request here);
  *  - tool uses become assistant `tool_calls` (arguments as a JSON string), tool results `tool`
- *    messages; other [Block.Raw] (thinking, server tools: Anthropic-only) is dropped, except this
- *    provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the same model only;
- *  - loaded and deferred tools are all sent as `function` tools (no tool search), `tool_choice: auto`;
+ *    messages; other [Block.Raw] is dropped (old Anthropic thinking, tool search and server tool
+ *    blocks), except this provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the
+ *    same model only;
+ *  - all tools are sent as `function` tools, `tool_choice: auto`;
  *  - `reasoning.effort` is the effort in effect for this request: that of the last effort-only
  *    message since the latest compaction point, else [ModelRequest.effort] ([effortIn]);
  *    `response_format: json_schema` from [ModelRequest.structuredOutput], and always `provider.data_collection: deny` (no provider that
  *    keeps or trains on prompts), the rest of `provider` from [OpenRouterRouting] (zero data retention,
- *    quantizations, sort) and `usage.include` (the response carries its cost).
- * Not supported: server tools (rejected), prompt-cache breakpoints, refusal fallbacks and
- * server-side compaction (all ignored). A long thread (the lead) compacts client-side instead
- * (`LeadAgent`, a [Message.summary] in its journal).
+ *    quantizations, sort) and `usage.include` (the response carries its cost);
+ *  - prompt caching, for models that cache only at explicit breakpoints ([usesCacheBreakpoints]:
+ *    Claude) and only when [ModelRequest.cache] is set: the system message becomes text parts, the
+ *    parts of system blocks with [SystemBlock.cacheBreakpoint] get `cache_control`, as does the user
+ *    text at [ModelRequest.messageBreakpoint], and [CachePolicy.automatic] adds the top-level
+ *    `cache_control` (automatic caching). Each is `{"type": "ephemeral"}`, plus `"ttl": "1h"` for a
+ *    one hour cache (OpenRouter's prompt caching guide). A breakpoint that falls on a tool result is
+ *    not sent (the guide documents breakpoints on system and user content only); the automatic one
+ *    covers the tail. Other models cache on their own and get no `cache_control`.
+ * A long thread (the lead) compacts client-side (`LeadAgent`, a [Message.summary] in its journal).
  *
  * Always streamed (SSE) so long outputs do not hit timeouts; the blocking read runs in
  * [runInterruptible], so cancelling the coroutine aborts it. A 429/5xx or a failed connection is
@@ -101,12 +109,7 @@ class OpenRouterModelGateway(
         .apply { if (proxy != null) proxy(FixedProxy(proxy)) }
         .build()
 
-    private val compactionWarned = AtomicBoolean(false)
-
     override suspend fun generate(request: ModelRequest, onTextDelta: (String) -> Unit): ModelResponse {
-        if (request.compaction != null && compactionWarned.compareAndSet(false, true)) {
-            log.warn { "OpenRouter has no server-side compaction; ${request.model} runs without it (compact client-side)" }
-        }
         val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing))
         val call = HttpRequest.newBuilder(endpoint)
             .timeout(RESPONSE_TIMEOUT.toJavaDuration())
@@ -191,17 +194,16 @@ class OpenRouterModelGateway(
 
         private const val PROVIDER = "openrouter"
 
-        /** What an Anthropic `compaction` block becomes when its summary is encrypted only. */
+        /** What a stored Anthropic `compaction` block becomes when its summary is encrypted only. */
         const val UNREADABLE_SUMMARY = "(The earlier conversation was summarized, but the summary can't be read here.)"
 
         /** The request body exactly as it goes over the wire; for tests and debugging. */
         internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting()): JsonObject {
-            require(request.serverTools.isEmpty()) { "OpenRouter does not run server tools (${request.serverTools.joinToString { it.wireName }})" }
-            // request.fallbacks: OpenRouter's own fallbacks (`models: [primary, ...]`) would need a configured
-            // fallback list; there is none, so nothing is sent.
+            val cache = request.cache?.takeIf { usesCacheBreakpoints(request.model) }
             return buildJsonObject {
                 put("model", request.model)
-                put("messages", wireMessages(request))
+                put("messages", wireMessages(request, cache))
+                if (cache?.automatic == true) put("cache_control", cacheControl(cache))
                 put("max_tokens", request.maxTokens)
                 put("stream", true)
                 putJsonObject("stream_options") { put("include_usage", true) }
@@ -214,10 +216,9 @@ class OpenRouterModelGateway(
                     if (routing.order.isNotEmpty()) put("order", JsonArray(routing.order.map(::JsonPrimitive)))
                     routing.allowFallbacks?.let { put("allow_fallbacks", it) }
                 }
-                effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it)) } }
-                val tools = request.tools + request.deferredTools
-                if (tools.isNotEmpty()) {
-                    put("tools", JsonArray(tools.map { it.toWire() }))
+                effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it, request.model)) } }
+                if (request.tools.isNotEmpty()) {
+                    put("tools", JsonArray(request.tools.map { it.toWire() }))
                     put("tool_choice", "auto")
                 }
                 request.structuredOutput?.let { schema ->
@@ -233,10 +234,27 @@ class OpenRouterModelGateway(
             }
         }
 
-        /** OpenRouter's efforts stop at `high`. */
-        internal fun reasoningEffort(effort: String): String = when (effort) {
-            "xhigh", "max" -> "high"
+        /**
+         * The `reasoning.effort` sent for [effort]. Claude takes `low` to `max` through OpenRouter (its
+         * reasoning guide: the thinking budget is a share of `max_tokens`, 0.95 for `xhigh` and `max`);
+         * other models are capped at `high`.
+         */
+        internal fun reasoningEffort(effort: String, model: String = ""): String = when {
+            usesCacheBreakpoints(model) -> effort
+            effort == "xhigh" || effort == "max" -> "high"
             else -> effort
+        }
+
+        /** `{"type": "ephemeral"}`, with `"ttl": "1h"` for a one hour cache (5 minutes is the default). */
+        private fun cacheControl(cache: CachePolicy): JsonObject = buildJsonObject {
+            put("type", "ephemeral")
+            if (cache.ttl == "1h") put("ttl", "1h")
+        }
+
+        private fun textPart(text: String, cache: CachePolicy?): JsonObject = buildJsonObject {
+            put("type", "text")
+            put("text", text)
+            cache?.let { put("cache_control", cacheControl(it)) }
         }
 
         private fun ToolDefinition.toWire(): JsonObject = buildJsonObject {
@@ -248,9 +266,22 @@ class OpenRouterModelGateway(
             }
         }
 
-        private fun wireMessages(request: ModelRequest): JsonArray = buildJsonArray {
-            if (request.system.isNotEmpty()) add(chat("system", JsonPrimitive(request.systemText)))
-            for (original in contextSince(request.messages)) {
+        private fun wireMessages(request: ModelRequest, cache: CachePolicy?): JsonArray = buildJsonArray {
+            if (request.system.isNotEmpty()) {
+                if (cache != null && request.system.any { it.cacheBreakpoint }) {
+                    // One text part per block, so a breakpoint ends exactly where its block does.
+                    add(chat("system", JsonArray(request.system.map { block -> textPart(block.text, cache.takeIf { block.cacheBreakpoint }) })))
+                } else {
+                    add(chat("system", JsonPrimitive(request.systemText)))
+                }
+            }
+            val context = contextSince(request.messages)
+            val offset = request.messages.size - context.size
+            // (message index in context, block index); only a user text block carries it on this wire.
+            val breakpoint = request.messageBreakpoint?.takeIf { cache != null }
+                ?.let { (m, b) -> (m - offset) to b }
+                ?.takeIf { (m, b) -> m >= 0 && context[m].role == Role.USER && context[m].content.getOrNull(b) is Block.Text }
+            for ((index, original) in context.withIndex()) {
                 // Anthropic drops everything before its compaction block; here the block becomes its summary text.
                 val compaction = original.content.indexOfLast { it is Block.Raw && it.isCompaction }
                 val message = if (compaction < 0) {
@@ -260,7 +291,11 @@ class OpenRouterModelGateway(
                     add(chat("user", JsonPrimitive("$SUMMARY_MARKER\n$summary")))
                     original.copy(content = original.content.drop(compaction + 1))
                 }
-                // Other Raw blocks are Anthropic-only (thinking signatures, server tools); no other provider reads them.
+                // The block that carries the message breakpoint, if it survived the cut above.
+                val marked = breakpoint?.takeIf { it.first == index }
+                    ?.let { (_, b) -> original.content[b] }
+                    ?.takeIf { block -> message.content.any { it === block } }
+                // Other Raw blocks are old Anthropic ones (thinking signatures, tool search, server tools) or another model's reasoning.
                 val texts = message.content.filterIsInstance<Block.Text>().map { it.text }
                 when (message.role) {
                     // An effort-only system message is dropped: effort is set per request here.
@@ -274,10 +309,12 @@ class OpenRouterModelGateway(
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
                         }
-                        when (texts.size) {
-                            0 -> Unit
-                            1 -> add(chat("user", JsonPrimitive(texts.single())))
-                            else -> add(chat("user", JsonArray(texts.map { buildJsonObject { put("type", "text"); put("text", it) } })))
+                        val textBlocks = message.content.filterIsInstance<Block.Text>()
+                        when {
+                            textBlocks.isEmpty() -> Unit
+                            marked != null -> add(chat("user", JsonArray(textBlocks.map { block -> textPart(block.text, cache.takeIf { block === marked }) })))
+                            textBlocks.size == 1 -> add(chat("user", JsonPrimitive(textBlocks.single().text)))
+                            else -> add(chat("user", JsonArray(textBlocks.map { textPart(it.text, null) })))
                         }
                     }
                     Role.ASSISTANT -> {

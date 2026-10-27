@@ -76,7 +76,6 @@ import net.robog.clarity.shared.vault.RegisterVaultKey
 import net.robog.clarity.shared.vault.ReleaseCode
 import net.robog.clarity.shared.vault.ReleaseGrant
 import net.robog.clarity.shared.vault.VaultEnvelope
-import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionId
@@ -107,7 +106,6 @@ interface ClarityApi : FeedBackend {
     suspend fun instance(): ApiResult<InstanceInfo>
 
     suspend fun setupStatus(): ApiResult<SetupStatus>
-    suspend fun putModelKey(request: ModelKeyRequest): ApiResult<Unit>
 
     suspend fun settings(): ApiResult<Settings>
     suspend fun putSettings(settings: Settings): ApiResult<Unit>
@@ -240,9 +238,6 @@ class KtorClarityApi(
     override suspend fun instance(): ApiResult<InstanceInfo> = get(ApiPaths.APP + "/instance")
 
     override suspend fun setupStatus(): ApiResult<SetupStatus> = get(ApiPaths.SETUP_STATUS)
-
-    override suspend fun putModelKey(request: ModelKeyRequest): ApiResult<Unit> =
-        putUnit(ApiPaths.SETUP_MODEL_KEY, request)
 
     override suspend fun settings(): ApiResult<Settings> = get(ApiPaths.SETTINGS)
 

@@ -31,7 +31,6 @@ import net.robog.clarity.app.data.ConnectorsRepository
 import net.robog.clarity.app.data.ConstitutionRepository
 import net.robog.clarity.app.data.EnrollmentRepository
 import net.robog.clarity.app.data.FeedRepository
-import net.robog.clarity.app.data.ModelKeyOutcome
 import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SaveConnectorOutcome
 import net.robog.clarity.app.data.ServerProbe
@@ -135,10 +134,9 @@ private class FakeServers(var result: ApiResult<ServerProbe> = ApiResult.Success
     override suspend fun probe(instanceUrl: String): ApiResult<ServerProbe> { probed += instanceUrl; return result }
 }
 
-private class FakeSetup(var status: SetupStatus? = null, var keyOutcome: ModelKeyOutcome = ModelKeyOutcome.Works) : SetupRepository {
-    val keys = mutableListOf<String>()
-    override suspend fun status(): SetupStatus? = status
-    override suspend fun submitModelKey(apiKey: String): ModelKeyOutcome { keys += apiKey; return keyOutcome }
+private class FakeSetup(var status: SetupStatus? = null) : SetupRepository {
+    var asks = 0
+    override suspend fun status(): SetupStatus? { asks++; return status }
 }
 
 private class FakeSessionRepo(enrolled: Boolean) : SessionRepository {
@@ -479,32 +477,28 @@ class ServerStepViewModelTest {
 }
 
 class ModelStepViewModelTest {
-    @Test fun checkSubmitsTheTrimmedKeyAndShowsItWorks() = withMain {
-        val setup = FakeSetup()
-        val vm = ModelStepViewModel(setup)
-        assertFalse(vm.state.value.canCheck)
-        vm.onKeyChanged("  sk-ant-api03-abc  ")
-        vm.check()
-        assertEquals(listOf("sk-ant-api03-abc"), setup.keys)
+    private fun status(key: SetupStatus.KeyState) = SetupStatus(key, 0, null, Settings())
+
+    @Test fun aServerWithItsKeyIsReady() = withMain {
+        val vm = ModelStepViewModel(FakeSetup(status(key = SetupStatus.KeyState.VALID)))
         assertEquals(ModelResult.Works, vm.state.value.result)
         assertTrue(vm.state.value.canContinue && !vm.state.value.canCheck)
     }
 
-    @Test fun aRejectedKeyCanBeCorrected() = withMain {
-        val setup = FakeSetup(keyOutcome = ModelKeyOutcome.Rejected("invalid x-api-key"))
+    @Test fun aServerWithoutItsKeyIsCheckedAgainAfterItIsSet() = withMain {
+        val setup = FakeSetup(status(key = SetupStatus.KeyState.MISSING))
         val vm = ModelStepViewModel(setup)
-        vm.onKeyChanged("bad")
-        vm.check()
-        assertEquals(ModelResult.Rejected("invalid x-api-key"), vm.state.value.result)
+        assertEquals(ModelResult.Missing, vm.state.value.result)
         assertFalse(vm.state.value.canContinue)
-        vm.onKeyChanged("good")
-        assertNull(vm.state.value.result)
+        assertTrue(vm.state.value.canCheck)
+        setup.status = status(key = SetupStatus.KeyState.VALID)
+        vm.check()
+        assertEquals(ModelResult.Works, vm.state.value.result)
+        assertEquals(2, setup.asks)
     }
 
-    @Test fun aServerWithoutTheRouteDoesNotBlockSetup() = withMain {
-        val vm = ModelStepViewModel(FakeSetup(keyOutcome = ModelKeyOutcome.Unavailable))
-        vm.onKeyChanged("k")
-        vm.check()
+    @Test fun aServerWithoutSetupStatusDoesNotBlockSetup() = withMain {
+        val vm = ModelStepViewModel(FakeSetup(null))
         assertEquals(ModelResult.ServerNotReady, vm.state.value.result)
         assertTrue(vm.state.value.canContinue)
     }

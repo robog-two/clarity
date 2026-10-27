@@ -157,6 +157,32 @@ class CredentialFormTest {
         assertIs<FormCardState.Done>(model.state)
     }
 
+    @Test fun aRequestTheServerClosedSaysItIsNoLongerNeeded() = runTest {
+        val closed = credentialRequest(status = CredentialRequestStatus.CANCELLED).copy(closedReason = "already saved as ulta_login")
+        val vault = FakeVault(request = ApiResult.Success(closed))
+        val model = CredentialFormModel(CredentialRequest1, vault)
+        model.load()
+        val done = assertIs<FormCardState.Done>(model.state)
+        assertEquals("no longer needed", done.kicker)
+        assertEquals("No longer needed: already saved as ulta_login.", done.line)
+        // one the person cancelled is not called saved either
+        assertEquals("cancelled", closedFormState(credentialRequest(status = CredentialRequestStatus.CANCELLED)).kicker)
+    }
+
+    @Test fun theChatRowSaysWhetherALoginIsStillWanted() {
+        assertEquals("Save it in your vault" to null, credentialRowText(null))
+        assertEquals("Save it in your vault" to null, credentialRowText(credentialRequest()))
+        assertEquals("Saved in your vault", credentialRowText(credentialRequest(status = CredentialRequestStatus.FULFILLED)).first)
+        val superseded = credentialRequest(status = CredentialRequestStatus.CANCELLED).copy(closedReason = "already saved as ulta_login")
+        assertEquals("No longer needed" to "already saved as ulta_login", credentialRowText(superseded))
+    }
+
+    @Test fun anOlderAppStillReadsAClosedRequest() {
+        // the server sends superseded/expired requests as cancelled plus a reason the app may not know
+        val json = """{"id":"r","name":"n","kind":"login","fields":[],"site":"s","purpose":"p","status":"cancelled","createdAt":"2026-10-26T13:05:09Z","closedReason":"x","newer":1}"""
+        assertEquals(CredentialRequestStatus.CANCELLED, ClarityJson.decodeFromString(net.robog.clarity.shared.vault.CredentialRequest.serializer(), json).status)
+    }
+
     @Test fun anUnreachableServerShowsAMessage() = runTest {
         val vault = FakeVault(request = ApiResult.Failure(ApiError.Unreachable("x")))
         val model = CredentialFormModel(CredentialRequest1, vault)

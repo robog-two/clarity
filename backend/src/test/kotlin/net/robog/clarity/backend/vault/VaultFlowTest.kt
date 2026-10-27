@@ -174,7 +174,7 @@ class VaultFlowTest : FunSpec({
         }
         val tools = browserTools.values.toList() + VaultTools(rig.vaultService, rig.vaultHolds).all(RunScope(runId, isLead = true))
         val request = roleRequest(
-            rig.config.roles.lead, runId, leadSystemBlocks(null), listOf(Message.user("go")), tools, emptyList(), 10, rig.large.sink,
+            rig.config.roles.lead, runId, leadSystemBlocks(null), listOf(Message.user("go")), tools, 10, rig.large.sink,
         )
         rig.runtime.harness(rig.journal).run(request).toList()
         return rig.journal.load(runId).flatMap { it.content }.filterIsInstance<Block.Result>().map { it.content }
@@ -329,7 +329,7 @@ class VaultFlowTest : FunSpec({
         val reply = ask.invoke(buildJsonObject { put("site", "bank.example.com"); put("purpose", "Log in to the bank") }).shouldBeInstanceOf<ToolResult.Ok>().content
         val held = heldOf(ProposedAction.AskCode::class.java).single()
         reply shouldContain "[secret:code_${held.id}]"
-        runTurn("run-c", "browser__type_text" to args("text" to "[secret:code_${held.id}]")).single() shouldContain "not entered"
+        runTurn("run-c", "browser__type_text" to args("text" to "[secret:code_${held.id}]")).single() shouldContain "has not typed that code yet"
 
         testApplication {
             val client = setup()

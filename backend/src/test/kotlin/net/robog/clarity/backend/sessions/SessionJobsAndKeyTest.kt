@@ -24,6 +24,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.LeadRig
+import net.robog.clarity.backend.agent.TEST_ROLES
 import net.robog.clarity.backend.agent.Priority
 import net.robog.clarity.backend.agent.ScheduledJobs
 import net.robog.clarity.backend.agent.end
@@ -42,12 +43,9 @@ import net.robog.clarity.backend.persistence.DatabaseFactory
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.scheduler.FireContext
 import net.robog.clarity.backend.scheduler.Scheduler
-import net.robog.clarity.backend.setup.KeyCheck
-import net.robog.clarity.backend.setup.ModelKeyStore
 import net.robog.clarity.backend.setup.SettingsStore
 import net.robog.clarity.backend.setup.SetupError
 import net.robog.clarity.backend.setup.SetupService
-import net.robog.clarity.backend.setup.StoredModelKeyLoader
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.Chip
 import net.robog.clarity.shared.feed.IfThen
@@ -82,7 +80,7 @@ class SessionJobsAndKeyTest : FunSpec({
         postgres.stop()
     }
 
-    suspend fun rig(apiKey: String? = "sk-test", roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles()) =
+    suspend fun rig(apiKey: String? = "sk-or-test", roles: net.robog.clarity.backend.config.AgentRoles = TEST_ROLES) =
         LeadRig(database, Clock.System, apiKey, roles).also { it.reset() }
 
     fun appConfig(dir: java.nio.file.Path, agent: AgentConfig) = AppConfig(
@@ -174,66 +172,31 @@ class SessionJobsAndKeyTest : FunSpec({
         r.sessionService.active() shouldBe listOf(store.live()!!.session)
     }
 
-    test("a model key set in setup wakes the lead without a restart; a configured key is never replaced") {
-        val r = rig(apiKey = null)
+    test("the model key is the server's: setup reports it, and a key sent from an older app is refused and not stored") {
         val dir = Files.createTempDirectory("clarity-key")
+        val r = rig()
         val config = appConfig(dir, r.config)
-        var verdict: KeyCheck = KeyCheck.Valid
-        val keys = ModelKeyStore(config)
-        val setup = SetupService(r.runtime, keys, { verdict }, SettingsStore(database, Clock.System), r.constitutions, ConnectorRegistry(database, Clock.System, config, net.robog.clarity.backend.connectors.ConnectorTests(database, Clock.System, net.robog.clarity.backend.governance.OutboxSignals())))
-
-        setup.status().modelKey shouldBe SetupStatus.KeyState.MISSING
-        r.runtime.enabled shouldBe false
-
-        // the lead is waiting for a key; the person's words queue up meanwhile
-        scope.launch { r.lead.run() }
-        delay(300)
-        r.model.handler = { end("hello") }
-        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("u1"), "hi", net.robog.clarity.shared.feed.InputSource.TYPED))
-        delay(500)
-        r.model.requests.size shouldBe 0
-
-        verdict = KeyCheck.Rejected("no")
-        setup.setModelKey("sk-bad").shouldBeInstanceOf<Either.Left<SetupError>>().value.shouldBeInstanceOf<SetupError.Rejected>()
-        setup.status().modelKey shouldBe SetupStatus.KeyState.INVALID
-        verdict = KeyCheck.Unreachable("offline")
-        setup.setModelKey("sk-offline").shouldBeInstanceOf<Either.Left<SetupError>>().value.shouldBeInstanceOf<SetupError.Unreachable>()
-        keys.read() shouldBe null
-
-        verdict = KeyCheck.Valid
-        setup.setModelKey(" sk-good ").ok().modelKey shouldBe SetupStatus.KeyState.VALID
-        keys.read() shouldBe "sk-good"
-        withTimeout(20.seconds) { while (r.model.requests.isEmpty()) delay(50) }
-        r.inbox.pending().size shouldBe 0
-
-        // and a restart with only the stored key enables a fresh runtime
-        val fresh = rig(apiKey = null)
-        fresh.runtime.enabled shouldBe false
-        StoredModelKeyLoader(keys, fresh.runtime).run()
-        fresh.runtime.enabled shouldBe true
-
-        // a configured key wins
-        val configured = rig(apiKey = "sk-from-secret")
-        val managed = SetupService(configured.runtime, keys, { KeyCheck.Valid }, SettingsStore(database, Clock.System), configured.constitutions, ConnectorRegistry(database, Clock.System, config, net.robog.clarity.backend.connectors.ConnectorTests(database, Clock.System, net.robog.clarity.backend.governance.OutboxSignals())))
-        managed.setModelKey("sk-other").shouldBeInstanceOf<Either.Left<SetupError>>().value shouldBe SetupError.ManagedByServer
-        keys.read() shouldBe "sk-good"
-        StoredModelKeyLoader(keys, configured.runtime).run()
-        configured.runtime.installKey("sk-x") shouldBe false
-    }
-    test("setup status is valid only while every provider some role uses has a key, and names the one missing") {
-        val defaults = net.robog.clarity.backend.config.AgentRoles()
-        val r = rig(roles = defaults.copy(triage = defaults.triage.copy(provider = net.robog.clarity.backend.config.ModelProvider.OPENROUTER, model = "x/y")))
-        val config = appConfig(Files.createTempDirectory("clarity-key"), r.config)
-        val setup = SetupService(r.runtime, ModelKeyStore(config), { KeyCheck.Valid }, SettingsStore(database, Clock.System), r.constitutions, ConnectorRegistry(database, Clock.System, config, net.robog.clarity.backend.connectors.ConnectorTests(database, Clock.System, net.robog.clarity.backend.governance.OutboxSignals())))
-        setup.status().let {
-            it.modelKey shouldBe SetupStatus.KeyState.MISSING
-            it.missingKeys shouldBe listOf("openrouter")
-        }
-        // Triage back on Anthropic, which has a key: valid again, without a restart.
-        r.modelSettings.set(net.robog.clarity.backend.config.AgentRole.TRIAGE, net.robog.clarity.backend.agent.RoleOverride(provider = net.robog.clarity.backend.config.ModelProvider.ANTHROPIC, model = "claude-haiku-5-5"))
-        setup.status().let {
+        fun setupFor(rig: LeadRig) = SetupService(
+            rig.runtime, SettingsStore(database, Clock.System), rig.constitutions,
+            ConnectorRegistry(database, Clock.System, config, net.robog.clarity.backend.connectors.ConnectorTests(database, Clock.System, net.robog.clarity.backend.governance.OutboxSignals())),
+        )
+        setupFor(r).status().let {
             it.modelKey shouldBe SetupStatus.KeyState.VALID
             it.missingKeys shouldBe emptyList()
         }
+        setupFor(r).setModelKey("sk-ant-from-an-old-app").shouldBeInstanceOf<Either.Left<SetupError>>().value shouldBe SetupError.ManagedByServer
+        Files.list(dir).use { it.count() } shouldBe 0L
+
+        // Without a key (only when a test builds the config by hand): missing, named, and the lead stays off.
+        val none = rig(apiKey = null)
+        setupFor(none).status().let {
+            it.modelKey shouldBe SetupStatus.KeyState.MISSING
+            it.missingKeys shouldBe listOf("openrouter")
+        }
+        none.runtime.enabled shouldBe false
+        scope.launch { none.lead.run() }
+        none.inbox.enqueue(InboxItem.UserInput(ClientInputId("u1"), "hi", net.robog.clarity.shared.feed.InputSource.TYPED))
+        delay(500)
+        none.model.requests.size shouldBe 0
     }
 })

@@ -51,7 +51,17 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.graphics.shapes.RoundedPolygon
+import net.robog.clarity.app.ui.components.CompactTaskRow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
@@ -63,6 +73,9 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.datetime.LocalDate
 import net.robog.clarity.app.ui.cards.taskStatusLabel
@@ -110,6 +123,8 @@ fun TodayContent(
     onReview: (HeldActionId) -> Unit,
     onOpenHeld: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Whether the quieter tasks start unfolded (previews and screenshots). */
+    quietExpanded: Boolean = false,
 ) {
     val pull = rememberPullToRefreshState()
     PullToRefreshBox(
@@ -149,7 +164,7 @@ fun TodayContent(
                     Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
                     Phase.Unavailable -> Hint("Your server can’t show today yet. Your plan, what I’m doing and what’s parked will appear here.")
                     Phase.Nothing -> Unit
-                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld) }
+                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded) }
                 }
             }
         }
@@ -159,22 +174,26 @@ fun TodayContent(
 private enum class Phase { Loading, Unavailable, Nothing, Ready }
 
 @Composable
-private fun DayBody(today: Today, state: TodayUiState, onReview: (HeldActionId) -> Unit, onOpenHeld: () -> Unit) {
+private fun DayBody(today: Today, state: TodayUiState, onReview: (HeldActionId) -> Unit, onOpenHeld: () -> Unit, quietExpanded: Boolean) {
     Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         var order = 0
         when {
             today.plan.isNotEmpty() -> PlanHero(today.plan, Modifier.springIn(order++))
             !today.called -> NoPlanYet(Modifier.springIn(order++))
         }
-        if (state.doing.isNotEmpty()) {
+        val doing = state.doing
+        if (!doing.isEmpty) {
             TodayLabel("I’m doing", Modifier.padding(top = 10.dp).springIn(order++))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                state.doing.forEachIndexed { i, row ->
-                    DoingRowView(row, groupShape(i, state.doing.size), onReview, Modifier.springIn(order++))
+            if (doing.main.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    doing.main.forEachIndexed { i, row ->
+                        DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++))
+                    }
                 }
             }
+            if (doing.quiet.isNotEmpty()) QuietTasks(doing.quiet, quietExpanded, Modifier.springIn(order++))
         }
-        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (state.doing.isEmpty()) 10.dp else 4.dp).springIn(order++))
+        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.isEmpty) 10.dp else 4.dp).springIn(order++))
         if (today.parked.isNotEmpty()) {
             TodayLabel("Parked", Modifier.padding(top = 10.dp).springIn(order++))
             ParkedChips(today.parked, Modifier.springIn(order++))
@@ -260,16 +279,82 @@ private fun NoPlanYet(modifier: Modifier = Modifier) {
 // ---------- I'm doing: a contained group ----------
 
 @Composable
-internal fun DoingRowView(row: DoingRow, shape: Shape, onReview: (HeldActionId) -> Unit, modifier: Modifier = Modifier) {
+internal fun DoingRowView(
+    row: DoingRow,
+    shape: Shape,
+    onReview: (HeldActionId) -> Unit,
+    modifier: Modifier = Modifier,
+    /** Whether the row shows the "needs you" shape: only when there is something to review. */
+    needsYou: Boolean = row.review != null,
+) {
     TaskRow(
         title = row.task.title,
         detail = row.task.detail,
         shape = shape,
-        glyph = { StatusGlyph(row.task) },
+        glyph = { StatusGlyph(row.task, needsYou) },
         // The one Peach element on the screen: the action that needs the person.
         trailing = { if (row.review != null) ReviewButton { onReview(row.review) } else TaskStatus(taskStatusLabel(row.task.status)) },
         modifier = modifier,
     )
+}
+
+/**
+ * The quieter tasks: waiting with nothing to review, or untouched for a long while. Folded by
+ * default under one small line; unfolded they are compact, still rows with nothing to press.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun QuietTasks(rows: List<DoingRow>, expandedInitially: Boolean, modifier: Modifier = Modifier) {
+    var expanded by rememberSaveable { mutableStateOf(expandedInitially) }
+    val colors = MaterialTheme.colorScheme
+    val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "quiet chevron")
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable(role = Role.Button, onClickLabel = if (expanded) "Hide quieter tasks" else "Show quieter tasks") { expanded = !expanded }
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(sentenceCase(quietLine(rows.size)), style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+            Icon(
+                Icons.Outlined.KeyboardArrowDown,
+                contentDescription = null,
+                tint = colors.onSurfaceVariant,
+                modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
+            )
+        }
+        AnimatedVisibility(expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                rows.forEachIndexed { i, row ->
+                    val (mark, fill) = quietMark(row.task.status)
+                    CompactTaskRow(row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill)
+                }
+            }
+        }
+    }
+}
+
+/** A quiet row's status word: a waiting row here has nothing to review, so it says only "waiting". */
+private fun quietStatusLabel(status: AgentTask.Status): String =
+    if (status == AgentTask.Status.WAITING_FOR_YOU) "waiting" else taskStatusLabel(status)
+
+/** A quiet row's small still mark: never the "needs you" Cookie in Sage. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun quietMark(status: AgentTask.Status): Pair<RoundedPolygon, Color> {
+    val colors = MaterialTheme.colorScheme
+    val muted = colors.onSurfaceVariant.copy(alpha = 0.35f)
+    return when (status) {
+        AgentTask.Status.WORKING -> MaterialShapes.Cookie9Sided to colors.secondaryContainer
+        AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to muted
+        AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondaryContainer
+        AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
+        else -> MaterialShapes.Circle to muted
+    }
 }
 
 /** The three solids, one per running task (picked by task id so a task keeps its solid). */
@@ -284,7 +369,7 @@ private fun solidFor(id: TaskId): Int = solids[Math.floorMod(id.value.hashCode()
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusGlyph(task: AgentTask) {
+private fun StatusGlyph(task: AgentTask, needsYou: Boolean) {
     val colors = MaterialTheme.colorScheme
     val size = Modifier.size(44.dp)
     when (task.status) {
@@ -302,7 +387,9 @@ private fun StatusGlyph(task: AgentTask) {
         }
         else -> {
             val (shape, fill) = when (task.status) {
-                AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU -> MaterialShapes.Cookie4Sided to colors.secondary
+                // The Sage Cookie means there is something to review; a waiting row without one stays plain.
+                AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU ->
+                    if (needsYou) MaterialShapes.Cookie4Sided to colors.secondary else MaterialShapes.Circle to colors.outlineVariant
                 AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to colors.onSurfaceVariant.copy(alpha = 0.35f)
                 AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondaryContainer
                 AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
@@ -381,8 +468,8 @@ private val previewTime = Instant.parse("2026-10-26T14:04:00Z")
 private val previewDate = LocalDate(2026, 10, 26)
 private const val PREVIEW_KICKER = "monday, October 26 · 2:04 pm"
 
-private fun previewTask(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null) =
-    AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, previewTime)
+private fun previewTask(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null, ago: Duration = Duration.ZERO) =
+    AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, previewTime - ago)
 
 private val previewState = TodayUiState(
     loading = false,
@@ -397,18 +484,24 @@ private val previewState = TodayUiState(
         parked = listOf("feedback for Alex", "expense report", "renewing the car registration"),
         called = true,
     ),
-    doing = listOf(
-        DoingRow(previewTask("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1"), HeldActionId("h1")),
-        DoingRow(previewTask("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING), null),
-        DoingRow(previewTask("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED), null),
+    doing = doingRows(
+        listOf(
+            previewTask("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            previewTask("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
+            previewTask("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            previewTask("q2", "Find Ulta haircut openings", "web · no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
+            previewTask("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+        ),
+        emptyMap(),
+        previewTime,
     ),
     heldWaiting = 2,
 )
 
 @Composable
-private fun PreviewFrame(state: TodayUiState) = ClarityTheme {
+private fun PreviewFrame(state: TodayUiState, quietOpen: Boolean = false) = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        TodayContent(state, onRefresh = {}, onReview = {}, onOpenHeld = {})
+        TodayContent(state, onRefresh = {}, onReview = {}, onOpenHeld = {}, quietExpanded = quietOpen)
     }
 }
 
@@ -416,6 +509,10 @@ private fun PreviewFrame(state: TodayUiState) = ClarityTheme {
 @Preview(name = "dark", widthDp = 390, heightDp = 1000, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
 private fun TodayPreview() = PreviewFrame(previewState)
+
+@Preview(name = "quieter tasks open", widthDp = 390, heightDp = 1100)
+@Composable
+private fun TodayQuietOpenPreview() = PreviewFrame(previewState, quietOpen = true)
 
 @Preview(name = "loading", widthDp = 390, heightDp = 780)
 @Composable
@@ -437,11 +534,13 @@ private fun TodayQuietPreview() = PreviewFrame(
 @Composable
 private fun TodayEveryStatusPreview() = PreviewFrame(
     previewState.copy(
-        doing = AgentTask.Status.entries.mapIndexed { i, status ->
-            val held = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
-            val review = if (held) HeldActionId("h$i") else null
-            DoingRow(previewTask("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, review?.value), review)
-        },
+        doing = Doing(
+            main = AgentTask.Status.entries.mapIndexed { i, status ->
+                val held = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
+                val review = if (held) HeldActionId("h$i") else null
+                DoingRow(previewTask("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, review?.value), review)
+            },
+        ),
     ),
 )
 

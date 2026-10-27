@@ -69,7 +69,7 @@ private class Rig(
 ) {
     val calls = AtomicInteger()
     val states = mutableListOf<JsonObject>()
-    val config = AgentConfig(anthropicApiKey = null, reviewInterval = 2.hours, openRouterApiKey = "k", decisions = decisions)
+    val config = AgentConfig(reviewInterval = 2.hours, openRouterApiKey = "k", decisions = decisions)
     val changes = FakeChanges(lastWake, snapshot)
     val inbox = FakeInbox()
     private val counting: DecisionClient? = client?.let { inner ->

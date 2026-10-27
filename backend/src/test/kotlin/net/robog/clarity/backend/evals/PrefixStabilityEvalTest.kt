@@ -17,7 +17,7 @@ import net.robog.clarity.shared.session.SessionKind
 import net.robog.clarity.shared.session.StartSession
 
 /**
- * Eval: the bytes a prompt cache keys on (system blocks, loaded tools, deferred tools) are the
+ * Eval: the bytes a prompt cache keys on (system blocks, tools) are the
  * same on every request of a 20-turn day, whatever the turns do: talk, tool calls, memory writes,
  * triggers, a morning call starting and ending. They change exactly once, when the constitution
  * is amended, and then only the constitution's own block moves.
@@ -63,7 +63,6 @@ class PrefixStabilityEvalTest : FunSpec({
         val (before, after) = prefixes.first() to prefixes.last()
         (before == after) shouldBe false
         after.tools shouldBe before.tools
-        after.deferred shouldBe before.deferred
         after.system.first() shouldBe before.system.first() // the instructions block is untouched
         after.system.last().text.contains("Lives in Berlin") shouldBe true
         // both system blocks keep their cache breakpoints

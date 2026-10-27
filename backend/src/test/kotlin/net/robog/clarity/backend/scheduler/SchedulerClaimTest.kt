@@ -141,7 +141,7 @@ class SchedulerClaimTest : FunSpec({
 
     test("the periodic review enqueues one low-priority job item per slot, even if it fires twice") {
         val inbox = ExposedInboxStore(database, Clock.System, InboxSignals())
-        val config = AgentConfig(anthropicApiKey = null, reviewInterval = 2.hours)
+        val config = AgentConfig(reviewInterval = 2.hours)
         val gate = ReviewGate(config, ExposedReviewChanges(database), net.robog.clarity.backend.agent.Decisions(config, { null }, database, Clock.System))
         val job = PeriodicReviewJob(config, inbox, gate)
         val slot = Instant.parse("2026-10-25T10:00:00Z")

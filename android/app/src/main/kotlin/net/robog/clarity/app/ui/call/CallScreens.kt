@@ -179,10 +179,12 @@ private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Un
         view.keepScreenOn = true
         onDispose { view.keepScreenOn = false }
     }
+    // Previews and screenshots show a fixed timer, so their images do not change with the clock.
+    val inspection = LocalInspectionMode.current
     val now by produceState(Clock.System.now()) {
-        while (true) { delay(1_000); value = Clock.System.now() }
+        if (!inspection) while (true) { delay(1_000); value = Clock.System.now() }
     }
-    val elapsed = state.startedAt?.let { formatElapsed(now - it) } ?: "0:00"
+    val elapsed = if (inspection) "4:12" else state.startedAt?.let { formatElapsed(now - it) } ?: "0:00"
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(
@@ -311,7 +313,8 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     state.setup.forEachIndexed { i, task ->
-                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++))
+                        // No Review button in the call, but a task holding something for review keeps its shape.
+                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++), needsYou = task.heldActionId != null)
                     }
                 }
             }

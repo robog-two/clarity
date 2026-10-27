@@ -73,7 +73,15 @@ class VaultTools(
     ) { input ->
         vault.requestCredential(input.name, input.kind, input.fields, input.site, input.purpose, input.replace).fold(
             { ToolResult.Error(it.detail ?: it.title) },
-            { request ->
+            { (request, existing) ->
+                if (existing) {
+                    return@fold ToolResult.Ok(
+                        "A form for ${request.kind.label()} on ${request.site} is already open (request ${request.id}, name ${request.name}); no new one was made. " +
+                            "If it is not in the chat yet, show it with send_to_user as one credential_request card " +
+                            "{\"type\": \"credential_request\", \"requestId\": \"${request.id}\"}; otherwise wait for the person. Once saved it appears in list_credentials as ${request.name}; write " +
+                            request.fields.joinToString(" ") { VaultNames.placeholder(request.name, it.name) } + " in browser tool inputs.",
+                    )
+                }
                 ToolResult.Ok(
                     "Made the form (request ${request.id}). It is not in the chat yet: show it with send_to_user as one credential_request card " +
                         "{\"type\": \"credential_request\", \"requestId\": \"${request.id}\"}, with a short line saying why. " +
@@ -109,7 +117,7 @@ class VaultTools(
             if (id == null) ToolResult.Error(wait.text)
             else ToolResult.Ok(
                 "Asked the person for the code. Once they type it, use [secret:code_${id.value}] in the browser (on ${Sites.registrableDomain(input.site)} only). " +
-                    "If the browser says it has not been entered yet, wait and try again. Do not ask twice.",
+                    "Write it into the code field right away: the fill waits for the person to type it (up to a few minutes). Do not ask twice.",
             )
         }
     }

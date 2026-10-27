@@ -16,9 +16,6 @@ import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -43,11 +40,9 @@ import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.sentenceCase
 import net.robog.clarity.app.ui.today.SectionTitle
-import net.robog.clarity.shared.session.ModelRoles
 
 /** Callbacks of the "Models" section, so previews and tests can pass no-ops. */
 data class ModelsActions(
-    val onProvider: (role: String, provider: String) -> Unit = { _, _ -> },
     val onModel: (role: String, model: String) -> Unit = { _, _ -> },
     val onEffort: (role: String, effort: String) -> Unit = { _, _ -> },
     val onReset: (role: String) -> Unit = {},
@@ -57,7 +52,7 @@ data class ModelsActions(
 @Composable
 fun ModelsSection(showTitle: Boolean = true, viewModel: ModelsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    ModelsSectionContent(state, ModelsActions(viewModel::setProvider, viewModel::setModel, viewModel::setEffort, viewModel::reset), showTitle)
+    ModelsSectionContent(state, ModelsActions(viewModel::setModel, viewModel::setEffort, viewModel::reset), showTitle)
 }
 
 /** [showTitle] is off when the section is a page of its own and the page already names it. */
@@ -73,9 +68,8 @@ fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions, showTitle
     }
     if (showTitle) SectionTitle("Models")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Which model does each part of the work. Changes are saved on your server.")
+        Hint("Which model does each part of the work, by its OpenRouter name. Changes are saved on your server.")
         state.message?.let { ErrorBox(it) }
-        if (!state.openRouterKey) Hint("To run on OpenRouter, add its key on your server.")
         state.rows.forEach { row -> RoleModelItem(row, state.efforts, actions) }
     }
 }
@@ -90,17 +84,6 @@ private fun RoleModelItem(row: RoleModelRow, efforts: List<String>, actions: Mod
                 Kicker(row.caption)
             }
             if (!row.isDefault) TextButton(onClick = { actions.onReset(row.role) }) { Text("Reset to default") }
-        }
-        Kicker("Runs on")
-        val anthropic = row.provider == ModelRoles.ANTHROPIC
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-            SegmentedButton(anthropic, { if (!anthropic) actions.onProvider(row.role, ModelRoles.ANTHROPIC) }, SegmentedButtonDefaults.itemShape(0, 2)) {
-                Text("Anthropic")
-            }
-            SegmentedButton(
-                !anthropic, { if (anthropic) actions.onProvider(row.role, ModelRoles.OPENROUTER) }, SegmentedButtonDefaults.itemShape(1, 2),
-                enabled = row.openRouterAllowed || !anthropic,
-            ) { Text("OpenRouter") }
         }
         ModelField(row, onModel = { actions.onModel(row.role, it) })
         ClarityDropdown(

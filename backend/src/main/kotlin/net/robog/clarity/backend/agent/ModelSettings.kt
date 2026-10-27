@@ -17,11 +17,12 @@ import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.config.AgentRoles
 import net.robog.clarity.backend.config.EFFORTS
-import net.robog.clarity.backend.config.ModelProvider
+
 import net.robog.clarity.backend.config.RoleConfig
 import net.robog.clarity.backend.lifecycle.StartupTask
 import net.robog.clarity.backend.persistence.tx
-import net.robog.clarity.harness.COMPACTION_MIN_TRIGGER_TOKENS
+import io.github.oshai.kotlinlogging.KotlinLogging
+import net.robog.clarity.harness.MIN_COMPACT_AT_TOKENS
 import net.robog.clarity.harness.ModelGateway
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.eq
@@ -31,13 +32,13 @@ import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.upsert
 
-/** The largest `max_tokens` a role may ask for (current Claude models stream up to 128K). */
+private val log = KotlinLogging.logger {}
+
+/** The largest `max_tokens` a role may ask for. */
 const val MAX_OUTPUT_TOKENS: Long = 128_000
 
-/** `anthropic` / `openrouter`, as in env, yaml, the database and the API. */
-val ModelProvider.wireName: String get() = name.lowercase()
-
-fun modelProviderOf(raw: String): ModelProvider? = ModelProvider.entries.firstOrNull { it.wireName == raw.trim().lowercase() }
+/** Pure: whether [model] looks like an OpenRouter model id (`vendor/model`, no spaces). */
+fun isOpenRouterModelId(model: String): Boolean = '/' in model && model.isNotBlank() && model.none(Char::isWhitespace)
 
 /** `lead` / `helper` / `guard` / `triage`. */
 val AgentRole.wireName: String get() = name.lowercase()
@@ -46,7 +47,6 @@ fun agentRoleOf(raw: String): AgentRole? = AgentRole.entries.firstOrNull { it.wi
 
 /** One role's runtime override (`model_role_override`); a null field keeps the deploy-time default. */
 data class RoleOverride(
-    val provider: ModelProvider? = null,
     val model: String? = null,
     val effort: String? = null,
     val maxTokens: Long? = null,
@@ -56,10 +56,13 @@ data class RoleOverride(
 ) {
     val isEmpty: Boolean get() = this == RoleOverride()
 
-    /** Pure: [base] with every set field replaced. */
+    /**
+     * Pure: [base] with every set field replaced. A stored model that is not an OpenRouter id (one
+     * saved for the former direct Anthropic API that migration V18 could not map) is ignored, so the
+     * role falls back to its default instead of failing every call.
+     */
     fun applyTo(base: RoleConfig): RoleConfig = base.copy(
-        provider = provider ?: base.provider,
-        model = model ?: base.model,
+        model = model?.takeIf(::isOpenRouterModelId) ?: base.model,
         effort = effort ?: base.effort,
         maxTokens = maxTokens ?: base.maxTokens,
         cacheTtl = cacheTtl ?: base.cacheTtl,
@@ -78,35 +81,22 @@ fun effectiveRoles(boot: AgentRoles, overrides: Map<AgentRole, RoleOverride>): A
 data class SettingError(val field: String, val message: String)
 
 /**
- * Pure: what is wrong with [override] for [role] on top of [boot], given the providers that have a
- * key. Only the fields the override sets are checked (the boot config passed its own checks), plus
- * whether the model name fits the provider whenever either is set. Empty means it can be saved.
+ * Pure: what is wrong with [override]. Only the fields it sets are checked (the boot config passed
+ * its own checks). Empty means it can be saved.
  */
-fun validateOverride(role: AgentRole, override: RoleOverride, boot: RoleConfig, keys: Set<ModelProvider>): List<SettingError> = buildList {
-    val effective = override.applyTo(boot)
-    // Any role may run on OpenRouter; the lead then compacts its thread client-side.
-    if (override.provider == ModelProvider.OPENROUTER && ModelProvider.OPENROUTER !in keys) {
-        add(SettingError("provider", "this server has no OpenRouter key (set OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE)"))
-    }
+fun validateOverride(override: RoleOverride): List<SettingError> = buildList {
     override.model?.let {
         when {
             it.isBlank() -> add(SettingError("model", "pick a model"))
             it.any(Char::isWhitespace) -> add(SettingError("model", "a model name has no spaces"))
-        }
-    }
-    if ((override.model != null || override.provider != null) && none { it.field == "model" }) {
-        when {
-            effective.provider == ModelProvider.OPENROUTER && '/' !in effective.model ->
-                add(SettingError("model", "OpenRouter model names look like vendor/model, e.g. anthropic/claude-haiku-5.5"))
-            effective.provider == ModelProvider.ANTHROPIC && '/' in effective.model ->
-                add(SettingError("model", "Anthropic model names have no vendor part, e.g. claude-haiku-5-5"))
+            '/' !in it -> add(SettingError("model", "OpenRouter model names look like vendor/model, e.g. anthropic/claude-haiku-5.5"))
         }
     }
     override.effort?.let { if (it !in EFFORTS) add(SettingError("effort", "effort is one of ${EFFORTS.joinToString(", ")}")) }
     override.maxTokens?.let { if (it !in 1..MAX_OUTPUT_TOKENS) add(SettingError("maxTokens", "max tokens is 1 to $MAX_OUTPUT_TOKENS")) }
     override.cacheTtl?.let { if (it != "5m" && it != "1h") add(SettingError("cacheTtl", "the cache lasts 5m or 1h")) }
     override.compactAtTokens?.let {
-        if (it < COMPACTION_MIN_TRIGGER_TOKENS) add(SettingError("compactAtTokens", "compaction starts at $COMPACTION_MIN_TRIGGER_TOKENS tokens or more"))
+        if (it < MIN_COMPACT_AT_TOKENS) add(SettingError("compactAtTokens", "compaction starts at $MIN_COMPACT_AT_TOKENS tokens or more"))
     }
 }
 
@@ -129,10 +119,9 @@ class InMemoryRoleOverrideStore(private val clock: Clock = Clock.System) : RoleO
     }
 }
 
-// Mirrors db/migration/V14__model_role_override.sql.
+// Mirrors db/migration/V14__model_role_override.sql and V18__model_role_override_openrouter.sql (no provider column).
 object ModelRoleOverrides : Table("model_role_override") {
     val role = text("role")
-    val provider = text("provider").nullable()
     val model = text("model").nullable()
     val effort = text("effort").nullable()
     val maxTokens = long("max_tokens").nullable()
@@ -150,10 +139,13 @@ class DbRoleOverrideStore(private val database: Database, private val clock: Clo
     override suspend fun all(): Map<AgentRole, StoredOverride> = database.tx {
         ModelRoleOverrides.selectAll().mapNotNull { row ->
             val role = agentRoleOf(row[ModelRoleOverrides.role]) ?: return@mapNotNull null
+            val model = row[ModelRoleOverrides.model]
+            if (model != null && !isOpenRouterModelId(model)) {
+                log.warn { "the ${role.wireName} override's model '$model' is not an OpenRouter id; the role uses its default model" }
+            }
             role to StoredOverride(
                 RoleOverride(
-                    provider = row[ModelRoleOverrides.provider]?.let(::modelProviderOf),
-                    model = row[ModelRoleOverrides.model],
+                    model = model,
                     effort = row[ModelRoleOverrides.effort],
                     maxTokens = row[ModelRoleOverrides.maxTokens],
                     cacheTtl = row[ModelRoleOverrides.cacheTtl],
@@ -170,7 +162,6 @@ class DbRoleOverrideStore(private val database: Database, private val clock: Clo
         database.tx {
             ModelRoleOverrides.upsert(ModelRoleOverrides.role) {
                 it[ModelRoleOverrides.role] = role.wireName
-                it[provider] = override.provider?.wireName
                 it[model] = override.model
                 it[effort] = override.effort
                 it[maxTokens] = override.maxTokens
@@ -243,7 +234,8 @@ class ModelSettingsLoader(private val settings: ModelSettings) : StartupTask {
 }
 
 /**
- * A role's settings and the gateway of its provider, read together so the two always match. Taken
+ * A role's settings and the gateway, read together so the two always match. Taken
+
  * once per call (guard, triage, rule drafts) or once per run (a lead turn, a helper run).
  */
 data class BoundRole(val role: AgentRole, val config: RoleConfig, val gateway: ModelGateway)

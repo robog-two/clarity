@@ -6,7 +6,6 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.math.roundToLong
 import kotlin.time.Clock
 import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.persistence.tx
@@ -21,19 +20,6 @@ import org.jetbrains.exposed.v1.jdbc.insert
 
 private val log = KotlinLogging.logger {}
 
-/** Dollars per million tokens. Cache writes cost 1.25x input (5 minute TTL) or 2x (1 hour). */
-data class ModelPrice(val input: Double, val output: Double, val cacheRead: Double)
-
-/** Pure: the price of [model] by family (Claude API list prices, October 2026), or null when unknown. */
-fun priceOf(model: String, promptTokens: Long = 0): ModelPrice? = when {
-    model.startsWith("claude-opus-5-5") -> ModelPrice(4.0, 20.0, 0.20)
-    model.startsWith("claude-sonnet-5-5") -> ModelPrice(2.0, 10.0, 0.20)
-    // Haiku 5.5 costs more above 100K prompt tokens.
-    model.startsWith("claude-haiku-5-5") ->
-        if (promptTokens > 100_000) ModelPrice(0.50, 2.50, 0.05) else ModelPrice(0.10, 0.50, 0.01)
-    else -> null
-}
-
 /** Pure: the 5 minute and 1 hour cache writes; an unsplit total counts as 5 minute writes. */
 fun cacheWrites(u: Usage): Pair<Long, Long> {
     val unsplit = (u.cacheCreationInputTokens - u.cacheCreation5mTokens - u.cacheCreation1hTokens).coerceAtLeast(0)
@@ -41,19 +27,10 @@ fun cacheWrites(u: Usage): Pair<Long, Long> {
 }
 
 /**
- * Pure: what one call cost, in millionths of a dollar: the provider's own figure when it reports one
- * (OpenRouter), else from [priceOf]; null for an unknown model without a reported cost.
+ * Pure: what one call cost, in millionths of a dollar: OpenRouter's own figure (`usage.cost`, which
+ * includes cache reads and writes at the serving provider's prices); null when it did not say.
  */
-fun costMicros(model: String, u: Usage): Long? {
-    u.reportedCostMicros?.let { return it }
-    val (w5, w1) = cacheWrites(u)
-    val prompt = u.inputTokens + u.cacheReadInputTokens + w5 + w1
-    val p = priceOf(model, prompt) ?: return null
-    // dollars per million tokens == micro-dollars per token
-    val micros = u.inputTokens * p.input + u.outputTokens * p.output + u.cacheReadInputTokens * p.cacheRead +
-        w5 * p.input * 1.25 + w1 * p.input * 2.0
-    return micros.roundToLong()
-}
+fun costMicros(u: Usage): Long? = u.reportedCostMicros
 
 object ModelCalls : Table("model_call") {
     val id = long("id").autoIncrement()
@@ -90,7 +67,7 @@ class DbUsageRecorder(private val database: Database, private val clock: Clock) 
                 it[cacheReadTokens] = usage.cacheReadInputTokens
                 it[cacheWrite5mTokens] = w5
                 it[cacheWrite1hTokens] = w1
-                it[costMicros] = costMicros(model, usage)
+                it[costMicros] = costMicros(usage)
                 it[ModelCalls.role] = role?.wireName
             }
         }

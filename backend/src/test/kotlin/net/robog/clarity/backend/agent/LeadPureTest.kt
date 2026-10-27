@@ -44,36 +44,7 @@ private val sample = Constitution(
 )
 
 class LeadPureTest : FunSpec({
-    context("idle compaction timing") {
-        val turn = now - 10.minutes
-        test("quiet for over 3 minutes, warm cache (1h), long thread: compact") {
-            shouldCompactNow(now, now - 5.minutes, turn, null, "1h", 80_000) shouldBe true
-        }
-        test("not while the person is still active") {
-            shouldCompactNow(now, now - 2.minutes, turn, null, "1h", 80_000) shouldBe false
-        }
-        test("not once the 1h cache is about to expire (55 minute window)") {
-            shouldCompactNow(now, now - 5.minutes, now - 56.minutes, null, "1h", 80_000) shouldBe false
-            shouldCompactNow(now, now - 5.minutes, now - 54.minutes, null, "1h", 80_000) shouldBe true
-        }
-        test("5 minute cache: only inside 4 minutes of the last turn") {
-            shouldCompactNow(now, now - 3.5.minutes, now - 3.6.minutes, null, "5m", 80_000) shouldBe true
-            shouldCompactNow(now, now - 6.minutes, now - 5.minutes, null, "5m", 80_000) shouldBe false
-        }
-        test("not twice for the same turn") {
-            shouldCompactNow(now, now - 5.minutes, turn, now - 1.minutes, "1h", 80_000) shouldBe false
-            shouldCompactNow(now, now - 5.minutes, turn, now - 20.minutes, "1h", 80_000) shouldBe true
-        }
-        test("not for a short thread, not before any turn") {
-            shouldCompactNow(now, now - 5.minutes, turn, null, "1h", 10_000) shouldBe false
-            shouldCompactNow(now, null, null, null, "1h", 80_000) shouldBe false
-        }
-        test("falls back to the last turn when nobody ever typed") {
-            shouldCompactNow(now, null, turn, null, "1h", 80_000) shouldBe true
-        }
-    }
-
-    test("only the history since the latest compaction block counts towards compacting again") {
+    test("only the history since the latest compaction point (a stored Anthropic compaction block too) counts towards compacting again") {
         val compacted = Message(Role.ASSISTANT, listOf(Block.Raw(buildJsonObject { put("type", "compaction") })))
         val old = Message.user("x".repeat(400_000))
         sinceLastCompaction(listOf(old)) shouldBe listOf(old)
@@ -90,7 +61,6 @@ class LeadPureTest : FunSpec({
             owesReply(false, finished(net.robog.clarity.harness.FinishReason.END_TURN)) shouldBe false
             owesReply(true, finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
             owesReply(true, finished(net.robog.clarity.harness.FinishReason.REFUSAL)) shouldBe false
-            owesReply(true, finished(net.robog.clarity.harness.FinishReason.COMPACTED)) shouldBe false
             owesReply(true, net.robog.clarity.harness.HarnessEvent.Failed("down", net.robog.clarity.harness.Usage.ZERO, emptyList())) shouldBe false
             owesReply(true, null) shouldBe false
             REPLY_NUDGE shouldContain "send_to_user"
@@ -161,32 +131,31 @@ class LeadPureTest : FunSpec({
         }
         test("role requests follow the role config and never switch models") {
             val roles = AgentRoles()
-            val lead = roleRequest(roles.lead, "run", leadSystemBlocks(null), emptyList(), emptyList(), emptyList(), 30, null)
-            lead.model shouldBe "claude-opus-5-5"
-            lead.cache!!.ttl shouldBe "1h"
-            (lead.compaction != null) shouldBe true
+            val lead = roleRequest(roles.lead, "run", leadSystemBlocks(null), emptyList(), emptyList(), 30, null)
+            lead.model shouldBe "xiaomi/mimo-v2.6-pro"
             lead.effort shouldBe "medium"
             lead.policy shouldBe ToolPolicy.Gated
-            val helper = roleRequest(roles[AgentRole.HELPER], "h", helperSystemBlocks(), emptyList(), emptyList(), emptyList(), 30, null)
-            helper.model shouldBe "claude-sonnet-5-5"
-            helper.cache!!.ttl shouldBe "5m"
-            helper.compaction shouldBe null
+            val helper = roleRequest(roles[AgentRole.HELPER], "h", helperSystemBlocks(), emptyList(), emptyList(), 30, null)
+            helper.model shouldBe "deepseek/deepseek-v4.1-flash-1017"
+            listOf(roles.guard, roles.triage).map { it.model }.toSet() shouldBe setOf("deepseek/deepseek-v4.1-flash-1017")
         }
-        test("on OpenRouter a role request has no cache, no breakpoints and no server-side compaction") {
-            val lead = AgentRoles().lead.copy(provider = net.robog.clarity.backend.config.ModelProvider.OPENROUTER, model = "anthropic/claude-opus-5.5")
-            val request = roleRequest(lead, "run", leadSystemBlocks(null), emptyList(), emptyList(), emptyList(), 30, null)
-            request.cache shouldBe null
-            request.compaction shouldBe null
-            request.system.none { it.cacheBreakpoint } shouldBe true
-            request.effort shouldBe "medium"
+        test("a model that caches on its own gets no cache policy and no breakpoints; Claude gets both, with the role's ttl") {
+            val mimo = roleRequest(AgentRoles().lead, "run", leadSystemBlocks(null), emptyList(), emptyList(), 30, null)
+            mimo.cache shouldBe null
+            mimo.system.none { it.cacheBreakpoint } shouldBe true
+            val claudeLead = AgentRoles().lead.copy(model = "anthropic/claude-opus-5.5")
+            val claude = roleRequest(claudeLead, "run", leadSystemBlocks(null), emptyList(), emptyList(), 30, null)
+            claude.cache!!.ttl shouldBe "1h"
+            claude.system.map { it.cacheBreakpoint } shouldBe listOf(true, true)
+            roleRequest(AgentRoles().helper.copy(model = "anthropic/claude-sonnet-5.5"), "h", helperSystemBlocks(), emptyList(), emptyList(), 30, null).cache!!.ttl shouldBe "5m"
         }
-        test("client compaction is due only on OpenRouter, at a turn boundary, at the threshold") {
-            val openRouter = AgentRoles().lead.copy(provider = net.robog.clarity.backend.config.ModelProvider.OPENROUTER, model = "a/b", compactAtTokens = 60_000)
+        test("client compaction is due only with compaction on, at a turn boundary, at the threshold") {
+            val openRouter = AgentRoles().lead.copy(model = "a/b", compactAtTokens = 60_000)
             val done = listOf(Message.user("q"), Message(Role.ASSISTANT, listOf(Block.Text("a"))))
             shouldCompactClientSide(openRouter, 60_000, done) shouldBe true
             shouldCompactClientSide(openRouter, 59_999, done) shouldBe false
             shouldCompactClientSide(openRouter.copy(compaction = false), 90_000, done) shouldBe false
-            shouldCompactClientSide(AgentRoles().lead, 90_000, done) shouldBe false
+            shouldCompactClientSide(AgentRoles().helper, 90_000, done) shouldBe false
             // Mid-turn (open tool calls, or the turn not answered yet): never.
             shouldCompactClientSide(openRouter, 90_000, listOf(Message.user("q"), Message(Role.ASSISTANT, listOf(Block.ToolUse("c", "t", JsonObject(emptyMap())))))) shouldBe false
             shouldCompactClientSide(openRouter, 90_000, done + Message.user("more")) shouldBe false

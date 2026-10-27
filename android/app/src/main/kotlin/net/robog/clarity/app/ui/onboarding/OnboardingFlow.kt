@@ -40,7 +40,6 @@ import net.robog.clarity.app.ui.components.ClarityField
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
-import net.robog.clarity.app.ui.components.MaskedKeyTransformation
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
 import net.robog.clarity.app.ui.components.ScreenTitle
@@ -302,11 +301,11 @@ private fun ServerError.message(): String = when (this) {
 @Composable
 fun ModelScreen(onNext: () -> Unit, onBack: () -> Unit, viewModel: ModelStepViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    ModelContent(state, viewModel::onKeyChanged, viewModel::check, onNext, onBack)
+    ModelContent(state, viewModel::check, onNext, onBack)
 }
 
 @Composable
-fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () -> Unit, onNext: () -> Unit, onBack: () -> Unit) {
+fun ModelContent(state: ModelState, onCheck: () -> Unit, onNext: () -> Unit, onBack: () -> Unit) {
     StepScaffold(
         step = OnboardingStep.Model,
         backLabel = "← server",
@@ -316,30 +315,19 @@ fun ModelContent(state: ModelState, onKeyChanged: (String) -> Unit, onCheck: () 
             if (state.canContinue) {
                 PrimaryButton("next", onNext, Modifier.fillMaxWidth())
             } else {
-                PrimaryButton("check key", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck, busy = state.checking)
+                PrimaryButton("check again", onCheck, Modifier.fillMaxWidth(), enabled = state.canCheck, busy = state.checking)
             }
         },
     ) {
-        Hint("I run on your own Anthropic API key. Usage is billed to your account, and requests go straight from your server.")
-        ClarityField(
-            label = "Anthropic API key",
-            value = state.key,
-            onValueChange = onKeyChanged,
-            placeholder = "sk-ant-…",
-            enabled = !state.checking,
-            visualTransformation = MaskedKeyTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
-        )
-        Hint("I pick the model size for each task: small for sorting mail, larger for drafting as you.")
-        when (val r = state.result) {
-            ModelResult.Works -> StatusLine("● key works")
-            is ModelResult.Rejected -> ErrorBox(
-                "Anthropic didn’t accept this key.",
-                "Check that you copied the whole key and that it’s still active.",
-                raw = r.detail,
+        Hint("I run on OpenRouter with your server’s own key. Usage is billed to that account, and requests go from your server, to providers that keep nothing.")
+        Hint("I pick the model size for each task: small for sorting mail, larger for drafting as you. You can change them in settings.")
+        when (state.result) {
+            ModelResult.Works -> StatusLine("● models ready")
+            ModelResult.Missing -> ErrorBox(
+                "Your server has no OpenRouter key yet.",
+                "Put it in the server’s openrouter_api_key secret (or OPENROUTER_API_KEY), restart it, then check again.",
             )
-            ModelResult.ServerNotReady -> Hint("This server can’t take the key yet. You can continue and add it in settings later.")
-            ModelResult.Failed -> ErrorBox("Could not check the key.", "Try again in a moment.")
+            ModelResult.ServerNotReady -> Hint("This server doesn’t report its setup yet. You can continue.")
             null -> if (state.checking) StatusLine("Checking…")
         }
         Spacer(Modifier.height(1.dp))
@@ -361,7 +349,7 @@ private fun ServerPreview() = ClarityTheme {
 @Composable
 private fun ModelPreview() = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        ModelContent(ModelState(key = "sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE", result = ModelResult.Works), {}, {}, {}, {})
+        ModelContent(ModelState(result = ModelResult.Works), {}, {}, {})
     }
 }
 

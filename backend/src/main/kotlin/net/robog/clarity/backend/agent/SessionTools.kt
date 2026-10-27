@@ -479,14 +479,20 @@ class SessionTools(
             because = input.because.trim(),
             hard = false,
         )
-        // A newer proposal replaces an older one that was never decided.
-        session.session.amendmentId?.let { old -> constitutions.discardAmendment(old) }
         val autonomy = input.autonomy?.let { AutonomyChange(it.kind, it.tier) }
+        val previous = session.session.amendmentId
         constitutions.propose(ProposeAmendment(target?.id, proposed, input.reason.trim(), session.session.heldActionId, autonomy)).fold(
             { ToolResult.Error("The amendment was not proposed: ${it.title}. ${it.detail.orEmpty()}") },
             { amendment ->
+                // A newer proposal replaces an older one that was never decided; asking for the same
+                // change again gets the one already waiting back.
+                if (previous != null && previous != amendment.id) constitutions.discardAmendment(previous)
                 sessions.mutate(session.id, quiet = true) { it.amendmentProposed(amendment.id) }
-                ToolResult.Ok("Proposed amendment ${amendment.id.value}; it waits for the person to save or discard it. Say in one sentence what it changes.")
+                if (previous == amendment.id) {
+                    ToolResult.Ok("That change is already proposed (amendment ${amendment.id.value}) and waits for the person to save or discard it. Do not propose it again.")
+                } else {
+                    ToolResult.Ok("Proposed amendment ${amendment.id.value}; it waits for the person to save or discard it. Say in one sentence what it changes.")
+                }
             },
         )
     }

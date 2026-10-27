@@ -21,20 +21,17 @@ private fun req(
     vararg tools: Tool,
     runId: String = "run-1",
     sink: ToolResultSink? = null,
-    deferred: List<Tool> = emptyList(),
 ) = RunRequest(
-    model = "claude-opus-5-5",
+    model = "anthropic/claude-opus-5.5",
     system = listOf(SystemBlock("static", cacheBreakpoint = true), SystemBlock("constitution")),
     messages = listOf(Message.user("go")),
     tools = tools.toList(),
     policy = ToolPolicy.AllowAll,
     runId = runId,
     resultSink = sink,
-    deferredTools = deferred,
 )
 
-private val compaction = Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "summary") })
-private val serverUse = Block.Raw(buildJsonObject { put("type", "server_tool_use"); put("id", "srv_1"); put("name", "tool_search_tool_bm25") })
+private val reasoning = Block.Raw(buildJsonObject { put("type", "openrouter_reasoning"); put("clarity_provider", "openrouter"); put("model", "m") })
 
 class HarnessRuntimeTest : FunSpec({
 
@@ -81,51 +78,29 @@ class HarnessRuntimeTest : FunSpec({
         systemPlacementViolations(gateway.requests.single().messages) shouldBe emptyList()
     }
 
-    test("planTools hides, sorts, and never defers everything") {
+    test("planTools hides, sorts and drops duplicate names") {
         val a = fakeTool("a")
         val b = fakeTool("b")
         val c = fakeTool("c")
-        val plan = planTools(listOf(b, a), listOf(c), ToolPolicy.AllowAll)
-        plan.loaded.map { it.name } shouldContainExactly listOf("a", "b")
-        plan.deferred.map { it.name } shouldContainExactly listOf("c")
-        val onlyDeferred = planTools(emptyList(), listOf(c, a), ToolPolicy.AllowAll)
-        onlyDeferred.loaded.map { it.name } shouldContainExactly listOf("a", "c")
-        onlyDeferred.deferred shouldBe emptyList()
-        planTools(listOf(a), listOf(c), ToolPolicy.only(setOf("a"))).deferred shouldBe emptyList()
+        planTools(listOf(c, b, a, fakeTool("a")), ToolPolicy.AllowAll).tools.map { it.name } shouldContainExactly listOf("a", "b", "c")
+        planTools(listOf(a, c), ToolPolicy.only(setOf("a"))).tools.map { it.name } shouldContainExactly listOf("a")
     }
 
-    test("request carries system blocks, deferred tools, cache policy; compaction and server-tool blocks replay verbatim") {
+    test("request carries system blocks, all tools and the cache policy; raw blocks replay verbatim") {
         val gateway = ScriptedGateway(
             listOf(
-                response(StopReason.TOOL_USE, compaction, serverUse, Block.Text("hm"), toolUse("1", "a")),
+                response(StopReason.TOOL_USE, reasoning, Block.Text("hm"), toolUse("1", "a")),
                 response(StopReason.END_TURN, Block.Text("done")),
             ),
         )
-        Harness(gateway).run(req(fakeTool("a"), deferred = listOf(fakeTool("z")))).toList()
+        Harness(gateway).run(req(fakeTool("z"), fakeTool("a"))).toList()
 
         val first = gateway.requests[0]
         first.system.map { it.cacheBreakpoint } shouldContainExactly listOf(true, false)
-        first.tools.map { it.name } shouldContainExactly listOf("a")
-        first.deferredTools.map { it.name } shouldContainExactly listOf("z")
+        first.tools.map { it.name } shouldContainExactly listOf("a", "z")
+        first.cache shouldBe CachePolicy()
         // Append verbatim: raw blocks come back in order, untouched.
-        gateway.requests[1].messages[1].content.take(3) shouldContainExactly listOf(compaction, serverUse, Block.Text("hm"))
-    }
-
-    test("a deferred tool the model calls after tool search runs like any other tool") {
-        val gateway = ScriptedGateway(
-            listOf(response(StopReason.TOOL_USE, toolUse("1", "z")), response(StopReason.END_TURN, Block.Text("x"))),
-        )
-        Harness(gateway).run(req(fakeTool("a"), deferred = listOf(fakeTool("z")))).toList()
-        gateway.requests[1].messages.last().content.single() shouldBe Block.Result("1", "z ok", false)
-    }
-
-    test("compaction pause: stop reason compaction resumes the loop without running tools") {
-        val gateway = ScriptedGateway(
-            listOf(response(StopReason.COMPACTION, compaction), response(StopReason.END_TURN, Block.Text("after"))),
-        )
-        val done = Harness(gateway).run(req()).toList().last().shouldBeInstanceOf<HarnessEvent.Finished>()
-        done.result.finalText shouldBe "after"
-        gateway.requests[1].messages[1].content shouldBe listOf(compaction)
+        gateway.requests[1].messages[1].content.take(2) shouldContainExactly listOf(reasoning, Block.Text("hm"))
     }
 
     test("journal checkpoints the initial message, every assistant message and every tool-result message") {

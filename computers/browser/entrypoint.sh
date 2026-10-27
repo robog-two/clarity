@@ -57,8 +57,20 @@ mcp="$mcp --pref browser.startup.page=3 --pref browser.sessionstore.resume_from_
 [ -n "${BROWSER_TOOL_PRESET:-}" ] && mcp="$mcp --tool-preset $BROWSER_TOOL_PRESET"
 [ -n "${BROWSER_IDLE_TIMEOUT:-}" ] && mcp="$mcp --idle-timeout $BROWSER_IDLE_TIMEOUT"
 
+# supergateway logs every message it relays, and a fill's arguments hold the real secret (the
+# backend substitutes it just before the call) while snapshots show what fields contain. Its log
+# goes through a filter that keeps the method and tool name and drops the message bodies.
+log_fifo=/tmp/supergateway-log
+rm -f "$log_fifo"; mkfifo "$log_fifo"
+sed -u -E \
+  -e 's/^(\[supergateway\] [A-Za-z]+ → [A-Za-z]+:).*"method":"tools\/call","params":\{("_meta":\{[^}]*\},)?"name":"([^"]*)".*/\1 tools\/call \3 (arguments not logged)/' -e t \
+  -e 's/^(\[supergateway\] [A-Za-z]+ → [A-Za-z]+:).*"method":"([^"]*)".*/\1 \2/' -e t \
+  -e 's/^(\[supergateway\] [A-Za-z]+ → [A-Za-z]+:).*/\1 (reply not logged)/' \
+  <"$log_fifo" &
+
 # --stateful: one MCP server (and one Firefox) per client session, kept alive between requests.
 # shellcheck disable=SC2086
+exec >"$log_fifo"
 exec node /opt/mcp/node_modules/supergateway/dist/index.js \
   --stdio "$mcp" \
   --outputTransport streamableHttp --stateful --sessionTimeout "${BROWSER_SESSION_TIMEOUT_MS:-21600000}" \

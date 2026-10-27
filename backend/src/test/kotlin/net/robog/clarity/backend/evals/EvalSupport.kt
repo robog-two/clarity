@@ -60,7 +60,11 @@ object EvalDb {
         }
     }
 
-    suspend fun rig(clock: Clock = Clock.System, apiKey: String? = "sk-test"): LeadRig = LeadRig(database, clock, apiKey).also { it.reset() }
+    suspend fun rig(
+        clock: Clock = Clock.System,
+        apiKey: String? = "sk-or-test",
+        roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.agent.TEST_ROLES,
+    ): LeadRig = LeadRig(database, clock, apiKey, roles).also { it.reset() }
 }
 
 /** The model answers from a queue, one response per model call. */
@@ -74,9 +78,9 @@ fun Message.text(): String = content.filterIsInstance<Block.Text>().joinToString
 fun ModelRequest.transcript(): String = messages.joinToString("\n---\n") { "${it.role}: ${it.text()}" }
 
 /** What a prompt cache keys on: the tools and the system blocks. */
-data class Prefix(val system: List<SystemBlock>, val tools: List<ToolDefinition>, val deferred: List<ToolDefinition>)
+data class Prefix(val system: List<SystemBlock>, val tools: List<ToolDefinition>)
 
-fun ModelRequest.prefix() = Prefix(system, tools, deferredTools)
+fun ModelRequest.prefix() = Prefix(system, tools)
 
 fun sendEmail(id: String, to: String, subject: String = "Contract", body: String = "Signed copy attached.", reason: String = "asked"): ModelResponse =
     callTool(
