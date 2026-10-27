@@ -86,10 +86,17 @@ fun Application.sandboxModule(tools: List<SandboxTool>, bearerKey: String?) {
         route(MCP_PATH) {
             install(bearerAuth(bearerKey))
             post { handleMcp(tools) }
-            get { handleMcp(tools) }
-            delete { handleMcp(tools) }
+            // Stateless: no server-initiated SSE stream and no sessions to end, so per the streamable
+            // HTTP spec GET and DELETE get 405 (the SDK's transport throws on a GET without a session).
+            get { methodNotAllowed() }
+            delete { methodNotAllowed() }
         }
     }
+}
+
+private suspend fun RoutingContext.methodNotAllowed() {
+    call.response.headers.append(HttpHeaders.Allow, "POST")
+    call.respond(HttpStatusCode.MethodNotAllowed)
 }
 
 /** Stateless streamable HTTP: each request gets its own short-lived server+transport, no sessions to leak. */

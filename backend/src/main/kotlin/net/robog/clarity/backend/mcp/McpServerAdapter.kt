@@ -1,5 +1,8 @@
 package net.robog.clarity.backend.mcp
 
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
 import io.ktor.server.routing.RoutingContext
 import io.ktor.server.routing.delete
@@ -66,9 +69,16 @@ private fun JsonObject.toToolSchema() = ToolSchema(
 fun Route.statelessMcp(path: String, serverFactory: () -> Server) {
     route(path) {
         post { handleMcp(serverFactory) }
-        get { handleMcp(serverFactory) }
-        delete { handleMcp(serverFactory) }
+        // Stateless: no server-initiated SSE stream and no sessions to end, so per the streamable
+        // HTTP spec GET and DELETE get 405 (the SDK's transport throws on a GET without a session).
+        get { methodNotAllowed() }
+        delete { methodNotAllowed() }
     }
+}
+
+private suspend fun RoutingContext.methodNotAllowed() {
+    call.response.headers.append(HttpHeaders.Allow, "POST")
+    call.respond(HttpStatusCode.MethodNotAllowed)
 }
 
 private suspend fun RoutingContext.handleMcp(serverFactory: () -> Server) {
