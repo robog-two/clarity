@@ -22,7 +22,6 @@ import net.robog.clarity.backend.agent.RoleOverride
 import net.robog.clarity.backend.agent.SettingError
 import net.robog.clarity.backend.agent.StoredOverride
 import net.robog.clarity.backend.agent.agentRoleOf
-import net.robog.clarity.backend.agent.modelProviderOf
 import net.robog.clarity.backend.agent.validateOverride
 import net.robog.clarity.backend.agent.wireName
 import net.robog.clarity.backend.auth.AuthProviders
@@ -57,17 +56,15 @@ sealed interface ModelSettingsError : HttpProblem {
 }
 
 fun RoleConfig.toWire(): RoleModelSettings =
-    RoleModelSettings(provider.wireName, model, effort, maxTokens, cacheTtl, compaction, compactAtTokens)
+    RoleModelSettings(model = model, effort = effort, maxTokens = maxTokens, cacheTtl = cacheTtl, compaction = compaction, compactAtTokens = compactAtTokens)
 
-/** Pure: the override the app sent, with the provider named, or what cannot be read. Blank fields count as unset. */
+/**
+ * Pure: the override the app sent. Blank fields count as unset. A `provider` (sent by older apps)
+ * is ignored: every model runs on OpenRouter. An old app that switches a role to Anthropic sends a
+ * model without a vendor, which [validateOverride] refuses.
+ */
 fun overrideFromWire(body: RoleModelOverride): Either<List<SettingError>, RoleOverride> {
-    val rawProvider = body.provider?.takeIf(String::isNotBlank)
-    val provider = rawProvider?.let(::modelProviderOf)
-    if (rawProvider != null && provider == null) {
-        return listOf(SettingError("provider", "unknown provider '$rawProvider' (anthropic or openrouter)")).left()
-    }
     return RoleOverride(
-        provider = provider,
         model = body.model?.trim(),
         effort = body.effort?.trim()?.lowercase()?.takeIf(String::isNotEmpty),
         maxTokens = body.maxTokens,
@@ -81,7 +78,7 @@ fun overrideFromWire(body: RoleModelOverride): Either<List<SettingError>, RoleOv
 fun sourcesOf(override: RoleOverride?): Map<String, SettingSource> {
     fun of(set: Any?) = if (set != null) SettingSource.OVERRIDE else SettingSource.DEFAULT
     return linkedMapOf(
-        "provider" to of(override?.provider),
+        "provider" to SettingSource.DEFAULT,
         "model" to of(override?.model),
         "effort" to of(override?.effort),
         "maxTokens" to of(override?.maxTokens),
@@ -108,17 +105,17 @@ class ModelSettingsService(private val runtime: AgentRuntime) {
 
     fun view(): ModelSettingsView = ModelSettingsView(
         roles = AgentRole.entries.map { roleView(it, settings.boot[it], settings.overrides[it]) },
-        providersWithKeys = runtime.providersWithKeys.sorted().map { it.wireName },
     )
 
     /** Replaces [roleName]'s overrides with [body], if they are valid. */
     suspend fun update(roleName: String, body: RoleModelOverride): Either<ModelSettingsError, ModelSettingsView> {
         val role = agentRoleOf(roleName) ?: return ModelSettingsError.UnknownRole(roleName).left()
         val override = overrideFromWire(body).fold({ return invalid(it).left() }, { it })
-        val errors = validateOverride(role, override, settings.boot[role], runtime.providersWithKeys)
+        val errors = validateOverride(override)
         if (errors.isNotEmpty()) return invalid(errors).left()
         settings.set(role, override)
-        log.info { "${role.wireName} model settings now ${settings[role].let { "${it.provider.wireName} ${it.model} effort=${it.effort}" }}" }
+        log.info { "${role.wireName} model settings now ${settings[role].let { "${it.model} effort=${it.effort}" }}" }
+
         return view().right()
     }
 

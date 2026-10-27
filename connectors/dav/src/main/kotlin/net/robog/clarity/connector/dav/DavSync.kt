@@ -17,12 +17,23 @@ import net.robog.clarity.shared.noun.Noun
 
 private val log = KotlinLogging.logger {}
 
-/** Recurring events are expanded from this far back to this far ahead. */
-val WINDOW_BEFORE: Duration = Duration.ofDays(30)
+/**
+ * Recurring events are expanded from this far back to this far ahead. Plain events are reported
+ * whatever their date. Occurrences that later fall behind the window are kept (history stays).
+ */
+val WINDOW_BEFORE: Duration = Duration.ofDays(365)
 val WINDOW_AFTER: Duration = Duration.ofDays(180)
 
 /** A recurring event is re-read when the window has moved on by more than this since it was expanded. */
 private val REEXPAND_AFTER: Duration = Duration.ofDays(7)
+
+/**
+ * Version of the calendar part of [CollectionState]. A collection stored with an older version has
+ * every resource refetched and re-expanded once (source ids do not change, so nothing duplicates).
+ * 2: plain events of any age, series from a year back, [CollectionState.recurring], history kept.
+ */
+// 3: refetch once so objects that failed to parse before the bad-line fix are read again.
+const val CAL_STATE_VERSION = 3
 
 private const val CHUNK = 100
 private const val MAX_FILES = 5000
@@ -30,7 +41,9 @@ private const val MAX_DEPTH = 6
 
 /**
  * What the last sync of one collection knew: the server's sync token, ETags per resource, and for
- * calendars which occurrence keys were reported per resource (to tombstone them when it changes).
+ * calendars which occurrence keys were reported per resource (to tombstone them when they go away)
+ * and which resources are recurring series (re-expanded as the window moves, even if they have
+ * produced nothing yet).
  */
 @Serializable
 data class CollectionState(
@@ -38,6 +51,8 @@ data class CollectionState(
     val etags: Map<String, String> = emptyMap(),
     val occurrences: Map<String, List<String>> = emptyMap(),
     val expandedThrough: Long = 0,
+    val recurring: Set<String> = emptySet(),
+    val version: Int = 0,
 )
 
 class DavSync(
@@ -82,34 +97,69 @@ class DavSync(
         val old = state.getAs<CollectionState>(key) ?: CollectionState()
         val changes = server.changes(cal.url, old.etags, old.token, cal.supportsSync)
 
-        val stale = nowJ.plus(WINDOW_AFTER).epochSecond - old.expandedThrough > REEXPAND_AFTER.seconds
-        val recurring = if (stale) old.occurrences.filterValues { keys -> keys.any(String::isNotEmpty) }.keys else emptySet()
-        val toFetch = (changes.changed + recurring).distinct().filter { it !in changes.removed }
+        // an older state version: refetch and re-expand everything once
+        val upgrade = old.version < CAL_STATE_VERSION
+        val stale = upgrade || nowJ.plus(WINDOW_AFTER).epochSecond - old.expandedThrough > REEXPAND_AFTER.seconds
+        val reexpand = when {
+            upgrade -> changes.etags.keys
+            stale -> old.recurring
+            else -> emptySet()
+        }
+        val toFetch = (changes.changed + reexpand).distinct().filter { it !in changes.removed }
         val objects = if (toFetch.isEmpty()) emptyMap() else server.calendarObjects(cal.url, toFetch)
+        val changedAtSource = changes.changed.toSet()
 
         val occurrences = old.occurrences.toMutableMap()
+        val recurring = old.recurring.toMutableSet()
         val records = mutableListOf<IngestRecord>()
+        var failures = 0
         for ((path, pair) in objects) {
             val (etag, ics) = pair
             val version = etag ?: hash(ics)
-            val parsed = try { Ical.events(ics, cal.name, window) } catch (e: Exception) {
+            val expansion = try { Ical.expand(ics, cal.name, window, plainWindow = null, source = path) } catch (e: Exception) {
                 log.warn(e) { "skipping unreadable calendar object $path" }
-                emptyList()
+                failures++
+                null
             }
-            val ids = parsed.associateBy { it.key.orEmpty() }
+            if (expansion == null) {
+                // unreadable: keep what it produced before, and try again whenever the window moves
+                recurring += path
+                continue
+            }
+            failures += expansion.failures
+            if (expansion.recurring) recurring += path else recurring -= path
+            val ids = expansion.occurrences.associateBy { it.key.orEmpty() }
             val before = old.occurrences[path].orEmpty()
-            (before - ids.keys).forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
+            // Occurrences no longer produced: gone at the source if they were inside the window
+            // (or the plain event itself); older ones simply fell behind the window and stay.
+            val (vanished, behind) = (before - ids.keys).partition { k -> k.isEmpty() || (k.toLongOrNull() ?: Long.MAX_VALUE) >= window.from.epochSecond }
+            if (vanished.isNotEmpty() && path !in changedAtSource) log.info { "$path: ${vanished.size} occurrence(s) inside the window are no longer produced" }
+            vanished.forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
             for ((k, occ) in ids) records += IngestRecord.Upsert(SourceId(sourceIdOf(config.id, path, k)), version, now, occ.payload)
-            occurrences[path] = ids.keys.toList()
+            occurrences[path] = (behind + ids.keys).distinct()
             counts.events += ids.size
         }
         for (path in changes.removed) {
             old.occurrences[path].orEmpty().ifEmpty { listOf("") }.forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
             occurrences.remove(path)
+            recurring.remove(path)
             counts.removed++
         }
         pushAll(records, push)
-        state.putAs(key, CollectionState(changes.syncToken, changes.etags, occurrences.filterKeys { it in changes.etags }, window.to.epochSecond))
+        val kept = occurrences.filterKeys { it in changes.etags }
+        val series = recurring.filterTo(mutableSetOf()) { it in changes.etags }
+        state.putAs(key, CollectionState(changes.syncToken, changes.etags, kept, window.to.epochSecond, series, CAL_STATE_VERSION))
+        // INFO whenever the sync did something (always on the upgrade and the weekly re-expansion), DEBUG otherwise
+        val busy = objects.isNotEmpty() || changes.removed.isNotEmpty() || failures > 0
+        run {
+            val line = {
+                "calendar '${cal.name}' sync: resources=${changes.etags.size} recurring series=${series.size} " +
+                    "occurrences=${kept.values.sumOf { it.size }} (resources with none=${changes.etags.keys.count { kept[it].isNullOrEmpty() }}) " +
+                    "fetched=${objects.size} upserted=${records.count { it is IngestRecord.Upsert }} tombstoned=${records.count { it is IngestRecord.Tombstone }} " +
+                    "expansion failures=$failures${if (upgrade) " (state upgraded to v$CAL_STATE_VERSION, full re-expansion)" else ""}"
+            }
+            if (busy) log.info(line) else log.debug(line)
+        }
     }
 
     // ---- contacts ------------------------------------------------------------------------------

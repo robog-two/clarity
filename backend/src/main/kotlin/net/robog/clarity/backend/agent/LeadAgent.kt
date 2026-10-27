@@ -26,7 +26,7 @@ import kotlinx.datetime.minus
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
-import net.robog.clarity.backend.config.ModelProvider
+
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
@@ -121,9 +121,10 @@ val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
  * appends [REPLY_NUDGE] and runs once more ([runTurn]); never more than once per turn. Turns made
  * only of events (jobs, triggers, helper results) are never nudged: silence is fine there.
  *
- * Compaction: on Anthropic the API compacts the thread server-side. On OpenRouter the lead does it
- * itself after a turn ([compactClientSide]): one summarizing call, whose text is appended to the
- * journal as a [Message.summary]; requests start there from then on.
+ * Compaction: the lead does it itself after a turn ([compactClientSide]): one summarizing call, whose
+ * text is appended to the journal as a [Message.summary]; requests start there from then on. An
+ * Anthropic `compaction` block in a journal from before OpenRouter was the only provider counts as
+ * a compaction point too ([contextSince]); it is read as it is, never rewritten.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -175,10 +176,9 @@ class LeadAgent(
 
     override suspend fun run() {
         if (!runtime.enabled) {
-            log.warn { "No Anthropic API key configured (ANTHROPIC_API_KEY_FILE or setup): the lead agent waits for one" }
+            log.warn { "No OpenRouter API key configured (OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE): the lead agent cannot start" }
             noticeDisabled()
             runtime.awaitEnabled()
-            log.info { "an Anthropic API key arrived: the lead agent starts" }
         }
         start()
         while (true) {
@@ -198,7 +198,7 @@ class LeadAgent(
         feed.append(
             FeedDraft(
                 author = FeedItem.Author.AGENT,
-                cards = listOf(Card.Note("I can't work yet: there is no Anthropic API key. Add one in setup and I'll start.")),
+                cards = listOf(Card.Note("I can't work yet: the server has no OpenRouter API key. Once it is set there and the server restarts, I'll start.")),
                 clientInputId = ClientInputId("system:no-api-key"),
             ),
         )
@@ -307,36 +307,34 @@ class LeadAgent(
      * placeholder user message since the thread ends with the assistant), appended at the end.
      */
     private suspend fun runTurn(bound: BoundRole) {
-        val first = runHarness(compactNow = false, bound)
+        val first = runHarness(bound)
         if (!owesReply(replyOwed.get(), first)) return
         log.info { "the person wrote and the lead ended without send_to_user: nudging once" }
         foldInterrupts(Role.ASSISTANT, listOf(Message.system(REPLY_NUDGE))).forEach { trackedJournal.append(threadId, it) }
-        val second = runHarness(compactNow = false, bound)
+        val second = runHarness(bound)
         if (owesReply(replyOwed.get(), second)) {
             log.warn { "the lead still did not answer the person after the nudge; leaving it" }
         }
     }
 
     /**
-     * One lead harness run on [bound]'s model. Thinking blocks from an earlier model stay in the journal and
-     * are replayed as they are: the API leaves out, unbilled, any block the current model can't read,
-     * and stripping them would be a history edit that breaks preserved thinking on the way back.
+     * One lead harness run on [bound]'s model. Reasoning blocks from an earlier model (and old
+     * Anthropic blocks) stay in the journal as they are; the gateway replays reasoning only to the
+     * model that wrote it, so nothing in the history is ever edited.
      */
-    private suspend fun runHarness(compactNow: Boolean, bound: BoundRole): HarnessEvent.Terminal? = coroutineScope {
+    private suspend fun runHarness(bound: BoundRole): HarnessEvent.Terminal? = coroutineScope {
         val tools = toolbox.leadTools(scope)
         val request = roleRequest(
             role = bound.config,
             runId = threadId,
             system = systemBlocks(),
             messages = emptyList(),
-            tools = tools.loaded,
-            deferred = tools.deferred,
+            tools = tools.tools,
             maxTurns = config.maxTurns,
             sink = large.sink,
-            compactNow = compactNow,
         )
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
-        val watcher = if (compactNow) null else launch { watchUserInput(interrupts) }
+        val watcher = launch { watchUserInput(interrupts) }
         var terminal: HarnessEvent.Terminal? = null
         try {
             runtime.harness(trackedJournal, bound).resume(threadId, request, interrupts.receiveAsFlow()).collect { event ->
@@ -350,7 +348,7 @@ class LeadAgent(
                 }
             }
         } finally {
-            watcher?.cancel()
+            watcher.cancel()
             interrupts.close()
         }
         afterTurn(terminal)
@@ -361,7 +359,7 @@ class LeadAgent(
         leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()))
 
     /**
-     * After a turn on a provider without server-side compaction: once the last call's prompt reached
+     * After a turn: once the last call's prompt reached
      * the role's `compactAtTokens`, one call on the same model summarizes the thread, and the summary
      * is appended to the journal ([Message.summary]). Nothing earlier is rewritten. A failed or empty
      * summary is skipped; the next turn tries again.
@@ -371,7 +369,8 @@ class LeadAgent(
         if (!shouldCompactClientSide(bound.config, lastPromptTokens, history)) return
         log.info { "compacting the lead thread client-side (last prompt ${lastPromptTokens ?: "unknown"} tokens, threshold ${bound.config.compactAtTokens})" }
         val tools = toolbox.leadTools(scope)
-        val request = clientCompactionRequest(bound.config, systemBlocks(), history, tools.loaded, tools.deferred)
+        val request = clientCompactionRequest(bound.config, systemBlocks(), history, tools.tools)
+
         val response = try {
             bound.gateway.complete(request)
         } catch (e: CancellationException) {
@@ -447,38 +446,6 @@ class LeadAgent(
             }
         }
         inbox.markConsumed(consumed)
-    }
-
-    /**
-     * Idle housekeeping: when the person has been quiet and the cache is still warm, compact the
-     * thread now (cheap while warm) so the next conversation starts from the summary. Returns
-     * whether a compaction ran. Never blocks a turn: it gives up if the lead is busy.
-     */
-    suspend fun compactIfIdle(): Boolean {
-        // Idle compaction is for a warm Anthropic cache; OpenRouter compacts client-side after a turn.
-        val role = runtime.settings[AgentRole.LEAD]
-        if (!role.idleCompaction || role.provider != ModelProvider.ANTHROPIC) return false
-        if (!runtime.enabled || !::threadId.isInitialized || !turnLock.tryLock()) return false
-        try {
-            val bound = runtime.bind(AgentRole.LEAD)?.takeIf { it.config.provider == ModelProvider.ANTHROPIC } ?: return false
-            val now = clock.now()
-            val thread = threads.ensure()
-            val history = journal.load(threadId)
-            if (history.lastOrNull()?.role != Role.ASSISTANT || history.last().content.any { it is Block.ToolUse }) return false
-            if (inbox.pending().any { it.item.priority == Priority.USER }) return false
-            val due = shouldCompactNow(
-                now, lastUserActivity ?: thread.lastUserInputAt, thread.lastTurnAt, thread.compactedAt,
-                bound.config.cacheTtl, estimateTokens(sinceLastCompaction(history)),
-            )
-            if (!due) return false
-            log.info { "compacting the lead thread while the cache is warm" }
-            trackedJournal.append(threadId, Message.user("(housekeeping: the conversation is being compacted; nothing to answer)"))
-            runHarness(compactNow = true, bound)
-            threads.markCompacted(clock.now())
-            return true
-        } finally {
-            turnLock.unlock()
-        }
     }
 
     private companion object {

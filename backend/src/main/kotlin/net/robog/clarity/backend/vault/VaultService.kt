@@ -140,7 +140,8 @@ class VaultService(
     suspend fun deviceKeys(): List<DeviceVaultKey> = store.deviceKeys()
 
     /**
-     * The agent's `request_credential`: stores the request. The form reaches the chat only when the
+     * The agent's `request_credential`: stores the request, or returns the one already open for the
+     * same site and kind ([OpenedRequest.existing]). The form reaches the chat only when the
      * agent posts its `credential_request` card with `send_to_user`.
      *
      * With [replace], [name] may already be saved: the new entry takes its place once the person
@@ -153,11 +154,11 @@ class VaultService(
         site: String,
         purpose: String,
         replace: Boolean = false,
-    ): Either<VaultError, CredentialRequest> = either {
+    ): Either<VaultError, OpenedRequest> = either {
         val handle = name?.takeIf { it.isNotBlank() } ?: VaultNames.slugOf("${Sites.registrableDomain(site) ?: site}_${kind.label()}")
         requestProblem(handle, fields, site, purpose)?.let { raise(VaultError.Invalid(it)) }
         if (!replace) ensure(store.byName(handle) == null) { VaultError.NameTaken(handle) }
-        store.createRequest(handle, kind, fields, site.trim(), purpose.trim())
+        store.createRequest(handle, kind, fields, site.trim(), purpose.trim(), replace)
     }
 
     suspend fun request(id: CredentialRequestId): Either<VaultError, CredentialRequest> = either {
@@ -269,7 +270,7 @@ class VaultService(
     }
 }
 
-private fun CredentialKind.label(): String = when (this) {
+internal fun CredentialKind.label(): String = when (this) {
     CredentialKind.LOGIN -> "login"
     CredentialKind.PAYMENT_CARD -> "card"
     CredentialKind.IDENTITY -> "identity"

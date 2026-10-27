@@ -41,7 +41,7 @@ Each workstream is one spec file here, implemented by one agent on its own branc
   (`./gradlew --stop`). Do not run more than one container build at a time.
 - **Tests**: unit tests for every pure function; Ktor `testApplication` for routes;
   Testcontainers Postgres for persistence (the integration test shows the pattern). Tests must
-  not call the real Anthropic API; use the scripted `ModelGateway` fakes.
+  not call a real model API; use the scripted `ModelGateway` fakes.
 - **No secrets** in code, tests or commits. No network calls to third parties in tests.
 - **Commit** on your branch in small logical commits with clear messages; do not push.
 - **Final report** (your last message): what you built, what you skipped and why, contract

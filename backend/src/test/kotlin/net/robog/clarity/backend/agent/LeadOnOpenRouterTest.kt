@@ -15,12 +15,11 @@ import kotlinx.serialization.json.put
 import net.robog.clarity.backend.config.AgentRole
 import net.robog.clarity.backend.config.AgentRoles
 import net.robog.clarity.backend.config.DatabaseConfig
-import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.backend.config.Secret
 import net.robog.clarity.backend.integration.ContainerRuntimeAvailable
 import net.robog.clarity.backend.persistence.DatabaseFactory
-import net.robog.clarity.harness.AnthropicModelGateway
 import net.robog.clarity.harness.Block
+import net.robog.clarity.harness.CachePolicy
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.ModelRequest
 import net.robog.clarity.harness.ModelResponse
@@ -33,7 +32,8 @@ import net.robog.clarity.shared.feed.ClientInputId
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.testcontainers.postgresql.PostgreSQLContainer
 
-private const val OR_LEAD = "anthropic/claude-opus-5.5"
+private const val OR_LEAD = LEAD_MODEL
+private const val MIMO = "xiaomi/mimo-v2.6-pro"
 
 private fun text(m: Message) = m.content.filterIsInstance<Block.Text>().joinToString("\n") { it.text }
 
@@ -44,7 +44,7 @@ private fun orMessages(request: ModelRequest) = OpenRouterModelGateway.buildBody
 
 private fun orEffort(request: ModelRequest) = OpenRouterModelGateway.buildBody(request)["reasoning"]!!.jsonObject["effort"]!!.jsonPrimitive.content
 
-/** The lead on OpenRouter against real Postgres: client-side compaction, provider switches, effort. The model is always a fake. */
+/** The lead on OpenRouter against real Postgres: client-side compaction, stored Anthropic history, model switches, effort. The model is always a fake. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class LeadOnOpenRouterTest : FunSpec({
     val postgres = PostgreSQLContainer("postgres:18-alpine")
@@ -58,10 +58,10 @@ class LeadOnOpenRouterTest : FunSpec({
     }
     afterSpec { postgres.stop() }
 
-    val onOpenRouter = AgentRoles().let { it.copy(lead = it.lead.copy(provider = ModelProvider.OPENROUTER, model = OR_LEAD, compactAtTokens = 60_000)) }
+    val onOpenRouter = TEST_ROLES.let { it.copy(lead = it.lead.copy(model = OR_LEAD, compactAtTokens = 60_000)) }
 
     suspend fun rig(roles: AgentRoles = onOpenRouter, effort: EffortOverride? = EffortOverride { null }) =
-        LeadRig(database, roles = roles, openRouterKey = "sk-or", effortOverride = effort).also { it.reset() }
+        LeadRig(database, roles = roles, effortOverride = effort).also { it.reset() }
 
     fun user(text: String) = InboxItem.UserInput(ClientInputId(text), text)
 
@@ -96,9 +96,9 @@ class LeadOnOpenRouterTest : FunSpec({
         r.model.requests.map { it.isSummaryCall() } shouldContainExactly listOf(false, false, false, false, false, false, true)
         val summaryCall = r.model.requests.last()
         summaryCall.model shouldBe OR_LEAD
-        summaryCall.cache shouldBe null
-        summaryCall.compaction shouldBe null
-        summaryCall.system.none { it.cacheBreakpoint } shouldBe true
+        // Same system blocks, tools and cache policy as the thread, so on Claude it reads the cached prefix.
+        summaryCall.cache shouldBe CachePolicy(ttl = "1h")
+        summaryCall.system.map { it.cacheBreakpoint } shouldContainExactly listOf(true, true)
         summaryCall.tools.isNotEmpty() shouldBe true
 
         // Append-only: everything journaled before stays as it was; the summary is one new user message.
@@ -125,62 +125,60 @@ class LeadOnOpenRouterTest : FunSpec({
         r.model.requests.count { it.isSummaryCall() } shouldBe 1
     }
 
-    test("Anthropic to OpenRouter: the server compaction summary reaches the OpenRouter model") {
-        val r = rig(roles = AgentRoles())
-        val compaction = Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "They like tea."); put("signature", "c-sig") })
-        r.model.handler = { request ->
-            if (request.model == LEAD_MODEL) {
-                ModelResponse(listOf(compaction, Block.Text("ok")), StopReason.END_TURN, Usage(100, 10, cacheReadInputTokens = 50))
-            } else {
-                end("tea it is")
-            }
-        }
+    test("a journal from the Anthropic API: its stored compaction block is the cut, and its summary reaches the model") {
+        val r = rig(roles = onOpenRouter.copy(lead = onOpenRouter.lead.copy(model = MIMO)))
+        val threadId = r.threads.ensure().id
+        // As the lead journaled it on the Anthropic API: thinking with a signature, server-side compaction.
+        val thinking = Block.Raw(buildJsonObject { put("type", "thinking"); put("thinking", "hm"); put("signature", "EqQBsig") })
+        val compaction = Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "They like tea.") })
+        r.journal.append(threadId, Message.user("before the compaction"))
+        r.journal.append(threadId, Message(Role.ASSISTANT, listOf(thinking, compaction, Block.Text("ok"))))
+        val stored = r.journal.load(threadId)
+        r.model.handler = { end("tea it is") }
         r.lead.start()
-        r.inbox.enqueue(user("before the compaction"))
-        r.lead.step() shouldBe true
-        r.model.requests.first().compaction!!.triggerInputTokens shouldBe 60_000
+        r.model.requests.size shouldBe 0 // a finished turn: nothing to resume
 
-        r.modelSettings.set(AgentRole.LEAD, RoleOverride(provider = ModelProvider.OPENROUTER, model = OR_LEAD))
         r.inbox.enqueue(user("what do I drink?"))
         r.lead.step() shouldBe true
-        val request = r.model.requests.last()
-        request.model shouldBe OR_LEAD
-        request.compaction shouldBe null
+        val request = r.model.requests.first()
+        request.model shouldBe MIMO
         request.cache shouldBe null
         val wire = orMessages(request)
-        wire.map { it["role"]!!.jsonPrimitive.content }.take(2) shouldContainExactly listOf("system", "user")
+        wire.map { it["role"]!!.jsonPrimitive.content }.take(3) shouldContainExactly listOf("system", "user", "assistant")
         wire[1]["content"]!!.jsonPrimitive.content shouldBe "$SUMMARY_MARKER\nThey like tea."
         wire.toString() shouldNotContain "before the compaction"
+        wire.toString() shouldNotContain "EqQBsig"
         wire.toString() shouldContain "what do I drink?"
+        // Read as it is: the stored rows are untouched.
+        r.journal.load(threadId).take(stored.size) shouldContainExactly stored
     }
 
-    test("OpenRouter to Anthropic: the history replays without OpenRouter's reasoning, with cache and server compaction back") {
-        val r = rig()
-        val reasoning = OpenRouterModelGateway.reasoningBlock(OR_LEAD, listOf(buildJsonObject { put("type", "reasoning.text"); put("text", "pondering") }))
+    test("switching to Claude: reasoning replays only to the model that wrote it, and cache breakpoints come on") {
+        val r = rig(roles = onOpenRouter.copy(lead = onOpenRouter.lead.copy(model = MIMO)))
+        val reasoning = OpenRouterModelGateway.reasoningBlock(MIMO, listOf(buildJsonObject { put("type", "reasoning.text"); put("text", "pondering") }))
         r.model.handler = { request ->
-            if (request.model == OR_LEAD) ModelResponse(listOf(reasoning, Block.Text("ok")), StopReason.END_TURN, Usage(100, 10)) else end("back")
+            if (request.model == MIMO) ModelResponse(listOf(reasoning, Block.Text("ok")), StopReason.END_TURN, Usage(100, 10)) else end("back")
         }
         r.lead.start()
-        r.inbox.enqueue(user("on openrouter"))
+        r.inbox.enqueue(user("on mimo"))
         r.lead.step() shouldBe true
-        // Replayed to the same OpenRouter model.
+        r.model.requests.last().cache shouldBe null
+        // Replayed to the same model.
         r.inbox.enqueue(user("again"))
         r.lead.step() shouldBe true
         orMessages(r.model.requests.last()).any { it.containsKey("reasoning_details") } shouldBe true
 
-        r.modelSettings.set(AgentRole.LEAD, RoleOverride(provider = ModelProvider.ANTHROPIC, model = LEAD_MODEL))
-        r.inbox.enqueue(user("on anthropic"))
+        r.modelSettings.set(AgentRole.LEAD, RoleOverride(model = OR_LEAD))
+        r.inbox.enqueue(user("on claude"))
         r.lead.step() shouldBe true
         val request = r.model.requests.last()
-        request.model shouldBe LEAD_MODEL
-        (request.cache != null) shouldBe true
-        (request.compaction != null) shouldBe true
-        // The breakpoint sits where the previous request ended, as on any Anthropic thread.
+        request.model shouldBe OR_LEAD
+        request.cache shouldBe CachePolicy(ttl = "1h")
         (request.messageBreakpoint != null) shouldBe true
         request.messages.any { m -> reasoning in m.content } shouldBe true
-        val body = AnthropicModelGateway.bodyJson(AnthropicModelGateway.buildParams(request))
+        val body = OpenRouterModelGateway.buildBody(request)
         body.toString() shouldNotContain "pondering"
-        body.toString() shouldNotContain OpenRouterModelGateway.REASONING_TYPE
+        body.toString() shouldContain "cache_control"
     }
 
     test("effort on OpenRouter is per request and follows the live-call override") {
@@ -231,14 +229,6 @@ class LeadOnOpenRouterTest : FunSpec({
         r.feed.page(0, 10).items.single().cards shouldBe listOf(net.robog.clarity.shared.feed.Card.Text("Noted."))
     }
 
-    test("idle compaction never runs on OpenRouter") {
-        val r = rig(roles = onOpenRouter.copy(lead = onOpenRouter.lead.copy(idleCompaction = true)))
-        r.lead.start()
-        r.inbox.enqueue(user("hi"))
-        r.lead.step() shouldBe true
-        r.lead.compactIfIdle() shouldBe false
-    }
-
     test("measure: the lead's prompt on OpenRouter with every tool loaded") {
         val r = rig()
         r.lead.start()
@@ -251,10 +241,10 @@ class LeadOnOpenRouterTest : FunSpec({
         val systemChars = request.systemText.length
         val total = body.toString().length
         println(
-            "lead prompt on OpenRouter: ${tools.size} tools (${request.tools.size} loaded + ${request.deferredTools.size} deferred, all sent), " +
+            "lead prompt on OpenRouter: ${tools.size} tools, " +
                 "tools $toolChars chars (~${toolChars / 4} tokens), system $systemChars chars (~${systemChars / 4} tokens), " +
                 "whole first request $total chars (~${total / 4} tokens)",
         )
-        tools.size shouldBe request.tools.size + request.deferredTools.size
+        tools.size shouldBe request.tools.size
     }
 })

@@ -109,6 +109,5 @@ class HeldAmendEvalTest : FunSpec({
         after.system.joinToString { it.text } shouldContain NEW_LINE
         after.system shouldNotBe before.system
         after.tools shouldBe before.tools
-        after.deferred shouldBe before.deferred
     }
 })

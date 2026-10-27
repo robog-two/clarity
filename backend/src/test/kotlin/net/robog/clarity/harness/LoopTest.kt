@@ -28,11 +28,6 @@ class LoopTest : FunSpec({
         decide(response(StopReason.MAX_TOKENS, call), 1, 5) shouldBe Decision.Stop(FinishReason.MAX_TOKENS)
     }
 
-    test("pause_turn without tool calls resumes; with tool calls runs them") {
-        decide(response(StopReason.PAUSE_TURN, Block.Text("...")), 1, 5) shouldBe Decision.Resume
-        decide(response(StopReason.PAUSE_TURN, call), 1, 5).shouldBeInstanceOf<Decision.RunTools>()
-    }
-
     test("tool_use stop without a tool_use block is treated as finished") {
         decide(response(StopReason.TOOL_USE, Block.Text("odd")), 1, 5) shouldBe Decision.Stop(FinishReason.OTHER)
     }

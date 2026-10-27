@@ -78,31 +78,11 @@ private class Rig(handler: (HttpRequestData) -> Pair<HttpStatusCode, String>) {
 }
 
 class SetupRepositoryTest {
-    @Test fun acceptedKeyWorks() = runTest {
-        val rig = Rig { r ->
-            if (r.method == HttpMethod.Put) HttpStatusCode.NoContent to "" else
-                HttpStatusCode.OK to ClarityJson.encodeToString(SetupStatus.serializer(), SetupStatus(SetupStatus.KeyState.VALID, 0, null, Settings()))
-        }
-        assertEquals(ModelKeyOutcome.Works, DefaultSetupRepository(rig.api).submitModelKey("  sk-ant-x "))
-        assertEquals("""{"apiKey":"sk-ant-x"}""", rig.body(0))
-    }
-
-    @Test fun rejectedByTheServerOrReportedInvalid() = runTest {
-        val problem = ClarityJson.encodeToString(Problem.serializer(), Problem(title = "Invalid key", status = 422, detail = "invalid x-api-key"))
-        val rejected = DefaultSetupRepository(Rig { HttpStatusCode.UnprocessableEntity to problem }.api).submitModelKey("k")
-        assertEquals(ModelKeyOutcome.Rejected("invalid x-api-key"), rejected)
-
-        val invalid = Rig { r ->
-            if (r.method == HttpMethod.Put) HttpStatusCode.OK to "{}" else
-                HttpStatusCode.OK to ClarityJson.encodeToString(SetupStatus.serializer(), SetupStatus(SetupStatus.KeyState.INVALID, 0, null, Settings()))
-        }
-        assertEquals(ModelKeyOutcome.Rejected(null), DefaultSetupRepository(invalid.api).submitModelKey("k"))
-    }
-
-    @Test fun missingRoutesAndOutages() = runTest {
-        assertEquals(ModelKeyOutcome.Unavailable, DefaultSetupRepository(Rig { HttpStatusCode.NotFound to "" }.api).submitModelKey("k"))
-        assertIs<ModelKeyOutcome.Failed>(DefaultSetupRepository(Rig { HttpStatusCode.InternalServerError to "" }.api).submitModelKey("k"))
+    @Test fun statusOrNothing() = runTest {
+        val rig = Rig { HttpStatusCode.OK to ClarityJson.encodeToString(SetupStatus.serializer(), SetupStatus(SetupStatus.KeyState.VALID, 0, null, Settings())) }
+        assertEquals(SetupStatus.KeyState.VALID, DefaultSetupRepository(rig.api).status()?.modelKey)
         assertEquals(null, DefaultSetupRepository(Rig { HttpStatusCode.NotFound to "" }.api).status())
+        assertEquals(null, DefaultSetupRepository(Rig { HttpStatusCode.InternalServerError to "" }.api).status())
     }
 }
 
@@ -219,7 +199,6 @@ class RootViewModelTest {
 
     private class Setup(val status: SetupStatus?) : SetupRepository {
         override suspend fun status() = status
-        override suspend fun submitModelKey(apiKey: String) = ModelKeyOutcome.Works
     }
 
     private class Sessions(enrolled: Boolean) : SessionRepository {
@@ -281,7 +260,6 @@ class RootViewModelTest {
     private class CountingSetup(val status: SetupStatus?) : SetupRepository {
         var asks = 0
         override suspend fun status(): SetupStatus? { asks++; return status }
-        override suspend fun submitModelKey(apiKey: String) = ModelKeyOutcome.Works
     }
 
     /** Runs [block] with the root's state collected, on one test dispatcher. */

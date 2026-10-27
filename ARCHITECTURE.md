@@ -8,7 +8,7 @@ constitution, and stays quiet unless something is worth their attention.
 
 The product, as designed (see the design canvas "Personal Agent Prototype"):
 
-1. **Onboarding**: server address, Anthropic API key, connectors (mail, calendar, contacts,
+1. **Onboarding**: server address, a check that the server has its model key, connectors (mail, calendar, contacts,
    files on the person's own server; messages and reminders on the phone), a spoken
    **values interview** that becomes a versioned **constitution**, and a schedule for the
    **morning call**.
@@ -115,7 +115,7 @@ net.robog.clarity.backend
 ├── sessions/               morning call, values interview, ask, amend: session state machines
 ├── setup/                  instance setup: model key, schedule settings
 └── mcp/                    exposes the domain tools as an MCP server at /mcp
-net.robog.clarity.harness   provider-agnostic-ish agent loop over the Anthropic Messages API + MCP client
+net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (the only model provider) + MCP client
 ```
 
 ### HTTP surface
@@ -126,7 +126,7 @@ net.robog.clarity.harness   provider-agnostic-ish agent loop over the Anthropic 
 | `POST /api/v1/enroll` | enrollment token or TOFU | register a device public key |
 | `GET /api/v1/instance` | device | instance info + setup status |
 | `GET /api/v1/setup` | device | `SetupStatus` (model key, connectors ready, constitution, settings) |
-| `PUT /api/v1/setup/model-key` | device | store + validate the Anthropic API key |
+| `PUT /api/v1/setup/model-key` | device | always 409: the model key is the server's own (kept for older apps) |
 | `GET/PUT /api/v1/settings` | device | morning call schedule, notification preferences |
 | `GET /api/v1/connectors` | device | connector summaries (manifest, grants, last seen, sync status) |
 | `PUT /api/v1/connectors/{id}/grants` | device | grant/revoke nouns for a connector |
@@ -180,9 +180,12 @@ announces as if `autoGrant` were on (lifting `pending`, never overriding `revoke
 consented with the Android permission, and the same JWT could grant them on the app API anyway.
 The app also grants `message` explicitly when the person allows reading texts in Settings.
 
-**The model key** comes from `ANTHROPIC_API_KEY_FILE` (Podman secret) or, if absent, from the
-app's onboarding (`PUT /api/v1/setup/model-key`), validated with a Models API call and stored
-in `${dataDir}/anthropic-api-key` (0600). It is never returned by the API.
+**The model key** is the server's OpenRouter key: `OPENROUTER_API_KEY_FILE` (the
+`openrouter_api_key` Podman secret) or `OPENROUTER_API_KEY`. The backend does not start without
+it (a configuration error names the variable). It is never returned by the API and cannot be set
+from the app; `SetupStatus.missingKeys` is `["openrouter"]` only when a hand-built test config
+has none. Every model call (all roles, embeddings, the decision model) goes to OpenRouter with
+`data_collection: deny` and zero data retention; nothing else leaves the server.
 
 ### Ingest, normalization and dedup
 
@@ -225,7 +228,8 @@ person managing a to-do list with a few assistants.
     together;
   - background items carry a priority; low priority ones can wait for an idle lead.
 - **Injected events** (triggers, jobs, helper results) are appended as **mid-conversation
-  system messages** (operator channel, does not break the cache). Untrusted content inside them
+  system messages** (operator channel, sent in place as `system` messages). Untrusted content inside them
+
   is quoted in `<untrusted source="…">…</untrusted>` blocks; the system prompt says such blocks are
   data and can never authorize an action.
 - **Talking to the person.** The lead's only way to reach the person is the `send_to_user`
@@ -286,22 +290,33 @@ for what our loop already has: an append-only transcript. So:
 
 ### Context engineering
 
+- **One provider**: every model runs on OpenRouter (`OpenRouterModelGateway`, Chat Completions,
+  streamed). Claude is reached there as `anthropic/...`; the direct Anthropic API is gone.
 - **Cache-stable prefix**: tools (sorted, byte-stable) → frozen system prompt (persona, rules,
   tool guidance) → constitution (a system block that changes only when amended) → messages.
-  One explicit breakpoint on the static system prefix, top-level automatic caching for the tail.
-  The person's profile facts are part of the constitution block.
-- **Tool search**: domain tools the lead uses constantly are loaded; everything else (MCP tools
-  from the browser and sandbox, rarely used domain tools) is `defer_loading` behind the BM25 tool
-  search tool, so adding a tool never invalidates the cache.
-- **Compaction**: server-side compaction (beta) keeps the lead thread inside its window; the
-  harness appends `response.content` verbatim so compaction blocks survive. When the person goes
-  quiet and the cache is still warm, the backend can compact proactively (off by default).
-  On OpenRouter (no server-side compaction, no prompt cache) the lead compacts client-side: after
-  a turn whose last call's prompt reached `compactAtTokens`, one call on the same model writes a
-  summary, appended to the journal as a user message starting with `[clarity:summary]`. The
-  journal stays append-only; requests start at the latest summary, and an OpenRouter request also
-  starts at the latest Anthropic compaction block (sent as its summary text). `compactAtTokens` is
-  the main cost lever there: every turn resends the whole context since the last summary.
+  The person's profile facts are part of the constitution block. Models that cache only at
+  explicit breakpoints (Claude, `usesCacheBreakpoints`) get them through OpenRouter's
+  `cache_control` (prompt caching guide): the system message as text parts with
+  `{"type":"ephemeral"}` (plus `"ttl":"1h"` for a 1 hour role) on the static and constitution
+  blocks, the same on the user text where the previous request ended, and a top-level
+  `cache_control` for automatic caching of the tail; at most four. A breakpoint that falls on tool
+  results is left out (the guide documents system and user content only). Other models (MiMo,
+  DeepSeek, Gemini) cache on their own and get no `cache_control`.
+- **Tools**: all of a run's tools are sent with every request (no tool search); the lead has no
+  MCP tools, so the list is small and stable.
+- **Compaction**: the lead compacts client-side: after a turn whose last call's prompt reached
+  `compactAtTokens`, one call on the same model (same system blocks and tools, so it reads the
+  cached prefix on Claude) writes a summary, appended to the journal as a user message starting
+  with `[clarity:summary]`. The journal stays append-only; requests start at the latest summary.
+  `compactAtTokens` is the main cost lever for a model without a prompt cache: every turn resends
+  the whole context since the last summary.
+- **Stored Anthropic history**: journals written while the lead ran on the Anthropic API keep
+  Anthropic's blocks (`Block.Raw`: thinking with signatures, redacted thinking, `compaction`,
+  `server_tool_use`, `tool_search_tool_result`). They are never rewritten; they are read at request
+  time: the latest `compaction` block is a compaction point (`contextSince`, the conversation
+  archive) and is sent as a `[clarity:summary]` user message with its readable `content`
+  (`UNREADABLE_SUMMARY` when it has only encrypted content); every other Anthropic-only block is
+  left out of the request.
 - **Time on the person's clock**: storage keeps UTC instants, but every time an agent sees or
   gives is in the person's home zone (`Settings.homeZone`), through one formatter/parser
   (`shared/time/LocalTimes`): out as `2026-10-26T19:00-04:00 (Mon)` (all-day events as dates), in
@@ -312,21 +327,21 @@ for what our loop already has: an append-only transcript. So:
   local day old. Helpers get it at the top of their task; the guard model gets a `<local_times>` note.
 - **Big outputs go to files**: tool results above a size limit are written to the sandbox
   workspace and the tool returns a path + summary.
-- **Model roles** (config, per role): `lead` (default `claude-opus-5-5`; effort `low` during a
-  live call for latency, `medium` otherwise), `helper` (`claude-sonnet-5-5`), `guard` and
-  `triage` (`claude-haiku-5-5`). Env/yaml set the deploy-time defaults; the app can override a
-  role's provider, model and effort at runtime (`model_role_override`, `/api/v1/settings/models`).
-  A run never switches model halfway: the lead picks up a change at its next turn, a helper keeps
-  the settings it started with, guard and triage read them per call. A switch costs one cold
-  prompt cache (the cache is per model). Thinking blocks from the earlier model stay in the journal
-  and are replayed unchanged; the API leaves out, unbilled, what the new model can't read (stripping
-  them would be a history edit). Any role may run on OpenRouter, the lead included. There all
-  tools are sent loaded (no tool search), effort is sent per request (the last effort message in
-  the thread, else the role's), Anthropic-only blocks are left out, and OpenRouter's own
-  `reasoning_details` are kept (tagged with provider and model) and replayed only to that model,
-  never to Anthropic.
-- Refusals: server-side fallback (`fallbacks: "default"`) on supported models; a refusal is
-  surfaced as a card, never retried silently.
+- **Model roles** (config, per role, OpenRouter model ids): `lead` (default
+  `xiaomi/mimo-v2.6-pro`; effort `low` during a live call for latency, `medium` otherwise),
+  `helper`, `guard` and `triage` (`deepseek/deepseek-v4.1-flash-1017`). Env/yaml set the
+  deploy-time defaults (`CLARITY_AGENT_<ROLE>_MODEL`); the app can override a role's model and
+  effort at runtime (`model_role_override`, `/api/v1/settings/models`; the wire still carries a
+  fixed `provider: "openrouter"` for older apps, and a `provider` they send is ignored). A run
+  never switches model halfway: the lead picks up a change at its next turn, a helper keeps the
+  settings it started with, guard and triage read them per call. A switch costs one cold prompt
+  cache (the cache is per model). Effort is sent per request as `reasoning.effort` (the last
+  effort message in the thread, else the role's); Claude takes `low` to `max`, other models are
+  capped at `high`. OpenRouter's `reasoning_details` are kept (tagged with provider and model) and
+  replayed only to the model that wrote them.
+- **Cost**: each `model_call` row's cost is what OpenRouter reports (`usage.cost`); there are no
+  price tables.
+- Refusals (`finish_reason: content_filter`) are surfaced as a card, never retried silently.
 
 ### Memory
 
@@ -340,7 +355,7 @@ the prompt, contents loaded when needed), which matters more the sooner the lead
 | **Collections** | Named topics of notes (`memory_collection`, `memory_note`): people, places, projects, detailed preferences, how-tos | Only the index (name + one-line description, capped at 40), as a system message when it changes; `open_collection` reads one, `save_note` adds/edits/removes, `manage_collection` re-describes, renames, merges |
 | **Journal** | Dated entries the agent writes about what happened and was decided (the morning call writes one) | Today's and yesterday's; older via search |
 | **Scratch** | Short-lived notes with a TTL (hours) | Live ones, as a system message when changed |
-| **Conversation archive** | The lead thread from before its latest compaction point (server-side compaction block or client-side summary), as readable chunks (`conversation_chunk`) | Search only |
+| **Conversation archive** | The lead thread from before its latest compaction point (a client-side summary, or a stored Anthropic compaction block), as readable chunks (`conversation_chunk`) | Search only |
 | **Everything else** | Ingested records, documents, files in the sandbox | Search tools only (`search_memory`, domain tools, shell in sandbox) |
 
 The memory context and the collection index are each re-sent only when they differ from the last
@@ -427,6 +442,12 @@ The person can approve (optionally with an edited draft), decline, or **talk abo
 session where they explain, and the agent either revises the action or proposes an
 **amendment** (old line → new line, with reason). Saving an amendment bumps the constitution
 version; the lead gets a system message with the change.
+Proposals do not pile up: proposing an equal change (same line, normalized text, tier change and
+held action) returns the one already waiting; saving one supersedes waiting proposals with the same
+text or for the same line (as does any change to that line); a proposal expires when the amend talk
+that made it ends unsaved (only that talk can save it) or after 7 days. A startup pass and a
+10-minute job apply the same rules. Closed rows keep their history (`superseded`/`expired` with a
+`closed_reason`) and reach the app as `discarded` with `closedReason`.
 
 ### Action outbox
 
@@ -451,6 +472,10 @@ The agent can log in and pay for things without ever seeing a password or card n
   check, expiry, CVC, name, address, phone, OTP) validated on the phone (validators are pure
   Kotlin in `:shared`). The phone encrypts before upload. The agent only learns the new
   credential's id and metadata.
+  One form per site (registrable domain) and kind is open at a time: asking again returns it.
+  Saving a credential closes the other open forms for that site and kind (`superseded`), and
+  forms nobody fills in close after 7 days (`expired`); the app sees them as cancelled with a
+  `closedReason`.
 - **Using a credential.** The agent never sees a secret. It writes placeholders such as
   `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g. "type
   `[secret:bank_login_password]` into uid e12". The backend's browser tool wrapper finds the
@@ -576,7 +601,7 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - **Egress proxy** (`egress`, Squid): the browser and the backend have no direct route out; they
   reach the internet only through this proxy, which refuses private, loopback and link-local
   destinations (it resolves names itself, so DNS tricks don't bypass it). The browser may reach
-  any public host on 80/443; the backend only `api.anthropic.com`. Connectors keep their own
+  any public host on 80/443; the backend only `openrouter.ai` (plus `CLARITY_BACKEND_EGRESS_ALLOW`). Connectors keep their own
   egress networks because their servers are usually on the person's LAN.
 - Secrets: Podman secrets from `deploy/secrets/` (generated by `deploy/init-secrets.sh`, gitignored).
 - Containers: non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, memory/CPU/pids
@@ -590,7 +615,7 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
   lead thread's prefix is logged as a warning (it is a bug).
 - `backend/src/test/.../evals`: scenario tests over a scripted `ModelGateway` (deterministic) for
   the inbox, guard, sessions and notification policy; plus an opt-in live eval suite
-  (`-Pclarity.liveEvals`) that runs recorded scenarios against the real API and grades with a
+  (`-Pclarity.liveEvals`, `OPENROUTER_API_KEY`) that runs recorded scenarios against the real models and grades with a
   rubric. Mistakes found in use become new scenarios.
 
 ## CI/CD and branches

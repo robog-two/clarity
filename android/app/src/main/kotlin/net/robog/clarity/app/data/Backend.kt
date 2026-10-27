@@ -34,7 +34,6 @@ import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldDecision
 import net.robog.clarity.shared.governance.ProposeAmendment
-import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionId
@@ -71,40 +70,14 @@ class DefaultServerRepository(private val api: ClarityApi) : ServerRepository {
     }
 }
 
-sealed interface ModelKeyOutcome {
-    data object Works : ModelKeyOutcome
-    /** The server (or Anthropic) refused the key. */
-    data class Rejected(val detail: String?) : ModelKeyOutcome
-    /** The server has no model-key route yet. */
-    data object Unavailable : ModelKeyOutcome
-    data class Failed(val error: ApiError) : ModelKeyOutcome
-}
-
+/** The server's setup state. The model key is the server's own (OpenRouter, set in its configuration). */
 interface SetupRepository {
     /** Null when the server does not report setup status (yet). */
     suspend fun status(): SetupStatus?
-    suspend fun submitModelKey(apiKey: String): ModelKeyOutcome
 }
 
 class DefaultSetupRepository(private val api: ClarityApi) : SetupRepository {
     override suspend fun status(): SetupStatus? = api.setupStatus().getOrNull()
-
-    override suspend fun submitModelKey(apiKey: String): ModelKeyOutcome =
-        when (val r = api.putModelKey(ModelKeyRequest(apiKey.trim()))) {
-            is ApiResult.Success -> when (api.setupStatus().getOrNull()?.modelKey) {
-                SetupStatus.KeyState.INVALID -> ModelKeyOutcome.Rejected(null)
-                else -> ModelKeyOutcome.Works
-            }
-            is ApiResult.Failure -> when (val e = r.error) {
-                is ApiError.NotFound -> ModelKeyOutcome.Unavailable
-                is ApiError.Http -> if (e.status in 400..499) {
-                    ModelKeyOutcome.Rejected(e.problem?.detail ?: e.problem?.title)
-                } else {
-                    ModelKeyOutcome.Failed(e)
-                }
-                else -> ModelKeyOutcome.Failed(e)
-            }
-        }
 }
 
 interface SettingsRepository {

@@ -107,11 +107,9 @@ class OpenRouterModelGatewayTest : FunSpec({
                 Message(Role.ASSISTANT, listOf(thinking)),
                 Message(Role.USER, listOf(Block.Text("a"), Block.Text("b"))),
             ),
-            tools = listOf(ToolDefinition("list", "List things", schema)),
+            tools = listOf(ToolDefinition("list", "List things", schema), ToolDefinition("zeta", "Z", schema)),
             maxTokens = 4_000,
             effort = "xhigh",
-            deferredTools = listOf(ToolDefinition("zeta", "Z", schema)),
-            compaction = CompactionConfig(),
         )
 
         val body = OpenRouterModelGateway.buildBody(request)
@@ -191,9 +189,85 @@ class OpenRouterModelGatewayTest : FunSpec({
         pinned["allow_fallbacks"] shouldBe JsonPrimitive(false)
     }
 
-    test("server tools are refused") {
-        val request = simple().copy(serverTools = setOf(ServerTool.WEB_SEARCH))
-        shouldThrow<IllegalArgumentException> { OpenRouterModelGateway.buildBody(request) }
+    context("prompt caching (cache_control breakpoints, OpenRouter's prompt caching guide)") {
+        val user = Message.user("hi")
+        val done = Message(Role.ASSISTANT, listOf(Block.Text("done")))
+        val call = Message(Role.ASSISTANT, listOf(Block.ToolUse("t1", "list", buildJsonObject { })))
+        val results = Message(Role.USER, listOf(Block.Result("t1", "r1")))
+        fun claude(messages: List<Message>, cache: CachePolicy? = CachePolicy(ttl = "1h"), model: String = "anthropic/claude-opus-5.5") = ModelRequest(
+            model = model,
+            system = listOf(SystemBlock("static", cacheBreakpoint = true), SystemBlock("constitution", cacheBreakpoint = true), SystemBlock("tail")),
+            messages = messages,
+            tools = listOf(ToolDefinition("list", "List things", schema)),
+            maxTokens = 1_000,
+            effort = "medium",
+            cache = cache,
+        )
+        val oneHour = buildJsonObject { put("type", "ephemeral"); put("ttl", "1h") }
+        fun marks(body: JsonObject): List<String> = body["messages"]!!.jsonArray.flatMap { m ->
+            (m.jsonObject["content"] as? JsonArray).orEmpty().mapNotNull { part ->
+                part.jsonObject.takeIf { "cache_control" in it }?.let { "${m.jsonObject["role"]!!.jsonPrimitive.content}:${it["text"]!!.jsonPrimitive.content}" }
+            }
+        }
+
+        test("Claude: system blocks as text parts, breakpoints on the marked ones, the automatic one at the top level, 1h ttl") {
+            val body = OpenRouterModelGateway.buildBody(claude(listOf(user, done, Message.user("again"))))
+            body["cache_control"] shouldBe oneHour
+            val system = body["messages"]!!.jsonArray[0].jsonObject
+            system["role"]!!.jsonPrimitive.content shouldBe "system"
+            system["content"] shouldBe JsonArray(
+                listOf(
+                    buildJsonObject { put("type", "text"); put("text", "static"); put("cache_control", oneHour) },
+                    buildJsonObject { put("type", "text"); put("text", "constitution"); put("cache_control", oneHour) },
+                    buildJsonObject { put("type", "text"); put("text", "tail") },
+                ),
+            )
+            // and the message breakpoint: the user text the previous request ended with
+            marks(body) shouldContainExactly listOf("system:static", "system:constitution", "user:hi")
+            body["messages"]!!.jsonArray.last().jsonObject["content"] shouldBe JsonPrimitive("again")
+        }
+
+        test("a 5 minute cache sends no ttl") {
+            val body = OpenRouterModelGateway.buildBody(claude(listOf(user), CachePolicy(ttl = "5m")))
+            body["cache_control"] shouldBe buildJsonObject { put("type", "ephemeral") }
+        }
+
+        test("never more than four breakpoints on the wire") {
+            val body = OpenRouterModelGateway.buildBody(claude(listOf(user, done, Message.user("again"))))
+            val count = marks(body).size + (if ("cache_control" in body) 1 else 0)
+            count shouldBe 4
+        }
+
+        test("a breakpoint on tool results is not sent (only system and user text carry one); the automatic one covers it") {
+            val call2 = Message(Role.ASSISTANT, listOf(Block.ToolUse("t2", "list", buildJsonObject { })))
+            val request = claude(listOf(user, call, results, call2, Message(Role.USER, listOf(Block.Result("t2", "r2")))))
+            request.messageBreakpoint shouldBe (2 to 0)
+            val body = OpenRouterModelGateway.buildBody(request)
+            marks(body) shouldContainExactly listOf("system:static", "system:constitution")
+            body["messages"]!!.jsonArray.last().jsonObject["content"] shouldBe JsonPrimitive("r2")
+        }
+
+        test("the breakpoint follows the message through a stored Anthropic compaction block") {
+            val compaction = Message(Role.ASSISTANT, listOf(Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "s") })))
+            val body = OpenRouterModelGateway.buildBody(claude(listOf(Message.user("old"), compaction, Message.user("next"), done, Message.user("again"))))
+            marks(body) shouldContainExactly listOf("system:static", "system:constitution", "user:next")
+        }
+
+        test("other models and requests without a cache policy get no cache_control at all") {
+            val uncached = ModelRequest("anthropic/claude-opus-5.5", listOf(SystemBlock("s")), listOf(user, done, Message.user("x")), emptyList(), 1_000, "medium", cache = null)
+            for (request in listOf(claude(listOf(user, done, Message.user("x")), model = "xiaomi/mimo-v2.6-pro"), uncached)) {
+                val body = OpenRouterModelGateway.buildBody(request)
+                body.toString().contains("cache_control") shouldBe false
+                (body["messages"]!!.jsonArray[0].jsonObject["content"] is JsonPrimitive) shouldBe true
+            }
+        }
+
+        test("usesCacheBreakpoints: Claude ids only") {
+            usesCacheBreakpoints("anthropic/claude-opus-5.5") shouldBe true
+            usesCacheBreakpoints("~anthropic/claude-sonnet-latest") shouldBe true
+            usesCacheBreakpoints("google/gemini-3-pro") shouldBe false
+            usesCacheBreakpoints("deepseek/deepseek-v4.1-flash-1017") shouldBe false
+        }
     }
 
     test("SSE parsing: comments skipped, multi-line data joined, stops at [DONE]") {
