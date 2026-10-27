@@ -276,6 +276,19 @@ since the last review, skipped windows included. Each call is a `model_call` row
 `decision`; each verdict is one info log line. The model has no tools, so injected text can at
 most flip the answer. That is why it is never used for the constitution guard.
 
+**The failure gate** (`agent/FailureGate.kt`) keeps failure stories out of memory and helper
+briefs: guesses at why a task failed, saved as facts ("Ulta lookup still broken"), outlive the bug,
+and pasted into a brief as "known issues" they make a helper mistake a loading page for the glitch.
+Every durable memory write (`write_journal`, `remember_fact`, `set_scratch`, `save_note` text and
+new collection descriptions, `manage_collection` descriptions, the facts `replace_profile` adds)
+asks Jev one `noul`, "Is this text discussing a technical failure or glitch?", with the text under
+`untrusted`; at p ≥ `CLARITY_MEMORY_GATE_THRESHOLD` (0.6) the tool returns an error that says to
+record only the outcome. `delegate` and `message_helper` ask whether the brief gives workaround
+advice or explanations about earlier failures; at p ≥ `CLARITY_BRIEF_GATE_THRESHOLD` (0.6) the lead
+is told to resend only the goal, a short flow and the constraints. Texts under 40 characters are
+not checked. It fails open (`CLARITY_FAILURE_GATE=false`, decisions off, no key, an error) and logs
+every refusal; each call is a `model_call` row with role `decision` (about $0.00002).
+
 ### The helper's browser (pilot)
 
 A helper does not see the browser MCP's raw tools. It gets a small planner surface
@@ -291,8 +304,9 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
   It walks every element, open shadow roots and same-origin frames. It keeps visible controls,
   headings and short text with role, name (80 chars), value or state, autocomplete and link
   target, stamps a stable ref on each, and stays within about 1.5k tokens ("N more – narrow with
-  scope"). Its header shows the tabs with their openers, any dialog, the page, and the sign-in
-  state of each site in the run (phase, codes sent and when). It never returns password values or
+  scope"). Its header shows the tabs with their openers, any dialog, whether the page is still
+  loading, the sign-in state of each site in the run (phase, codes sent and when) and how much of
+  the page is below; scroll areas follow as their own entries. It never returns password values or
   the values of fields Clarity typed a secret into.
 - **act** takes one screenshot and makes one Jev call: a `noul` "is <intent> visible?" and a `box`.
   A box always comes back, so the noul decides. The target is the element under the box centre
@@ -322,6 +336,57 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
   after-screenshot. It says "No visible change" outright. After two of those in a row, `act`
   refuses until the helper calls `look`. A helper's browser task stops after
   `CLARITY_BROWSER_MAX_ACTIONS` (25) actions.
+- **Settling.** After every action, navigation and sign-in step, and before `look`, `read` and
+  `sign_in`, the pilot waits until the page has settled before it builds the change report or asks
+  Jev anything. Settled means: the document is not loading; no request finished, no DOM node was
+  added or changed, and Clarity's own last step was at least 500 ms ago; and no loading indicator
+  (`aria-busy`, `role=progressbar`, a spinner, loader, skeleton or shimmer class) is in view. The
+  script's `settle` op reports those times from a MutationObserver and Resource Timing (a
+  `PerformanceObserver`); the Kotlin side polls it every 250 ms (`settleWait`). The page's own `fetch`
+  and XHR are never wrapped: the probe runs in the isolated sandbox, and patching the page realm
+  would be visible to its bot detection. A request still in flight is invisible to Resource Timing,
+  so the quiet window also counts from Clarity's last step, which gives a step 500 ms to start one.
+  After 8 s the report says "Still loading after 8 s (why)", and a failed Jev check on such a page
+  reads "not there yet, but the page is still loading", never "did not happen". This is the 500 ms
+  quiet window of Playwright's `networkidle` ([load states](https://playwright.dev/docs/api/class-page#page-wait-for-load-state);
+  Playwright discourages it as the only signal, hence the DOM and indicator checks), browser-use's
+  `wait_for_network_idle_page_load_time` of 0.5 s ([profile](https://github.com/browser-use/browser-use/blob/main/browser_use/browser/profile.py))
+  and Stagehand's DOM-and-network quiet wait with a capped budget ([PR 1284](https://github.com/browserbase/stagehand/pull/1284)).
+- **Signed in sticks.** Per run and site, `SignInState` keeps `signedInAt`. A site counts as signed
+  in on firm signals only (`signedInVerdict`): no password or code field, not a sign-in address
+  (`login.`/`auth.`/`accounts.` hosts, `/login`, `/signin`, `/oauth`… paths), and two of: a sign-out
+  control or greeting on screen, new names among the site's readable cookies since it was first seen
+  (names only, never values; HttpOnly cookies cannot be seen), and Jev's `sign_in` choice. Jev alone
+  still counts after `sign_in` submits. This follows Playwright's advice to wait for the final URL
+  after redirects and then for an element only signed-in users see
+  ([authentication](https://playwright.dev/docs/auth)). When a sign-in ends on another site (an
+  identity provider sending the person back), every site of that sign-in is marked. Once signed in:
+  `look` says "Signed in to ulta.com (since 14:16)"; `sign_in` refuses to start again unless the page
+  shows a login or code field; `act` refuses a control named like "Sign in", or one that started
+  this run's sign-in on that page (recorded when a step led from an ordinary page into a sign-in),
+  before any model call; and `go`/`back` to such a page get "you are already signed in; look for the
+  page you need". Signed in only ends when the page says the session expired. A code field after
+  sign-in (a "verify it's you" dialog) is a second verification: `sign_in` asks the person for a new
+  code through `ask_code`, the code guard lets the site send that one code, and a code placeholder
+  already typed is refused on a new code field.
+- **Scrolling.** `look` lists each scroll area (an element that scrolls on its own, such as an
+  inner list in a fixed layout) as its own entry: `[c40] scroll area "Available times": showing ~8 of
+  ~30 rows, more below (880 px)`. The name comes from its label or the heading before it, and the
+  total rows are estimated from its height, so a virtualized list counts all of them. The header says
+  "Page continues: 3,200 px below". Elements scrolled out of an area are marked "(scrolled out of view
+  in c40)". `act("scroll the available times down")` scrolls that area: by its name in the text view,
+  else found on the screenshot by Jev. A bare "scroll down" scrolls the area under the middle of the
+  viewport that can still move, else the page (browser-use's scroll also takes an element for
+  "dropdowns/custom UI", [tools](https://github.com/browser-use/browser-use/blob/main/browser_use/tools/service.py)).
+  A target the text view names but that is off screen, in the page or in an area, is scrolled into view
+  (`scrollIntoView`, which scrolls the areas around it) before the screenshot and grounding, as
+  Playwright scrolls before acting ([actionability](https://playwright.dev/docs/actionability)).
+  `read` scrolls the page (at most 8 steps) and each area (at most 4 areas, 25 steps each) to the end,
+  waits after each step for rows that load, collects the text per block (one line per row) and drops
+  the overlap between steps (`mergeLines`). A list that loads more on scroll and one that renders only
+  the rows in view are both read whole. Scroll positions are put back afterwards.
+- **Script size.** `evaluate_script` takes at most 16 KiB, so `observe.js` is split into
+  `//#if op …` sections and each call sends only the shared part and its op's sections.
 - **Tabs.** A tab that a step opens is selected at once ("Opened tab 1 (opener 0)"). When a popup
   closes, its opener is selected again. While a popup that a tab opened is still open, `go` and
   `back` in that tab are refused ("finish or close the sign-in tab first").

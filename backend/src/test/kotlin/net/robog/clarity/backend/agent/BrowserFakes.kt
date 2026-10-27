@@ -79,7 +79,14 @@ class FakeGovernance : VaultGovernance {
         return Hold.Wait("Asked the person to approve ${credential.name} on $domain.", HeldActionId("h-${credential.name}"))
     }
 
-    override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait = Hold.Wait("asked", HeldActionId("h-code"))
+    /** What each ask_code asked for. With [freshIds], every ask after the first gets a new held id ("h-code2", …), as the real one does. */
+    val codeAsks = CopyOnWriteArrayList<String>()
+    var freshIds = false
+
+    override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait {
+        codeAsks += purpose
+        return Hold.Wait("asked", HeldActionId(if (codeAsks.size == 1 || !freshIds) "h-code" else "h-code${codeAsks.size}"))
+    }
 
     override suspend fun browserStep(action: ProposedAction.ExternalTool, provenance: Provenance, reason: String, context: List<ContextItem>): Hold {
         steps += action

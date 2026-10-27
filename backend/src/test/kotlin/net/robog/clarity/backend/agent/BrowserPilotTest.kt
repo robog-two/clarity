@@ -133,7 +133,7 @@ class BrowserPilotTest : FunSpec({
         done shouldNotContain FakeSite.CODE
         rig.site.signedIn shouldBe true
         rig.site.codesSent shouldBe 1
-        rig.call("look").text() shouldContain "Sign-in on example.com: signed in; 1 code sent"
+        rig.call("look").text() shouldContain "Signed in to example.com (since 12:00); 1 code sent"
     }
 
     test("sign_in waits for a code the person has not typed and reports back without resending") {

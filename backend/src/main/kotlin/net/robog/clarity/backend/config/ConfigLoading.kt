@@ -254,6 +254,9 @@ private class Lookup(
                     reviewGate = bool("CLARITY_REVIEW_GATE", "agent.decisions.reviewGate", true),
                     reviewThreshold = fraction("CLARITY_REVIEW_GATE_THRESHOLD", "agent.decisions.reviewThreshold", 0.3),
                     reviewMaxQuiet = duration("CLARITY_REVIEW_MAX_QUIET", "agent.decisions.reviewMaxQuiet", Duration.parse("8h")),
+                    failureGate = bool("CLARITY_FAILURE_GATE", "agent.decisions.failureGate", true),
+                    memoryGateThreshold = fraction("CLARITY_MEMORY_GATE_THRESHOLD", "agent.decisions.memoryGateThreshold", 0.6),
+                    briefGateThreshold = fraction("CLARITY_BRIEF_GATE_THRESHOLD", "agent.decisions.briefGateThreshold", 0.6),
                 ),
                 browser = BrowserPilotConfig(
                     jevModel = string("CLARITY_JEV_MODEL", "agent.browser.jevModel") ?: DEFAULT_JEV_MODEL,

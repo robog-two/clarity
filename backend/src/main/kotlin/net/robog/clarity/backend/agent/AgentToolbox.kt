@@ -31,7 +31,7 @@ val MEMORY_GC_TOOLS = listOf(
 /** The helper-control tools of the lead. */
 @Inject
 @SingleIn(AppScope::class)
-class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: TaskStore) {
+class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: TaskStore, private val gate: FailureGate) {
     @Serializable
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
@@ -77,6 +77,7 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
             when {
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 taskId != null && tasks.get(taskId) == null -> ToolResult.Error("No task with id $taskId; create it with update_task first, or omit `taskId`.")
+                gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, taskId)
                     ToolResult.Ok(started.text)
@@ -99,7 +100,11 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
             description = "Send a message to a running helper (new information, a changed priority).",
             effect = ToolEffect.WRITE,
             json = ClarityJson,
-        ) { input -> helpers.value.message(input.id, input.message).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) }) },
+        ) { input ->
+            // A message to a running helper is part of its brief: the same gate keeps failure stories out.
+            gate.check(GateKind.BRIEF, "message_helper", input.message)?.let { return@tool ToolResult.Error(it) }
+            helpers.value.message(input.id, input.message).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+        },
         tool<CancelHelperInput>(
             name = "cancel_helper",
             description = "Stop a helper. Its work so far is kept in its journal; it returns no result.",

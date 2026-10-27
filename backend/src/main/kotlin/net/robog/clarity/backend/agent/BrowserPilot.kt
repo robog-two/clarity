@@ -69,6 +69,10 @@ class BrowserPilot(
     private val settle: Duration = 700.milliseconds,
     /** How often a run waiting for the browser asks again. */
     private val leasePoll: Duration = 1.seconds,
+    /** At most this long waiting for a page to settle before it is reported as still loading. */
+    private val settleCap: Duration = 8.seconds,
+    /** How often the page is asked whether it has settled. */
+    private val settlePoll: Duration = 250.milliseconds,
 ) {
     private val settings: BrowserPilotConfig = config.browser
 
@@ -85,6 +89,12 @@ class BrowserPilot(
         var lastUrl: String? = null
         var lastTitle: String? = null
         var taskKey: String? = null
+        /** Controls that started this run's sign-in, by page ([flowKey]) and lower-case label: pressing one again restarts it. */
+        val starters: MutableSet<Pair<String, String>> = ConcurrentHashMap.newKeySet()
+        /** The cookie names ([PageObservation.ckn]) of each site when first seen before signing in. */
+        val cookies = ConcurrentHashMap<String, String>()
+        /** Code placeholders already typed: a new code field needs a fresh code, never one of these. */
+        val usedCodes: MutableSet<String> = ConcurrentHashMap.newKeySet()
     }
 
     private val runs = ConcurrentHashMap<String, RunState>()
@@ -119,7 +129,7 @@ class BrowserPilot(
 
     @Serializable
     class ActInput(
-        @Description("The one element to act on, in words a person would use for what they see: \"the SMS option\", \"the Continue button\", \"the email field\". Or \"scroll down\" / \"scroll up\", or \"press Escape\".")
+        @Description("The one element to act on, in words a person would use for what they see: \"the SMS option\", \"the Continue button\", \"the email field\". Or \"scroll down\" / \"scroll up\" (the area under the middle of the screen, or the page), \"scroll the available times down\" (a scroll area by its name in look), or \"press Escape\".")
         val intent: String,
         @Description("What should be on the screen afterwards, in words: \"a page asking for a 6-digit code\". The step is checked against it.")
         val expect: String,
@@ -160,21 +170,23 @@ class BrowserPilot(
             tool<LookInput>(
                 name = "${BrowserGate.PREFIX}look",
                 description = "See the selected tab as text: tabs (with which tab opened which), the page, any dialog, the sign-in state for the site " +
-                    "(codes sent), then every visible control and heading with its ref, name, value and state, at any depth. Call it first, " +
-                    "after anything surprising, and whenever a step changed nothing. " + TABS_HINT,
+                    "(codes sent; \"Signed in to …\" once done), how much of the page is below, its scroll areas (rows shown of all), then every " +
+                    "visible control and heading with its ref, name, value and state, at any depth. It waits for the page to finish loading first. " +
+                    "Call it first, after anything surprising, and whenever a step changed nothing. " + TABS_HINT,
                 json = ClarityJson,
             ) { input -> guarded { look(input.scope) } },
             tool<ActInput>(
                 name = "${BrowserGate.PREFIX}act",
                 description = "Do one thing on the page, named in words (not a ref): click it, or type `value` into it. The element is found on a " +
                     "screenshot, the step is checked, then you get a report of what changed (address, tabs opened or closed, new text) and " +
-                    "whether `expect` happened. A new tab it opens is selected for you. " + BrowserGate.PLACEHOLDER_HINT + " " + BrowserGate.DOWNLOAD_HINT,
+                    "whether `expect` happened, once the page has finished loading (or a \"Still loading\" note). A new tab it opens is selected for you. " + BrowserGate.PLACEHOLDER_HINT + " " + BrowserGate.DOWNLOAD_HINT,
                 effect = ToolEffect.EXTERNAL,
                 json = ClarityJson,
             ) { input -> guarded { act(input.intent.trim(), input.expect.trim(), input.value) } },
             tool<ReadInput>(
                 name = "${BrowserGate.PREFIX}read",
-                description = "Read the visible text of the page (or of one part of it, by ref from look). Hidden and off-screen text is left out.",
+                description = "Read the visible text of the page (or of one part of it, by ref from look). It scrolls the page and every scroll area to " +
+                    "the end, so rows that load on scroll are read too. Hidden text is left out.",
                 json = ClarityJson,
             ) { input -> guarded { read(input.scope) } },
             tool<TabsInput>(
@@ -204,7 +216,8 @@ class BrowserPilot(
                 name = "${BrowserGate.PREFIX}sign_in",
                 description = "Sign in on the page that is open, with a saved login: fills the login fields, submits, and checks whether you are " +
                     "signed in. On a page asking for a one-time code it asks the person for it (ask_code), types it and verifies. It never asks " +
-                    "the site for another code. It reports anything else (pick where a code goes with act, then call sign_in again).",
+                    "the site for another code. It reports anything else (pick where a code goes with act, then call sign_in again). Once you " +
+                    "are signed in it refuses to start over, unless the page shows a login or code field (a site asking to verify again gets a fresh code).",
                 effect = ToolEffect.EXTERNAL,
                 json = ClarityJson,
             ) { input -> guarded { signIn(input.credential.trim()) } },
@@ -293,6 +306,8 @@ class BrowserPilot(
             openers = emptyMap()
             secretRefs = "" to emptySet()
             state.signIn.clear()
+            state.starters.clear()
+            state.cookies.clear()
             state.noChange = 0
             state.mustLook = false
             gate.withBrowser {
@@ -328,12 +343,12 @@ class BrowserPilot(
         private fun refsNow(url: String): Set<String> = secretRefs.takeIf { it.first == pageKey(url) }?.second ?: emptySet()
 
         /** Runs the observation script [op]; [lock] false when the caller already holds the browser. The reply is not scrubbed. */
-        private suspend fun observe(op: String, extra: Map<String, Any?> = emptyMap(), lock: Boolean = true): JsonElement? {
+        private suspend fun observe(op: String, extra: Map<String, Any?> = emptyMap(), lock: Boolean = true, timeoutMillis: Int = 8000): JsonElement? {
             val refs = secretRefs.second
             val input = buildJsonObject {
                 put("function", ObserveScript.call(op, observeArgs(refs, extra)))
                 put("sandbox", ObserveScript.SANDBOX)
-                put("timeout", 8000)
+                put("timeout", timeoutMillis)
             }
             val result = if (lock) locked("evaluate_script", input) else mcp("evaluate_script", input)
             // Parsed as the page gave it (scrubbing could cut a released value out of an address); whatever is shown or stored is scrubbed.
@@ -344,7 +359,75 @@ class BrowserPilot(
             decodeObservation<PageObservation>(observe(op, extra, lock))?.also {
                 // Where the run is, for the resume note when it lets the browser go.
                 if ((op == "look" || op == "changes") && it.url.isNotBlank()) { state.lastUrl = it.url; state.lastTitle = it.title }
+                // The site's cookie names before signing in, to tell when a sign-in set new ones.
+                val domain = Sites.registrableDomain(it.url)
+                if (it.ckn != null && domain != null && state.signIn[domain]?.signedIn != true) state.cookies.putIfAbsent(domain, it.ckn)
             }
+
+        /** How long the page took to settle, and why it had not when [settleCap] ran out. */
+        private inner class Settled(val loading: String?, val waitedMillis: Long)
+
+        /**
+         * Waits until the page has settled ([settleWait]): ready, no request finishing and no DOM change
+         * for 500 ms, no loading indicator on screen. Gives up after [cap] and says why.
+         */
+        private suspend fun settleDown(cap: Duration = settleCap): Settled {
+            val started = TimeSource.Monotonic.markNow()
+            while (true) {
+                val why = settleWait(decodeObservation<SettleProbe>(observe("settle", timeoutMillis = 2000)))
+                val waited = started.elapsedNow()
+                if (why == null) return Settled(null, waited.inWholeMilliseconds)
+                if (waited >= minOf(cap, settleCap)) return Settled(why, waited.inWholeMilliseconds)
+                delay(settlePoll)
+            }
+        }
+
+        /** The sites whose sign-in this run is in the middle of. */
+        private fun flowDomains(): Set<String> =
+            state.signIn.filterValues { it.phase in setOf(SignInPhase.LOGIN, SignInPhase.CHOOSE_METHOD, SignInPhase.CODE_SENT) }.keys
+
+        private fun signals(obs: PageObservation, jev: Pair<String, Double>?): SignInSignals {
+            val domain = Sites.registrableDomain(obs.url)
+            val seen = domain?.let { state.cookies[it] }
+            return SignInSignals(
+                loginForm = obs.password || obs.otp, authUrl = isAuthUrl(obs.url), account = obs.account != null,
+                cookiesChanged = seen != null && obs.ckn != null && obs.ckn != seen, jev = jev, expired = obs.expired,
+            )
+        }
+
+        /**
+         * Updates the signed-in state from what [obs] shows (and Jev's [jev] answer, when asked). Marks
+         * the page's site and every site whose sign-in was under way as signed in on firm signals only
+         * ([signedInVerdict]); an expiry message signs it out. Returns a line for the helper when it changed.
+         */
+        private fun noteSignIn(obs: PageObservation, jev: Pair<String, Double>?, extra: Set<String> = emptySet()): String? {
+            val domain = Sites.registrableDomain(obs.url) ?: return null
+            val current = state.signIn[domain]
+            val s = signals(obs, jev)
+            when (signedInVerdict(s)) {
+                true -> {
+                    if (current?.signedIn == true) return null
+                    val flow = flowDomains() + extra
+                    if (flow.isEmpty() && jev == null) return null // signed in before this run: nothing to stop
+                    val now = clock.now()
+                    (flow + domain).forEach { d -> state.signIn[d] = (state.signIn[d] ?: SignInState()).signIn(now) }
+                    val why = listOfNotNull(
+                        obs.account?.let { "\"$it\" is on the page" }, "new session cookies".takeIf { s.cookiesChanged },
+                        s.jev?.takeIf { it.first == "signed_in" }?.let { "Jev p=%.2f".format(it.second) },
+                    )
+                    return "Signed in to $domain (${why.joinToString(", ")}). Do not sign in again: go on with the task."
+                }
+                false -> if (current?.signedIn == true && obs.expired) {
+                    state.signIn[domain] = current.copy(phase = SignInPhase.LOGIN, signedInAt = null)
+                    return "The site says the session expired: you are no longer signed in to $domain."
+                }
+                null -> {}
+            }
+            return null
+        }
+
+        private suspend fun alreadySignedIn(domain: String, st: SignInState): String =
+            "You are already signed in to $domain" + (st.signedInAt?.let { " (since ${clockTime(it, zone.zone())})" }.orEmpty())
 
         private suspend fun listTabs(lock: Boolean = true): List<Tab> =
             ((if (lock) locked("list_pages") else mcp("list_pages")) as? ToolResult.Ok)?.content?.let(::parseTabs).orEmpty()
@@ -406,27 +489,81 @@ class BrowserPilot(
         // ---- tools ----------------------------------------------------------------------------
 
         suspend fun look(scopeRef: String?): ToolResult {
-            val notes = syncTabs()
+            val notes = syncTabs().toMutableList()
+            val settled = settleDown()
             val obs = page("look", mapOf("scope" to scopeRef)) ?: return ToolResult.Error("Could not read the page (it may still be loading, or a browser dialog is open). Try wait, then look.")
             state.noChange = 0
             state.mustLook = false
             updatePhase(obs)
-            val header = header(obs)
+            noteSignIn(obs, null)?.let { notes += it }
+            val header = header(obs).copy(loading = settled.loading?.let { "after ${(settled.waitedMillis + 500) / 1000} s, $it" })
             val hint = resumeHint()?.let { "$it\n" }.orEmpty()
             return ToolResult.Ok(gate.scrub(hint + (notes.joinToString("\n").let { if (it.isEmpty()) "" else "$it\n" }) + formatLook(obs, header, scoped = scopeRef != null)))
         }
 
+        /**
+         * The visible text of the page (or of [scopeRef]), then of each scroll area in it read to its end:
+         * the page and every area are scrolled step by step until nothing new loads (capped), the text
+         * is collected at each step (a list that drops rows it scrolled past is still read whole) and
+         * the overlap between steps is dropped ([mergeLines]). Scroll positions are put back afterwards.
+         */
         suspend fun read(scopeRef: String?): ToolResult {
             syncTabs()
-            val reply = decodeObservation<ReadReply>(observe("read", mapOf("scope" to scopeRef, "max" to READ_BUDGET)))
-                ?: return ToolResult.Error("Could not read the page. Try wait, then look.")
+            val settled = settleDown()
+            val obs = page("look", mapOf("scope" to scopeRef, "max" to 1)) ?: return ToolResult.Error("Could not read the page. Try wait, then look.")
+            val areas = obs.areas.take(MAX_READ_AREAS)
+            val skip = areas.map { it.ref }
+            var pageLines = readLines(scopeRef, skip) ?: return ToolResult.Error("Could not read the page. Try wait, then look.")
+            var pageSteps = 0
+            if (scopeRef == null && (obs.below ?: 0.0) > 0) {
+                val startY = obs.scrollY
+                while (pageSteps < MAX_PAGE_STEPS) {
+                    val moved = decodeObservation<ScrollArea>(observe("scroll", mapOf("dy" to 1, "page" to true)))?.moved ?: 0.0
+                    pageSteps++
+                    if (moved <= 0) break
+                    settleDown(READ_SETTLE)
+                    val merged = mergeLines(pageLines, readLines(null, skip).orEmpty())
+                    if (merged.size == pageLines.size) break
+                    pageLines = merged
+                }
+                observe("scroll", mapOf("page" to true, "top" to startY))
+            }
+            val sections = areas.map { area -> area to readArea(area) }
             val tab = lastTabs.firstOrNull { it.selected }
-            return ToolResult.Ok(
-                gate.scrub(
-                    "Page: ${tab?.title.orEmpty()} — ${tab?.url.orEmpty()}\n" + reply.text.ifBlank { "(no visible text)" } +
-                        (if (reply.truncated) "\n(cut off – read(scope=…) a part of the page)" else ""),
-                ),
-            )
+            val text = buildString {
+                append("Page: ${tab?.title.orEmpty()} — ${tab?.url.orEmpty()}\n")
+                settled.loading?.let { append("(still loading: $it – the text may be incomplete)\n") }
+                append(pageLines.joinToString("\n").ifBlank { "(no visible text)" })
+                if (pageSteps > 1) append("\n(scrolled the page $pageSteps times to load more)")
+                sections.forEach { (area, lines) ->
+                    append("\n\n--- scroll area \"${area.name}\": ${lines.size} rows, read to the end ---\n")
+                    append(lines.joinToString("\n").ifBlank { "(no visible text)" })
+                }
+            }
+            val cut = text.length > READ_BUDGET * 3
+            return ToolResult.Ok(gate.scrub(text.take(READ_BUDGET * 3) + if (cut) "\n(cut off – read(scope=…) a part of the page)" else ""))
+        }
+
+        private suspend fun readLines(scopeRef: String?, skip: List<String> = emptyList()): List<String>? =
+            decodeObservation<ReadReply>(observe("read", mapOf("scope" to scopeRef, "max" to READ_BUDGET * 3, "lines" to true, "skip" to skip)))?.lines
+
+        /** One scroll area from its top to its end, step by step, collecting rows; its position is put back. */
+        private suspend fun readArea(area: ScrollArea): List<String> {
+            observe("scroll", mapOf("ref" to area.ref, "to" to "top"))
+            settleDown(READ_SETTLE)
+            var lines = readLines(area.ref).orEmpty()
+            var still = 0
+            for (step in 1..MAX_AREA_STEPS) {
+                val moved = decodeObservation<ScrollArea>(observe("scroll", mapOf("ref" to area.ref, "dy" to 1)))?.moved ?: 0.0
+                settleDown(READ_SETTLE)
+                val merged = mergeLines(lines, readLines(area.ref).orEmpty())
+                // At the end and nothing new loaded (a list that loads more grows once it is reached): done.
+                still = if (merged.size == lines.size && moved <= 0) still + 1 else 0
+                lines = merged
+                if (still >= 1 || lines.sumOf { it.length } > READ_BUDGET * 2) break
+            }
+            observe("scroll", mapOf("ref" to area.ref, "top" to area.top))
+            return lines
         }
 
         suspend fun tabs(select: Int?, close: Int?): ToolResult {
@@ -454,6 +591,22 @@ class BrowserPilot(
             return navigate("go", "navigate_page", buildJsonObject { put("url", url) }, url)
         }
 
+        /**
+         * After going somewhere while signed in: a note when the page is one that starts the sign-in (a
+         * sign-in address, or a page whose control started this run's sign-in), or when it shows a login form.
+         */
+        private suspend fun signedInNote(after: PageObservation): String? {
+            val domain = Sites.registrableDomain(after.url) ?: return null
+            val st = state.signIn[domain]?.takeIf { it.signedIn } ?: return null
+            return when {
+                after.password || after.otp ->
+                    "${alreadySignedIn(domain, st)}, but this page shows a login or code field. Only if the site says the session expired, or asks to verify again, call sign_in; otherwise go to the page you need."
+                isAuthUrl(after.url) || state.starters.any { it.first == flowKey(after.url) } ->
+                    "${alreadySignedIn(domain, st)}; this page starts the sign-in. Do not sign in again: look for the page you need (the site's menu, a search, or its address)."
+                else -> null
+            }
+        }
+
         suspend fun back(): ToolResult {
             syncTabs()
             limit()?.let { return it }
@@ -467,11 +620,17 @@ class BrowserPilot(
             val result = gate.perform(scope, GateStep(remote, input, BrowserKind.NAVIGATE, pages, guard = leaseGuard) { mcp(remote, it) })
             if (result is ToolResult.Error) return result
             delay(settle)
+            val settled = settleDown()
             val after = page("changes") ?: before
             lastTabs = listTabs()
+            val signedIn = after?.let { noteSignIn(it, null) }
+            val already = after?.let { signedInNote(it) }
             val report = buildString {
+                settled.loading?.let { append(stillLoadingLine(it, settled.waitedMillis)).append('\n') }
                 append(if (after?.url != before?.url) "Now on: ${after?.title.orEmpty()} — ${after?.url.orEmpty()}" else "Still on: ${after?.title.orEmpty()} — ${after?.url.orEmpty()}")
                 if (after?.dialog != null) append("\nDialog open: \"${after.dialog}\"")
+                signedIn?.let { append('\n').append(it) }
+                already?.let { append('\n').append(it) }
                 append("\nCall look to see the page.")
             }
             record(tool, before, url ?: "back", null, null, null, null, "passed", "$remote $input", null, report)
@@ -504,20 +663,37 @@ class BrowserPilot(
         // ---- act ------------------------------------------------------------------------------
 
         suspend fun act(intent: String, expect: String, value: String?): ToolResult {
-            val notes = syncTabs()
+            val notes = syncTabs().toMutableList()
             limit()?.let { return it }
             if (state.mustLook) return ToolResult.Ok("Two steps in a row changed nothing visible. Call look and rethink before acting again.")
             if (intent.isBlank()) return ToolResult.Error("`intent` must name what to act on.")
-            scrollIntent(intent)?.let { dy ->
-                val r = decodeObservation<ScrollReply>(observe("scroll", mapOf("dy" to dy)))
-                return ToolResult.Ok(if (r == null) "Could not scroll." else "Scrolled ${if (dy > 0) "down" else "up"} (now ${r.scrollY.toInt()} px from the top). Call look to see what is there.")
-            }
-            val before = page("look") ?: return ToolResult.Error("Could not read the page (still loading, or a browser dialog is open). Try wait, then look.")
+            scrollOf(intent)?.let { return scroll(it, intent) }
+            var before = page("look") ?: return ToolResult.Error("Could not read the page (still loading, or a browser dialog is open). Try wait, then look.")
             val url = before.url
             val domain = Sites.registrableDomain(url)
             val trail = Trail()
             keyIntent(intent)?.let { key -> return pressKey(key, intent, expect, before, trail, notes) }
+            val signedIn = domain?.let { state.signIn[it] }?.takeIf { it.signedIn }
+            val loginForm = before.password || before.otp
+            // Never restart a sign-in that is done: refused before any model call when the words name such a control.
+            renameCandidate(before.items, intent)?.takeIf { restartsSignIn(signedIn != null, loginForm, url, it.name, state.starters) }?.let { c ->
+                return refuseRestart(domain!!, signedIn!!, before, intent, expect, c.name)
+            }
+            value?.let { v ->
+                Placeholders.tokens(v).mapNotNull(Placeholders::codeId).firstOrNull { it in state.usedCodes }?.let {
+                    return ToolResult.Ok("Refused: that code was already typed for an earlier code field. A new code field needs a fresh code: call sign_in on this page (it asks the person for the new code with ask_code).")
+                }
+            }
             state.actions++
+
+            // A target named in the text view but scrolled out of sight (in the page or in a scroll area) is brought into view first.
+            renameCandidate(before.items, intent)?.takeIf { !it.inView }?.let { off ->
+                if (decodeObservation<FocusReply>(observe("reveal", mapOf("ref" to off.ref)))?.ok == true) {
+                    settleDown(READ_SETTLE)
+                    page("look")?.let { before = it }
+                    notes.add("Scrolled \"${off.name}\" into view.")
+                }
+            }
 
             val frame = frame(url)
             val grounded = ground(intent, before, frame, trail)
@@ -537,6 +713,9 @@ class BrowserPilot(
                 record("act", before, intent, expect, frame, hit, null, "refused", null, trail, "not a field")
                 return ToolResult.Error(gate.scrub("\"${element.name}\" is a ${element.role}, not a field: act on it without `value`, or name the field to type into."))
             }
+            if (value == null && restartsSignIn(signedIn != null, loginForm, url, element.name, state.starters)) {
+                return refuseRestart(domain!!, signedIn!!, before, intent, expect, element.name, frame, hit, trail)
+            }
 
             val description = gate.scrub(describeAct(element, value, url))
             val signIn = domain?.let { state.signIn[it] }
@@ -551,7 +730,75 @@ class BrowserPilot(
             }
 
             val result = execute(element, value, before, frame, intent, expect, hit, trail, notes) { JevCheck(view, settings.jevMayApprove, settings.approveThreshold) }
+            value?.let { v -> state.usedCodes += Placeholders.tokens(v).mapNotNull(Placeholders::codeId) }
             return result
+        }
+
+        /** Refuses a step that would start a finished sign-in again, and says what to do instead. */
+        private suspend fun refuseRestart(
+            domain: String, st: SignInState, before: PageObservation, intent: String, expect: String, label: String,
+            frame: Frame? = null, hit: Ground.Hit? = null, trail: Trail? = null,
+        ): ToolResult {
+            val message = "Refused: ${alreadySignedIn(domain, st)}, and this page shows no login form; \"$label\" would start the sign-in again. " +
+                "Do not sign in again: look for the page you need (the site's menu, a search, or its address). Only if the site says the session expired, or shows a login or code field, sign in again."
+            record("act", before, intent, expect, frame, hit, null, "signed_in_guard", null, trail, message)
+            return ToolResult.Ok(gate.scrub(message))
+        }
+
+        /**
+         * A scroll: of the area [req] names (by its name in the text view, else found on the screen by Jev),
+         * or of the area under the viewport centre, or the page. Waits for rows that load on scroll and says
+         * what is new.
+         */
+        private suspend fun scroll(req: ScrollRequest, intent: String): ToolResult {
+            val token = newToken()
+            val args = mutableMapOf<String, Any?>("dy" to req.dy)
+            val notes = mutableListOf<String>()
+            val before = page("look")
+            var trail: Trail? = null
+            if (req.target != null && before != null) {
+                val picked = pickArea(before.areas, req.target)
+                when {
+                    picked != null -> args["ref"] = picked.ref
+                    before.areas.isEmpty() -> notes += "There is no scroll area on this page, so I scrolled the page."
+                    else -> {
+                        // Not named in the text view: find it on the screen like any target, then scroll the area under that point.
+                        val t = Trail().also { trail = it }
+                        val frame = frame(before.url)
+                        when (val g = ground(req.target, before, frame, t)) {
+                            is Ground.Hit -> { args["x"] = g.element.centerX; args["y"] = g.element.centerY }
+                            is Ground.NotFound, is Ground.Failed -> {
+                                val why = (g as? Ground.NotFound)?.why ?: (g as Ground.Failed).why
+                                record("scroll", before, intent, null, frame, null, null, "not_found", null, t, why)
+                                return ToolResult.Ok(gate.scrub("Not found: $why. Scroll areas on this page: " + before.areas.joinToString("; ") { it.line() }))
+                            }
+                        }
+                    }
+                }
+            }
+            observe("arm", mapOf("token" to token))
+            val r = decodeObservation<ScrollArea>(observe("scroll", args)) ?: return ToolResult.Error("Could not scroll.")
+            r.error?.let { return ToolResult.Error("Could not scroll: $it") }
+            settleDown(READ_SETTLE)
+            val way = if (req.dy > 0) "down" else "up"
+            val after = page("changes", mapOf("token" to token))
+            val text = buildString {
+                notes.forEach { appendLine(it) }
+                val moved = r.moved ?: 0.0
+                if (r.ref.isNotEmpty()) {
+                    // The area again, now that more rows may have loaded.
+                    val now = decodeObservation<ScrollArea>(observe("scroll", mapOf("ref" to r.ref, "dy" to 0)))?.takeIf { it.error == null } ?: r
+                    if (moved == 0.0) appendLine("Scroll area \"${now.name}\" did not move: it is at the ${if (req.dy > 0) "end" else "top"} (${now.showing()}).")
+                    else appendLine("Scrolled scroll area \"${now.name}\" [${now.ref}] $way: ${now.showing()}.")
+                } else {
+                    if (moved == 0.0) appendLine("The page did not move: it is at the ${if (req.dy > 0) "end" else "top"}.")
+                    else appendLine("Scrolled the page $way (now %,d px from the top; %,d px below).".format((r.scrollY ?: 0.0).toInt(), (r.below).toInt()))
+                }
+                after?.added?.takeIf { it.isNotEmpty() }?.let { appendLine("New on the page: " + it.take(6).joinToString(" | ") { s -> "\"${s.take(120)}\"" }) }
+                append("Call look to see what is there, or read for all of it.")
+            }
+            record("scroll", before, intent, null, null, null, null, "passed", "scroll $args", trail, text)
+            return ToolResult.Ok(gate.scrub(text))
         }
 
         /** A key press ("press Escape"): judged by the rules as press_key, reported like any step. */
@@ -769,6 +1016,8 @@ class BrowserPilot(
             }
             diff.closed?.let { closed -> tabNotes += closedTab(closed, closed == selectedBefore || tabsAfter.none { it.selected }, tabsAfter); tabsAfter = listTabs() }
             lastTabs = tabsAfter
+            // Judge the page only once it has settled (a single-page app renders after its data arrives).
+            val settled = settleDown()
             val after = waitForPage(token) ?: before.copy(same = false, added = emptyList())
             val targetAfter = element?.takeIf { after.same }?.let { page("target", mapOf("ref" to it.ref))?.hit }
             val domain = Sites.registrableDomain(after.url)
@@ -776,14 +1025,21 @@ class BrowserPilot(
             val codeSent = codeSentBy(before, after, element?.name, signIn.triggers)
             if (codeSent && domain != null) {
                 state.signIn[domain] = signIn.copy(
-                    codesSent = signIn.codesSent + 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT,
+                    codesSent = signIn.codesSent + 1, lastSentAt = clock.now(), phase = if (signIn.signedIn) SignInPhase.SIGNED_IN else SignInPhase.CODE_SENT,
                     triggers = signIn.triggers + listOfNotNull(element?.name?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }),
                 )
             }
+            noteStarter(before, after, element)
             updatePhase(after)
             val afterFrame = frame(after.url)
             val (verified, verifyNote) = verify(expect, action, afterFrame, trail)
-            val change = StepChange(before, after, diff, tabNotes, element, targetAfter, verified, verifyNote, expect, codeSent)
+            // Mid-sign-in and off the sign-in pages: is the person signed in now? Jev's sign_in choice joins the page's own signs.
+            val jevSign = if (flowDomains().isNotEmpty() && !after.password && !after.otp && !isAuthUrl(after.url) && domain != null) signInState(domain, afterFrame, trail) else null
+            val signInNote = noteSignIn(after, jevSign)
+            val change = StepChange(
+                before, after, diff, tabNotes, element, targetAfter, verified, verifyNote, expect, codeSent,
+                loading = settled.loading, waitedMillis = settled.waitedMillis, signInNote = signInNote,
+            )
             val changed = visiblyChanged(change)
             state.noChange = if (changed) 0 else state.noChange + 1
             if (state.noChange >= 2) state.mustLook = true
@@ -811,9 +1067,20 @@ class BrowserPilot(
             return p to (if (p == null) "Not checked on the screen (Jev: ${answer.leftOrNull()?.message?.take(80) ?: "no answer"})." else null)
         }
 
+        /** A step that led from an ordinary page into a sign-in started it: remember that control on that page. */
+        private fun noteStarter(before: PageObservation, after: PageObservation, element: SeenElement?) {
+            val label = element?.name?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return
+            if (Sites.registrableDomain(before.url)?.let { state.signIn[it]?.signedIn } == true) return
+            val wasAuth = before.password || before.otp || isAuthUrl(before.url)
+            val isAuth = after.password || after.otp || isAuthUrl(after.url)
+            if (!wasAuth && isAuth) state.starters += flowKey(before.url) to label
+        }
+
         private fun updatePhase(obs: PageObservation) {
             val domain = Sites.registrableDomain(obs.url) ?: return
             val current = state.signIn[domain] ?: if (obs.password || obs.otp) SignInState() else return
+            // Signed in sticks: a code field now is a second verification (sign_in handles it), not a new sign-in.
+            if (current.signedIn) return
             val phase = when {
                 obs.otp -> if (current.codesSent > 0) SignInPhase.CODE_SENT else current.phase
                 obs.password -> SignInPhase.LOGIN
@@ -838,10 +1105,18 @@ class BrowserPilot(
             val credential = vault.byName(credentialName)
                 ?: return ToolResult.Error("No saved credential \"$credentialName\". Saved: ${vault.list().joinToString { it.name }.ifEmpty { "none" }} (see list_credentials).")
             val messages = mutableListOf<String>()
+            settleDown()
             repeat(2) {
                 val fields = decodeObservation<SignInFields>(observe("signin")) ?: return ToolResult.Error("Could not read the page. Try wait, then look.")
                 val url = fields.url
                 val domain = Sites.registrableDomain(url) ?: return ToolResult.Error("Cannot tell which site this page is.")
+                // Signed in already and no login or code field: never start over (that costs the person new codes).
+                state.signIn[domain]?.takeIf { it.signedIn && fields.password == null && fields.otp == null }?.let { st ->
+                    val message = "${alreadySignedIn(domain, st)}, and this page shows no login or code field, so I did not sign in again. " +
+                        "Look for the page you need (the site's menu, a search, or its address). Call sign_in again only if the site says the session expired or shows a login or code field."
+                    record("sign_in", page("look"), "refused", null, null, null, null, "signed_in_guard", null, null, message)
+                    return ToolResult.Ok(gate.scrub((messages + message).joinToString("\n")))
+                }
                 state.actions++
                 val before = page("look") ?: PageObservation(url = url)
                 val beforeFrame = frame(url)
@@ -852,14 +1127,26 @@ class BrowserPilot(
                 when {
                     fields.otp != null -> {
                         val current = state.signIn[domain] ?: SignInState()
+                        // Signed in, and the site asks for a code again (a second verification): a new code, asked for afresh.
+                        val stepUp = current.signedIn
                         if (current.codeTries >= MAX_CODE_TRIES) return ToolResult.Ok("The site rejected the code ${current.codeTries} times. Stop and report back so the person can finish signing in; do not ask the site for a new code.")
-                        if (current.codesSent == 0) state.signIn[domain] = current.copy(codesSent = 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT)
-                        val ask = governance.askCode(url, if (current.codeTries == 0) "the sign-in code $domain just sent" else "the sign-in code $domain sent, again: the last one typed was not accepted", scope.provenance())
+                        when {
+                            stepUp && current.stepUpOpen() -> state.signIn[domain] = current.copy(codesSent = current.codesSent + 1, lastSentAt = clock.now(), codeTries = 0)
+                            !stepUp && current.codesSent == 0 -> state.signIn[domain] = current.copy(codesSent = 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT)
+                        }
+                        val purpose = when {
+                            stepUp && current.codeTries == 0 -> "the new code $domain just sent to verify again after signing in (not the earlier sign-in code)"
+                            current.codeTries == 0 -> "the sign-in code $domain just sent"
+                            else -> "the code $domain sent, again: the last one typed was not accepted"
+                        }
+                        val ask = governance.askCode(url, purpose, scope.provenance())
                         val heldId = ask.heldId ?: return ToolResult.Error(ask.text)
                         val placeholder = "[secret:code_${heldId.value}]"
-                        messages += "Asked the person for the code $domain sent."
+                        messages += if (stepUp) "You are signed in, and $domain asks to verify again: asked the person for the new code (a fresh one; an earlier code is never reused)."
+                        else "Asked the person for the code $domain sent."
                         fill(fields.otp, placeholder, url)?.let { return ToolResult.Ok(gate.scrub((messages + it).joinToString("\n"))) }
-                        step = "code"
+                        state.usedCodes += heldId.value
+                        step = if (stepUp) "verify again" else "code"
                     }
                     fields.password != null -> {
                         val user = credential.fields.firstOrNull { it.type == FieldType.USERNAME } ?: credential.fields.firstOrNull { it.type == FieldType.EMAIL }
@@ -934,37 +1221,56 @@ class BrowserPilot(
             val diff = diffTabs(tabsBefore, tabsAfter, openers.keys)
             diff.closed?.let { tabNotes += closedTab(it, it == selectedIndex(tabsBefore) || tabsAfter.none { t -> t.selected }, tabsAfter) }
             lastTabs = listTabs()
+            // Judge where the sign-in stands only once the page has settled: the page a sign-in lands on often renders late.
+            val settled = settleDown()
             val after = waitForPage(token) ?: before.copy(same = false)
             val frame = frame(after.url)
             val sign = signInState(domain, frame, trail)
             val current = state.signIn[domain] ?: SignInState()
+            val code = step != "login"
             val codeArrived = after.otp && !before.otp
-            // The code page is still there after typing the code: the site did not take it.
-            val rejected = step == "code" && after.otp && sign?.first != "signed_in"
-            val next = if (rejected) current.copy(phase = SignInPhase.CODE_SENT, codeTries = current.codeTries + 1) else when (sign?.first) {
-                "signed_in" -> current.copy(phase = SignInPhase.SIGNED_IN)
-                "needs_code" -> if (codeArrived) current.copy(codesSent = current.codesSent + 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT) else current.copy(phase = SignInPhase.CODE_SENT)
-                "choose_method" -> current.copy(phase = SignInPhase.CHOOSE_METHOD)
-                "needs_login" -> current.copy(phase = SignInPhase.LOGIN)
-                "error" -> current.copy(phase = SignInPhase.ERROR)
-                else -> current
+            // The code field is still there after typing the code: the site did not take it.
+            val rejected = code && after.otp && sign?.first != "signed_in"
+            // Firm signs on the page (no login form, off the sign-in pages, a greeting or sign-out, new cookies) count with Jev's answer.
+            val firm = !rejected && signedInVerdict(signals(after, sign)) == true
+            val signedIn = !rejected && (firm || (sign?.first == "signed_in" && !after.password && !after.otp))
+            val next = when {
+                rejected -> current.copy(phase = if (current.signedIn) SignInPhase.SIGNED_IN else SignInPhase.CODE_SENT, codeTries = current.codeTries + 1)
+                signedIn || (step == "verify again" && !after.otp && !after.password) -> current.signIn(clock.now())
+                else -> when (sign?.first) {
+                    "needs_code" -> if (codeArrived) current.copy(codesSent = current.codesSent + 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT) else current.copy(phase = SignInPhase.CODE_SENT)
+                    "choose_method" -> current.copy(phase = SignInPhase.CHOOSE_METHOD)
+                    "needs_login" -> current.copy(phase = SignInPhase.LOGIN)
+                    "error" -> current.copy(phase = SignInPhase.ERROR)
+                    else -> current
+                }.let { if (current.signedIn) it.copy(phase = SignInPhase.SIGNED_IN) else it }
             }
             state.signIn[domain] = next
+            if (signedIn) {
+                // The sign-in usually ends on the site it was for (an identity provider sends the person back): signed in there too.
+                val now = clock.now()
+                (flowDomains() + setOfNotNull(Sites.registrableDomain(after.url))).forEach { d -> state.signIn[d] = (state.signIn[d] ?: SignInState()).signIn(now) }
+            }
             val p = sign?.second?.let { " (Jev p=%.2f)".format(it) }.orEmpty()
             val tries = current.codeTries + 1
-            val message = (tabNotes + if (rejected) {
+            val landed = Sites.registrableDomain(after.url)?.takeIf { it != domain }?.let { " and $it" }.orEmpty()
+            val message = (tabNotes + listOfNotNull(settled.loading?.let { stillLoadingLine(it, settled.waitedMillis) }) + if (rejected) {
                 if (tries < MAX_CODE_TRIES) "The site did not accept the code$p (attempt $tries of $MAX_CODE_TRIES). Call sign_in again: it asks the person to type the code again. It does not ask the site for a new code; do not press Resend."
                 else "The site rejected the code $tries times$p. Stop and report back so the person can finish signing in; do not ask the site for a new code."
-            } else when (sign?.first) {
-                null -> "Submitted the ${if (step == "code") "code" else "login"}. I could not check the screen (${frame.why ?: "Jev did not answer"}); call look to see where the sign-in stands."
-                "signed_in" -> "Signed in to $domain$p."
-                "needs_code" -> if (codeArrived || after.otp) "The site sent a one-time code$p." else "The site asks for a one-time code$p, but I see no code field. Call look."
-                "choose_method" -> "The site asks where to send a sign-in code$p. Pick one with act, say act(intent=\"the SMS option\"…), continue with act, then call sign_in again for the code."
-                "needs_login" -> if (step == "login") "The site still asks for the login$p: the email or password may be wrong. Report back; do not retry." else "The site asks for the login again$p."
-                "error" -> "The site shows an error$p. Call read to see it and report back; do not retry."
-                else -> "Submitted the ${if (step == "code") "code" else "login"}; the page shows something else$p. Call look."
+            } else when {
+                step == "verify again" && !after.otp && !after.password -> "The site took the new code: the verification is done and you are still signed in to $domain$p. Go on with the task."
+                signedIn -> "Signed in to $domain$landed$p. Do not sign in again: go on with the task."
+                settled.loading != null -> "Submitted the ${if (code) "code" else "login"}; the page is still loading, so where the sign-in stands is not known yet$p. Call wait, then look. Do not sign in again."
+                else -> when (sign?.first) {
+                    null -> "Submitted the ${if (code) "code" else "login"}. I could not check the screen (${frame.why ?: "Jev did not answer"}); call look to see where the sign-in stands."
+                    "needs_code" -> if (codeArrived || after.otp) "The site sent a one-time code$p." else "The site asks for a one-time code$p, but I see no code field. Call look."
+                    "choose_method" -> "The site asks where to send a sign-in code$p. Pick one with act, say act(intent=\"the SMS option\"…), continue with act, then call sign_in again for the code."
+                    "needs_login" -> if (step == "login") "The site still asks for the login$p: the email or password may be wrong. Report back; do not retry." else "The site asks for the login again$p."
+                    "error" -> "The site shows an error$p. Call read to see it and report back; do not retry."
+                    else -> "Submitted the ${if (code) "code" else "login"}; the page shows something else$p. Call look."
+                }
             }).joinToString("\n")
-            val action = if (step == "code") "sign_in: fill the code, submit" else "sign_in: fill the login, submit"
+            val action = if (code) "sign_in: fill the code, submit" else "sign_in: fill the login, submit"
             record("sign_in", before, step, sign?.first, beforeFrame, null, frame, "passed", action, trail, message)
             // Straight on to the code only when it is the login that led to a code page, and only once.
             return message to (step == "login" && (sign?.first == "needs_code") && after.otp)
@@ -1078,6 +1384,12 @@ class BrowserPilot(
         private val FILLABLE = setOf("textbox", "searchbox", "combobox", "spinbutton", "listbox", "slider")
         private const val READ_BUDGET = 6_000
         private const val MAX_RUNS = 50
+        /** `read` scrolls at most this many areas, each at most this many steps, and the page this many. */
+        private const val MAX_READ_AREAS = 4
+        private const val MAX_AREA_STEPS = 25
+        private const val MAX_PAGE_STEPS = 8
+        /** How long `read` and a scroll wait for more rows to load after a step. */
+        private val READ_SETTLE = 3.seconds
 
         const val TABS_HINT = "Tabs survive a browser restart, but then an empty tab is selected: if the page is not the one you expect, switch with tabs or go to it again. Never assume you are still where you were."
 
@@ -1126,13 +1438,10 @@ class Trail {
 }
 
 @Serializable
-private data class ReadReply(val text: String = "", val truncated: Boolean = false)
+private data class ReadReply(val text: String = "", val truncated: Boolean = false, val lines: List<String>? = null)
 
 @Serializable
 private data class FocusReply(val ok: Boolean = false)
-
-@Serializable
-private data class ScrollReply(val scrollY: Double = 0.0)
 
 @Serializable
 data class CssRect(val x: Double, val y: Double, val w: Double, val h: Double) {
