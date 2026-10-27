@@ -82,4 +82,50 @@ echo "add-ons active: $(echo "$addons" | tr '\n' ';')"
 pages="$(call 5 list_pages '{}')"
 echo "$pages" | grep -q '1 pages' || fail "unexpected tabs: $pages"
 echo "single tab ok"
+
+# --- session restore: open tabs survive the container being recreated (as every deploy does) -----
+podman rm -f "$name" >/dev/null
+volume="clarity-browser-smoke-profile-$$"
+podman volume create "$volume" >/dev/null
+trap 'cleanup; podman volume rm -f "$volume" >/dev/null 2>&1 || true' EXIT
+start() { # start a hardened container on the kept profile volume and open an MCP session (sets $sid)
+  podman run -d --name "$name" --read-only --cap-drop ALL --cap-add SYS_CHROOT --security-opt no-new-privileges \
+    --tmpfs /tmp:rw,nosuid,size=512m --shm-size 512m --memory 1536m --pids-limit 1024 \
+    -e BROWSER_PROFILE_DIR=/profile -v "$volume:/profile" \
+    -v "$tmp/browser_key:/run/secrets/browser_key:ro,z" \
+    -v "$here/testpage.html:/srv/test.html:ro,z" \
+    -p "127.0.0.1:$port:8931" "$image" >/dev/null
+  for _ in $(seq 1 60); do
+    [ "$(curl -s -o /dev/null -w '%{http_code}' "$base/healthz" || true)" = 200 ] && break
+    sleep 1
+  done
+  sid="$(curl -sS -D - -o /dev/null -X POST "$base/mcp" -H "$(hdr)" -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}' \
+    | tr -d '\r' | sed -n 's/^[Mm]cp-[Ss]ession-[Ii]d: //p')"
+  [ -n "$sid" ] || fail "no MCP session id"
+  post "$sid" '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null
+}
+start
+call 10 navigate_page '{"url":"file:///srv/test.html?first"}' >/dev/null
+call 11 new_page '{"url":"file:///srv/test.html?second"}' >/dev/null
+for round in 1 2; do   # twice: the spare empty tab must not pile up
+  sleep 20   # Firefox writes its session every 15 s (browser.sessionstore.interval)
+  podman stop -t 10 "$name" >/dev/null   # what a deploy does
+  podman rm -f "$name" >/dev/null
+  start
+  pages=""
+  for i in $(seq 1 20); do   # the restore finishes shortly after Firefox starts
+    pages="$(call $((20 + i)) list_pages '{}')"
+    echo "$pages" | grep -q 'test.html?first' && echo "$pages" | grep -q 'test.html?second' && break
+    sleep 1
+  done
+  echo "$pages" | grep -q 'test.html?first' || fail "first tab not restored (round $round): $pages"
+  echo "$pages" | grep -q 'test.html?second' || fail "second tab not restored (round $round): $pages"
+  [ "$(echo "$pages" | head -1 | grep -o 'about:blank' | wc -l)" -le 1 ] || fail "more than one empty tab (round $round): $pages"
+  call 50 select_page '{"url":"test.html?second"}' >/dev/null
+  snap="$(call 51 take_snapshot '{}')"
+  echo "$snap" | grep -q 'Press me' || fail "restored tab is not usable (round $round): $snap"
+  echo "session restore ok (round $round)"
+done
 echo "browser smoke OK"

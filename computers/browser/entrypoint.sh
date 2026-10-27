@@ -10,7 +10,7 @@
 #   BROWSER_TOOL_PRESET         firefox-devtools-mcp --tool-preset (default: the server's own default)
 #   BROWSER_IDLE_TIMEOUT        passed to --idle-timeout when set (e.g. 10m)
 #   BROWSER_SESSION_TIMEOUT_MS  how long an idle MCP session (and its Firefox) is kept (default 6 hours);
-#                               a new session starts a new Firefox, which loses the open pages
+#                               a new session starts a new Firefox, which restores the open tabs
 #   BROWSER_DOWNLOADS_DAYS      downloads older than this are deleted at start (default 7)
 #
 # Downloads go to /downloads, a volume the sandbox also mounts (read-only), so the agent can work on
@@ -49,7 +49,11 @@ elif [ "${BROWSER_ALLOW_NO_AUTH:-}" != "true" ]; then
 fi
 
 mcp="node /opt/mcp/node_modules/@mozilla/firefox-devtools-mcp/dist/index.js"
-mcp="$mcp --headless --firefox-path /opt/firefox/firefox --profile-path $profile --viewport ${BROWSER_VIEWPORT:-1280x800}"
+# The wrapper prepares the saved session before each Firefox start (firefox-wrapper.sh).
+mcp="$mcp --headless --firefox-path /opt/clarity-browser/firefox --profile-path $profile --viewport ${BROWSER_VIEWPORT:-1280x800}"
+# Session restore (see user.js). geckodriver overwrites these two in user.js with its automation
+# defaults; preferences passed through moz:firefoxOptions win over both.
+mcp="$mcp --pref browser.startup.page=3 --pref browser.sessionstore.resume_from_crash=true"
 [ -n "${BROWSER_TOOL_PRESET:-}" ] && mcp="$mcp --tool-preset $BROWSER_TOOL_PRESET"
 [ -n "${BROWSER_IDLE_TIMEOUT:-}" ] && mcp="$mcp --idle-timeout $BROWSER_IDLE_TIMEOUT"
 

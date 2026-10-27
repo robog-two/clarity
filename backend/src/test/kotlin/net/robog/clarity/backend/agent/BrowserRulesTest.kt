@@ -1,6 +1,7 @@
 package net.robog.clarity.backend.agent
 
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -70,6 +71,29 @@ class BrowserRulesTest : FunSpec({
                 "https://shop.example.com/checkout?x=(1)"
             parseSelectedUrl("No pages") shouldBe null
             parseSelectedUrl("1 pages (selected: 0)\n>[0] Untitled (URL unavailable)") shouldBe null
+        }
+
+        test("an empty tab where a page was gets a short note naming the page; otherwise nothing") {
+            val note = lostPageNote("about:blank", "https://www.ulta.com/signin").shouldNotBeNull()
+            note shouldContain "https://www.ulta.com/signin"
+            note shouldContain "select_page"
+            note shouldContain "navigate_page"
+            note shouldContain "report"
+            (note.length < 400) shouldBe true
+            lostPageNote(null, "https://www.ulta.com/signin").shouldNotBeNull()
+            lostPageNote("https://www.ulta.com/signin", "https://www.ulta.com/signin") shouldBe null
+            lostPageNote("about:blank", null) shouldBe null
+            lostPageNote("about:blank", "about:blank") shouldBe null
+        }
+
+        test("empty snapshots and page texts") {
+            looksEmpty("take_snapshot", "Snapshot\n\nuid=e0 body\n") shouldBe true
+            looksEmpty("take_snapshot", "uid=1_0 document \"Sign in\"\n  uid=1_1 textbox \"Username\"") shouldBe false
+            looksEmpty("get_page_text", "\n\n[full content, 0 chars]") shouldBe true
+            looksEmpty("get_page_text", "Welcome back") shouldBe false
+            looksEmpty("list_pages", "") shouldBe false
+            isBlankPage("about:blank") shouldBe true
+            isBlankPage("https://a.com/") shouldBe false
         }
 
         test("targets and typed strings") {
