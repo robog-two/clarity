@@ -127,16 +127,13 @@ fun SetupServerConnected() = Frame {
 }
 
 @PreviewTest @Screen @Composable
-fun SetupModelChecking() = Frame {
-    ModelContent(ModelState(key = "sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE", checking = true), {}, {}, {}, {})
+fun SetupModelReady() = Frame {
+    ModelContent(ModelState(result = ModelResult.Works), {}, {}, {})
 }
 
 @PreviewTest @Screen @Composable
-fun SetupModelRejected() = Frame {
-    ModelContent(
-        ModelState(key = "sk-ant-api03-EXAMPLEEXAMPLEEXAMPLE", result = ModelResult.Rejected("authentication_error: invalid x-api-key")),
-        {}, {}, {}, {},
-    )
+fun SetupModelMissing() = Frame {
+    ModelContent(ModelState(result = ModelResult.Missing), {}, {}, {})
 }
 
 private fun server(id: String, name: String?, kind: String = "imap") = ConnectorRow.Server(

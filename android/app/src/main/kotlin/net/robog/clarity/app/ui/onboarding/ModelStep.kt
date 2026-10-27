@@ -11,35 +11,37 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import net.robog.clarity.app.data.ModelKeyOutcome
 import net.robog.clarity.app.data.SetupRepository
+import net.robog.clarity.shared.session.SetupStatus
 
 sealed interface ModelResult {
-    /** "● key works". */
+    /** "● models ready": the server has its OpenRouter key. */
     data object Works : ModelResult
-    data class Rejected(val detail: String?) : ModelResult
-    /** The server cannot take a key yet (route missing); setup can go on, the key must be set later. */
+    /** The server has no OpenRouter key: it is set in the server's configuration, not here. */
+    data object Missing : ModelResult
+    /** The server does not report setup status (yet); setup can go on. */
     data object ServerNotReady : ModelResult
-    data object Failed : ModelResult
 }
 
 data class ModelState(
-    val key: String = "",
     val checking: Boolean = false,
     val result: ModelResult? = null,
 ) {
-    val canCheck: Boolean get() = key.isNotBlank() && !checking && result != ModelResult.Works
+    val canCheck: Boolean get() = !checking && result != ModelResult.Works
     val canContinue: Boolean get() = result == ModelResult.Works || result == ModelResult.ServerNotReady
 }
 
-fun ModelKeyOutcome.toResult(): ModelResult = when (this) {
-    ModelKeyOutcome.Works -> ModelResult.Works
-    is ModelKeyOutcome.Rejected -> ModelResult.Rejected(detail)
-    ModelKeyOutcome.Unavailable -> ModelResult.ServerNotReady
-    is ModelKeyOutcome.Failed -> ModelResult.Failed
+/** Pure: what the setup status says about the model key. */
+fun modelResult(status: SetupStatus?): ModelResult = when (status?.modelKey) {
+    null -> ModelResult.ServerNotReady
+    SetupStatus.KeyState.VALID -> ModelResult.Works
+    else -> ModelResult.Missing
 }
 
-/** Step 1, model: the Anthropic API key, stored and validated by the server. */
+/**
+ * Step 1, model: every model runs on OpenRouter with the server's own key (`OPENROUTER_API_KEY_FILE`),
+ * so this step only checks that the server has it; the key is never entered on the phone.
+ */
 @Inject
 @ViewModelKey(ModelStepViewModel::class)
 @ContributesIntoMap(AppScope::class)
@@ -47,14 +49,15 @@ class ModelStepViewModel(private val setup: SetupRepository) : ViewModel() {
     private val _state = MutableStateFlow(ModelState())
     val state: StateFlow<ModelState> = _state.asStateFlow()
 
-    fun onKeyChanged(value: String) = _state.update { ModelState(key = value.trim()) }
+    init {
+        check()
+    }
 
     fun check() {
-        val key = _state.value.takeIf { it.canCheck }?.key ?: return
-        _state.update { it.copy(checking = true, result = null) }
+        if (_state.value.checking) return
+        _state.update { it.copy(checking = true) }
         viewModelScope.launch {
-            val result = setup.submitModelKey(key).toResult()
-            // The key stays in memory only until this screen goes away; it is never persisted on the phone.
+            val result = modelResult(setup.status())
             _state.update { it.copy(checking = false, result = result) }
         }
     }
