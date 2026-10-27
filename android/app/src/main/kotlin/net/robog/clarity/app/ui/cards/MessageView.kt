@@ -53,6 +53,11 @@ import net.robog.clarity.app.ui.held.HeldRowView
 import net.robog.clarity.app.ui.held.heldRows
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.vault.CredentialFormCard
+import net.robog.clarity.app.vault.LocalVaultRepository
+import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.vault.credentialRowText
+import net.robog.clarity.shared.vault.CredentialRequest
+import androidx.compose.runtime.LaunchedEffect
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedItem
@@ -88,7 +93,7 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
         actions.forEach { card ->
             when (card) {
                 is Card.Proposal -> ApprovalRow(card, env)
-                is Card.CredentialRequest -> ActionRow(Icons.Outlined.Key, "a login to save", "Save it in your vault", { sheet = listOf(card) })
+                is Card.CredentialRequest -> CredentialRequestRow(card, sheetOpen = sheet != null) { sheet = listOf(card) }
                 else -> Unit
             }
         }
@@ -175,6 +180,22 @@ private fun ApprovalRow(card: Card.Proposal, env: CardEnv) {
     }
     val row = remember(held) { heldRows(listOf(held), TimeZone.currentSystemDefault()).single() }
     RowCard { HeldRowView(row, onClick = { env.onReview(held.id) }) }
+}
+
+/**
+ * A login the agent asked for. It looks the request up, so one that was saved, cancelled or closed
+ * by the server (the same login saved another way, or never filled in) does not read as waiting.
+ */
+@Composable
+private fun CredentialRequestRow(card: Card.CredentialRequest, sheetOpen: Boolean, onOpen: () -> Unit) {
+    val vault = LocalVaultRepository.current
+    var request by remember(card.requestId) { mutableStateOf<CredentialRequest?>(null) }
+    // Looked up again when the sheet closes: the person may have just saved it.
+    LaunchedEffect(card.requestId, vault, sheetOpen) {
+        if (vault != null && !sheetOpen) (vault.request(card.requestId) as? ApiResult.Success)?.let { request = it.value }
+    }
+    val (title, supporting) = credentialRowText(request)
+    ActionRow(Icons.Outlined.Key, "a login to save", title, onOpen, supporting)
 }
 
 @Composable

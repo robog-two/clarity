@@ -75,6 +75,16 @@ user_pref("browser.download.dir", "/downloads");
 user_pref("browser.download.useDownloadDir", true);
 user_pref("browser.download.manager.addToRecentDocs", false);
 user_pref("browser.helperApps.deleteTempFileOnExit", true);
+// Nobody is there to answer "what should Firefox do with this file?": save new types right away,
+// straight into the download dir (not a temp dir first), and never open them afterwards.
+user_pref("browser.download.always_ask_before_handling_new_types", false);
+user_pref("browser.download.start_downloads_in_tmp_dir", false);
+user_pref("browser.download.open_pdfs_internally", false);
+user_pref("browser.download.viewableInternally.enabledTypes", "");
+// A PDF a site sends inline ("View statement") is saved as a download too, not opened in the
+// built-in viewer: the agent works on documents in the sandbox (pdftotext), and the viewer gave it
+// no way to get the file there. computers/browser/smoke.sh checks both kinds of PDF link.
+user_pref("pdfjs.disabled", true);
 // All traffic goes through the egress proxy (computers/egress), which refuses private, loopback and
 // link-local destinations. The container has no other route out. No bypass list, not even
 // localhost: the proxy refuses it anyway, and file:// pages do not use the proxy.
