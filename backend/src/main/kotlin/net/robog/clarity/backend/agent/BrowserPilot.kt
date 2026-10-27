@@ -472,7 +472,7 @@ class BrowserPilot(
 
         /** Finds [intent] on the page: on the screenshot (Jev), or for an exact name match by the text decision model when allowed. */
         private suspend fun ground(intent: String, before: PageObservation, frame: Frame, trail: Trail): Ground {
-            if (settings.textGrounding) exactMatch(before.items, intent)?.let { exact -> textGround(intent, before, exact, trail)?.let { return it } }
+            if (settings.textGrounding) exactMatch(before.items, intent)?.let { exact -> textGround(intent, before, exact, frame, trail)?.let { return it } }
             val png = frame.png ?: return Ground.Failed(frame.why ?: "no screenshot")
             val jev = models.jev ?: return Ground.Failed("no screen model is configured")
             val g = when (val r = askGrounding("ground", intent, png, jev, trail)) {
@@ -488,9 +488,13 @@ class BrowserPilot(
             }
             // Second step: Jev may not share the helper's words ("link" for a link styled as a button), or its box sat
             // between two controls. Ask again by the name the page gives the likeliest element, and act only if Jev sees
-            // it and its box lands on that element.
+            // it and its box picks that element.
             val candidate = renameCandidate(before.items, intent)
-                ?: return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f)".format(g.pVisible))
+                ?: return Ground.NotFound(
+                    tiedCandidates(before.items, intent).takeIf { it.size > 1 }?.let { tie ->
+                        "several controls fit \"$intent\" (${tie.joinToString { "\"" + it.name + "\"" }}): name only the one you mean, by its own words, where it is or its colour, without naming the others"
+                    } ?: "\"$intent\" is not visible on the screen (Jev p=%.2f)".format(g.pVisible),
+                )
             val named = namedIntent(candidate)
             val second = when (val r = askGrounding("ground_named", named, png, jev, trail)) {
                 is Either.Left -> return r.value
@@ -499,7 +503,7 @@ class BrowserPilot(
             if (second.pVisible < settings.visibleThreshold) {
                 return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f; as $named p=%.2f)".format(g.pVisible, second.pVisible))
             }
-            return locate(second, intent, before, frame, trail, expected = candidate, earlier = g.box.takeIf { g.pVisible >= settings.visibleThreshold })
+            return locate(second, intent, before, frame, trail, expected = candidate)
         }
 
         private suspend fun askGrounding(label: String, intent: String, png: ByteArray, jev: DecisionClient, trail: Trail): Either<Ground, Grounding> {
@@ -508,40 +512,54 @@ class BrowserPilot(
             return groundingOf(result)?.let { Either.Right(it) } ?: Either.Left(Ground.Failed("Jev did not answer"))
         }
 
-        /** The element under the box centre; with [expected] (the second step) it must be that element. */
-        private suspend fun locate(g: Grounding, intent: String, before: PageObservation, frame: Frame, trail: Trail, expected: SeenElement?, earlier: DecisionAnswer.Box? = null): Ground {
+        /**
+         * The element under the box centre, unless a click there would land on something else (an invisible
+         * layer, a page-wide click-catcher, a covered control). With [expected] (the second step) it must be that
+         * element, or Jev must be sure of it by name and its box must cover more of it than of the control at the
+         * box centre; the page's name alone never decides.
+         */
+        private suspend fun locate(g: Grounding, intent: String, before: PageObservation, frame: Frame, trail: Trail, expected: SeenElement?): Ground {
             val box = g.box ?: return Ground.Failed("Jev gave no box")
+            trail.box = box // kept for the audit even when nothing is clicked
             val vw = before.vw.takeIf { it > 0 } ?: frame.width.toDouble()
             val vh = before.vh.takeIf { it > 0 } ?: frame.height.toDouble()
             val x = (box.left + box.right) / 2 * vw
             val y = (box.top + box.bottom) / 2 * vh
             val hit = page("point", mapOf("x" to x, "y" to y))?.hit ?: return Ground.NotFound("nothing to act on where \"$intent\" is on the screen")
+            hitProblem(hit, box, vw, vh)?.let { why ->
+                return Ground.NotFound("I did not click where Jev saw \"$intent\": $why")
+            }
+            val s = frame.width / vw
+            val jevBox = boxPixels(box, frame.width, frame.height)
             if (expected != null && !sameElement(hit, expected)) {
-                // The box sits across two controls: take the named one when Jev's box covers a fair part of it. Jev's
-                // step check then sees that element outlined, not the box. It must also be on top at its own centre:
-                // a field behind a dialog is not acted on.
-                val onTop = page("point", mapOf("x" to expected.centerX, "y" to expected.centerY))?.hit?.let { sameElement(it, expected) } == true
-                if (onTop && (boxCovers(box, vw, vh, expected) || (earlier != null && boxCovers(earlier, vw, vh, expected)))) {
-                    val fresh = page("target", mapOf("ref" to expected.ref))?.hit ?: expected
-                    trail.box = box
-                    val s = frame.width / vw
-                    return Ground.Hit(fresh, PixelRect((fresh.x * s).toInt(), (fresh.y * s).toInt(), (fresh.w * s).toInt(), (fresh.h * s).toInt()), "screen box + name")
+                if (!namedWins(box, g.pVisible, vw, vh, expected, hit)) {
+                    return Ground.NotFound(
+                        "\"$intent\" is not clearly on the screen: Jev's box for \"${expected.name}\" sits over ${hit.role} \"${hit.name}\" too. " +
+                            "Name it with more context: where it is or its colour, without naming the other control" +
+                            (before.dialog?.let { "; a dialog is open: \"$it\", deal with it first" } ?: ""),
+                    )
                 }
-                return Ground.NotFound("\"$intent\" is not clearly on the screen: Jev's box for \"${expected.name}\" landed on ${hit.role} \"${hit.name}\"" + (before.dialog?.let { " (a dialog is open: \"$it\"; deal with it first)" } ?: ""))
+                // Jev is sure and its box covers more of the named control: check what a click on that one would hit.
+                val named = page("point", mapOf("x" to expected.centerX, "y" to expected.centerY))?.hit?.takeIf { sameElement(it, expected) }
+                    ?: return Ground.NotFound("\"${expected.name}\" is covered by something else on the screen")
+                hitProblem(named, box, vw, vh)?.let { why -> return Ground.NotFound("I did not click \"${expected.name}\": $why") }
+                trail.box = box
+                return Ground.Hit(named, pixelRect(named, s), "screen box + name", jevBox)
             }
             trail.box = box
-            return Ground.Hit(hit, boxPixels(box, frame.width, frame.height), if (expected == null) "screen" else "screen, by name")
+            return Ground.Hit(hit, pixelRect(hit, s), if (expected == null) "screen" else "screen, by name", jevBox)
         }
 
         /** The cheaper text path: Decision-1 confirms the exact match among up to 20 candidates; null falls back to the screenshot. */
-        private suspend fun textGround(intent: String, before: PageObservation, exact: SeenElement, trail: Trail): Ground? {
+        private suspend fun textGround(intent: String, before: PageObservation, exact: SeenElement, frame: Frame, trail: Trail): Ground? {
             val text = models.text ?: return null
             val options = candidates(before.items, intent).let { if (exact in it) it else (listOf(exact) + it).take(20) }
             val answer = trail.ask("pick", models.textModel, text, pickAsk(intent, options)).getOrNull() ?: return null
             val choice = answer.answers[Q_PICK] as? DecisionAnswer.Choice ?: return null
             val p = choice.probabilities[choice.choice] ?: choice.confidence ?: 0.0
             if (choice.choice != exact.ref || p < settings.visibleThreshold) return null
-            return Ground.Hit(exact, null, "text")
+            val vw = before.vw.takeIf { it > 0 } ?: frame.width.toDouble()
+            return Ground.Hit(exact, if (frame.width > 0) pixelRect(exact, frame.width / vw) else null, "text")
         }
 
         /** Jev's check of the step on the screenshot with the target outlined; a failure is a [JevView] that asks the person. */
@@ -859,6 +877,13 @@ class BrowserPilot(
 
         // ---- audit ----------------------------------------------------------------------------
 
+        /** The stored before frame: what is clicked outlined in red, what Jev pointed at dashed blue. */
+        private fun annotate(png: ByteArray, frame: Frame, hit: Ground.Hit?, trail: Trail?): ByteArray {
+            val jevBox = hit?.jevBox ?: trail?.box?.takeIf { frame.width > 0 }?.let { boxPixels(it, frame.width, frame.height) }
+            if (hit?.box == null && jevBox == null) return png
+            return editPng(png, outline = hit?.box, secondary = jevBox) ?: png
+        }
+
         private suspend fun record(
             tool: String,
             before: PageObservation?,
@@ -879,7 +904,7 @@ class BrowserPilot(
                     runId = scope.runId, seq = seq, at = clock.now(), tool = tool,
                     tabUrl = before?.url?.let(gate::scrub), tabTitle = before?.title?.let(gate::scrub),
                     intent = intent?.let(gate::scrub), expect = expect?.let(gate::scrub),
-                    beforePng = beforeFrame?.storable, beforeWithheld = beforeFrame?.withheld == true,
+                    beforePng = beforeFrame?.storable?.let { png -> annotate(png, beforeFrame, hit, trail) }, beforeWithheld = beforeFrame?.withheld == true,
                     box = trail?.box?.let { b -> buildJsonObject { put("top", b.top); put("bottom", b.bottom); put("left", b.left); put("right", b.right); b.confidence?.let { put("confidence", it) } } },
                     hitRole = element?.role, hitName = element?.name?.let(gate::scrub),
                     jev = trail?.json(), gate = gateOutcome, action = action?.let(gate::scrub),
@@ -914,7 +939,8 @@ class Frame(val png: ByteArray?, val why: String?, val withheld: Boolean, val wi
 
 /** Where grounding found the element an intent names, or why not. */
 sealed interface Ground {
-    data class Hit(val element: SeenElement, val box: PixelRect?, val how: String) : Ground
+    /** [box] is the element's own rect on the frame (what will be clicked), [jevBox] what Jev pointed at. */
+    data class Hit(val element: SeenElement, val box: PixelRect?, val how: String, val jevBox: PixelRect? = null) : Ground
 
     data class NotFound(val why: String) : Ground
 

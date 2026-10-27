@@ -173,22 +173,50 @@
     const f = fields();
     return { ...page(), dialog: dialogOf(), items, total, otp: !!f.otp, password: !!f.password, signals: signals() };
   }
-  if (op === "point") {
-    let el = doc.elementFromPoint(a.x, a.y), x = a.x, y = a.y;
+  // The deepest element at a viewport point, through open shadow roots and same-origin frames.
+  const topAt = (x0, y0) => {
+    let el = doc.elementFromPoint(x0, y0), x = x0, y = y0;
     for (let i = 0; el && i < 8; i++) {
       if (el.shadowRoot) { const inner = el.shadowRoot.elementFromPoint(x, y); if (inner && inner !== el) { el = inner; continue; } }
       if (el.tagName === "IFRAME") { try { const r = el.getBoundingClientRect(); const d = el.contentDocument; if (d) { x -= r.left; y -= r.top; const inner = d.elementFromPoint(x, y); if (inner) { el = inner; continue; } } } catch (e) {} }
       break;
     }
+    return el;
+  };
+  const up = (n) => n.parentElement || (n.getRootNode().host || null);
+  const within = (top, el) => { for (let n = top; n; n = up(n)) if (n === el) return true; return false; };
+  // What a click on el would really hit: its opacity with its ancestors', visibility, whether it paints
+  // anything itself, the control underneath it, and whether it is on top at its own centre.
+  const facts = (el, x, y) => {
+    let opacity = 1;
+    for (let n = el; n && n.nodeType === 1; n = up(n)) opacity *= parseFloat(n.ownerDocument.defaultView.getComputedStyle(n).opacity) || 0;
+    const st = el.ownerDocument.defaultView.getComputedStyle(el);
+    const clear = (c) => c === "transparent" || /rgba\([^)]*,\s*0(\.0+)?\)$/.test(c);
+    const border = ["Top", "Right", "Bottom", "Left"].some((s) => parseFloat(st["border" + s + "Width"]) > 0 && st["border" + s + "Style"] !== "none" && !clear(st["border" + s + "Color"]));
+    const painted = el.matches("input,select,textarea,img,video,canvas,svg") || st.backgroundImage !== "none" || !clear(st.backgroundColor) ||
+      border || st.boxShadow !== "none" || (el.innerText || "").trim().length > 0 || !!el.querySelector("img,svg,canvas,video,picture");
+    let under = null;
+    for (const e of doc.elementsFromPoint(x, y)) {
+      if (e === el || within(e, el) || within(el, e)) continue;
+      if (INTERACTIVE.has(roleOf(e))) { const r = rectOf(e); under = r.w * r.h; break; }
+    }
+    const r = rectOf(el);
+    const top = topAt(r.x + r.w / 2, r.y + r.h / 2);
+    return { opacity, hidden: st.visibility === "hidden", painted, under, onTop: !!top && within(top, el) };
+  };
+  if (op === "point") {
+    const el = topAt(a.x, a.y);
     if (!el) return { ...page(), hit: null };
-    let cur = el, hit = null;
+    let cur = el, hit = null, target = el;
     for (let i = 0; cur && i < 8; i++) {
       const role = roleOf(cur);
-      if (INTERACTIVE.has(role)) { hit = item(cur, role); break; }
-      if (cur.tagName === "LABEL" && cur.control) { hit = item(cur.control, roleOf(cur.control)); break; }
-      cur = cur.parentElement || (cur.getRootNode().host || null);
+      if (INTERACTIVE.has(role)) { hit = item(cur, role); target = cur; break; }
+      if (cur.tagName === "LABEL" && cur.control) { hit = item(cur.control, roleOf(cur.control)); target = cur.control; break; }
+      cur = up(cur);
     }
-    return { ...page(), hit: hit || item(el, roleOf(el) || "text") };
+    hit = hit || item(el, roleOf(el) || "text");
+    hit.paint = facts(target, a.x, a.y);
+    return { ...page(), hit };
   }
   if (op === "target") {
     const el = byRef(a.ref);

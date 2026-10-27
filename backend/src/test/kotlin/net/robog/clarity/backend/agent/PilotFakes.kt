@@ -48,6 +48,7 @@ class FakeSite(val popup: Boolean = false) {
     data class El(
         val ref: String, val role: String, val name: String, val depth: Int = 4,
         val type: String? = null, val ac: String? = null, val x: Double = 40.0, val y: Double = 100.0, val w: Double = 160.0, val h: Double = 40.0,
+        val paint: HitFacts? = null,
         val action: (FakeSite.() -> Unit)? = null,
     )
 
@@ -58,6 +59,9 @@ class FakeSite(val popup: Boolean = false) {
     var codesSent = 0
     var method: String? = null
     var signedIn = false
+    /** A layer over the method page that a click must never reach (its [El.paint] says what it is). */
+    var overlay: El? = null
+    var hijacked = false
     val values = LinkedHashMap<String, String>()
     val clicked = CopyOnWriteArrayList<String>()
     private val tokens = HashMap<String, String>()
@@ -98,7 +102,7 @@ class FakeSite(val popup: Boolean = false) {
 
     fun method(inPopup: Boolean): Page = Page(
         "https://login.example.com/method" + if (inPopup) "?popup=1" else "", "Clarity ID",
-        listOf(
+        listOfNotNull(overlay) + listOf(
             El("c20", "heading", "Select a method", depth = 13, y = 40.0),
             El("c21", "radio", "Email (d•••@example.com)", depth = 14, y = 120.0, w = 300.0) { method = "email" },
             El("c22", "radio", "SMS (••• •• 42)", depth = 14, y = 180.0, w = 300.0) { method = "sms" },
@@ -150,6 +154,7 @@ class FakeSite(val popup: Boolean = false) {
         values[e.ref]?.let { put("value", if (e.type == "password") "•••" else it) }
         e.type?.let { put("type", it) }; e.ac?.let { put("ac", it) }
         put("x", e.x); put("y", e.y); put("w", e.w); put("h", e.h); put("inView", true)
+        e.paint?.let { put("paint", observationJson.encodeToJsonElement(HitFacts.serializer(), it)) }
     }
 
     private fun pageJson(extra: JsonObject.() -> Map<String, JsonElement> = { emptyMap() }): Map<String, JsonElement> = mapOf(

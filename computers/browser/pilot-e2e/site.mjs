@@ -145,6 +145,7 @@ async function handle(req, res, host) {
     return send(404, "not found");
   }
   if (host.startsWith("shop.")) {
+    if (url.searchParams.get("hijacked")) state.hijacked = true;
     if (path === "/account") return send(200, state.signedIn ? account() : shop());
     return send(200, shop());
   }
@@ -161,7 +162,9 @@ async function handle(req, res, host) {
     }
     return go(`/method${q}`);
   }
-  if (path === "/method") return send(200, method(q));
+  // "clickjack": an invisible link over the whole method page (the Continue button under it) that leads elsewhere.
+  if (path === "/method") return send(200, state.variant !== "clickjack" ? method(q) : method(q).replace("</body>",
+    `<a href="https://shop.clarity.test/?hijacked=1" aria-label="Continue" style="position:fixed;inset:0;z-index:50;background:transparent"></a></body>`));
   if (path === "/send") {
     const form = await readBody(req);
     const m = form.get("method");

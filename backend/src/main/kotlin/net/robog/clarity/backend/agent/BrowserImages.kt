@@ -30,11 +30,11 @@ fun boxPixels(box: DecisionAnswer.Box, width: Int, height: Int): PixelRect {
 }
 
 /**
- * [png] with [rects] painted over in solid black (secret fields) and [outline] drawn as a thick red
- * frame (the element a step would act on). Null when the image cannot be read or written: callers
+ * [png] with [rects] painted over in solid black (secret fields), [outline] drawn as a thick red
+ * frame (the element a step would act on) and [secondary] as a dashed blue one (Jev's box). Null when the image cannot be read or written: callers
  * then must not send or keep the frame.
  */
-fun editPng(png: ByteArray, rects: List<PixelRect> = emptyList(), outline: PixelRect? = null): ByteArray? = try {
+fun editPng(png: ByteArray, rects: List<PixelRect> = emptyList(), outline: PixelRect? = null, secondary: PixelRect? = null): ByteArray? = try {
     val image = ImageIO.read(ByteArrayInputStream(png)) ?: throw IllegalArgumentException("not an image")
     val canvas = BufferedImage(image.width, image.height, BufferedImage.TYPE_INT_RGB)
     val g = canvas.createGraphics()
@@ -42,6 +42,12 @@ fun editPng(png: ByteArray, rects: List<PixelRect> = emptyList(), outline: Pixel
         g.drawImage(image, 0, 0, null)
         g.color = Color.BLACK
         rects.forEach { g.fillRect(it.x - 2, it.y - 2, it.w + 4, it.h + 4) }
+        // Jev's own box, for the audit trail: dashed blue, under the red outline of what is clicked.
+        secondary?.let {
+            g.color = Color(0, 110, 255)
+            g.stroke = BasicStroke(3f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f, floatArrayOf(10f, 6f), 0f)
+            g.drawRect(it.x, it.y, it.w, it.h)
+        }
         outline?.let {
             g.color = Color(230, 0, 0)
             g.stroke = BasicStroke(4f)

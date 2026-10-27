@@ -174,10 +174,31 @@ class BrowserPilotPureTest : FunSpec({
         groundingAgrees(reject, items, "the Reject all button") shouldBe true
         groundingAgrees(accept, items, "the SMS option") shouldBe true // nothing to compare with
         namedIntent(reject) shouldBe "the control labelled \"Reject all\""
-        // Jev's two boxes from the live cookie dialog (1280 x 714): the first covers 38% of "Reject all", the second 15%.
-        boxCovers(DecisionAnswer.Box(0.55, 0.62, 0.36, 0.46, null), 1280.0, 714.0, reject) shouldBe true
-        boxCovers(DecisionAnswer.Box(0.55, 0.62, 0.35, 0.44, null), 1280.0, 714.0, reject) shouldBe false
-        boxCovers(DecisionAnswer.Box(0.1, 0.2, 0.1, 0.2, null), 1280.0, 714.0, reject) shouldBe false
+        // Jev's two boxes from the live cookie dialog (1280 x 714): neither covers more of "Reject all" than of "Accept all".
+        val first = DecisionAnswer.Box(0.55, 0.62, 0.36, 0.46, null)
+        val second = DecisionAnswer.Box(0.55, 0.62, 0.35, 0.44, null)
+        (coveredShare(first, 1280.0, 714.0, reject) in 0.37..0.39) shouldBe true
+        (coveredShare(first, 1280.0, 714.0, accept) in 0.57..0.59) shouldBe true
+        namedWins(first, 0.99, 1280.0, 714.0, reject, accept) shouldBe false
+        namedWins(second, 0.99, 1280.0, 714.0, reject, accept) shouldBe false
+        val onReject = DecisionAnswer.Box(0.55, 0.62, 0.42, 0.52, null)
+        namedWins(onReject, 0.95, 1280.0, 714.0, reject, accept) shouldBe true
+        namedWins(onReject, 0.85, 1280.0, 714.0, reject, accept) shouldBe false // not sure enough by name
+    }
+
+    test("hitProblem: transparent, hidden, unpainted layers over a control, page-wide catchers and covered controls are refused") {
+        val small = DecisionAnswer.Box(0.5, 0.56, 0.3, 0.4, null)
+        val button = SeenElement("c1", "button", "Continue", x = 380.0, y = 360.0, w = 114.0, h = 41.0)
+        hitProblem(button, small, 1280.0, 714.0).shouldBeNull()
+        hitProblem(button.copy(paint = HitFacts()), small, 1280.0, 714.0).shouldBeNull()
+        hitProblem(button.copy(paint = HitFacts(opacity = 0.05)), small, 1280.0, 714.0)!! shouldContain "transparent"
+        hitProblem(button.copy(paint = HitFacts(hidden = true)), small, 1280.0, 714.0)!! shouldContain "hidden"
+        hitProblem(button.copy(paint = HitFacts(onTop = false)), small, 1280.0, 714.0)!! shouldContain "on top"
+        val page = SeenElement("c2", "link", "", x = 0.0, y = 0.0, w = 1280.0, h = 714.0)
+        hitProblem(page.copy(paint = HitFacts(painted = false, under = 114.0 * 41)), small, 1280.0, 714.0)!! shouldContain "invisible layer"
+        hitProblem(page.copy(paint = HitFacts(painted = true)), small, 1280.0, 714.0)!! shouldContain "click-catcher"
+        // An unpainted control smaller than what is under it (an icon link inside a card) is fine.
+        hitProblem(button.copy(paint = HitFacts(painted = false, under = 1280.0 * 300)), small, 1280.0, 714.0).shouldBeNull()
     }
 })
 

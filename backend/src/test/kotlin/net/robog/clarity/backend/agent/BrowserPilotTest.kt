@@ -316,11 +316,50 @@ class BrowserPilotTest : FunSpec({
         rig.site.clicked shouldBe listOf("Reject all")
         rig.audit.rows.last().jev!!.keys shouldBe setOf("ground", "ground_named", "approve", "verify")
 
+        // An intent that names both controls is a tie: no guess, whatever Jev's box says.
+        val tie = PilotRig()
+        tie.jev.visible = { tie.site.page.els.first { it.name == "Accept all" } }
+        tie.act("the white Reject all button next to the blue Accept all button", "the banner closes") shouldContain "several controls fit"
+        tie.site.clicked.shouldBeEmpty()
+
         // When the second box lands on the wrong control too, nothing is clicked.
         val stuck = PilotRig()
         stuck.jev.visible = { stuck.site.page.els.first { it.name == "Accept all" } }
         stuck.act("the Reject all button", "the banner closes") shouldContain "Not found"
         stuck.site.clicked.shouldBeEmpty()
+    }
+
+    test("clickjacking: an invisible layer, a transparent one, a page-wide catcher or a covered control is never clicked") {
+        val layers = listOf(
+            FakeSite.El("c29", "link", "Continue", x = 0.0, y = 0.0, w = 800.0, h = 600.0, paint = HitFacts(painted = false, under = 6400.0)) { hijacked = true } to "invisible layer",
+            FakeSite.El("c29", "button", "Continue", y = 260.0, paint = HitFacts(opacity = 0.02)) { hijacked = true } to "transparent",
+            FakeSite.El("c29", "link", "Continue", x = 0.0, y = 0.0, w = 800.0, h = 600.0, paint = HitFacts(painted = true)) { hijacked = true } to "far larger than what Jev pointed at",
+            FakeSite.El("c29", "button", "Continue", y = 260.0, paint = HitFacts(onTop = false)) { hijacked = true } to "something else is on top",
+        )
+        for ((layer, why) in layers) {
+            val rig = PilotRig()
+            rig.site.overlay = layer
+            rig.site.open(rig.site.method(false))
+            // Jev points at a small box; the page answers with the layer.
+            rig.jev.visible = { intent -> if ("Continue" in intent) rig.site.page.els.first { it.ref == "c23" } else rig.site.find(intent) }
+            val text = rig.act("the Continue button", "a code page")
+            text shouldContain "Not found"
+            text shouldContain why
+            rig.site.hijacked shouldBe false
+            rig.site.clicked.shouldBeEmpty()
+            rig.site.codesSent shouldBe 0
+        }
+    }
+
+    test("the approval image outlines the element that will be clicked, and the stored frame also shows Jev's box") {
+        val rig = PilotRig()
+        rig.act("the Sign in link", "a sign-in form")
+        val row = rig.audit.rows.single()
+        val stored = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(row.beforePng!!))
+        // "Sign in" is at x 40..200, y 100..140 on the fake page: red frame just outside it.
+        (stored.getRGB(37, 120) and 0xff0000) shouldBe 0xe60000
+        // Jev's box (the same element in the fake) is drawn dashed blue on top of the frame's inside edge.
+        (stored.getRGB(45, 101) and 0x0000ff) shouldBe 0xff
     }
 
     test("a wrong code leads back to ask_code without a new code from the site; three rejections hand back") {

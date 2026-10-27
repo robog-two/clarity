@@ -26,7 +26,7 @@ object ObserveScript {
     /** The script without its comment lines and indentation (evaluate_script takes at most 16 KiB). */
     val source: String by lazy {
         val raw = ObserveScript::class.java.getResource("/browser/observe.js")?.readText() ?: error("observe.js missing from resources")
-        raw.lineSequence().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("//") }.joinToString("\n")
+        raw.lineSequence().map { it.trim().replace(Regex(";\\s+// .*$"), ";") }.filter { it.isNotEmpty() && !it.startsWith("//") }.joinToString("\n")
     }
 
     /** The `function` argument of evaluate_script for [op] with [args]. */
@@ -59,6 +59,8 @@ data class SeenElement(
     val w: Double = 0.0,
     val h: Double = 0.0,
     val inView: Boolean = true,
+    /** For a hit under Jev's box only: what a click there would really land on ([hitProblem]). */
+    val paint: HitFacts? = null,
 ) {
     val centerX: Double get() = x + w / 2
     val centerY: Double get() = y + h / 2
@@ -79,6 +81,57 @@ data class SeenElement(
         if (!inView) append(" (off screen)")
     }
 }
+
+/**
+ * What the observation script found about the element a click would land on: its [opacity] with its
+ * ancestors', whether it is visibility-[hidden], whether it [painted] anything itself (background,
+ * border, shadow, text or media), the area of the control [under] it at the point, and whether it is
+ * [onTop] at its own centre (where the click goes).
+ */
+@Serializable
+data class HitFacts(
+    val opacity: Double = 1.0,
+    val hidden: Boolean = false,
+    val painted: Boolean = true,
+    val under: Double? = null,
+    val onTop: Boolean = true,
+)
+
+/**
+ * Pure: why a hit must not be clicked (a clickjacking layer, or something covering it), or null.
+ * [box] is Jev's box in fractions of the [vw] x [vh] viewport.
+ */
+fun hitProblem(hit: SeenElement, box: DecisionAnswer.Box?, vw: Double, vh: Double): String? {
+    val f = hit.paint ?: return null
+    val area = hit.w * hit.h
+    return when {
+        f.opacity < 0.1 -> "it is transparent (opacity %.2f)".format(f.opacity)
+        f.hidden -> "it is hidden (visibility: hidden)"
+        !f.painted && f.under != null && area > f.under -> "it is an invisible layer over the control underneath"
+        box != null && area > 6 * (box.right - box.left) * vw * (box.bottom - box.top) * vh && area > 0.25 * vw * vh ->
+            "it is far larger than what Jev pointed at (a page-wide click-catcher)"
+        !f.onTop -> "something else is on top of it"
+        else -> null
+    }
+}
+
+/** Pure: the share of [element]'s area that [box] (fractions of a [vw] x [vh] viewport) covers. */
+fun coveredShare(box: DecisionAnswer.Box, vw: Double, vh: Double, element: SeenElement): Double {
+    if (element.w <= 0 || element.h <= 0) return 0.0
+    val w = minOf(box.right * vw, element.x + element.w) - maxOf(box.left * vw, element.x)
+    val h = minOf(box.bottom * vh, element.y + element.h) - maxOf(box.top * vh, element.y)
+    return if (w <= 0 || h <= 0) 0.0 else (w * h) / (element.w * element.h)
+}
+
+/** A sure by-name answer, for taking the named control when the box centre is on its neighbour. */
+const val NAMED_SURE = 0.9
+
+/**
+ * Pure: Jev's by-name box ([box], with [p] visible) picks [named] over [atCentre], the control under
+ * the box centre: Jev is sure (p ≥ [NAMED_SURE]) and the box covers more of the named control.
+ */
+fun namedWins(box: DecisionAnswer.Box, p: Double, vw: Double, vh: Double, named: SeenElement, atCentre: SeenElement): Boolean =
+    p >= NAMED_SURE && coveredShare(box, vw, vh, named) > coveredShare(box, vw, vh, atCentre)
 
 /** What `look` and `changes` return about the page. */
 @Serializable
@@ -433,21 +486,27 @@ fun renameCandidate(items: List<SeenElement>, intent: String): SeenElement? {
  * ([renameCandidate]); true when there is no candidate to compare with.
  */
 fun groundingAgrees(hit: SeenElement, items: List<SeenElement>, intent: String): Boolean {
+    // "the Reject all button next to Accept all" fits both: when the hit is one of several equal fits, it is a guess.
+    if (tiedCandidates(items, intent).let { tie -> tie.size > 1 && tie.any { sameElement(it, hit) } }) return false
     val candidate = renameCandidate(items, intent) ?: return true
     if (sameElement(hit, candidate)) return true
     val want = words(intent).toSet()
     return words(hit.name).count { it in want } >= words(candidate.name).count { it in want }
 }
 
-/**
- * Pure: Jev's [box] (fractions of a [vw] x [vh] viewport) covers at least [share] of [element]'s area,
- * so the named element is really inside what Jev pointed at.
- */
-fun boxCovers(box: DecisionAnswer.Box, vw: Double, vh: Double, element: SeenElement, share: Double = 0.25): Boolean {
-    if (element.w <= 0 || element.h <= 0) return false
-    val w = minOf(box.right * vw, element.x + element.w) - maxOf(box.left * vw, element.x)
-    val h = minOf(box.bottom * vh, element.y + element.h) - maxOf(box.top * vh, element.y)
-    return w > 0 && h > 0 && (w * h) / (element.w * element.h) >= share
+/** Pure: [element]'s rect on a screenshot [scale] times its CSS pixels. */
+fun pixelRect(element: SeenElement, scale: Double): PixelRect =
+    PixelRect((element.x * scale).toInt(), (element.y * scale).toInt(), (element.w * scale).toInt().coerceAtLeast(1), (element.h * scale).toInt().coerceAtLeast(1))
+
+/** Pure: the controls that share the most words with [intent], when there is no exact match (more than one is a tie). */
+fun tiedCandidates(items: List<SeenElement>, intent: String): List<SeenElement> {
+    if (exactMatch(items, intent) != null) return emptyList()
+    val want = words(intent).toSet()
+    val scored = items.filter { it.role != "text" && it.role != "heading" && it.name.isNotBlank() }
+        .map { it to words(it.name).count { w -> w in want } }
+        .filter { it.second > 0 }
+    val best = scored.maxOfOrNull { it.second } ?: return emptyList()
+    return scored.filter { it.second == best }.map { it.first }
 }
 
 /** Pure: the second grounding question's target, by the element's own visible name. */
