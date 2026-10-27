@@ -25,9 +25,9 @@ class ProviderGatewayFactory(private val config: AgentConfig) : ModelGatewayFact
     }
 }
 
-/** The OpenRouter gateway, through the same egress proxy as Anthropic (`CLARITY_HTTPS_PROXY`). */
+/** The OpenRouter gateway with the configured routing, through the same egress proxy as Anthropic (`CLARITY_HTTPS_PROXY`). */
 fun openRouterGateway(apiKey: String, config: AgentConfig, env: Map<String, String> = System.getenv()): OpenRouterModelGateway =
-    OpenRouterModelGateway(apiKey, config.openRouterBaseUrl, httpsProxyFromEnv(env))
+    OpenRouterModelGateway(apiKey, config.openRouterBaseUrl, httpsProxyFromEnv(env), routing = config.openRouterRouting)
 
 /**
  * The one place Anthropic SDK clients are configured: API key, optional base URL (tests), and the

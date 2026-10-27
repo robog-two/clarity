@@ -42,7 +42,8 @@ class IngestRoutes(
             authenticate(AuthProviders.CONNECTOR) {
                 route(ApiPaths.INGEST) {
                     put("manifest") {
-                        registry.acceptManifest(call.connector(), call.receive<ConnectorManifest>())
+                        val principal = call.principal<ConnectorPrincipal>() ?: throw ProblemException(EdgeProblem.Unauthorized())
+                        registry.acceptManifest(principal.connectorId, call.receive<ConnectorManifest>(), ownDevice = principal.isOwnDevice)
                         call.respond(HttpStatusCode.NoContent)
                     }
                     get("config") {

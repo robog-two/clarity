@@ -43,6 +43,6 @@ class ConnectorAuthenticator(
     suspend fun authenticate(token: String): Either<AuthFailure, ConnectorPrincipal> {
         registry.authenticateKey(sha256(token))?.let { return ConnectorPrincipal(it).right() }
         if (token.count { it == '.' } != 2) return AuthFailure("unknown connector key").left()
-        return deviceAuth.authenticate(token).map { ConnectorPrincipal(registry.ensureDeviceConnector(it.deviceId)) }
+        return deviceAuth.authenticate(token).map { ConnectorPrincipal(registry.ensureDeviceConnector(it.deviceId), it.deviceId) }
     }
 }

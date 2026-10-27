@@ -55,7 +55,6 @@ import net.robog.clarity.app.testutil.ScreenSettings
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.app.testutil.signedIn
-import net.robog.clarity.app.ui.onboarding.ModelKeyOutcome
 import net.robog.clarity.shared.session.Settings
 import net.robog.clarity.shared.session.SetupStatus
 
@@ -110,7 +109,7 @@ class ForgetServerTest {
         val vault = FakeVaultKeys()
         val sessions = DefaultSessionRepository(
             sessionStore, FakeDeviceKey(), cache,
-            perServerState(sync, pushWork, connectorWork, scheduler, dnd, notifier, flag, ledger, cursor, vault),
+            perServerState(sync, pushWork, connectorWork, net.robog.clarity.app.connector.NoOpPhoneConnector(), scheduler, dnd, notifier, flag, ledger, cursor, vault),
         )
 
         /** A phone paired and set up, with something of everything. */
@@ -118,7 +117,8 @@ class ForgetServerTest {
             sessionStore.save(signedIn())
             flag.markDone()
             ledger.claim(Arrival.Item(agentItem(7, "notified")))
-            cursor.advance(1819, T0, SmsAnchor(1, "abc"))
+            cursor.advance(1819, 1819, SmsAnchor(1, "abc"))
+            cursor.finish(T0, null)
             callCache.save(Settings(homeZone = "UTC"))
             AlarmSlot.entries.forEach { alarms.set(it, T0 + 1.hours) }
             dndState.save(DndState(T0 + 2.hours, NotificationManager.INTERRUPTION_FILTER_ALL))
@@ -150,7 +150,7 @@ class ForgetServerTest {
         assertTrue(r.ledger.claim(Arrival.Item(agentItem(7, "notified"))), "the old server's claims are gone")
         assertEquals(0, r.cursor.lastId())
         assertNull(r.cursor.anchor())
-        assertNull(r.cursor.lastSyncAt.first(), "\"last synced\" starts over")
+        assertEquals(net.robog.clarity.app.connector.SmsSyncStatus(), r.cursor.status.first(), "the sync status starts over")
         assertNull(r.callCache.load(), "a reboot cannot re-arm the old schedule")
         assertTrue(r.alarms.set.isEmpty(), "no call, heads-up or snooze")
         assertNull(r.dndState.load())

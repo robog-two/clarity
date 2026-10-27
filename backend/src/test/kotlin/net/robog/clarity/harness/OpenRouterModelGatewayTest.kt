@@ -21,6 +21,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -120,7 +121,7 @@ class OpenRouterModelGatewayTest : FunSpec({
         body["stream"]?.jsonPrimitive?.content shouldBe "true"
         body["stream_options"] shouldBe buildJsonObject { put("include_usage", true) }
         body["usage"] shouldBe buildJsonObject { put("include", true) }
-        body["provider"] shouldBe buildJsonObject { put("data_collection", "deny") }
+        body["provider"] shouldBe DEFAULT_PROVIDER
         body["reasoning"] shouldBe buildJsonObject { put("effort", "high") }
         body["tool_choice"]?.jsonPrimitive?.content shouldBe "auto"
         body["tools"]!!.jsonArray.map { it.jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content } shouldContainExactly listOf("list", "zeta")
@@ -172,6 +173,22 @@ class OpenRouterModelGatewayTest : FunSpec({
         messages[1]["content"] shouldBe JsonNull
         listOf("low", "medium", "high", "xhigh", "max").map(OpenRouterModelGateway::reasoningEffort) shouldContainExactly
             listOf("low", "medium", "high", "high", "high")
+    }
+
+    test("provider routing: zero data retention, fp8 or better, cheapest first by default; each can be turned off") {
+        OpenRouterModelGateway.buildBody(simple())["provider"] shouldBe DEFAULT_PROVIDER
+        OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(zdr = false, quantizations = emptyList(), sort = null))["provider"] shouldBe
+            buildJsonObject { put("data_collection", "deny") }
+        OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(quantizations = listOf("bf16"), sort = "throughput"))["provider"] shouldBe
+            buildJsonObject {
+                put("data_collection", "deny")
+                put("zdr", true)
+                put("quantizations", JsonArray(listOf(JsonPrimitive("bf16"))))
+                put("sort", "throughput")
+            }
+        val pinned = OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(order = listOf("DeepInfra", "Novita"), allowFallbacks = false))["provider"]!!.jsonObject
+        pinned["order"] shouldBe JsonArray(listOf(JsonPrimitive("DeepInfra"), JsonPrimitive("Novita")))
+        pinned["allow_fallbacks"] shouldBe JsonPrimitive(false)
     }
 
     test("server tools are refused") {
@@ -242,7 +259,7 @@ class OpenRouterModelGatewayTest : FunSpec({
             seen.headers["accept"] shouldBe listOf("text/event-stream")
             val sent = HarnessJson.parseToJsonElement(seen.body).jsonObject
             sent["stream"] shouldBe JsonPrimitive(true)
-            sent["provider"] shouldBe buildJsonObject { put("data_collection", "deny") }
+            sent["provider"] shouldBe DEFAULT_PROVIDER
         }
     }
 
@@ -339,3 +356,11 @@ class OpenRouterModelGatewayTest : FunSpec({
         }
     }
 })
+
+/** The `provider` object sent with the default [OpenRouterRouting]. */
+private val DEFAULT_PROVIDER = buildJsonObject {
+    put("data_collection", "deny")
+    put("zdr", true)
+    put("quantizations", JsonArray(listOf("fp8", "bf16", "fp16").map(::JsonPrimitive)))
+    put("sort", "price")
+}

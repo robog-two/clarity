@@ -169,6 +169,7 @@ interface AppGraph : ViewModelGraph {
         sync: FeedSync,
         pushWork: PushFallbackWork,
         connectorWork: ConnectorWork,
+        phone: PhoneConnector,
         callScheduler: CallScheduler,
         dnd: DndActionHandler,
         notifier: PushNotifier,
@@ -178,7 +179,7 @@ interface AppGraph : ViewModelGraph {
         vaultKeys: VaultKeys,
     ): SessionRepository = DefaultSessionRepository(
         sessions, key, cache,
-        perServerState(sync, pushWork, connectorWork, callScheduler, dnd, notifier, flag, ledger, smsCursor, vaultKeys),
+        perServerState(sync, pushWork, connectorWork, phone, callScheduler, dnd, notifier, flag, ledger, smsCursor, vaultKeys),
     )
 
     @Provides @SingleIn(AppScope::class)

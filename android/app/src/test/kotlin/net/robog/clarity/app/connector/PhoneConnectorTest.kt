@@ -9,13 +9,12 @@ import kotlin.test.assertFalse
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
-import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import net.robog.clarity.app.data.ApiError
@@ -26,6 +25,7 @@ import net.robog.clarity.app.testutil.FakeSessionStore
 import net.robog.clarity.app.testutil.FixedClock
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.signedIn
+import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.action.ActionId
 import net.robog.clarity.shared.action.ActionOutcome
@@ -33,6 +33,8 @@ import net.robog.clarity.shared.action.ActionPoll
 import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.action.ConnectorAction
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.connector.GrantState
+import net.robog.clarity.shared.connector.GrantsUpdate
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.EmailDraft
 import net.robog.clarity.shared.governance.ProposedAction
@@ -90,6 +92,16 @@ class SmsMappingTest {
         assertTrue(before != smsSourceId(sms(9).copy(dateMillis = 1)), "the same words another time")
     }
 
+    @Test fun alphanumericSendersKeepTheirName() {
+        val payload = smsToRecord(sms(3, address = "AMAZON"), account, T0)!!.payload as MessagePayload
+        assertEquals(Handle(Handle.Kind.OTHER, "AMAZON", "AMAZON"), payload.sender)
+        assertEquals(Handle.phone("+1 555 0101"), smsParty(" +1 555 0101 "))
+    }
+
+    @Test fun theConnectorIdIsLowercaseLikeTheServers() {
+        assertEquals("device-abc-1", phoneConnectorId("ABC-1"))
+    }
+
     @Test fun draftsOutboxAndBlankAddressesAreSkipped() {
         assertNull(smsToRecord(sms(1, type = 3), account, T0))
         assertNull(smsToRecord(sms(2, address = "  "), account, T0))
@@ -119,14 +131,30 @@ private class FakeIngest : IngestApi {
     var pushFailure: ApiError? = null
     var rejectAll = false
     var pollFailure: ApiError? = null
+    var manifestFailure: ApiError? = null
+    /** The server grants messages when it gets the manifest (as the backend does for a device's own connector). */
+    var grantedOnManifest = true
+    var granted = false
+    val grants = mutableListOf<Pair<ConnectorId, GrantsUpdate>>()
 
-    override suspend fun putManifest(manifest: ConnectorManifest): ApiResult<Unit> { manifests += manifest; return ApiResult.Success(Unit) }
+    override suspend fun putManifest(manifest: ConnectorManifest): ApiResult<Unit> {
+        manifestFailure?.let { return ApiResult.Failure(it) }
+        manifests += manifest
+        if (grantedOnManifest) granted = true
+        return ApiResult.Success(Unit)
+    }
+
+    override suspend fun putGrants(id: ConnectorId, update: GrantsUpdate): ApiResult<Unit> {
+        grants += id to update
+        if (update.grants[Noun.MESSAGE] == GrantState.GRANTED) granted = true
+        return ApiResult.Success(Unit)
+    }
 
     override suspend fun pushBatch(batch: IngestBatch): ApiResult<IngestResponse> {
         pushFailure?.let { return ApiResult.Failure(it) }
         batches += batch
         return ApiResult.Success(
-            IngestResponse(batch.records.map { RecordResult(it.sourceId, if (rejectAll) RecordOutcome.Rejected("not granted") else RecordOutcome.Removed) }),
+            IngestResponse(batch.records.map { RecordResult(it.sourceId, if (rejectAll || !granted) RecordOutcome.Rejected("not granted") else RecordOutcome.Removed) }),
         )
     }
 
@@ -141,21 +169,30 @@ private class FakeIngest : IngestApi {
 }
 
 private class FakeSmsSource(var rows: List<SmsRow>) : SmsSource {
-    override suspend fun readAfter(afterId: Long, limit: Int) = rows.filter { it.id > afterId && it.type in setOf(SMS_INBOX, SMS_SENT) }.sortedBy { it.id }.take(limit)
+    var reads = 0
+    var failure: Exception? = null
+    override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> {
+        failure?.let { throw it }
+        reads++
+        return rows.filter { it.id > afterId && it.type in setOf(SMS_INBOX, SMS_SENT) }.sortedBy { it.id }.take(limit)
+    }
     override suspend fun rowAt(id: Long) = rows.firstOrNull { it.id == id && it.type in setOf(SMS_INBOX, SMS_SENT) }
     override suspend fun maxId() = rows.maxOfOrNull { it.id }
 }
 
 private class MemoryCursor(var id: Long = 0, var anchor: SmsAnchor? = null) : SmsCursorStore {
+    val state = MutableStateFlow(SmsSyncStatus())
     var restarts = 0
     override suspend fun lastId() = id
     override suspend fun anchor() = anchor
-    override suspend fun advance(to: Long, at: Instant, anchor: SmsAnchor?) { id = to; this.anchor = anchor; last.value = at }
     override suspend fun adopt(anchor: SmsAnchor) { this.anchor = anchor }
     override suspend fun restart() { restarts++; id = 0; anchor = null }
-    override suspend fun clear() { id = 0; anchor = null; last.value = null }
-    val last = MutableStateFlow<Instant?>(null)
-    override val lastSyncAt: Flow<Instant?> = last
+    override suspend fun clear() { id = 0; anchor = null; state.value = SmsSyncStatus() }
+    override suspend fun advance(to: Long, sent: Int, anchor: SmsAnchor?) { id = to; this.anchor = anchor; state.value = state.value.copy(sent = state.value.sent + sent) }
+    override suspend fun finish(at: Instant, problem: SmsSyncProblem?) {
+        state.value = state.value.copy(lastAttemptAt = at, problem = problem, lastSyncAt = if (problem == null) at else state.value.lastSyncAt)
+    }
+    override val status: Flow<SmsSyncStatus> = state
 }
 
 private class FakeDnd(var access: Boolean = true, var filter: Int = ALL) : DndController {
@@ -296,7 +333,7 @@ class PhoneConnectorTest {
         assertEquals(3, r.connector.syncOnce())
         assertEquals(1, r.ingest.batches.size)
         assertEquals(3L, r.cursor.id)
-        assertEquals(T0, r.cursor.last.value)
+        assertEquals(SmsSyncStatus(lastSyncAt = T0, lastAttemptAt = T0, sent = 3, problem = null), r.cursor.state.value)
         // Nothing new the next time.
         assertEquals(0, r.connector.syncOnce())
         assertEquals(1, r.ingest.batches.size)
@@ -315,6 +352,12 @@ class PhoneConnectorTest {
         r.ingest.pushFailure = ApiError.Unreachable("down")
         assertEquals(0, r.connector.syncOnce())
         assertEquals(0L, r.cursor.id)
+        assertEquals(SmsSyncProblem.UNREACHABLE, r.cursor.state.value.problem)
+        assertNull(r.cursor.state.value.lastSyncAt)
+        // Back online: it all goes, and the problem clears.
+        r.ingest.pushFailure = null
+        assertEquals(3, r.connector.syncOnce())
+        assertNull(r.cursor.state.value.problem)
     }
 
     @Test fun refusedBecauseNotGrantedKeepsTheCursor() = runBlocking {
@@ -322,6 +365,76 @@ class PhoneConnectorTest {
         r.ingest.rejectAll = true
         r.connector.syncOnce()
         assertEquals(0L, r.cursor.id)
+        assertEquals(SmsSyncProblem.NOT_ALLOWED, r.cursor.state.value.problem)
+    }
+
+    @Test fun theFirstSyncAnnouncesThePhoneSoTheServerAllowsItsMessages() = runBlocking {
+        val r = ConnectorRig((1L..3L).map { sms(it) })
+        assertEquals(3, r.connector.syncOnce())
+        assertEquals(1, r.ingest.manifests.size)
+        // once is enough while the app runs
+        r.connector.syncOnce()
+        assertEquals(1, r.ingest.manifests.size)
+    }
+
+    @Test fun refusedMessagesAnnounceAgainNextTimeAndThenGoThrough() = runBlocking {
+        val r = ConnectorRig((1L..3L).map { sms(it) })
+        r.ingest.grantedOnManifest = false
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(0L, r.cursor.id)
+        // a newer server grants on the manifest: the next sync announces again and everything goes
+        r.ingest.grantedOnManifest = true
+        assertEquals(3, r.connector.syncOnce())
+        assertEquals(2, r.ingest.manifests.size)
+        assertEquals(3L, r.cursor.id)
+    }
+
+    @Test fun enablingMessagesGrantsThemOnTheServerAndSyncs() = runBlocking {
+        val r = ConnectorRig((1L..2L).map { sms(it) })
+        r.ingest.grantedOnManifest = false // an older server: only an explicit grant helps
+        assertEquals(2, r.connector.enableMessages())
+        val (id, update) = r.ingest.grants.single()
+        assertEquals(ConnectorId(phoneConnectorId(signedIn().deviceId.value)), id)
+        assertEquals(mapOf(Noun.MESSAGE to GrantState.GRANTED), update.grants)
+        assertEquals(2L, r.cursor.id)
+    }
+
+    @Test fun anUnreachableServerOnTheManifestIsReportedAndNothingIsRead() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)))
+        r.ingest.manifestFailure = ApiError.Unreachable("offline")
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(0, r.source.reads)
+        assertEquals(SmsSyncProblem.UNREACHABLE, r.cursor.state.value.problem)
+    }
+
+    @Test fun aFailingSmsStoreIsReportedNotThrown() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)))
+        r.source.failure = IllegalArgumentException("bad query")
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(SmsSyncProblem.READ_FAILED, r.cursor.state.value.problem)
+    }
+
+    @Test fun nothingNewStillCountsAsSynced() = runBlocking {
+        val r = ConnectorRig()
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(T0, r.cursor.state.value.lastSyncAt)
+        assertNull(r.cursor.state.value.problem)
+    }
+
+    @Test fun aHugeInboxIsReadInPagesAndContinuesOnTheNextPass() = runBlocking {
+        val r = ConnectorRig((1L..10_250L).map { sms(it) })
+        assertEquals(10_000, r.connector.syncOnce()) // 20 reads of 500 per pass
+        assertEquals(10_000L, r.cursor.id)
+        assertEquals(20, r.source.reads)
+        assertEquals(250, r.connector.syncOnce())
+        assertEquals(10_250L, r.cursor.id)
+        assertEquals(10_250L, r.cursor.state.value.sent)
+    }
+
+    @Test fun onlyAcceptedRecordsAreCounted() {
+        val ok = RecordResult(SourceId("a"), RecordOutcome.Removed)
+        val no = RecordResult(SourceId("b"), RecordOutcome.Rejected("invalid"))
+        assertEquals(1, acceptedCount(listOf(ok, no)))
     }
 
     @Test fun largeBacklogIsSentInSeveralBatches() = runBlocking {
@@ -374,6 +487,63 @@ class PhoneConnectorTest {
         val r = ConnectorRig()
         r.connector.schedule()
         assertEquals(1, r.work.scheduled)
+    }
+}
+
+class DataStoreSmsCursorStoreTest {
+    @Test fun keepsTheCursorCountAndLastProblem() = runBlocking {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "sms-cursor-${System.nanoTime()}").apply { mkdirs() }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val store = DataStoreSmsCursorStore(
+                PreferenceDataStoreFactory.create(scope = scope) { java.io.File(dir, "c.preferences_pb") },
+            )
+            assertEquals(0L, store.lastId())
+            assertEquals(SmsSyncStatus(), store.status.first())
+            store.advance(500, 498)
+            store.advance(700, 200)
+            store.finish(T0, null)
+            assertEquals(700L, store.lastId())
+            assertEquals(SmsSyncStatus(lastSyncAt = T0, lastAttemptAt = T0, sent = 698, problem = null), store.status.first())
+            store.finish(T0 + 1.hours, SmsSyncProblem.UNREACHABLE)
+            assertEquals(
+                SmsSyncStatus(lastSyncAt = T0, lastAttemptAt = T0 + 1.hours, sent = 698, problem = SmsSyncProblem.UNREACHABLE),
+                store.status.first(),
+            )
+            store.finish(T0 + 2.hours, null)
+            assertNull(store.status.first().problem)
+        } finally {
+            scope.cancel()
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test fun keepsTheAnchorRestartsAndForgetsEverythingOnClear() = runBlocking {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "sms-anchor-${System.nanoTime()}").apply { mkdirs() }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val store = DataStoreSmsCursorStore(
+                PreferenceDataStoreFactory.create(scope = scope) { java.io.File(dir, "c.preferences_pb") },
+            )
+            val anchor = anchorOf(sms(9))
+            assertNull(store.anchor())
+            store.advance(9, 9, anchor)
+            store.finish(T0, null)
+            assertEquals(anchor, store.anchor())
+            store.restart()
+            assertEquals(0L, store.lastId())
+            assertNull(store.anchor())
+            assertEquals(SmsSyncStatus(lastSyncAt = T0, lastAttemptAt = T0, sent = 9), store.status.first(), "a rescan keeps the status")
+            store.advance(3, 3, anchorOf(sms(3)))
+            store.finish(T0 + 1.hours, SmsSyncProblem.UNREACHABLE)
+            store.clear()
+            assertEquals(0L, store.lastId())
+            assertNull(store.anchor())
+            assertEquals(SmsSyncStatus(), store.status.first(), "forgetting the server resets the sync status")
+        } finally {
+            scope.cancel()
+            dir.deleteRecursively()
+        }
     }
 }
 
@@ -450,28 +620,14 @@ class SmsRenumberingTest {
         assertEquals(1, smsBatches(twice, account, T0).single().first.records.size)
     }
 
-    @Test fun theDataStoreCursorKeepsItsAnchorAndForgetsOnClear() = runBlocking {
-        val dir = File(System.getProperty("java.io.tmpdir"), "sms-cursor-${System.nanoTime()}").apply { mkdirs() }
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-        try {
-            val store = PreferenceDataStoreFactory.create(scope = scope) { File(dir, "t.preferences_pb") }
-            val cursor = DataStoreSmsCursorStore(store)
-            assertNull(cursor.anchor())
-            cursor.advance(9, T0, anchor9)
-            assertEquals(9, cursor.lastId())
-            assertEquals(anchor9, cursor.anchor())
-            cursor.restart()
-            assertEquals(0, cursor.lastId())
-            assertNull(cursor.anchor())
-            assertEquals(T0, cursor.lastSyncAt.first(), "a rescan keeps when it last synced")
-            cursor.advance(3, T0, anchorOf(sms(3)))
-            cursor.clear()
-            assertEquals(0, cursor.lastId())
-            assertNull(cursor.anchor())
-            assertNull(cursor.lastSyncAt.first())
-        } finally {
-            scope.cancel()
-            dir.deleteRecursively()
-        }
+    @Test fun aForgottenServerHearsTheManifestAgainFromTheNextOne() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)))
+        r.connector.syncOnce()
+        val announced = r.ingest.manifests.size
+        r.connector.syncOnce()
+        assertEquals(announced, r.ingest.manifests.size, "announced once per server")
+        r.connector.forgetServer()
+        r.connector.syncOnce()
+        assertEquals(announced + 1, r.ingest.manifests.size)
     }
 }

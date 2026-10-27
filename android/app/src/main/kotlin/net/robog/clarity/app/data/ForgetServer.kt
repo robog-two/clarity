@@ -4,6 +4,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.connector.ConnectorWork
 import net.robog.clarity.app.connector.DndActionHandler
+import net.robog.clarity.app.connector.PhoneConnector
 import net.robog.clarity.app.connector.SmsCursorStore
 import net.robog.clarity.app.data.feed.FeedSync
 import net.robog.clarity.app.push.NotifiedLedger
@@ -27,6 +28,7 @@ fun perServerState(
     sync: FeedSync,
     pushWork: PushFallbackWork,
     connectorWork: ConnectorWork,
+    phone: PhoneConnector,
     callScheduler: CallScheduler,
     dnd: DndActionHandler,
     notifier: PushNotifier,
@@ -38,6 +40,8 @@ fun perServerState(
     // The 15-minute catch-up and the phone connector's pass would talk to (and write for) the old server.
     ServerScopedState("push fallback job") { pushWork.cancel() },
     ServerScopedState("phone connector job") { connectorWork.cancel() },
+    // It told the old server what it is; the next server has to hear it again.
+    ServerScopedState("phone connector manifest") { phone.forgetServer() },
     // "Thinking…" or "unauthorized" from the old server must not show on the next one.
     ServerScopedState("feed connection state") { sync.forgetServer() },
     // Its morning call must not ring, and must not come back from the cached schedule after a reboot.
@@ -50,7 +54,7 @@ fun perServerState(
     ServerScopedState("onboarding") { flag.forgetServer() },
     // Seqs, held ids and releases of the old server mean nothing on the next one.
     ServerScopedState("notified ledger") { ledger.reset() },
-    // The next server has none of these texts: send them all again, and "last synced" starts over.
+    // The next server has none of these texts: send them all again; "last synced", the count and the problem start over.
     ServerScopedState("SMS cursor") { smsCursor.clear() },
     // What the old server sealed to these keys is gone with it; the next server gets new keys.
     ServerScopedState("vault keys") { vaultKeys.delete() },
