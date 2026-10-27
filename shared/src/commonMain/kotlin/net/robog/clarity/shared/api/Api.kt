@@ -28,6 +28,8 @@ object ApiPaths {
     const val CONSTITUTION = "$APP/constitution"
     const val HELD = "$APP/held"
     const val ACTIVITY = "$APP/activity"
+    /** `GET`: pending nudges and the timeline of resolved ones (`?since=<ISO instant>`, default the last 7 days). */
+    const val NUDGES = "$APP/nudges"
 
     // Vault (under APP)
     const val VAULT = "$APP/vault"

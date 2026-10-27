@@ -81,6 +81,9 @@ interface TaskStore {
 
     /** Newest first (by last update), so fresh work leads and stale tasks sink. */
     suspend fun list(includeFinished: Boolean = false): List<AgentTask>
+
+    /** One task, finished or not; null when [id] is unknown. */
+    suspend fun get(id: TaskId): AgentTask?
 }
 
 private val FINISHED = listOf(AgentTask.Status.DONE, AgentTask.Status.FAILED, AgentTask.Status.CANCELLED)
@@ -134,6 +137,11 @@ class ExposedTaskStore(
         val query = AgentTasks.selectAll()
         if (!includeFinished) query.where { AgentTasks.status inList listOf("working", "drafted", "waiting_for_you", "scheduled") }
         query.orderBy(AgentTasks.updatedAt to SortOrder.DESC).map { it.toTask() }
+    }
+
+    override suspend fun get(id: TaskId): AgentTask? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx { AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask() }
     }
 }
 

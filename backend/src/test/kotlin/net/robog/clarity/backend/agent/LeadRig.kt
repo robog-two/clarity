@@ -153,13 +153,16 @@ class LeadRig(
     val heldWaiters = HeldWaiters(clock)
     val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters, codeWait = kotlin.time.Duration.parse("1s"))
 
+    val nudges = ExposedNudgeStore(database, clock)
+    val nudgeTools = NudgeTools(nudges, tasks, settingsProvider, clock)
+
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
     val lead: LeadAgent
 
     init {
         val helperTools = HelperTools(lazy { helpers })
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserGate)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserGate, nudgeTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
@@ -173,7 +176,7 @@ class LeadRig(
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, scheduled_job, tool_result, message, " +
-                    "agent_session, day_plan, settings " +
+                    "agent_session, day_plan, settings, nudge " +
                     "RESTART IDENTITY CASCADE",
             )
         }

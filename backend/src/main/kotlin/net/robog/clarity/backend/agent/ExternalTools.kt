@@ -220,7 +220,8 @@ class ExternalTools(
 
     fun createReminder(scope: RunScope): Tool = tool<ReminderInput>(
         name = "create_reminder",
-        description = "Create a reminder for the person at a time (shows up as a short event with an alarm).",
+        description = "Create a reminder for the person at a time (shows up as a short event with an alarm on their calendar). " +
+            "It only alerts them; to check in with them yourself, use nudge.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
     ) { i -> propose(scope, "create_reminder", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.reminder(k, i, zone) } }

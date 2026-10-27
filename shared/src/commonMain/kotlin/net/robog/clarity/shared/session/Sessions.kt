@@ -13,6 +13,7 @@ import kotlinx.serialization.json.JsonTransformingSerializer
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Chip
 import net.robog.clarity.shared.feed.IfThen
+import net.robog.clarity.shared.feed.Nudge
 import net.robog.clarity.shared.governance.AmendmentId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Line
@@ -103,6 +104,8 @@ data class Today(
     val parked: List<String> = emptyList(),
     /** True once today's morning call has happened. */
     val called: Boolean = false,
+    /** Check-ins the agent has scheduled for itself and not yet made, soonest first. */
+    val nudges: List<Nudge> = emptyList(),
 )
 
 /**

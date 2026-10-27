@@ -240,7 +240,7 @@ class SessionScenarioTest : FunSpec({
         r.model.requests.first().tools.map { it.name }.toSet().containsAll(SESSION_TOOL_NAMES) shouldBe true
 
         // --- Today reflects the call
-        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.settingsProvider, r.clock).today()
+        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.settingsProvider, r.clock).today()
         today.called shouldBe true
         today.priorities.map { it.text } shouldBe listOf("onboarding spec", "Dana’s contract")
         today.priorities.map { it.sub } shouldBe listOf("important", "due today")

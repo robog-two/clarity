@@ -108,7 +108,7 @@ net.robog.clarity.backend
 ├── dedup/                  pure: per-noun normalization + DedupKey
 ├── connectors/             registry, manifests, grants, config, action outbox (app + connector APIs)
 ├── triggers/               pure RecordQuery evaluator + trigger store + matcher on ingest events
-├── scheduler/              durable in-process jobs (morning call prep, evening batch, review)
+├── scheduler/              durable in-process jobs (morning call prep, evening batch, review, nudges)
 ├── agent/                  lead agent, inbox, journal, helpers, memory, domain tools, prompts
 ├── governance/             constitution store, guard, held actions, action executor, notify policy
 ├── feed/                   the app's feed: messages + cards, sequence numbers, SSE fan-out
@@ -140,6 +140,7 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/constitution` · `POST …/amendments` | device | current constitution, history, amend |
 | `GET /api/v1/held` · `POST /api/v1/held/{id}/decision` | device | held actions; approve (optionally edited), decline, talk |
 | `GET /api/v1/activity` | device | actions taken alone ("see allowed actions") |
+| `GET /api/v1/nudges?since={iso}` | device | pending nudges and the timeline of fired/skipped/missed/cancelled ones |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |
@@ -274,6 +275,36 @@ error, a refusal or a missing answer wakes the lead as before. A woken review co
 since the last review, skipped windows included. Each call is a `model_call` row with role
 `decision`; each verdict is one info log line. The model has no tools, so injected text can at
 most flip the answer. That is why it is never used for the constitution guard.
+
+### Nudges (check-ins the lead schedules for itself)
+
+Triggers only fire on new data, and `create_reminder` only alerts the person's phone. A **nudge**
+wakes Clarity itself at a time, so it can ask how something is going ("nudge me throughout the
+day…"). Lead-only tools (`agent/Nudges.kt`):
+
+- `nudge(at, note, taskId?)`: `at` is the person's local time (ISO, or `HH:MM` for today); `note`
+  says what to ask. Refused when it is not in the future, more than 7 days ahead, 10 are already
+  pending, its day already has 12, or one for the same task (or, with no task, the same note) is
+  within 10 minutes. A task that is already done or cancelled is refused too.
+- `list_nudges`, `cancel_nudge(id)`.
+
+Each nudge is a row in `nudge` (`V24`): `due_at`, `note`, `task_id`, `status`
+(`pending` → `fired` | `skipped` | `missed` | `cancelled`), `reason`, `resolved_at`. The
+`nudges` job (every 30 s, `scheduler/NudgeJob.kt`) runs a pass in the background: it claims due
+pending rows with `FOR UPDATE SKIP LOCKED` and resolves each in the same transaction, so two
+instances never resolve one twice. Per nudge, in code and without a model call: more than 2 h late
+(the backend was down) → `missed`; linked task done or cancelled → `skipped`; 12 already fired
+today → `skipped`. When the person wrote in the last 20 minutes or a session is live, one
+Decision-1 question ("has the person already given the update this check-in asks for?", the
+conversation since the nudge was set under `untrusted`) skips it at p ≥ 0.8; any failure fires it.
+Otherwise it **fires**: a `nudge_due` inbox item (normal priority, dedup key `nudge:<id>`) tells
+the lead "Nudge you set at <time>: <note>" plus the task's title and status. A fired nudge posts
+nothing by itself; the lead decides whether to ask one short question through `send_to_user`, so
+the notify policy and protected-time holds apply as for anything else.
+
+Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
+returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
+an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
 
 ### Durability (journal instead of a workflow engine)
 
