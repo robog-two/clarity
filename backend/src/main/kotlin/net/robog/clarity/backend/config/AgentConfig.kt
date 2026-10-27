@@ -17,6 +17,8 @@ data class AgentConfig(
     val openRouterApiKey: String? = null,
     /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
     val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
+    /** Memory recall: semantic search over the agent's memory (`CLARITY_MEMORY_*`). */
+    val memory: MemoryConfig = MemoryConfig(),
     /** `OPENROUTER_ZDR`, `OPENROUTER_QUANTIZATIONS`, `OPENROUTER_SORT`: which OpenRouter endpoints may serve a request. */
     val openRouterRouting: net.robog.clarity.harness.OpenRouterRouting = net.robog.clarity.harness.OpenRouterRouting(),
 ) {
@@ -37,6 +39,23 @@ data class AgentConfig(
 data class McpServerConfig(val name: String, val url: String, val keyFile: String? = null)
 
 const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+/**
+ * Memory recall settings. Embeddings for semantic search come from OpenRouter's embeddings endpoint
+ * and are used only when [embeddings] is on and an OpenRouter key is configured; without them search
+ * is full-text only. [embeddingsModel] is an OpenRouter model id. [embeddingDimensions] keeps the
+ * first that many values of each vector, renormalized (Matryoshka truncation, which Qwen3-Embedding
+ * is trained for; 0 = keep all). The endpoints list no `dimensions` parameter, so it is not sent.
+ * Only the providers in [embeddingProviders] are used, in that order.
+ */
+data class MemoryConfig(
+    val embeddings: Boolean = true,
+    val embeddingsModel: String = DEFAULT_EMBEDDINGS_MODEL,
+    val embeddingDimensions: Int = 1024,
+    val embeddingProviders: List<String> = listOf("deepinfra", "nebius"),
+)
+
+const val DEFAULT_EMBEDDINGS_MODEL = "qwen/qwen3-embedding-8b"
 
 /**
  * Who serves a role's model. [OPENROUTER] speaks the OpenAI-compatible API without prompt-cache

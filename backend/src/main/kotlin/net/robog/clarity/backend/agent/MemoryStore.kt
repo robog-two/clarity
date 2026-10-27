@@ -4,7 +4,6 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import java.sql.ResultSet
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Instant
@@ -12,8 +11,6 @@ import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import net.robog.clarity.backend.persistence.tx
-import org.jetbrains.exposed.v1.core.IntegerColumnType
-import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.less
@@ -27,10 +24,7 @@ data class JournalEntry(val id: Long, val date: LocalDate, val text: String)
 
 data class ScratchNote(val id: Long, val text: String, val expiresAt: Instant)
 
-/** A search hit from [MemoryStore.search]; [source] is `journal`, `feed` or `message`. */
-data class MemoryHit(val source: String, val ref: String, val text: String)
-
-/** Journal, scratch and full-text search: the memory tiers below the constitution (all in Postgres). */
+/** Journal and scratch: the dated and short-lived memory tiers ([MemorySearch] searches everything). */
 interface MemoryStore {
     suspend fun writeJournal(date: LocalDate, text: String): Long
 
@@ -44,9 +38,6 @@ interface MemoryStore {
 
     /** Deletes expired notes; returns how many. */
     suspend fun purgeScratch(now: Instant): Int
-
-    /** Full-text search over the journal, the feed and messages, best matches first. */
-    suspend fun search(query: String, limit: Int): List<MemoryHit>
 }
 
 @Inject
@@ -83,39 +74,6 @@ class ExposedMemoryStore(private val database: Database, private val clock: Cloc
 
     override suspend fun purgeScratch(now: Instant): Int = database.tx {
         MemoryScratch.deleteWhere { expiresAt less now }
-    }
-
-    override suspend fun search(query: String, limit: Int): List<MemoryHit> {
-        if (query.isBlank()) return emptyList()
-        return database.tx {
-            val args = listOf(
-                TextColumnType() to query, TextColumnType() to query, TextColumnType() to query,
-                IntegerColumnType() to limit.coerceIn(1, 50),
-            )
-            exec(SEARCH_SQL, args) { rs: ResultSet ->
-                buildList { while (rs.next()) add(MemoryHit(rs.getString(1), rs.getString(2), rs.getString(3).take(MAX_HIT_CHARS))) }
-            }.orEmpty()
-        }
-    }
-
-    private companion object {
-        const val MAX_HIT_CHARS = 600
-
-        val SEARCH_SQL = """
-            SELECT source, ref, body FROM (
-              SELECT 'journal' AS source, date::text AS ref, text AS body, ts_rank(tsv, q) AS rank
-                FROM memory_journal, websearch_to_tsquery('english', ?) q WHERE tsv @@ q
-              UNION ALL
-              SELECT 'feed', to_char(at, 'YYYY-MM-DD"T"HH24:MI'), cards::text, ts_rank(to_tsvector('english', cards::text), q)
-                FROM feed_item, websearch_to_tsquery('english', ?) q
-                WHERE batch_state IS NULL AND to_tsvector('english', cards::text) @@ q
-              UNION ALL
-              SELECT 'message', id::text, coalesce(subject, '') || E'\n' || body,
-                     ts_rank(to_tsvector('english', coalesce(subject, '') || ' ' || body), q)
-                FROM message, websearch_to_tsquery('english', ?) q
-                WHERE deleted_at IS NULL AND to_tsvector('english', coalesce(subject, '') || ' ' || body) @@ q
-            ) hits ORDER BY rank DESC LIMIT ?
-        """.trimIndent()
     }
 }
 

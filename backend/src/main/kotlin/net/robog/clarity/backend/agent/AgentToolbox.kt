@@ -20,19 +20,22 @@ val LEAD_LOADED = setOf(
     "list_messages", "list_calendar_events", "search_contacts",
     "save_draft", "send_email", "create_event",
     "send_to_user", "delegate", "list_helpers", "message_helper", "cancel_helper",
-    "remember_fact", "write_journal", "read_journal", "set_scratch", "search_memory", "update_task", "read_result",
+    "remember_fact", "write_journal", "read_journal", "set_scratch", "search_memory", "read_memory", "open_collection", "save_note",
+    "update_task", "read_result",
     "request_credential", "list_credentials", "ask_code",
 ) + SESSION_TOOL_NAMES
 
 /** What a helper may use unless the lead narrows it: reads and the gated external tools. */
 val HELPER_BASE = setOf(
-    "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_journal", "read_profile", "read_result",
-    "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
+    "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
+    "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
     "request_credential", "list_credentials", "ask_code",
 )
 
 /** The memory clean-up helper's tools. */
-val MEMORY_GC_TOOLS = listOf("read_profile", "replace_profile", "read_journal", "search_memory")
+val MEMORY_GC_TOOLS = listOf(
+    "read_profile", "replace_profile", "read_journal", "search_memory", "read_memory", "open_collection", "save_note", "manage_collection",
+)
 
 /** The helper-control tools of the lead. */
 @Inject
@@ -106,6 +109,7 @@ class HelperTools(private val helpers: Lazy<HelperManager>) {
 class AgentToolbox(
     private val domain: DomainTools,
     private val own: OwnStateTools,
+    private val memory: MemoryTools,
     private val external: ExternalTools,
     private val helperTools: HelperTools,
     private val results: LargeResults,
@@ -125,8 +129,12 @@ class AgentToolbox(
         addAll(external.all(scope))
         add(results.readResultTool())
         addAll(vault.all(scope))
+        with(memory) {
+            addAll(listOf(searchMemory(), readMemory(), openCollection()))
+            if (forLead) addAll(listOf(saveNote(), manageCollection()))
+        }
         with(own) {
-            addAll(listOf(searchMemory(), readJournal(), readProfile()))
+            addAll(listOf(readJournal(), readProfile()))
             if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask()))
         }
         if (forLead) addAll(helperTools.all(scope))
@@ -160,7 +168,7 @@ class AgentToolbox(
         return HelperToolSet(ToolSet(loaded.sortedBy { it.name }, deferred.sortedBy { it.name }), unknown)
     }
 
-    private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile()))
+    private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile(), memory.saveNote(), memory.manageCollection()))
 }
 
 data class HelperToolSet(val tools: ToolSet, val unknown: List<String>)

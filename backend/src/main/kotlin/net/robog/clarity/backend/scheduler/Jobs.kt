@@ -11,7 +11,16 @@ import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalTime
+import dev.zacsweers.metro.SingleIn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.minus
+import net.robog.clarity.backend.agent.CollectionStore
+import net.robog.clarity.backend.agent.ConversationArchive
+import net.robog.clarity.backend.agent.EmbeddingIndexer
 import net.robog.clarity.backend.agent.HelperManager
+import net.robog.clarity.backend.agent.journalDate
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.InboxStore
 import net.robog.clarity.backend.agent.LeadAgent
@@ -79,12 +88,17 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
     }
 }
 
-/** Daily: drop expired scratch notes and have a helper merge, de-duplicate and expire profile facts. */
+/**
+ * Daily: drop expired scratch notes and have a helper tidy memory: merge and expire profile facts,
+ * merge duplicate collections, keep their descriptions accurate, and file durable facts from recent
+ * journal entries into collections. Skipped while there is little to tidy (it costs a helper run).
+ */
 @Inject
 @ContributesIntoSet(AppScope::class)
 class MemoryGcJob(
     private val memory: MemoryStore,
     private val constitutions: ConstitutionStore,
+    private val collections: CollectionStore,
     private val helpers: HelperManager,
 ) : ScheduledJob {
     override val name = "memory-gc"
@@ -93,19 +107,79 @@ class MemoryGcJob(
 
     override suspend fun fire(context: FireContext) {
         memory.purgeScratch(context.now)
+        val today = journalDate(context.now, context.settings.homeZone)
+        val weekAgo = today.minus(DatePeriod(days = 7))
         val profile = constitutions.current()?.profile.orEmpty()
-        if (profile.size < MIN_FACTS) return
+        val worthIt = profile.size >= MIN_FACTS || collections.collections().size >= MIN_COLLECTIONS ||
+            memory.journal(weekAgo, today).size >= MIN_JOURNAL
+        if (!worthIt) return
         helpers.delegate(
-            task = "Tidy the person's profile. Read it with read_profile. Merge facts that say the same thing, drop ones that are clearly stale " +
-                "(check recent journal entries with read_journal when unsure), keep every fact that is still true, and keep each one short. " +
-                "Then call replace_profile once with the complete cleaned list. Report in one line what you changed.",
+            task = memoryGcTask(weekAgo, today),
             tools = MEMORY_GC_TOOLS,
             role = "helper",
             parent = RunScope("memory-gc", isLead = false),
         ).onLeft { log.warn { "memory clean-up helper did not start: $it" } }
     }
 
-    private companion object { const val MIN_FACTS = 6 }
+    private companion object {
+        const val MIN_FACTS = 6
+        const val MIN_COLLECTIONS = 2
+        const val MIN_JOURNAL = 5
+    }
+}
+
+/** Pure: the memory clean-up helper's task. */
+fun memoryGcTask(from: LocalDate, until: LocalDate): String =
+    "Tidy the agent's memory. Change only what is clearly better; when in doubt, leave it.\n" +
+        "1. Profile: read it with read_profile. Merge facts that say the same thing, drop ones that are clearly stale " +
+        "(check read_journal when unsure), keep every fact that is still true, and keep each one short. " +
+        "If anything changed, call replace_profile once with the complete cleaned list.\n" +
+        "2. Collections: list them with open_collection (no name) and open the ones you need. Merge collections about the same topic " +
+        "(manage_collection with mergeInto), keep each description an accurate one-line summary of what is in it, " +
+        "and remove notes that repeat another note or are clearly outdated (save_note with id and remove).\n" +
+        "3. Journal: read entries from $from to $until with read_journal. File durable facts in them (people, places, projects, " +
+        "preferences, how things are done) into the fitting collection with save_note, unless a note already says it; " +
+        "create a collection only for a topic that clearly recurs. Leave passing events in the journal.\n" +
+        "Never store passwords, codes, keys or tokens. Report in two or three lines what you changed."
+
+/**
+ * Every 10 minutes: archive the lead conversation that compaction took out of view (searchable
+ * chunks) and embed what is new for semantic search. The first runs backfill; both steps are
+ * idempotent and bounded, and run in the background so the job's row lock is not held.
+ */
+@Inject
+@SingleIn(AppScope::class)
+@ContributesIntoSet(AppScope::class)
+class MemoryIndexJob(
+    private val archive: ConversationArchive,
+    private val indexer: EmbeddingIndexer,
+    private val scope: CoroutineScope,
+) : ScheduledJob {
+    override val name = "memory-index"
+    private val running = Mutex()
+
+    override fun schedule(settings: Settings) = Schedule.Every(10.minutes)
+
+    override suspend fun fire(context: FireContext) {
+        scope.launch { runOnce() }
+    }
+
+    /** One pass; false when a pass was already running. */
+    suspend fun runOnce(): Boolean {
+        if (!running.tryLock()) return false
+        try {
+            val chunks = archive.indexCompacted()
+            val embedded = indexer.run()
+            if (chunks > 0 || embedded > 0) log.info { "memory index: $chunks conversation chunks archived, $embedded records embedded" }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(e) { "memory indexing failed; the next run tries again" }
+        } finally {
+            running.unlock()
+        }
+        return true
+    }
 }
 
 /** Every minute: compact the lead thread if the person is away and the prompt cache is still warm. */

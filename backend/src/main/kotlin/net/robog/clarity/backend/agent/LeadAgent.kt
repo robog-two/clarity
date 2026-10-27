@@ -47,6 +47,12 @@ import net.robog.clarity.shared.feed.FeedItem
 
 private val log = KotlinLogging.logger {}
 
+/** Pure: the text of the last system message in [messages] that starts with [prefix]. */
+fun lastSystemText(messages: List<Message>, prefix: String): String? =
+    messages.asReversed().firstNotNullOfOrNull { m ->
+        if (m.role != Role.SYSTEM) null else (m.content.singleOrNull() as? Block.Text)?.text?.takeIf { it.startsWith(prefix) }
+    }
+
 /**
  * Pure: does a journal end mid-turn (an unanswered user message or tool results, or unanswered tool
  * calls)? A client-side summary at the end is not: it waits for the next turn.
@@ -102,6 +108,7 @@ class LeadAgent(
     private val threads: ThreadStore,
     private val constitutions: ConstitutionStore,
     private val memory: MemoryStore,
+    private val collections: CollectionStore,
     private val toolbox: AgentToolbox,
     private val large: LargeResults,
     private val feed: FeedService,
@@ -115,7 +122,6 @@ class LeadAgent(
     private lateinit var scope: RunScope
     private val turnLock = Mutex()
     private val awaiting = ConcurrentLinkedQueue<Delivery>()
-    private var lastMemoryContext: String? = null
     private var lastUserActivity: Instant? = null
     private var failures = 0
 
@@ -201,7 +207,8 @@ class LeadAgent(
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
-        val deliveries = memoryDelivery(now) + renderDeliveries(items, now)
+        val history = journal.load(threadId)
+        val deliveries = memoryDelivery(now, contextSince(history)) + renderDeliveries(items, now)
         if (userTurn) {
             lastUserActivity = now
             threads.touchUserInput(now)
@@ -210,7 +217,6 @@ class LeadAgent(
         try {
             // The turn boundary: the lead's settings are read here and kept for the whole turn.
             val bound = runtime.bindOrFail(AgentRole.LEAD)
-            val history = journal.load(threadId)
             val closing = closeOpenToolCalls(history)
             closing?.let { trackedJournal.append(threadId, it) }
             // A live call runs at low effort and the thread goes back afterwards, by a mid-conversation message (the cache prefix stays intact).
@@ -233,16 +239,23 @@ class LeadAgent(
         if (failures > 0) delay(minOf(60.seconds, 5.seconds * (1 shl (failures - 1).coerceAtMost(4))))
     }
 
-    /** The memory context message, only when it differs from what the thread last saw. */
-    private suspend fun memoryDelivery(now: Instant): List<Delivery> {
+    /**
+     * The memory context and the collection index, each only when it differs from the last one the
+     * model can still see ([visible]: the thread since its latest compaction point). So nothing is
+     * repeated while it is in view, after a restart included, and both come back after a compaction.
+     */
+    private suspend fun memoryDelivery(now: Instant, visible: List<Message>): List<Delivery> {
         val zone = settings.current().homeZone
         val today = journalDate(now, zone)
         val yesterday = today.minus(DatePeriod(days = 1))
-        val text = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now))
-            ?: if (lastMemoryContext != null) "[memory, $today] The journal and scratch notes are empty." else null
-        if (text == null || text == lastMemoryContext) return emptyList()
-        lastMemoryContext = text
-        return listOf(Delivery(emptyList(), Message(Role.SYSTEM, listOf(Block.Text(text)))))
+        val lastMemory = lastSystemText(visible, MEMORY_CONTEXT_PREFIX)
+        val memoryText = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now))
+            ?: if (lastMemory != null && !lastMemory.endsWith(EMPTY_MEMORY)) "[memory, $today] $EMPTY_MEMORY" else null
+        val lastIndex = lastSystemText(visible, COLLECTION_INDEX_PREFIX)
+        val indexText = renderCollectionIndex(collections.collections())
+            ?: if (lastIndex != null && lastIndex != NO_COLLECTIONS) NO_COLLECTIONS else null
+        return listOfNotNull(memoryText.takeIf { it != lastMemory }, indexText.takeIf { it != lastIndex })
+            .map { Delivery(emptyList(), Message(Role.SYSTEM, listOf(Block.Text(it)))) }
     }
 
     /**
@@ -407,6 +420,10 @@ class LeadAgent(
     }
 
     private companion object {
+        const val MEMORY_CONTEXT_PREFIX = "[memory, "
+        const val COLLECTION_INDEX_PREFIX = "[memory collections]"
+        const val EMPTY_MEMORY = "The journal and scratch notes are empty."
+        const val NO_COLLECTIONS = "[memory collections] none left."
         val IDLE_POLL = 30.seconds
         val INTERRUPT_POLL = 5.seconds
     }
