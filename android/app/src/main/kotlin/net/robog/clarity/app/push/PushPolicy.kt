@@ -259,6 +259,88 @@ private fun heldPlan(held: HeldAction, front: Front, now: Instant, maxAge: Durat
     )
 }
 
+// --- what was missed ---
+
+/**
+ * How old something missed may be and still notify when the phone catches up (from the service
+ * coming back, the 15-minute fallback job, or a reconnect's gap fill). Older than the 2 hours for
+ * live arrivals ([MAX_PUSH_AGE]) because a phone that was off overnight or had the service killed
+ * for a day should still hear about yesterday evening, but no more than a day: by then the
+ * morning call and the evening summary have gone over it, and a buzz about it is noise.
+ */
+val MISSED_MAX_AGE: Duration = 24.hours
+
+/** More missed notifications than this collapse into one summary instead of a burst. */
+const val MISSED_SEPARATELY = 3
+
+/** When [arrival] happened, for the age and since rules: a release counts from the release. */
+fun occurredAt(arrival: Arrival): Instant = when (arrival) {
+    is Arrival.Item -> (parseNotify(arrival.item.notify) as? NotifyKind.Released)?.at ?: arrival.item.at
+    is Arrival.Held -> arrival.action.createdAt
+}
+
+/**
+ * The notifications for things missed while nothing was listening: [fresh] are the arrivals nobody
+ * had claimed (the ledger already dropped what was notified, decided, or seen on screen). Each
+ * decides as live ([decideNotification]) but with [maxAge]; things from before this phone started
+ * keeping its ledger ([since]: pairing, or the first push after it) are not missed but history.
+ * Up to [separately] post on their own; more become one summary.
+ */
+fun decideMissed(
+    fresh: List<Arrival>,
+    front: Front,
+    canPost: Boolean,
+    now: Instant,
+    since: Instant?,
+    maxAge: Duration = MISSED_MAX_AGE,
+    separately: Int = MISSED_SEPARATELY,
+): List<NotificationPlan> {
+    val plans = fresh
+        .filter { since == null || occurredAt(it) >= since }
+        .sortedBy { occurredAt(it) }
+        .mapNotNull { decideNotification(it, front, canPost, now, maxAge) }
+    return if (plans.size <= separately) plans else listOf(summaryPlan(plans))
+}
+
+/** "While you were away": one notification for many missed ones, on the most urgent of their channels. */
+fun summaryPlan(plans: List<NotificationPlan>): NotificationPlan {
+    val approvals = plans.count { it.link is DeepLink.HeldItem }
+    val others = plans.size - approvals
+    val parts = buildList {
+        if (others > 0) add(if (others == 1) "1 message" else "$others messages")
+        if (approvals > 0) add(if (approvals == 1) "1 thing needs your ok" else "$approvals things need your ok")
+    }
+    return NotificationPlan(
+        id = SUMMARY_ID,
+        channel = plans.minOf { it.channel }, // Urgent, then Agent, then Evening
+        title = "While you were away",
+        text = parts.joinToString(", ") + ". Latest: " + plans.last().text,
+        link = if (others == 0) DeepLink.Held else DeepLink.Today,
+    )
+}
+
+/** The summary of missed notifications; a newer summary replaces the last one. */
+const val SUMMARY_ID = 9_001
+
+/**
+ * What the person has in front of them in the app, as arrivals to claim, so none of it notifies
+ * afterwards (a catch-up would otherwise find it unclaimed). The feed on Today or Ask shows the
+ * finished items; the held list its waiting actions; one held item itself.
+ */
+fun seenArrivals(front: Front, items: List<FeedItem>, held: List<HeldAction>, limit: Int = SEEN_LIMIT): List<Arrival> {
+    val where = (front as? Front.Showing)?.where ?: return emptyList()
+    return when {
+        where is Place.Tab && (where.tab == MainTab.Today || where.tab == MainTab.Ask) ->
+            items.filter { !it.streaming }.takeLast(limit).map { Arrival.Item(it) }
+        where == Place.Tab(MainTab.Held) -> held.filter { it.status == HeldAction.Status.HELD }.map { Arrival.Held(it) }
+        where is Place.HeldItem -> held.filter { it.id == where.id }.map { Arrival.Held(it) }
+        else -> emptyList()
+    }
+}
+
+/** How many recent cached items a catch-up looks through, and a screen marks seen. */
+const val SEEN_LIMIT = 100
+
 /** The first line of the item's own words, else a plain fallback. */
 fun itemText(item: FeedItem, limit: Int = 140, fallback: String = "New from Clarity"): String {
     val words = item.cards.firstNotNullOfOrNull { card ->

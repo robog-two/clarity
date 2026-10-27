@@ -16,8 +16,11 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
+import kotlin.time.Instant
 import kotlinx.coroutines.flow.first
 import net.robog.clarity.app.call.graph
+import net.robog.clarity.app.data.AppClock
+import net.robog.clarity.app.data.SystemAppClock
 import net.robog.clarity.app.data.SessionStore
 import net.robog.clarity.app.data.feed.Arrival
 import net.robog.clarity.app.data.feed.FeedSync
@@ -33,7 +36,9 @@ import net.robog.clarity.app.data.feed.FeedSync
  * remembered by seq: everything at or below [floor] is done, plus the recent [seqs] above it (kept
  * as a set so that two paths finishing out of order never skip one). Held actions have no seq, so
  * the most recent [held] ids are kept instead. A released hold reuses the seq its item was first
- * claimed under, so the most recent [released] seqs are kept apart.
+ * claimed under, so the most recent [released] seqs are kept apart. [since] is when this ledger
+ * began for [scope] (epoch millis; 0 when unknown, a ledger from before it was kept): what happened
+ * before then was never this phone's to notify about as missed.
  */
 data class Notified(
     val scope: String = "",
@@ -41,14 +46,18 @@ data class Notified(
     val seqs: List<Long> = emptyList(),
     val held: List<String> = emptyList(),
     val released: List<Long> = emptyList(),
+    val since: Long = 0,
 ) {
     /** The highest seq either path has notified (or decided not to). */
     val lastSeq: Long get() = seqs.maxOrNull() ?: floor
 
-    /** The state after claiming [arrival] for [scope], or null when it was already claimed. */
-    fun claim(arrival: Arrival, scope: String, keep: Int = KEEP): Notified? {
+    /**
+     * The state after claiming [arrival] for [scope], or null when it was already claimed. [now]
+     * (epoch millis) starts [since] when the scope is new.
+     */
+    fun claim(arrival: Arrival, scope: String, keep: Int = KEEP, now: Long = 0): Notified? {
         // A different server or device starts over: its seqs mean something else.
-        val base = if (scope == this.scope) this else Notified(scope)
+        val base = if (scope == this.scope) this else Notified(scope, since = now)
         return when (arrival) {
             is Arrival.Item if arrival.item.notify.startsWith("released:") -> {
                 val seq = arrival.item.seq
@@ -70,15 +79,37 @@ data class Notified(
         }
     }
 
+    /**
+     * Claims each of [arrivals] in turn: the state after, and the ones that were new (in order).
+     * One write for a whole catch-up or a screenful of seen items.
+     */
+    fun claimAll(arrivals: List<Arrival>, scope: String, keep: Int = KEEP, now: Long = 0): Pair<Notified, List<Arrival>> {
+        var state = this
+        val fresh = mutableListOf<Arrival>()
+        for (arrival in arrivals) {
+            state = state.claim(arrival, scope, keep, now)?.also { fresh += arrival } ?: continue
+        }
+        return state to fresh
+    }
+
     companion object {
         const val KEEP = 128
     }
 }
 
-/** Shared by the live listener and the fallback, so the same arrival never notifies twice. */
+/** Shared by the live listener, the fallback and the screens, so the same arrival never notifies twice. */
 interface NotifiedLedger {
     /** True the first time [arrival] is claimed (and records it); false every time after. */
     suspend fun claim(arrival: Arrival): Boolean
+
+    /** Claims all of [arrivals] at once; returns the ones nobody had claimed yet, in order. */
+    suspend fun claimAll(arrivals: List<Arrival>): List<Arrival> = arrivals.filter { claim(it) }
+
+    /** When this ledger began for the current server; null when unknown. */
+    suspend fun since(): Instant? = null
+
+    /** Forgets every claim (the server was forgotten). */
+    suspend fun reset() {}
 
     /** Remembers nothing: every arrival is new. For tests and previews. */
     object None : NotifiedLedger {
@@ -90,16 +121,33 @@ interface NotifiedLedger {
 class DataStoreNotifiedLedger(
     private val store: DataStore<Preferences>,
     private val sessions: SessionStore,
+    private val clock: AppClock = SystemAppClock(),
 ) : NotifiedLedger {
-    override suspend fun claim(arrival: Arrival): Boolean {
-        val scope = sessions.session.first()?.let { "${it.instanceUrl}|${it.deviceId.value}" } ?: ""
-        var claimed = false
+    private suspend fun scope(): String = sessions.session.first()?.let { "${it.instanceUrl}|${it.deviceId.value}" } ?: ""
+
+    override suspend fun claim(arrival: Arrival): Boolean = claimAll(listOf(arrival)).isNotEmpty()
+
+    override suspend fun claimAll(arrivals: List<Arrival>): List<Arrival> {
+        if (arrivals.isEmpty()) return emptyList()
+        val scope = scope()
+        val now = clock.now().toEpochMilliseconds()
+        var fresh = emptyList<Arrival>()
         store.edit { prefs ->
-            val next = read(prefs).claim(arrival, scope) ?: return@edit
+            val (next, claimed) = read(prefs).claimAll(arrivals, scope, now = now)
+            if (claimed.isEmpty()) return@edit
             write(prefs, next)
-            claimed = true
+            fresh = claimed
         }
-        return claimed
+        return fresh
+    }
+
+    override suspend fun since(): Instant? {
+        val n = read(store.data.first())
+        return if (n.scope == scope() && n.since > 0) Instant.fromEpochMilliseconds(n.since) else null
+    }
+
+    override suspend fun reset() {
+        store.edit { prefs -> listOf(SCOPE, FLOOR, SEQS, HELD, RELEASED, SINCE).forEach { prefs.remove(it) } }
     }
 
     private fun read(prefs: Preferences) = Notified(
@@ -108,6 +156,7 @@ class DataStoreNotifiedLedger(
         seqs = prefs[SEQS].orEmpty().split(',').mapNotNull { it.toLongOrNull() },
         held = prefs[HELD].orEmpty().split('\n').filter { it.isNotEmpty() },
         released = prefs[RELEASED].orEmpty().split(',').mapNotNull { it.toLongOrNull() },
+        since = prefs[SINCE] ?: 0,
     )
 
     private fun write(prefs: MutablePreferences, n: Notified) {
@@ -116,6 +165,7 @@ class DataStoreNotifiedLedger(
         prefs[SEQS] = n.seqs.joinToString(",")
         prefs[HELD] = n.held.joinToString("\n")
         prefs[RELEASED] = n.released.joinToString(",")
+        prefs[SINCE] = n.since
     }
 
     private companion object {
@@ -124,6 +174,7 @@ class DataStoreNotifiedLedger(
         val SEQS = stringPreferencesKey("push_notified_seqs")
         val HELD = stringPreferencesKey("push_notified_held")
         val RELEASED = stringPreferencesKey("push_notified_released")
+        val SINCE = longPreferencesKey("push_notified_since")
     }
 }
 
@@ -159,7 +210,8 @@ class PushFallback(
     private val serviceRunning: () -> Boolean,
     private val feedLive: () -> Boolean,
     private val catchUp: suspend () -> FeedSync.CatchUp,
-    private val deliver: suspend (Arrival) -> Boolean,
+    /** Notifies what was missed (what the catch-up brought, and what the cache holds unnotified); returns how many posted. */
+    private val deliver: suspend (List<Arrival>) -> Int,
     private val reconnect: () -> Unit,
     private val canStartService: () -> Boolean,
     private val startService: suspend () -> Unit,
@@ -178,7 +230,7 @@ class PushFallback(
             FallbackStep.CatchUp -> Unit
         }
         // The ledger makes this safe even if the service is posting the same arrivals right now.
-        val posted = catchUp().arrived.count { deliver(it) }
+        val posted = deliver(catchUp().arrived)
         if (running) {
             // Up but not live (a stalled socket or a long backoff): have it reconnect now.
             reconnect()

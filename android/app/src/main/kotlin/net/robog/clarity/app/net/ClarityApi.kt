@@ -151,6 +151,8 @@ interface IngestApi {
     /** Long-polls for actions addressed to this phone ([waitSeconds] 0..30). */
     suspend fun pollActions(waitSeconds: Int): ApiResult<ActionPoll>
     suspend fun reportResult(id: ActionId, result: ActionResult): ApiResult<Unit>
+    /** Grants on the app API (`/api/v1/connectors/{id}/grants`), for the phone's own connector. */
+    suspend fun putGrants(id: ConnectorId, update: GrantsUpdate): ApiResult<Unit>
 }
 
 /** Each role's model settings (`/api/v1/settings/models`). */

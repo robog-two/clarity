@@ -30,4 +30,6 @@ class FakePushPrefs(enabled: Boolean = true, asked: Boolean = false) : PushPrefs
 class RecordingPushNotifier : PushNotifier {
     val posted = mutableListOf<NotificationPlan>()
     override fun post(plan: NotificationPlan) { posted += plan }
+    var clearedAll = 0
+    override fun clearAll() { clearedAll++ }
 }

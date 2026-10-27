@@ -10,17 +10,23 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import net.robog.clarity.app.call.graph
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.SessionStore
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.net.IngestApi
+import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.connector.GrantState
+import net.robog.clarity.shared.connector.GrantsUpdate
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.noun.Noun
 
@@ -31,10 +37,19 @@ import net.robog.clarity.shared.noun.Noun
  */
 interface PhoneConnector {
     /** Connector id the backend assigns to this device, e.g. `device-<deviceId>`. */
-    fun connectorId(deviceId: String): String = "device-$deviceId"
+    fun connectorId(deviceId: String): String = phoneConnectorId(deviceId)
 
-    /** Pushes SMS that arrived since the cursor. Returns how many records were sent. */
+    /**
+     * Pushes SMS that arrived since the cursor (the whole store on the first run, in batches).
+     * Returns how many records the server accepted; how it went is in [status].
+     */
     suspend fun syncOnce(): Int
+
+    /**
+     * The person just allowed reading texts: allow messages from this phone on the server too
+     * (an explicit grant, so it also undoes an earlier revoke) and sync.
+     */
+    suspend fun enableMessages(): Int
 
     /** Asks for pending actions once (long-polling up to [waitSeconds]) and executes them. Returns how many. */
     suspend fun actionPass(waitSeconds: Int): Int
@@ -48,9 +63,15 @@ interface PhoneConnector {
     /** (Re)schedules the periodic background pass. */
     fun schedule()
 
-    /** When SMS last reached the server. */
-    val lastSyncAt: Flow<kotlin.time.Instant?>
+    /** The server was forgotten: the next one has not heard of this phone yet (the manifest goes again). */
+    fun forgetServer() {}
+
+    /** When SMS last reached the server, how many, and why the last try failed. */
+    val status: Flow<SmsSyncStatus>
 }
+
+/** The id the backend gives a device acting as a connector (it lowercases the device id). */
+fun phoneConnectorId(deviceId: String): String = "device-${deviceId.lowercase()}"
 
 fun phoneManifest(version: String) = ConnectorManifest(
     kind = "phone",
@@ -71,30 +92,96 @@ class DefaultPhoneConnector(
     private val work: ConnectorWork,
     private val version: String = "1",
 ) : PhoneConnector {
-    override val lastSyncAt: Flow<kotlin.time.Instant?> = cursor.lastSyncAt
+    override val status: Flow<SmsSyncStatus> = cursor.status
 
-    override suspend fun syncOnce(): Int {
+    /** The worker and the app in front may both sync: one at a time, so nothing is sent twice. */
+    private val syncLock = Mutex()
+
+    /** The server has this run's manifest (and with it, the grant for messages). */
+    @Volatile private var announced = false
+
+    private data class SyncOutcome(val sent: Int, val problem: SmsSyncProblem?)
+
+    override suspend fun syncOnce(): Int = syncLock.withLock {
         if (!capabilities.smsGranted()) return 0
         val deviceId = sessions.session.first()?.deviceId?.value ?: return 0
+        val outcome = sync(deviceId)
+        cursor.finish(clock.now(), outcome.problem)
+        outcome.sent
+    }
+
+    override suspend fun enableMessages(): Int {
+        val deviceId = sessions.session.first()?.deviceId?.value ?: return 0
+        if (announce() == null) {
+            ingest.putGrants(ConnectorId(phoneConnectorId(deviceId)), GrantsUpdate(mapOf(Noun.MESSAGE to GrantState.GRANTED)))
+        }
+        return syncOnce()
+    }
+
+    /** Puts the manifest; null when the server has it. */
+    private suspend fun announce(): SmsSyncProblem? =
+        when (val r = ingest.putManifest(phoneManifest(version))) {
+            is ApiResult.Failure -> problemOf(r.error)
+            is ApiResult.Success -> { announced = true; null }
+        }
+
+    private suspend fun sync(deviceId: String): SyncOutcome {
+        // The manifest is what makes the server allow (grant) messages from this phone.
+        if (!announced) announce()?.let { return SyncOutcome(0, it) }
         val account = phoneAccount(deviceId)
+        try {
+            checkCursorFirst()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return SyncOutcome(0, SmsSyncProblem.READ_FAILED)
+        }
         var sent = 0
         repeat(MAX_READS) {
-            val rows = sms.readAfter(cursor.lastId(), READ_SIZE)
-            if (rows.isEmpty()) return sent
+            val rows = try {
+                sms.readAfter(cursor.lastId(), READ_SIZE)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                return SyncOutcome(sent, SmsSyncProblem.READ_FAILED)
+            }
+            if (rows.isEmpty()) return SyncOutcome(sent, null)
             for ((batch, newest) in smsBatches(rows, account, clock.now())) {
+                var accepted = 0
                 if (batch.records.isNotEmpty()) {
                     val response = when (val r = ingest.pushBatch(batch)) {
-                        is ApiResult.Failure -> return sent
+                        is ApiResult.Failure -> return SyncOutcome(sent, problemOf(r.error))
                         is ApiResult.Success -> r.value
                     }
-                    if (!cursorMayAdvance(response.results)) return sent
-                    sent += batch.records.size
+                    if (!cursorMayAdvance(response.results)) {
+                        // Next time the manifest goes again: it heals a grant left pending.
+                        announced = false
+                        return SyncOutcome(sent, SmsSyncProblem.NOT_ALLOWED)
+                    }
+                    accepted = acceptedCount(response.results)
                 }
-                cursor.advance(newest, clock.now())
+                sent += accepted
+                cursor.advance(newest.id, accepted, anchorOf(newest))
             }
-            if (rows.size < READ_SIZE) return sent
+            if (rows.size < READ_SIZE) return SyncOutcome(sent, null)
         }
-        return sent
+        // More is left (a very large inbox): the next pass carries on from the cursor.
+        return SyncOutcome(sent, null)
+    }
+
+    /** A restore or a new phone renumbers the SMS store: start over rather than skip texts (see [checkCursor]). */
+    private suspend fun checkCursorFirst() {
+        val last = cursor.lastId()
+        if (last <= 0) return
+        when (val check = checkCursor(last, cursor.anchor(), sms.rowAt(last), sms.maxId())) {
+            CursorCheck.Keep -> Unit
+            is CursorCheck.Adopt -> cursor.adopt(check.anchor)
+            CursorCheck.Rescan -> cursor.restart()
+        }
+    }
+
+    override fun forgetServer() {
+        announced = false
     }
 
     override suspend fun actionPass(waitSeconds: Int): Int {
@@ -107,14 +194,14 @@ class DefaultPhoneConnector(
     }
 
     override suspend fun runPass() {
-        ingest.putManifest(phoneManifest(version))
+        announce()
         dnd.endIfDue()
         syncOnce()
         actionPass(0)
     }
 
     override suspend fun runActionLoop() {
-        ingest.putManifest(phoneManifest(version))
+        announce()
         while (true) {
             // -1 means the poll failed (offline, route missing): wait before trying again.
             if (actionPass(LONG_POLL_SECONDS) < 0) delay(RETRY_DELAY)
@@ -134,6 +221,9 @@ class DefaultPhoneConnector(
 /** The WorkManager side, behind an interface so the connector is testable. */
 interface ConnectorWork {
     fun schedule()
+
+    /** Stops the periodic pass (the server was forgotten). */
+    fun cancel() {}
 }
 
 class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
@@ -142,6 +232,10 @@ class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(UNIQUE_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
+
+    override fun cancel() {
+        WorkManager.getInstance(context).cancelUniqueWork(UNIQUE_NAME)
     }
 
     private companion object { const val UNIQUE_NAME = "phone-connector" }
@@ -165,9 +259,10 @@ class PhoneConnectorWorker(context: Context, params: WorkerParameters) : Corouti
 
 class NoOpPhoneConnector : PhoneConnector {
     override suspend fun syncOnce(): Int = 0
+    override suspend fun enableMessages(): Int = 0
     override suspend fun actionPass(waitSeconds: Int): Int = 0
     override suspend fun runPass() = Unit
     override suspend fun runActionLoop() = Unit
     override fun schedule() = Unit
-    override val lastSyncAt: Flow<kotlin.time.Instant?> = kotlinx.coroutines.flow.flowOf(null)
+    override val status: Flow<SmsSyncStatus> = kotlinx.coroutines.flow.flowOf(SmsSyncStatus())
 }

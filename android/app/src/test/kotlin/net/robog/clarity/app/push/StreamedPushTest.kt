@@ -35,7 +35,7 @@ class StreamedPushTest {
         val sync = FeedSync(backend, FakeEventSource(emptyList()), store)
         val ledger = Ledger()
         val notifier = RecordingPushNotifier()
-        fun listener() = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0), notifier, ledger)
+        fun listener() = PushListener(sync.arrivals, { Front.Background }, { true }, FixedClock(T0), notifier, ledger, sync.caughtUp, { store.notifiable() })
         val service = listener()
 
         fun fallback(running: Boolean = false) = PushFallback(
@@ -43,7 +43,7 @@ class StreamedPushTest {
             serviceRunning = { running },
             feedLive = { false },
             catchUp = sync::catchUp,
-            deliver = listener()::deliver,
+            deliver = listener()::deliverMissed,
             reconnect = {},
             canStartService = { false },
             startService = {},

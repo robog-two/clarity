@@ -129,6 +129,8 @@ data class SettingsActions(
     val onAllowExactAlarms: () -> Unit = {},
     val onAllowFullScreen: () -> Unit = {},
     val onAllowSms: () -> Unit = {},
+    /** Texts are readable but the server refuses them: grant them there. */
+    val onAllowSmsOnServer: () -> Unit = {},
     val onAllowDnd: () -> Unit = {},
     val onRedoOnboarding: () -> Unit = {},
     val onForget: () -> Unit = {},
@@ -150,7 +152,18 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
         onDispose { lifecycle.removeObserver(observer) }
     }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.refreshDevice() }
-    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) viewModel.onSmsGranted() else viewModel.refreshDevice() }
+    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) {
+            viewModel.onSmsGranted()
+        } else {
+            viewModel.refreshDevice()
+            // Denied for good ("don't ask again"): the system no longer shows the dialog, so open the app's page.
+            val activity = context as? android.app.Activity
+            if (activity != null && !activity.shouldShowRequestPermissionRationale(Manifest.permission.READ_SMS)) {
+                context.openSystem(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, withPackage = true)
+            }
+        }
+    }
     SettingsContent(
         state = state,
         actions = SettingsActions(
@@ -178,6 +191,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
                 if (Build.VERSION.SDK_INT >= 34) context.openSystem(AndroidSettings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true)
             },
             onAllowSms = { sms.launch(Manifest.permission.READ_SMS) },
+            onAllowSmsOnServer = viewModel::onSmsGranted,
             onAllowDnd = { context.openSystem(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
             onRedoOnboarding = viewModel::redoOnboarding,
             onForget = viewModel::forgetInstance,
@@ -363,7 +377,8 @@ private fun sourcesSummary(state: SettingsUiState): String {
         1 -> "1 on your server"
         else -> "${state.serverSources.size} on your server"
     }
-    return if (state.smsGranted) "$server · texts synced" else server
+    val textsOk = state.smsGranted && state.sms.ok
+    return if (textsOk) "$server · texts synced" else server
 }
 
 /** A titled group of rows on a raised surface. */
@@ -524,9 +539,14 @@ private fun SourcesPage(state: SettingsUiState, actions: SettingsActions) {
     Column {
         SelectRow(
             "messages",
-            if (state.smsGranted) "synced with your server" else "allow reading texts to sync them",
-            if (state.smsGranted) state.smsLastSync else "allow",
-            { if (!state.smsGranted) actions.onAllowSms() },
+            state.sms.sub,
+            state.sms.trailing,
+            {
+                when {
+                    !state.smsGranted -> actions.onAllowSms()
+                    state.sms.needsAllow -> actions.onAllowSmsOnServer()
+                }
+            },
         )
         SelectRow(
             "do not disturb",
@@ -582,7 +602,7 @@ private val previewState = SettingsUiState(
         SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
         SourceRow("files", "webdav", "never", "files"),
     ),
-    smsGranted = true, smsLastSync = "just now", notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
+    smsGranted = true, sms = SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )
 
 private val previewVault = VaultUiState(

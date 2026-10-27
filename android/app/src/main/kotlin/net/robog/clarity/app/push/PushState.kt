@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SessionStore
+import net.robog.clarity.app.data.feed.FeedStore
 import net.robog.clarity.app.nav.MainTab
 
 /** The person's own push choices, kept on this phone. */
@@ -83,5 +84,23 @@ class FrontScreen {
         state.update(change)
         val s = state.value
         _front.value = if (s.started) Front.Showing(s.place) else Front.Background
+    }
+}
+
+/**
+ * Claims in the ledger what the person has on screen ([seenArrivals]), so that a later catch-up
+ * never notifies something already read. Without it, an item that reached the cache while the push
+ * service was not running stayed unclaimed however long the person had looked at it.
+ */
+class SeenOnScreen(
+    private val front: Flow<Front>,
+    private val store: FeedStore,
+    private val ledger: NotifiedLedger,
+) {
+    /** Runs until cancelled; run it while the app is in front. */
+    suspend fun track() {
+        combine(front, store.items, store.held) { f, items, held -> seenArrivals(f, items, held) }
+            .distinctUntilChanged()
+            .collect { if (it.isNotEmpty()) ledger.claimAll(it) }
     }
 }

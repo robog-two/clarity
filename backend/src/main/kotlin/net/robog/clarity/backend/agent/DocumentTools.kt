@@ -112,7 +112,11 @@ class GatedDocumentFetcher(
  */
 @Inject
 @SingleIn(AppScope::class)
-class DocumentTools(private val reader: NounReader, private val fetcher: DocumentFetcher) {
+class DocumentTools(
+    private val reader: NounReader,
+    private val settings: SettingsProvider = SettingsProvider { net.robog.clarity.shared.session.Settings() },
+    private val fetcher: DocumentFetcher,
+) {
 
     val all: List<Tool> by lazy { listOf(searchDocuments, readDocument) }
 
@@ -129,7 +133,8 @@ class DocumentTools(private val reader: NounReader, private val fetcher: Documen
         json = ClarityJson,
     ) { input ->
         val found = reader.searchDocuments(input.query, input.limit.coerceIn(1, MAX_SEARCH))
-        ToolResult.Ok(JsonArray(found.map { it.summaryJson() }).toString())
+        val zone = settings.homeZone()
+        ToolResult.Ok(JsonArray(found.map { it.summaryJson(zone) }).toString())
     }
 
     @Serializable
@@ -164,14 +169,14 @@ class DocumentTools(private val reader: NounReader, private val fetcher: Documen
     }
 }
 
-private fun Stored<DocumentPayload>.summaryJson(): JsonElement = buildJsonObject {
+private fun Stored<DocumentPayload>.summaryJson(zone: kotlinx.datetime.TimeZone): JsonElement = buildJsonObject {
     put("id", id.value)
     put("title", payload.title)
     put("path", payload.path)
     put("store", payload.store)
     payload.mimeType?.let { put("type", it) }
     payload.size?.let { put("size", it) }
-    payload.modifiedAt?.let { put("modifiedAt", it.toString()) }
+    payload.modifiedAt?.let { put("modifiedAt", agentTime(it, zone)) }
     if (payload.excerpt.isNotEmpty()) put("excerpt", JsonPrimitive(payload.excerpt.take(EXCERPT_CHARS)))
 }
 

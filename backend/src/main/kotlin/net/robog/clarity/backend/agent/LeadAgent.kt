@@ -6,6 +6,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -44,8 +45,15 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.time.ScheduleClock
 
 private val log = KotlinLogging.logger {}
+
+/** Pure: the text of the last system message in [messages] that starts with [prefix]. */
+fun lastSystemText(messages: List<Message>, prefix: String): String? =
+    messages.asReversed().firstNotNullOfOrNull { m ->
+        if (m.role != Role.SYSTEM) null else (m.content.singleOrNull() as? Block.Text)?.text?.takeIf { it.startsWith(prefix) }
+    }
 
 /**
  * Pure: does a journal end mid-turn (an unanswered user message or tool results, or unanswered tool
@@ -71,6 +79,30 @@ fun closeOpenToolCalls(history: List<Message>): Message? {
     return Message(Role.USER, open.map { Block.Result(it.id, "Not run: the turn ended before this call could run.", isError = true) })
 }
 
+/**
+ * The operator note appended when the person wrote and the lead ended its turn without answering
+ * through `send_to_user` (open models sometimes do the work and stop). Appended at the end of the
+ * thread, so the cached prefix is untouched.
+ */
+const val REPLY_NUDGE: String =
+    "[clarity] The person wrote to you and has had no reply: your plain text is not shown to them. " +
+        "Reply now with send_to_user (a short answer is fine)."
+
+/**
+ * Tools whose successful call shows the person something, so it counts as answering them:
+ * `send_to_user`, and the session tools that post their own card (in a live call the person sees
+ * "captured · N" or the plan appear; a nudge there would only add chatter).
+ */
+val ANSWERING_TOOLS: Set<String> = setOf("send_to_user", "capture", "set_priorities", "set_plan", "hand_off", "propose_line")
+
+/**
+ * Pure: whether a run that just ended still owes the person a reply: they wrote during this turn
+ * ([replyOwed]: no successful call of one of the [ANSWERING_TOOLS] since), and the model finished on its own (END_TURN).
+ * A run that failed, hit its turn limit, refused or compacted gets no nudge.
+ */
+fun owesReply(replyOwed: Boolean, terminal: HarnessEvent.Terminal?): Boolean =
+    replyOwed && terminal is HarnessEvent.Finished && terminal.reason == FinishReason.END_TURN
+
 /** How long after the person's last word the lead counts as "not idle" for low priority work. */
 val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
 
@@ -84,7 +116,10 @@ val USER_QUIET_FOR_LOW_PRIORITY: Duration = 60.seconds
  * (unanswered tool calls run again; external ones are idempotent through the action gate).
  * Inbox rows are marked consumed only when the message carrying them has been journaled.
  *
- * Plain assistant text is never shown to the person; `send_to_user` is the only way out.
+ * Plain assistant text is never shown to the person; `send_to_user` is the only way out. When the
+ * person wrote during a turn and the model ends it without a successful `send_to_user`, the lead
+ * appends [REPLY_NUDGE] and runs once more ([runTurn]); never more than once per turn. Turns made
+ * only of events (jobs, triggers, helper results) are never nudged: silence is fine there.
  *
  * Compaction: on Anthropic the API compacts the thread server-side. On OpenRouter the lead does it
  * itself after a turn ([compactClientSide]): one summarizing call, whose text is appended to the
@@ -102,6 +137,7 @@ class LeadAgent(
     private val threads: ThreadStore,
     private val constitutions: ConstitutionStore,
     private val memory: MemoryStore,
+    private val collections: CollectionStore,
     private val toolbox: AgentToolbox,
     private val large: LargeResults,
     private val feed: FeedService,
@@ -115,9 +151,14 @@ class LeadAgent(
     private lateinit var scope: RunScope
     private val turnLock = Mutex()
     private val awaiting = ConcurrentLinkedQueue<Delivery>()
-    private var lastMemoryContext: String? = null
     private var lastUserActivity: Instant? = null
+
+    /** When the thread was last told the current time (an inbox header or a `[now …]` line); null after a restart. */
+    private var lastClockStated: Instant? = null
     private var failures = 0
+
+    /** The person wrote during the current turn and nothing has answered them since ([ANSWERING_TOOLS]). */
+    private val replyOwed = AtomicBoolean(false)
 
     /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
     private var lastPromptTokens: Long? = null
@@ -172,10 +213,11 @@ class LeadAgent(
             log.info { "resuming the lead thread from its journal" }
             turnLock.withLock {
                 scope.startTurn(untrusted = true, requestedByUser = false)
+                replyOwed.set(false)
                 feed.publish(FeedEvent.Busy(true))
                 try {
                     val bound = runtime.bindOrFail(AgentRole.LEAD)
-                    runHarness(compactNow = false, bound)
+                    runTurn(bound)
                     threads.touchTurn(clock.now())
                     compactClientSide(bound)
                 } finally {
@@ -201,7 +243,15 @@ class LeadAgent(
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
-        val deliveries = memoryDelivery(now) + renderDeliveries(items, now)
+        replyOwed.set(userTurn)
+        val history = journal.load(threadId)
+        val visible = contextSince(history)
+        val zone = settings.homeZone()
+        // Like the memory context: state the time again if the model can no longer see one (compacted away).
+        val statesClock = clockDue(lastClockStated, now, zone) || !statesTime(visible)
+        val rendered = renderDeliveries(items, now, zone, statesClock = statesClock)
+        if (rendered.any { it.message.role == Role.SYSTEM }) lastClockStated = now
+        val deliveries = memoryDelivery(now, visible) + rendered
         if (userTurn) {
             lastUserActivity = now
             threads.touchUserInput(now)
@@ -210,7 +260,6 @@ class LeadAgent(
         try {
             // The turn boundary: the lead's settings are read here and kept for the whole turn.
             val bound = runtime.bindOrFail(AgentRole.LEAD)
-            val history = journal.load(threadId)
             val closing = closeOpenToolCalls(history)
             closing?.let { trackedJournal.append(threadId, it) }
             // A live call runs at low effort and the thread goes back afterwards, by a mid-conversation message (the cache prefix stays intact).
@@ -223,7 +272,7 @@ class LeadAgent(
             )
             awaiting.addAll(deliveries.filter { it.seqs.isNotEmpty() })
             messages.forEach { trackedJournal.append(threadId, it) }
-            runHarness(compactNow = false, bound)
+            runTurn(bound)
             threads.touchTurn(clock.now())
             compactClientSide(bound)
         } finally {
@@ -233,24 +282,47 @@ class LeadAgent(
         if (failures > 0) delay(minOf(60.seconds, 5.seconds * (1 shl (failures - 1).coerceAtMost(4))))
     }
 
-    /** The memory context message, only when it differs from what the thread last saw. */
-    private suspend fun memoryDelivery(now: Instant): List<Delivery> {
-        val zone = settings.current().homeZone
-        val today = journalDate(now, zone)
+    /**
+     * The memory context and the collection index, each only when it differs from the last one the
+     * model can still see ([visible]: the thread since its latest compaction point). So nothing is
+     * repeated while it is in view, after a restart included, and both come back after a compaction.
+     */
+    private suspend fun memoryDelivery(now: Instant, visible: List<Message>): List<Delivery> {
+        val zone = settings.homeZone()
+        val today = ScheduleClock.homeDate(now, zone)
         val yesterday = today.minus(DatePeriod(days = 1))
-        val text = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now))
-            ?: if (lastMemoryContext != null) "[memory, $today] The journal and scratch notes are empty." else null
-        if (text == null || text == lastMemoryContext) return emptyList()
-        lastMemoryContext = text
-        return listOf(Delivery(emptyList(), Message(Role.SYSTEM, listOf(Block.Text(text)))))
+        val lastMemory = lastSystemText(visible, MEMORY_CONTEXT_PREFIX)
+        val memoryText = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now), zone)
+            ?: if (lastMemory != null && !lastMemory.endsWith(EMPTY_MEMORY)) "[memory, $today] $EMPTY_MEMORY" else null
+        val lastIndex = lastSystemText(visible, COLLECTION_INDEX_PREFIX)
+        val indexText = renderCollectionIndex(collections.collections())
+            ?: if (lastIndex != null && lastIndex != NO_COLLECTIONS) NO_COLLECTIONS else null
+        return listOfNotNull(memoryText.takeIf { it != lastMemory }, indexText.takeIf { it != lastIndex })
+            .map { Delivery(emptyList(), Message(Role.SYSTEM, listOf(Block.Text(it)))) }
     }
 
     /**
-     * One lead turn on [bound]'s model. Thinking blocks from an earlier model stay in the journal and
+     * One lead turn: the harness run, and, when the person wrote and got no reply, ONE more run after
+     * [REPLY_NUDGE]. The nudge goes through the operator channel (a system message, after a
+     * placeholder user message since the thread ends with the assistant), appended at the end.
+     */
+    private suspend fun runTurn(bound: BoundRole) {
+        val first = runHarness(compactNow = false, bound)
+        if (!owesReply(replyOwed.get(), first)) return
+        log.info { "the person wrote and the lead ended without send_to_user: nudging once" }
+        foldInterrupts(Role.ASSISTANT, listOf(Message.system(REPLY_NUDGE))).forEach { trackedJournal.append(threadId, it) }
+        val second = runHarness(compactNow = false, bound)
+        if (owesReply(replyOwed.get(), second)) {
+            log.warn { "the lead still did not answer the person after the nudge; leaving it" }
+        }
+    }
+
+    /**
+     * One lead harness run on [bound]'s model. Thinking blocks from an earlier model stay in the journal and
      * are replayed as they are: the API leaves out, unbilled, any block the current model can't read,
      * and stripping them would be a history edit that breaks preserved thinking on the way back.
      */
-    private suspend fun runHarness(compactNow: Boolean, bound: BoundRole) = coroutineScope {
+    private suspend fun runHarness(compactNow: Boolean, bound: BoundRole): HarnessEvent.Terminal? = coroutineScope {
         val tools = toolbox.leadTools(scope)
         val request = roleRequest(
             role = bound.config,
@@ -272,6 +344,7 @@ class LeadAgent(
                     is HarnessEvent.AssistantText -> log.debug { "lead (not shown): ${event.text.take(200)}" }
                     is HarnessEvent.Called -> lastPromptTokens = event.usage.promptTokens
                     is HarnessEvent.CacheMiss -> log.warn { "prompt cache miss on lead turn ${event.turn}: ${event.usage}" }
+                    is HarnessEvent.ToolCompleted -> if (event.name in ANSWERING_TOOLS && !event.isError) replyOwed.set(false)
                     is HarnessEvent.Terminal -> terminal = event
                     else -> Unit
                 }
@@ -281,6 +354,7 @@ class LeadAgent(
             interrupts.close()
         }
         afterTurn(terminal)
+        terminal
     }
 
     private suspend fun systemBlocks() =
@@ -345,8 +419,9 @@ class LeadAgent(
         while (true) {
             val users = inbox.pending().filter { it.item.priority == Priority.USER && it.seq !in delivered }
             if (users.isNotEmpty()) {
-                val deliveries = renderDeliveries(users, clock.now())
+                val deliveries = renderDeliveries(users, clock.now(), settings.homeZone())
                 scope.userAsked()
+                replyOwed.set(true)
                 lastUserActivity = clock.now()
                 awaiting.addAll(deliveries)
                 delivered += users.map { it.seq }
@@ -407,6 +482,10 @@ class LeadAgent(
     }
 
     private companion object {
+        const val MEMORY_CONTEXT_PREFIX = "[memory, "
+        const val COLLECTION_INDEX_PREFIX = "[memory collections]"
+        const val EMPTY_MEMORY = "The journal and scratch notes are empty."
+        const val NO_COLLECTIONS = "[memory collections] none left."
         val IDLE_POLL = 30.seconds
         val INTERRUPT_POLL = 5.seconds
     }
