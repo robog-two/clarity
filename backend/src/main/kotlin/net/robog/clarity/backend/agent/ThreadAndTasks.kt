@@ -15,6 +15,7 @@ import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
@@ -78,6 +79,7 @@ interface TaskStore {
         heldActionId: HeldActionId? = null,
     ): AgentTask?
 
+    /** Newest first (by last update), so fresh work leads and stale tasks sink. */
     suspend fun list(includeFinished: Boolean = false): List<AgentTask>
 }
 
@@ -131,7 +133,7 @@ class ExposedTaskStore(
     override suspend fun list(includeFinished: Boolean): List<AgentTask> = database.tx {
         val query = AgentTasks.selectAll()
         if (!includeFinished) query.where { AgentTasks.status inList listOf("working", "drafted", "waiting_for_you", "scheduled") }
-        query.orderBy(AgentTasks.updatedAt).map { it.toTask() }
+        query.orderBy(AgentTasks.updatedAt to SortOrder.DESC).map { it.toTask() }
     }
 }
 

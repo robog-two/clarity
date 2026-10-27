@@ -25,6 +25,10 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import net.robog.clarity.backend.governance.ClosedStatus
+import io.github.oshai.kotlinlogging.KotlinLogging
+import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
@@ -76,6 +80,8 @@ object CredentialRequests : Table("credential_request") {
     val status = text("status")
     val credentialId = uuid("credential_id").nullable()
     val createdAt = timestamp("created_at")
+    val closedReason = text("closed_reason").nullable()
+    val closedAt = timestamp("closed_at").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -94,6 +100,9 @@ sealed interface CreateOutcome {
     data object UnknownRequest : CreateOutcome
 }
 
+/** A request the agent asked for: a new one, or the equal one ([existing]) already open for the same site and kind. */
+data class OpenedRequest(val request: CredentialRequest, val existing: Boolean)
+
 /** Persistence of the vault: ciphertext and metadata only. */
 interface VaultStore {
     /** Registers or replaces the device's keys; [approvalKey] (SPKI, base64url) replaces any earlier approval key, null clears it. */
@@ -107,11 +116,29 @@ interface VaultStore {
     /** Records an accepted signature (by hash); false when it was already used. */
     suspend fun markSignatureUsed(signatureHash: String, heldId: String, device: DeviceId): Boolean
 
-    suspend fun createRequest(name: String, kind: CredentialKind, fields: List<FieldSpec>, site: String, purpose: String): CredentialRequest
+    /**
+     * Opens a request, unless one for the same site and kind is already open: then that one comes
+     * back. With [replace] (re-entering the saved credential [name]) an open request under another
+     * name does not count: the new one takes its place, so the entry ends up under the saved name.
+     */
+    suspend fun createRequest(
+        name: String,
+        kind: CredentialKind,
+        fields: List<FieldSpec>,
+        site: String,
+        purpose: String,
+        replace: Boolean = false,
+    ): OpenedRequest
     suspend fun request(id: CredentialRequestId): CredentialRequest?
     suspend fun cancelRequest(id: CredentialRequestId): Boolean
 
-    /** Completes an open request into a credential with [envelopes], atomically. */
+    /**
+     * Closes open requests nobody needs any more ([staleRequests]): superseded by a saved credential
+     * or a newer request for the same site and kind, or expired. Returns how many it closed.
+     */
+    suspend fun tidyRequests(): Int
+
+    /** Completes an open request into a credential with [envelopes], atomically; other open requests for the same site and kind close. */
     suspend fun createCredential(request: CredentialRequestId, hints: Map<String, String>, envelopes: List<VaultEnvelope>): CreateOutcome
 
     suspend fun list(): List<CredentialMeta>
@@ -123,6 +150,8 @@ interface VaultStore {
     /** The calling device's own sealed copy; never anyone else's. */
     suspend fun envelopeFor(id: CredentialId, device: DeviceId): VaultEnvelope?
 }
+
+private val log = KotlinLogging.logger {}
 
 private fun uuidOrNull(raw: String): Uuid? = runCatching { Uuid.parse(raw) }.getOrNull()
 
@@ -186,7 +215,14 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
         fields: List<FieldSpec>,
         site: String,
         purpose: String,
-    ): CredentialRequest = database.tx {
+        replace: Boolean,
+    ): OpenedRequest = database.tx {
+        tidyTx()
+        val slot = slotOf(site, kind)
+        val open = CredentialRequests.selectAll().where { CredentialRequests.status eq CredentialRequestStatus.OPEN.wire() }
+            .orderBy(CredentialRequests.createdAt, SortOrder.DESC).map { it.toRequest() }
+            .firstOrNull { it.slot() == slot }
+        if (open != null && !(replace && open.name != name)) return@tx OpenedRequest(open, existing = true)
         val id = Uuid.random()
         val now = clock.now()
         CredentialRequests.insert {
@@ -199,7 +235,38 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
             it[status] = CredentialRequestStatus.OPEN.wire()
             it[createdAt] = now
         }
-        CredentialRequests.selectAll().where { CredentialRequests.id eq id }.single().toRequest()
+        // The form it took over from is answered by this one.
+        if (open != null) {
+            CredentialRequests.update({ (CredentialRequests.id eq Uuid.parse(open.id.value)) and (CredentialRequests.status eq CredentialRequestStatus.OPEN.wire()) }) {
+                it[status] = ClosedStatus.SUPERSEDED
+                it[closedReason] = "replaced by a request to enter $name again"
+                it[closedAt] = now
+            }
+        }
+        OpenedRequest(CredentialRequests.selectAll().where { CredentialRequests.id eq id }.single().toRequest(), existing = false)
+    }
+
+    override suspend fun tidyRequests(): Int = database.tx { tidyTx() }
+
+    private fun JdbcTransaction.tidyTx(): Int {
+        // One at a time, so a tidy and a new request cannot both keep a duplicate.
+        exec("SELECT pg_advisory_xact_lock($REQUEST_LOCK)")
+        val requests = CredentialRequests.selectAll()
+            .where { CredentialRequests.status inList listOf(CredentialRequestStatus.OPEN.wire(), CredentialRequestStatus.FULFILLED.wire()) }
+            .map { it.toRequest() }
+        if (requests.none { it.status == CredentialRequestStatus.OPEN }) return 0
+        val now = clock.now()
+        val closings = staleRequests(requests, Credentials.selectAll().map { it.toMeta() }, now)
+        closings.forEach { c ->
+            val uuid = uuidOrNull(c.id.value) ?: return@forEach
+            CredentialRequests.update({ (CredentialRequests.id eq uuid) and (CredentialRequests.status eq CredentialRequestStatus.OPEN.wire()) }) {
+                it[status] = c.status
+                it[closedReason] = c.reason
+                it[closedAt] = now
+            }
+        }
+        if (closings.isNotEmpty()) log.info { "closed ${closings.size} stale credential request(s): " + closings.joinToString { "${it.id} ${it.status} (${it.reason})" } }
+        return closings.size
     }
 
     override suspend fun request(id: CredentialRequestId): CredentialRequest? {
@@ -255,6 +322,8 @@ class ExposedVaultStore(private val database: Database, private val clock: Clock
                 it[status] = CredentialRequestStatus.FULFILLED.wire()
                 it[credentialId] = id
             }
+            // Other open forms for the same site and kind are answered by this one.
+            tidyTx()
             CreateOutcome.Created(Credentials.selectAll().where { Credentials.id eq id }.single().toMeta(), replaced = existing != null)
         }
     }
@@ -320,7 +389,11 @@ private fun ResultRow.toRequest() = CredentialRequest(
     fields = this[CredentialRequests.fieldSpecs],
     site = this[CredentialRequests.site],
     purpose = this[CredentialRequests.purpose],
-    status = parseWire<CredentialRequestStatus>(this[CredentialRequests.status]) ?: CredentialRequestStatus.OPEN,
+    // Superseded and expired requests (and any status this build does not know) read as cancelled.
+    status = parseWire<CredentialRequestStatus>(this[CredentialRequests.status]) ?: CredentialRequestStatus.CANCELLED,
     credentialId = this[CredentialRequests.credentialId]?.let { CredentialId(it.toString()) },
     createdAt = this[CredentialRequests.createdAt],
+    closedReason = this[CredentialRequests.closedReason],
 )
+
+private const val REQUEST_LOCK = 0x6372656471L

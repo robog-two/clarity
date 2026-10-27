@@ -26,12 +26,19 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.inList
+import io.github.oshai.kotlinlogging.KotlinLogging
+import net.robog.clarity.backend.sessions.AgentSessions
+import net.robog.clarity.shared.session.Session
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.andWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
+
+private val log = KotlinLogging.logger {}
 
 /** A stored version without its document, for history lists. */
 data class VersionInfo(val version: Int, val createdAt: Instant)
@@ -103,7 +110,7 @@ class ConstitutionStore(
     suspend fun create(initial: Constitution): Either<GovernanceError, Constitution> = either {
         validateConstitution(initial).let { it.fold({ e -> raise(e) }, { v -> v }) }
         val stored = database.tx {
-            if (latest() != null) null else write(initial.copy(version = 1, updatedAt = clock.now()))
+            if (latest() != null) null else write(initial.copy(version = 1, updatedAt = clock.now())).also { tidyTx() }
         }
         ensureNotNull(stored) { GovernanceError.AlreadyInitialized }
         events.publish(GovernanceEvent.ConstitutionChanged(stored.version))
@@ -112,20 +119,35 @@ class ConstitutionStore(
 
     /** Stores `transform(current)` as the next version. */
     suspend fun saveVersion(transform: (Constitution) -> Constitution): Either<GovernanceError, Constitution> = either {
-        val stored = database.tx { saveVersionTx(transform) }
+        val stored = database.tx { saveVersionTx(transform)?.also { tidyTx() } }
         ensureNotNull(stored) { GovernanceError.NoConstitution() }
         events.publish(GovernanceEvent.ConstitutionChanged(stored.version))
         stored
     }
 
+    /**
+     * Stores a proposal, or returns the equal one already waiting (same line, normalized text, tier
+     * change and held action), so asking twice does not leave two. Stale proposals are closed first,
+     * so an equal one from a conversation that has ended is not handed back.
+     */
     suspend fun propose(request: ProposeAmendment): Either<GovernanceError, Amendment> = either {
         val current = ensureNotNull(current()) { GovernanceError.NoConstitution() }
         val old = request.lineId?.let { id ->
             ensureNotNull(current.lines.firstOrNull { it.id == id }) { GovernanceError.LineNotFound(id.value) }
         }
         request.autonomy?.let { change -> autonomyProblem(change, current)?.let { raise(GovernanceError.InvalidConstitution(it)) } }
+        val candidate = Amendment(
+            AmendmentId(""), request.lineId, old?.text, request.proposed, request.reason,
+            request.fromHeld, Amendment.Status.PROPOSED, request.autonomy,
+        )
+        ensure(!alreadyInConstitution(candidate, current)) { GovernanceError.AlreadyInConstitution }
         val id = Uuid.random()
         database.tx {
+            tidyTx()
+            val key = candidate.key()
+            val existing = Amendments.selectAll().where { Amendments.status eq Amendment.Status.PROPOSED.wire() }
+                .orderBy(Amendments.createdAt, SortOrder.DESC).map { it.toAmendment() }.firstOrNull { it.key() == key }
+            if (existing != null) return@tx existing
             Amendments.insert {
                 it[Amendments.id] = id
                 it[lineId] = request.lineId?.value
@@ -137,17 +159,58 @@ class ConstitutionStore(
                 it[createdAt] = clock.now()
                 it[autonomy] = request.autonomy
             }
+            candidate.copy(id = AmendmentId(id.toString()))
         }
-        Amendment(
-            AmendmentId(id.toString()), request.lineId, old?.text, request.proposed, request.reason,
-            request.fromHeld, Amendment.Status.PROPOSED, request.autonomy,
-        )
     }
 
+    /**
+     * The amendments with [status] (all when null), newest first. Stale proposals are closed first,
+     * so `proposed` lists only the ones that can still be saved; `discarded` includes the
+     * superseded and expired ones (they carry a `closedReason`).
+     */
     suspend fun amendments(status: Amendment.Status? = null): List<Amendment> = database.tx {
+        tidyTx()
         val query = Amendments.selectAll()
-        status?.let { s -> query.andWhere { Amendments.status eq s.wire() } }
+        status?.let { s ->
+            val stored = if (s == Amendment.Status.DISCARDED) listOf(s.wire()) + ClosedStatus.ALL else listOf(s.wire())
+            query.andWhere { Amendments.status inList stored }
+        }
         query.orderBy(Amendments.createdAt, SortOrder.DESC).map { it.toAmendment() }
+    }
+
+    /**
+     * Closes proposals nobody can act on any more ([staleAmendments]): superseded by a save or a
+     * changed line, duplicates, ones whose conversation ended, and old ones. Statuses change; no row
+     * is deleted. Runs at startup, on a schedule and inside every change that can make one stale.
+     * Returns how many it closed.
+     */
+    suspend fun tidyProposals(): Int = database.tx { tidyTx() }
+
+    private fun JdbcTransaction.tidyTx(): Int {
+        // One tidy (or propose) at a time, so two concurrent ones cannot keep both of a duplicate pair.
+        exec("SELECT pg_advisory_xact_lock($AMENDMENT_LOCK)")
+        val rows = Amendments.selectAll()
+            .where { Amendments.status inList listOf(Amendment.Status.PROPOSED.wire(), Amendment.Status.SAVED.wire()) }
+            .map { it.toAmendment() to it[Amendments.createdAt] }
+        if (rows.none { it.first.status == Amendment.Status.PROPOSED }) return 0
+        val ids = rows.filter { it.first.status == Amendment.Status.PROPOSED }.map { it.first.id.value }
+        val liveBySession = AgentSessions.select(AgentSessions.amendmentId, AgentSessions.state)
+            .where { AgentSessions.amendmentId inList ids }
+            .groupBy({ it[AgentSessions.amendmentId]!! }, { it[AgentSessions.state] != Session.State.ENDED.wire() })
+            .mapValues { (_, live) -> live.any { it } }
+        val facts = rows.map { (a, at) -> AmendmentFacts(a, at, liveBySession[a.id.value]) }
+        val now = clock.now()
+        val closings = staleAmendments(facts, latest(), now)
+        closings.forEach { c ->
+            val uuid = parseHeldId(c.id.value) ?: return@forEach
+            Amendments.update({ (Amendments.id eq uuid) and (Amendments.status eq Amendment.Status.PROPOSED.wire()) }) {
+                it[status] = c.status
+                it[closedReason] = c.reason
+                it[closedAt] = now
+            }
+        }
+        if (closings.isNotEmpty()) log.info { "closed ${closings.size} stale amendment proposal(s): " + closings.joinToString { "${it.id} ${it.status} (${it.reason})" } }
+        return closings.size
     }
 
     suspend fun amendment(id: AmendmentId): Amendment? {
@@ -174,6 +237,8 @@ class ConstitutionStore(
                     val changed = with(held) { transitionTx(h, PENDING_STATUSES, HeldAction.Status.RULE_UPDATED, clock.now(), edited = null) }
                     if (changed) heldChanged = h
                 }
+                // Other proposals with the same text or for the same line are now redundant.
+                tidyTx()
                 stored
             }
         }.let { it.fold({ e -> raise(e) }, { v -> v }) }
@@ -221,6 +286,10 @@ private fun ResultRow.toAmendment() = Amendment(
     proposed = this[Amendments.proposed],
     reason = this[Amendments.reason],
     fromHeld = this[Amendments.fromHeld]?.let { HeldActionId(it.toString()) },
-    status = parseWire<Amendment.Status>(this[Amendments.status]) ?: Amendment.Status.PROPOSED,
+    // Superseded and expired proposals (and any status this build does not know) read as discarded.
+    status = parseWire<Amendment.Status>(this[Amendments.status]) ?: Amendment.Status.DISCARDED,
     autonomy = this[Amendments.autonomy],
+    closedReason = this[Amendments.closedReason],
 )
+
+private const val AMENDMENT_LOCK = 0x616d656e64L

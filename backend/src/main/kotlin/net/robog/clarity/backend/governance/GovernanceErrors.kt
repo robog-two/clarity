@@ -41,6 +41,12 @@ sealed interface GovernanceError : HttpProblem {
         override val detail = "amendment '$id' is no longer proposed"
     }
 
+    data object AlreadyInConstitution : GovernanceError {
+        override val status = HttpStatusCode.Conflict
+        override val title = "Already a rule"
+        override val detail = "the constitution already has this rule (and its tier); there is nothing to change"
+    }
+
     data class HeldNotFound(val id: String) : GovernanceError {
         override val status = HttpStatusCode.NotFound
         override val title = "Unknown held action"

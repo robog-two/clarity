@@ -153,6 +153,12 @@ data class CredentialRequest(
     val status: CredentialRequestStatus,
     val credentialId: CredentialId? = null,
     val createdAt: Instant,
+    /**
+     * Why the request closed without the person cancelling it: the same login was saved from another
+     * request ("superseded"), or nobody filled it in in time ("expired"). Those arrive as
+     * [CredentialRequestStatus.CANCELLED], so apps that know only the three statuses keep working.
+     */
+    val closedReason: String? = null,
 )
 
 /** `POST /api/v1/vault/credentials`: completes a [CredentialRequest]; name, kind, site, purpose and fields come from it. */

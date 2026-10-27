@@ -35,7 +35,13 @@ import net.robog.clarity.app.ui.held.NotNowOptions
 import net.robog.clarity.app.ui.held.RuleDialog
 import net.robog.clarity.app.ui.main.TabBar
 import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.app.ui.today.Doing
 import net.robog.clarity.app.ui.today.DoingRow
+import net.robog.clarity.app.ui.today.doingRows
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import net.robog.clarity.app.ui.today.TodayContent
 import net.robog.clarity.app.ui.today.TodayUiState
 import net.robog.clarity.app.vault.vaultExtras
@@ -90,8 +96,8 @@ private fun Screen(dark: Boolean, content: @Composable () -> Unit) {
 
 // ---------- Today ----------
 
-private fun task(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null) =
-    AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, t0)
+private fun task(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null, ago: Duration = Duration.ZERO) =
+    AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, t0 - ago)
 
 private val todayFull = TodayUiState(
     loading = false,
@@ -106,15 +112,23 @@ private val todayFull = TodayUiState(
         parked = listOf("feedback for Alex", "expense report", "renewing the car registration"),
         called = true,
     ),
-    doing = listOf(
-        DoingRow(task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1"), HeldActionId("h1")),
-        DoingRow(task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING), null),
-        DoingRow(task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED), null),
+    // Grouped by the app's own rule at t0: needs you, running, scheduled; stale ones folded away.
+    doing = doingRows(
+        listOf(
+            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
+            task("q2", "Find Ulta haircut openings", "web · no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
+            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("q3", "Sort the receipts folder", "files · started on Friday", AgentTask.Status.WORKING, ago = 3.days),
+            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+        ),
+        emptyMap(),
+        t0,
     ),
     heldWaiting = 2,
 )
 
-@Composable private fun TodayFull(dark: Boolean) = Screen(dark) { TodayContent(todayFull, {}, {}, {}) }
+@Composable private fun TodayFull(dark: Boolean, quietOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, quietExpanded = quietOpen) }
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
     TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
@@ -126,6 +140,9 @@ private val todayFull = TodayUiState(
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullLight() = TodayFull(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullDark() = TodayFull(true)
+// The quieter tasks unfolded: compact, still rows with nothing to press.
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, quietOpen = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, quietOpen = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyLight() = TodayEmpty(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyDark() = TodayEmpty(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorLight() = TodayError(false)
@@ -133,11 +150,13 @@ private val todayFull = TodayUiState(
 
 // One "I'm doing" row per task status: running work gets a drawn solid, the rest a still shape.
 private val everyStatus = todayFull.copy(
-    doing = AgentTask.Status.entries.mapIndexed { i, status ->
-        val waiting = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
-        val held = if (waiting) "s$i" else null
-        DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, held), held?.let { HeldActionId(it) })
-    },
+    doing = Doing(
+        main = AgentTask.Status.entries.mapIndexed { i, status ->
+            val waiting = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
+            val held = if (waiting) "s$i" else null
+            DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, held), held?.let { HeldActionId(it) })
+        } + DoingRow(task("sw", "A task that waits with nothing to review", "chat · asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
+    ),
 )
 @PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
 @PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusDark() = Screen(true) { TodayContent(everyStatus, {}, {}, {}) }

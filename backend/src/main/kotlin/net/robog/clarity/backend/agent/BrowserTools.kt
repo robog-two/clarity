@@ -562,7 +562,8 @@ class BrowserGate(
         /** Tools that can start a download. */
         val DOWNLOAD_TOOLS = setOf("click_by_uid", "navigate_page", "new_page")
         const val DOWNLOAD_HINT =
-            "A file this downloads (a PDF, CSV, ZIP...) is saved without asking and shows up in the sandbox at /workspace/downloads, read-only, for the shell to work on."
+            "A file this downloads (a PDF, CSV, ZIP...) is saved without asking and shows up in the sandbox at /workspace/downloads, read-only, for the shell to work on. " +
+                "PDFs are always downloaded, never shown in the browser (read them with pdftotext in the sandbox); list_downloads shows the saved file names."
         const val TABS_HINT =
             "Tabs survive a browser restart, but then an empty tab is selected: if the page you expect is not the selected one, " +
                 "select_page it, or navigate_page to it again if it is gone. Never assume you are still where you were."
