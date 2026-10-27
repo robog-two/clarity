@@ -7,7 +7,9 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import kotlin.time.Instant
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import net.robog.clarity.shared.SourceId
@@ -84,7 +86,7 @@ interface SmsSource {
 }
 
 class AndroidSmsSource(private val context: Context) : SmsSource {
-    override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> {
+    override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> = withContext(Dispatchers.IO) {
         val rows = mutableListOf<SmsRow>()
         val projection = arrayOf(
             Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY,
@@ -96,7 +98,7 @@ class AndroidSmsSource(private val context: Context) : SmsSource {
             "${Telephony.Sms._ID} > ? AND ${Telephony.Sms.TYPE} IN (?, ?)",
             arrayOf(afterId.toString(), SMS_INBOX.toString(), SMS_SENT.toString()),
             "${Telephony.Sms._ID} ASC LIMIT $limit",
-        ) ?: return emptyList()
+        ) ?: return@withContext emptyList()
         cursor.use {
             while (it.moveToNext()) {
                 rows += SmsRow(
@@ -109,7 +111,7 @@ class AndroidSmsSource(private val context: Context) : SmsSource {
                 )
             }
         }
-        return rows
+        rows
     }
 }
 

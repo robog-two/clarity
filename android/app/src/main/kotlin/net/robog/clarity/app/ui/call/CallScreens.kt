@@ -29,21 +29,22 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import net.robog.clarity.app.ui.components.FollowNewest
+import net.robog.clarity.app.ui.components.arrivingItem
+import net.robog.clarity.app.ui.components.groupShape
+import net.robog.clarity.app.ui.components.springIn
 import net.robog.clarity.app.ui.today.DoingRow
 import net.robog.clarity.app.ui.today.DoingRowView
 import net.robog.clarity.app.ui.today.PlanHero
 import net.robog.clarity.app.ui.today.TodayLabel
-import net.robog.clarity.app.ui.today.groupShape
-import net.robog.clarity.app.ui.today.springIn
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
@@ -66,7 +67,6 @@ import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
-import net.robog.clarity.app.ui.components.ReadingText
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
@@ -74,7 +74,6 @@ import net.robog.clarity.app.voice.MicAccess
 import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.MicRationale
 import net.robog.clarity.app.voice.MicStateChip
-import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.session.CallStage
 
 /** Everything `Call.dc.html` shows after the lock screen: incoming, snoozed, in call, ended, replay. */
@@ -271,23 +270,22 @@ private fun RowScope.Segment(label: String, state: SegmentState) {
     }
 }
 
-/** This call's feed items with the live bubble last; follows the newest line. */
+/** This call's feed items with the live bubble last (at the bottom); follows the newest line. */
 @Composable
 private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
     val listState = rememberLazyListState()
     val env = CardEnv(held = state.held, tasks = state.tasks)
-    val count = state.items.size + if (state.live != null) 1 else 0
-    LaunchedEffect(count, state.items.lastOrNull()?.cards?.size) {
-        if (count > 0) listState.animateScrollToItem(count - 1)
-    }
+    FollowNewest(listState, state.items.size)
+    // Bottom-up like Ask: opens at the newest line and stays pinned while a line streams in.
     LazyColumn(
         modifier.fillMaxWidth(),
         state = listState,
+        reverseLayout = true,
         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
     ) {
-        items(state.items, key = { it.seq }) { FeedItemView(it, env = env) }
-        state.live?.let { live -> item(key = "live") { LiveBubble(live) } }
+        state.live?.let { live -> item(key = "live") { LiveBubble(live, arrivingItem()) } }
+        items(state.items.asReversed(), key = { it.seq }) { FeedItemView(it, arrivingItem(), env = env) }
     }
 }
 

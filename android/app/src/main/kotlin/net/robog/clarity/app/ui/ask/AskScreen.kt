@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.ask
 
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.ui.unit.sp
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +26,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +44,8 @@ import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.SecondaryButton
+import net.robog.clarity.app.ui.components.FollowNewest
+import net.robog.clarity.app.ui.components.arrivingItem
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.voice.MicAccess
 import net.robog.clarity.app.voice.MicChipState
@@ -69,6 +73,7 @@ fun AskScreen(modifier: Modifier = Modifier, onReview: (HeldActionId) -> Unit = 
     )
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun AskContent(
     state: AskUiState,
@@ -84,10 +89,7 @@ fun AskContent(
 ) {
     val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message)
     val listState = rememberLazyListState()
-    LaunchedEffect(state.items.size, state.items.lastOrNull()?.cards?.size, state.live) {
-        val count = listState.layoutInfo.totalItemsCount
-        if (count > 0) listState.animateScrollToItem(count - 1)
-    }
+    FollowNewest(listState, state.items.size)
     Column(modifier.fillMaxSize().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 12.dp),
@@ -96,23 +98,25 @@ fun AskContent(
         ) {
             Text("Ask", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 24.sp, lineHeight = 30.sp))
             if (state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn) MicStateChip(state.mic)
-            else Kicker(if (state.busy) "working…" else "replies in text")
+            else if (state.busy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                LoadingIndicator(Modifier.size(24.dp))
+                Kicker("working…")
+            }
+            else Kicker("replies in text")
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // Built bottom-up (newest first, reverseLayout) so the thread opens at the latest message and a
+        // reply that grows while streaming stays pinned to the bottom without any scrolling.
         LazyColumn(
             Modifier.weight(1f).fillMaxWidth(),
             state = listState,
+            reverseLayout = true,
             contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
         ) {
-            if (state.items.isEmpty() && state.live == null) {
-                item { Hint("Ask me anything about your day. I’ll check your sources and answer here.") }
-            }
-            items(state.items, key = { it.seq }) { FeedItemView(it, env = env) }
-            state.live?.let { live -> item(key = "live") { LiveBubble(live) } }
             if (state.suggestions.isNotEmpty()) {
                 item(key = "suggestions") {
-                    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(arrivingItem().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Kicker("try saying")
                         state.suggestions.forEach { s ->
                             OutlinedButton(
@@ -123,6 +127,11 @@ fun AskContent(
                         }
                     }
                 }
+            }
+            state.live?.let { live -> item(key = "live") { LiveBubble(live, arrivingItem()) } }
+            items(state.items.asReversed(), key = { it.seq }) { FeedItemView(it, arrivingItem(), env = env) }
+            if (state.items.isEmpty() && state.live == null) {
+                item(key = "empty") { Hint("Ask me anything about your day. I’ll check your sources and answer here.") }
             }
         }
         if (state.sync == SyncState.Unauthorized) {

@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,8 +44,10 @@ fun slideConfirms(offset: Float, max: Float): Boolean = max > 0f && offset >= ma
 /**
  * Slide the knob from left to right to confirm. Let go early and it springs back. Screen readers
  * get it as a plain button. [resetKey] puts the knob back at the start (for example after the
- * request failed).
+ * request failed). While [working] (the confirmed request is in flight) the knob stays lit at the
+ * end and shows a loading indicator instead of the arrow.
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SlideToConfirm(
     text: String,
@@ -50,6 +55,7 @@ fun SlideToConfirm(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     resetKey: Any? = null,
+    working: Boolean = false,
 ) {
     val knob = 48.dp
     val pad = 4.dp
@@ -57,11 +63,13 @@ fun SlideToConfirm(
     val offset = remember(resetKey) { Animatable(0f) }
     var done by remember(resetKey) { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
+    val spring = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
+    val lit = enabled || working
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .height(knob + pad * 2)
-            .background(if (enabled) colors.primaryContainer else colors.surfaceContainerHighest, CircleShape)
+            .background(if (lit) colors.primaryContainer else colors.surfaceContainerHighest, CircleShape)
             .semantics {
                 role = Role.Button
                 if (enabled && !done) onClick(label = text) { done = true; onConfirm(); true }
@@ -71,7 +79,7 @@ fun SlideToConfirm(
         Text(
             text,
             Modifier.align(Alignment.Center).padding(start = knob),
-            color = if (enabled) colors.onPrimaryContainer else colors.onSurface.copy(alpha = .38f),
+            color = if (lit) colors.onPrimaryContainer else colors.onSurface.copy(alpha = .38f),
             style = MaterialTheme.typography.labelLarge,
         )
         Box(
@@ -79,7 +87,7 @@ fun SlideToConfirm(
                 .padding(pad)
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
                 .size(knob)
-                .background(if (enabled) colors.primary else colors.onSurface.copy(alpha = .12f), CircleShape)
+                .background(if (lit) colors.primary else colors.onSurface.copy(alpha = .12f), CircleShape)
                 .pointerInput(enabled, done, max) {
                     if (!enabled || done) return@pointerInput
                     detectHorizontalDragGestures(
@@ -87,14 +95,14 @@ fun SlideToConfirm(
                             scope.launch {
                                 if (slideConfirms(offset.value, max)) {
                                     done = true
-                                    offset.animateTo(max)
+                                    offset.animateTo(max, spring)
                                     onConfirm()
                                 } else {
-                                    offset.animateTo(0f)
+                                    offset.animateTo(0f, spring)
                                 }
                             }
                         },
-                        onDragCancel = { scope.launch { offset.animateTo(0f) } },
+                        onDragCancel = { scope.launch { offset.animateTo(0f, spring) } },
                     ) { change, dx ->
                         change.consume()
                         scope.launch { offset.snapTo((offset.value + dx).coerceIn(0f, max)) }
@@ -102,11 +110,17 @@ fun SlideToConfirm(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowForward,
-                contentDescription = null,
-                tint = if (enabled) colors.onPrimary else colors.onSurface.copy(alpha = .38f),
-            )
+            Crossfade(working, animationSpec = MaterialTheme.motionScheme.fastEffectsSpec(), label = "knob") { busy ->
+                if (busy) {
+                    LoadingIndicator(Modifier.size(36.dp), color = colors.onPrimary)
+                } else {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = if (lit) colors.onPrimary else colors.onSurface.copy(alpha = .38f),
+                    )
+                }
+            }
         }
     }
 }

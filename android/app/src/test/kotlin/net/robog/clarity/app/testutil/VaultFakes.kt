@@ -156,7 +156,7 @@ class FakeVault(
     val deleted = mutableListOf<CredentialId>()
     var registers = 0
     var rekeys = 0
-    override fun keyStatus() = status
+    override suspend fun keyStatus() = status
     override suspend fun register(): ApiResult<Unit> { registers++; return ApiResult.Success(Unit) }
     override suspend fun credentials() = list
     override suspend fun delete(id: CredentialId): ApiResult<Unit> { deleted += id; return ApiResult.Success(Unit) }

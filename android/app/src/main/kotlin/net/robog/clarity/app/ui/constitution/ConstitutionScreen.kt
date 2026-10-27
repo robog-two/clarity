@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.constitution
 
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import net.robog.clarity.R
 import net.robog.clarity.app.ui.components.Drawing
@@ -193,7 +194,7 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
         ScreenTitle("How I want to work")
         state.error?.let { ErrorBox(it) }
         when {
-            state.loading -> Hint("Loading…")
+            state.loading -> LoadingSpinner()
             c == null -> Hint(if (state.unavailable) "Your server doesn’t have a constitution yet." else "Can’t load it right now.")
             else -> {
                 Kicker("lines")

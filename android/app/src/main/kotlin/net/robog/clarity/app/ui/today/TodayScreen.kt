@@ -3,7 +3,6 @@ package net.robog.clarity.app.ui.today
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -30,7 +29,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -39,7 +37,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -53,12 +50,10 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -69,17 +64,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import kotlin.time.Instant
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalDate
 import net.robog.clarity.app.ui.cards.taskStatusLabel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.LoadingSpinner
+import net.robog.clarity.app.ui.components.ReviewButton
 import net.robog.clarity.app.ui.components.ScreenGutter
+import net.robog.clarity.app.ui.components.TaskRow
+import net.robog.clarity.app.ui.components.TaskShape
+import net.robog.clarity.app.ui.components.TaskStatus
+import net.robog.clarity.app.ui.components.groupShape
+import net.robog.clarity.app.ui.components.springIn
 import net.robog.clarity.app.ui.components.sentenceCase
-import net.robog.clarity.app.ui.theme.ClarityPalette
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.feed.AgentTask
@@ -261,48 +259,17 @@ private fun NoPlanYet(modifier: Modifier = Modifier) {
 
 // ---------- I'm doing: a contained group ----------
 
-/** Segmented-list corners: round outer ends, tight inner joins. */
-internal fun groupShape(index: Int, count: Int): Shape {
-    val outer = 24.dp
-    val inner = 6.dp
-    return RoundedCornerShape(
-        topStart = if (index == 0) outer else inner,
-        topEnd = if (index == 0) outer else inner,
-        bottomStart = if (index == count - 1) outer else inner,
-        bottomEnd = if (index == count - 1) outer else inner,
-    )
-}
-
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 internal fun DoingRowView(row: DoingRow, shape: Shape, onReview: (HeldActionId) -> Unit, modifier: Modifier = Modifier) {
-    Surface(modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainer, shape = shape) {
-        Row(
-            Modifier.heightIn(min = 72.dp).padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            StatusGlyph(row.task)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(row.task.title, style = MaterialTheme.clarityText.chat)
-                Text(sentenceCase(row.task.detail), style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (row.review != null) {
-                // The one Peach element on the screen: the action that needs the person.
-                Button(
-                    onClick = { onReview(row.review) },
-                    shapes = ButtonDefaults.shapes(),
-                    colors = ButtonDefaults.buttonColors(containerColor = ClarityPalette.Peach, contentColor = ClarityPalette.Charcoal),
-                ) { Text("Review") }
-            } else {
-                Text(
-                    sentenceCase(taskStatusLabel(row.task.status)),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    TaskRow(
+        title = row.task.title,
+        detail = row.task.detail,
+        shape = shape,
+        glyph = { StatusGlyph(row.task) },
+        // The one Peach element on the screen: the action that needs the person.
+        trailing = { if (row.review != null) ReviewButton { onReview(row.review) } else TaskStatus(taskStatusLabel(row.task.status)) },
+        modifier = modifier,
+    )
 }
 
 /** The three solids, one per running task (picked by task id so a task keeps its solid). */
@@ -341,7 +308,7 @@ private fun StatusGlyph(task: AgentTask) {
                 AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
                 else -> MaterialShapes.Circle to colors.onSurfaceVariant.copy(alpha = 0.35f)
             }
-            Box(Modifier.padding(8.dp).size(28.dp).background(fill, shape.toShape()))
+            TaskShape(shape, fill)
         }
     }
 }
@@ -408,28 +375,6 @@ internal fun TodayLabel(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(text, modifier.padding(top = 6.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-}
-
-// ---------- Motion ----------
-
-/**
- * Staggered arrival: each block rises a little and fades in on an expressive spring, [index] steps
- * after the first. Previews and screenshots show the settled layout.
- */
-@Composable
-internal fun Modifier.springIn(index: Int): Modifier {
-    if (LocalInspectionMode.current) return this
-    val progress = remember { Animatable(0f) }
-    val spatial = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
-    LaunchedEffect(Unit) {
-        delay(45L * index)
-        launch { progress.animateTo(1f, spatial) }
-    }
-    return graphicsLayer {
-        val p = progress.value
-        alpha = p.coerceIn(0f, 1f)
-        translationY = (1f - p) * 24.dp.toPx()
-    }
 }
 
 private val previewTime = Instant.parse("2026-10-26T14:04:00Z")

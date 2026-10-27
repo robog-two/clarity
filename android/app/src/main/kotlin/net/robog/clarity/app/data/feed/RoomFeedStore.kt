@@ -10,7 +10,12 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.map
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.AgentTask
@@ -90,20 +95,30 @@ abstract class ClarityDatabase : RoomDatabase() {
     abstract fun feedDao(): FeedDao
 }
 
-class RoomFeedStore(private val dao: FeedDao) : FeedStore {
+/**
+ * The feed cache. Every table change re-reads and re-decodes the whole list, which during a streamed
+ * reply happens many times a second, so decoding runs on [decode] (a background pool) and only the
+ * newest list is kept when the screen falls behind.
+ */
+class RoomFeedStore(
+    private val dao: FeedDao,
+    private val decode: CoroutineDispatcher = Dispatchers.Default,
+) : FeedStore {
     private val json = ClarityJson
 
     override val items: Flow<List<FeedItem>> =
-        dao.items().map { rows -> rows.map { json.decodeFromString(FeedItem.serializer(), it) } }
+        dao.items().map { rows -> rows.map { json.decodeFromString(FeedItem.serializer(), it) } }.offMain()
     override val tasks: Flow<List<AgentTask>> =
-        dao.tasks().map { rows -> rows.map { json.decodeFromString(AgentTask.serializer(), it) } }
+        dao.tasks().map { rows -> rows.map { json.decodeFromString(AgentTask.serializer(), it) } }.offMain()
     override val held: Flow<List<HeldAction>> =
-        dao.held().map { rows -> rows.map { json.decodeFromString(HeldAction.serializer(), it) } }
+        dao.held().map { rows -> rows.map { json.decodeFromString(HeldAction.serializer(), it) } }.offMain()
+
+    private fun <T> Flow<T>.offMain(): Flow<T> = flowOn(decode).conflate()
 
     override suspend fun lastSeq(): Long = dao.lastSeq()
 
     override suspend fun recentItems(limit: Int): List<FeedItem> =
-        dao.recent(limit).map { json.decodeFromString(FeedItem.serializer(), it) }.reversed()
+        withContext(decode) { dao.recent(limit).map { json.decodeFromString(FeedItem.serializer(), it) }.reversed() }
 
     override suspend fun item(id: FeedItemId): FeedItem? =
         dao.itemById(id.value)?.let { json.decodeFromString(FeedItem.serializer(), it) }
