@@ -5,10 +5,9 @@ import net.robog.clarity.shared.session.Settings
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import java.time.DateTimeException
-import java.time.LocalDate
-import java.time.ZoneId
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -34,6 +33,8 @@ import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.query.RecordQuery
 import net.robog.clarity.shared.query.TriggerSpec
+import net.robog.clarity.shared.time.LocalTimes
+import net.robog.clarity.shared.time.ScheduleClock
 
 /**
  * The agent's window onto Clarity: tools defined once over [NounReader] and [TriggerStore], served
@@ -41,7 +42,8 @@ import net.robog.clarity.shared.query.TriggerSpec
  * [NounReader], so what an agent can see is exactly what that interface exposes.
  *
  * Output is compact JSON (no pretty printing, empty fields omitted, long bodies truncated) because
- * every byte comes back as input tokens on the next turn.
+ * every byte comes back as input tokens on the next turn. Times in and out are on the person's own
+ * clock (their home zone, [LocalTimes]); storage stays in instants.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -59,8 +61,8 @@ class DomainTools(
 
     @Serializable
     class ListMessagesInput(
-        @Description("Start of the window, ISO-8601 instant, e.g. 2026-10-24T00:00:00Z") val from: String,
-        @Description("End of the window (exclusive), ISO-8601 instant") val until: String,
+        @Description("Start of the window. $LOCAL_TIME_HINT A plain date (2026-10-26) means the start of that day.") val from: String,
+        @Description("End of the window (exclusive), local time like `from`. A plain date means the end of that day, so from=until=2026-10-26 is that whole day.") val until: String,
         @Description("Only messages sent or received by this address/number (exact, case-insensitive)") val participant: String? = null,
         @Description("Maximum messages to return (1-$MAX_LIMIT, default 50)") val limit: Int = 50,
         @Description("Email folder or label: INBOX (default), Sent, Junk, Spam, Archive, a label, or \"*\" for every folder. SMS and chat are always included.")
@@ -74,34 +76,39 @@ class DomainTools(
             "Email comes from the inbox unless you name another folder (e.g. Junk when something seems missing).",
         json = ClarityJson,
     ) { input ->
-        withRange(input.from, input.until) { range ->
+        val zone = settings.homeZone()
+        withRange(input.from, input.until, zone) { range ->
             val folder = input.folder.trim().takeUnless { it.isEmpty() || it == "*" }
             val found = reader.messages(range, input.participant?.takeIf { it.isNotBlank() }, input.limit.clampLimit(), folder)
             if (found.isEmpty() && folder != null) return@withRange emptyFolderAnswer(folder, reader.emailFolders())
             val folders = reader.messageFolders(found.map { it.id })
-            ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty()) }.asJsonArray().toString())
+            ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty(), zone) }.asJsonArray().toString())
         }
     }
 
     @Serializable
     class ListCalendarEventsInput(
-        @Description("A single day, YYYY-MM-DD (interpreted in `timezone`). Use this OR from/until.") val date: String? = null,
-        @Description("Range start, ISO-8601 instant. Requires `until`.") val from: String? = null,
-        @Description("Range end (exclusive), ISO-8601 instant") val until: String? = null,
-        @Description("IANA time zone used for `date`, e.g. Europe/Berlin; default the person's home zone") val timezone: String? = null,
+        @Description("A single day, YYYY-MM-DD (the person's local day). Use this OR from/until.") val date: String? = null,
+        @Description("Range start. Requires `until`. $LOCAL_TIME_HINT A plain date means the start of that day.") val from: String? = null,
+        @Description("Range end (exclusive), local time like `from`. A plain date means the end of that day.") val until: String? = null,
+        @Description("IANA time zone to read `date`/`from`/`until` in, e.g. Europe/Berlin; default (and almost always right) the person's home zone. Results are always shown in the person's home zone.") val timezone: String? = null,
         @Description("Maximum events to return (1-$MAX_LIMIT, default 100)") val limit: Int = 100,
     )
 
     private val listCalendarEvents = tool<ListCalendarEventsInput>(
         name = "list_calendar_events",
-        description = "List calendar events overlapping a day or a time range, soonest first.",
+        description = "List calendar events overlapping a day or a time range, soonest first. Times are the person's local time " +
+            "with their offset; all-day events give `start` and `end` as dates (the first and last day, inclusive).",
         json = ClarityJson,
     ) { input ->
-        val range = dayOrRange(input, input.timezone ?: settings.current().homeZone)
-        when (range) {
+        val home = settings.homeZone()
+        val readIn = input.timezone?.let { id -> runCatching { TimeZone.of(id) }.getOrNull() ?: return@tool ToolResult.Error("Unknown `timezone`: $id") } ?: home
+        when (val range = dayOrRange(input, readIn)) {
             is Parsed.Bad -> ToolResult.Error(range.message)
             is Parsed.Ok -> ToolResult.Ok(
-                reader.calendarEvents(range.value, input.limit.clampLimit()).map { it.eventJson() }.asJsonArray().toString(),
+                reader.calendarEvents(range.value, input.limit.clampLimit())
+                    .filter { !it.payload.allDay || allDayTouches(it.payload, range.value, readIn) }
+                    .map { it.eventJson(home) }.asJsonArray().toString(),
             )
         }
     }
@@ -167,13 +174,13 @@ private sealed interface Parsed<out T> {
     data class Bad(val message: String) : Parsed<Nothing>
 }
 
-private fun parseInstant(label: String, raw: String?): Parsed<Instant> =
-    if (raw == null) Parsed.Bad("`$label` is required")
-    else runCatching { Instant.parse(raw) }.fold({ Parsed.Ok(it) }, { Parsed.Bad("`$label` is not an ISO-8601 instant: $raw") })
+/** A range bound on the clock of [zone]: a plain date is the start of the day for `from`, its end for `until`. */
+private fun parseBound(label: String, raw: String?, zone: TimeZone, dayAs: DayAs): Parsed<Instant> =
+    readToolTime(label, raw, zone, dayAs).fold({ Parsed.Bad(it) }, { Parsed.Ok(it) })
 
-private inline fun withRange(from: String, until: String, block: (TimeRange) -> ToolResult): ToolResult {
-    val start = parseInstant("from", from)
-    val end = parseInstant("until", until)
+private inline fun withRange(from: String, until: String, zone: TimeZone, block: (TimeRange) -> ToolResult): ToolResult {
+    val start = parseBound("from", from, zone, DayAs.START)
+    val end = parseBound("until", until, zone, DayAs.END)
     return when {
         start is Parsed.Bad -> ToolResult.Error(start.message)
         end is Parsed.Bad -> ToolResult.Error(end.message)
@@ -197,20 +204,13 @@ internal fun emptyFolderAnswer(folder: String, known: List<String>): ToolResult 
     }
 }
 
-private fun dayOrRange(input: DomainTools.ListCalendarEventsInput, zoneId: String): Parsed<TimeRange> {
+private fun dayOrRange(input: DomainTools.ListCalendarEventsInput, zone: TimeZone): Parsed<TimeRange> {
     if (input.date != null) {
-        return try {
-            val zone = ZoneId.of(zoneId)
-            val day = LocalDate.parse(input.date)
-            val start = day.atStartOfDay(zone).toInstant()
-            val end = day.plusDays(1).atStartOfDay(zone).toInstant()
-            Parsed.Ok(TimeRange(Instant.fromEpochSeconds(start.epochSecond), Instant.fromEpochSeconds(end.epochSecond)))
-        } catch (e: DateTimeException) {
-            Parsed.Bad("Invalid `date`/`timezone`: ${e.message}")
-        }
+        val day = LocalTimes.parse(input.date, zone) as? LocalTimes.Parsed.Day ?: return Parsed.Bad("Invalid `date` (YYYY-MM-DD): ${input.date}")
+        return Parsed.Ok(TimeRange(day.start, day.end))
     }
-    val start = parseInstant("from", input.from)
-    val end = parseInstant("until", input.until)
+    val start = parseBound("from", input.from, zone, DayAs.START)
+    val end = parseBound("until", input.until, zone, DayAs.END)
     return when {
         start is Parsed.Bad -> Parsed.Bad("Provide `date` or both `from` and `until`. ${start.message}")
         end is Parsed.Bad -> Parsed.Bad("Provide `date` or both `from` and `until`. ${end.message}")
@@ -224,14 +224,14 @@ private fun Iterable<JsonElement>.asJsonArray() = JsonArray(toList())
 
 private fun Handle.label(): String = if (displayName.isNullOrBlank()) value else "$displayName <$value>"
 
-private fun Stored<MessagePayload>.messageJson(folders: List<String>): JsonElement = buildJsonObject {
+private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: TimeZone): JsonElement = buildJsonObject {
     put("id", id.value)
     if (folders.isNotEmpty()) put("folders", JsonArray(folders.map(::JsonPrimitive)))
     put("channel", payload.channel.name.lowercase())
     put("from", payload.sender.label())
     put("to", JsonArray(payload.recipients.map { JsonPrimitive(it.label()) }))
     payload.subject?.let { put("subject", it) }
-    put("sentAt", payload.sentAt.toString())
+    put("sentAt", agentTime(payload.sentAt, zone))
     payload.threadRef?.let { put("thread", it) }
     put("body", payload.body.truncated())
 }
@@ -241,13 +241,31 @@ private const val MAX_BODY_CHARS = 1_500
 private fun String.truncated(): String =
     if (length <= MAX_BODY_CHARS) this else take(MAX_BODY_CHARS) + "…[truncated ${length - MAX_BODY_CHARS} chars]"
 
-private fun Stored<CalendarEventPayload>.eventJson(): JsonElement = buildJsonObject {
+/**
+ * Pure: whether an all-day event (stored as UTC midnights, see [LocalTimes.allDayDates]) covers a
+ * day of [range] as the person reads the range on the clock of [zone]. Its instants alone would
+ * also overlap the evening before in zones west of UTC.
+ */
+internal fun allDayTouches(event: CalendarEventPayload, range: TimeRange, zone: TimeZone): Boolean {
+    val (first, last) = LocalTimes.allDayDates(event.start, event.end)
+    val rangeFirst = ScheduleClock.homeDate(range.from, zone)
+    val rangeLast = ScheduleClock.homeDate(range.until - 1.nanoseconds, zone)
+    return first <= rangeLast && last >= rangeFirst
+}
+
+private fun Stored<CalendarEventPayload>.eventJson(zone: TimeZone): JsonElement = buildJsonObject {
     put("id", id.value)
     put("title", payload.title)
     put("calendar", payload.calendar)
-    put("start", payload.start.toString())
-    put("end", payload.end.toString())
-    if (payload.allDay) put("allDay", true)
+    if (payload.allDay) {
+        val (first, last) = LocalTimes.allDayDates(payload.start, payload.end)
+        put("start", LocalTimes.formatDate(first))
+        put("end", LocalTimes.formatDate(last))
+        put("allDay", true)
+    } else {
+        put("start", agentTime(payload.start, zone))
+        put("end", agentTime(payload.end, zone))
+    }
     payload.location?.let { put("location", it) }
     if (payload.attendees.isNotEmpty()) put("attendees", JsonArray(payload.attendees.map { JsonPrimitive(it.label()) }))
     payload.description?.let { put("description", it.truncated()) }

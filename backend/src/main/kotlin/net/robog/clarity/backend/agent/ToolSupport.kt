@@ -19,6 +19,9 @@ fun interface SettingsProvider {
     suspend fun current(): Settings
 }
 
+/** The person's home zone: every time an agent sees or gives is on this clock (see [net.robog.clarity.shared.time.LocalTimes]). */
+suspend fun SettingsProvider.homeZone(): kotlinx.datetime.TimeZone = net.robog.clarity.shared.time.zoneOrUtc(current().homeZone)
+
 @Inject
 @ContributesBinding(AppScope::class)
 class DefaultSettingsProvider : SettingsProvider {

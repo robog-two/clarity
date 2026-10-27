@@ -44,6 +44,7 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.time.ScheduleClock
 
 private val log = KotlinLogging.logger {}
 
@@ -123,6 +124,9 @@ class LeadAgent(
     private val turnLock = Mutex()
     private val awaiting = ConcurrentLinkedQueue<Delivery>()
     private var lastUserActivity: Instant? = null
+
+    /** When the thread was last told the current time (an inbox header or a `[now …]` line); null after a restart. */
+    private var lastClockStated: Instant? = null
     private var failures = 0
 
     /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
@@ -208,7 +212,13 @@ class LeadAgent(
         val now = clock.now()
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
         val history = journal.load(threadId)
-        val deliveries = memoryDelivery(now, contextSince(history)) + renderDeliveries(items, now)
+        val visible = contextSince(history)
+        val zone = settings.homeZone()
+        // Like the memory context: state the time again if the model can no longer see one (compacted away).
+        val statesClock = clockDue(lastClockStated, now, zone) || !statesTime(visible)
+        val rendered = renderDeliveries(items, now, zone, statesClock = statesClock)
+        if (rendered.any { it.message.role == Role.SYSTEM }) lastClockStated = now
+        val deliveries = memoryDelivery(now, visible) + rendered
         if (userTurn) {
             lastUserActivity = now
             threads.touchUserInput(now)
@@ -245,11 +255,11 @@ class LeadAgent(
      * repeated while it is in view, after a restart included, and both come back after a compaction.
      */
     private suspend fun memoryDelivery(now: Instant, visible: List<Message>): List<Delivery> {
-        val zone = settings.current().homeZone
-        val today = journalDate(now, zone)
+        val zone = settings.homeZone()
+        val today = ScheduleClock.homeDate(now, zone)
         val yesterday = today.minus(DatePeriod(days = 1))
         val lastMemory = lastSystemText(visible, MEMORY_CONTEXT_PREFIX)
-        val memoryText = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now))
+        val memoryText = renderMemoryContext(today, memory.journal(yesterday, today), memory.liveScratch(now), zone)
             ?: if (lastMemory != null && !lastMemory.endsWith(EMPTY_MEMORY)) "[memory, $today] $EMPTY_MEMORY" else null
         val lastIndex = lastSystemText(visible, COLLECTION_INDEX_PREFIX)
         val indexText = renderCollectionIndex(collections.collections())
@@ -358,7 +368,7 @@ class LeadAgent(
         while (true) {
             val users = inbox.pending().filter { it.item.priority == Priority.USER && it.seq !in delivered }
             if (users.isNotEmpty()) {
-                val deliveries = renderDeliveries(users, clock.now())
+                val deliveries = renderDeliveries(users, clock.now(), settings.homeZone())
                 scope.userAsked()
                 lastUserActivity = clock.now()
                 awaiting.addAll(deliveries)

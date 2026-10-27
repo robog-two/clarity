@@ -95,7 +95,7 @@ class MemoryTools(
         val header = "${collection.name}: ${collection.description} (${collection.notes} notes)"
         if (notes.isEmpty()) return@tool ToolResult.Ok("$header\n(no ${if (input.query.isNullOrBlank()) "notes" else "matching notes"})")
         var used = header.length
-        val lines = notes.map { "#${it.id} (${formatAt(it.updatedAt, zone).substringBefore(' ')}) ${it.text}" }.takeWhile { line ->
+        val lines = notes.map { "#${it.id} (${net.robog.clarity.shared.time.LocalTimes.formatDate(net.robog.clarity.shared.time.ScheduleClock.homeDate(it.updatedAt, zone))}) ${it.text}" }.takeWhile { line ->
             used += line.length + 1
             used <= OPEN_CHARS
         }

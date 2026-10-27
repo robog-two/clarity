@@ -146,6 +146,27 @@ class MemoryPureTest : FunSpec({
                 "[journal 2026-10-01 · journal:3]\ndecided X"
         }
 
+        test("hit times are on the person's clock with the weekday; days and all-day events as dates") {
+            val ny = kotlinx.datetime.TimeZone.of("America/New_York")
+            val start = Instant.parse("2026-10-26T23:00:00Z")
+            hitTime(null, start, null, ny) shouldBe "2026-10-26T19:00-04:00 (Mon)"
+            // A conversation chunk or a timed event: the span, ending later the same evening.
+            hitTime(null, start, Instant.parse("2026-10-27T01:15:00Z"), ny) shouldBe "2026-10-26T19:00-04:00 (Mon) to 21:15"
+            // A journal day, and all-day events (UTC dates from SQL: first/last, inclusive).
+            hitTime("2026-10-26", start, null, ny) shouldBe "2026-10-26 (Mon)"
+            hitTime("2026-10-26/2026-10-26", Instant.parse("2026-10-26T00:00:00Z"), Instant.parse("2026-10-27T00:00:00Z"), ny) shouldBe "2026-10-26 (Mon)"
+            hitTime("2026-10-26/2026-10-28", null, null, ny) shouldBe "2026-10-26 (Mon) to 2026-10-28 (Wed)"
+            hitTime("2026-10-26/2026-10-25", null, null, ny) shouldBe "2026-10-26 (Mon)" // a zero-length all-day event
+            hitTime(null, null, null, ny) shouldBe ""
+            formatAt(start, ny) shouldBe "2026-10-26T19:00-04:00 (Mon)"
+        }
+
+        test("scratch notes say until when on the person's clock") {
+            val ny = kotlinx.datetime.TimeZone.of("America/New_York")
+            renderMemoryContext(LocalDate(2026, 10, 26), emptyList(), listOf(ScratchNote(1, "waiting on Dana", Instant.parse("2026-10-27T01:00:00Z"))), ny)!! shouldContain
+                "waiting on Dana (until 2026-10-26T21:00-04:00 (Mon))"
+        }
+
         test("refs parse") {
             MemoryKey.parse("conversation:12") shouldBe MemoryKey("conversation", "12")
             MemoryKey.parse(" Message : abc ") shouldBe MemoryKey("message", "abc")

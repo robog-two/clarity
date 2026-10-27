@@ -82,7 +82,7 @@ class ExposedMemoryStore(private val database: Database, private val clock: Cloc
  * scratch notes. Null when there is nothing to say. Rendered only when it changed, so it never
  * churns the cache.
  */
-fun renderMemoryContext(today: LocalDate, entries: List<JournalEntry>, scratch: List<ScratchNote>): String? {
+fun renderMemoryContext(today: LocalDate, entries: List<JournalEntry>, scratch: List<ScratchNote>, zone: kotlinx.datetime.TimeZone): String? {
     val yesterday = today.minus(DatePeriod(days = 1))
     val todays = entries.filter { it.date == today }
     val yesterdays = entries.filter { it.date == yesterday }
@@ -99,7 +99,7 @@ fun renderMemoryContext(today: LocalDate, entries: List<JournalEntry>, scratch: 
         }
         if (scratch.isNotEmpty()) {
             append("\nScratch notes (they expire):")
-            scratch.forEach { append("\n- ").append(it.text).append(" (until ").append(it.expiresAt).append(')') }
+            scratch.forEach { append("\n- ").append(it.text).append(" (until ").append(agentTime(it.expiresAt, zone)).append(')') }
         }
     }
 }

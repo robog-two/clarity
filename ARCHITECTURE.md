@@ -277,6 +277,14 @@ for what our loop already has: an append-only transcript. So:
   journal stays append-only; requests start at the latest summary, and an OpenRouter request also
   starts at the latest Anthropic compaction block (sent as its summary text). `compactAtTokens` is
   the main cost lever there: every turn resends the whole context since the last summary.
+- **Time on the person's clock**: storage keeps UTC instants, but every time an agent sees or
+  gives is in the person's home zone (`Settings.homeZone`), through one formatter/parser
+  (`shared/time/LocalTimes`): out as `2026-10-26T19:00-04:00 (Mon)` (all-day events as dates), in
+  as ISO with an offset/`Z`, a local date-time without offset (wall clock in the home zone, gaps
+  and overlaps resolved like `ScheduleClock`), or a plain date where a day is enough. The current
+  local time is never in the cached system prompt: it heads each `[inbox, now …]` message, and a
+  turn of only the person's words gets a `[now …]` line when the last one is over 10 minutes or a
+  local day old. Helpers get it at the top of their task; the guard model gets a `<local_times>` note.
 - **Big outputs go to files**: tool results above a size limit are written to the sandbox
   workspace and the tool returns a path + summary.
 - **Model roles** (config, per role): `lead` (default `claude-opus-5-5`; effort `low` during a

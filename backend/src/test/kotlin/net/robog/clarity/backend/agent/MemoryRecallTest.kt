@@ -218,10 +218,13 @@ class MemoryRecallTest : FunSpec({
             insertMessage("Budget", "Here is the budget draft for Q4.")
             database.tx {
                 exec("INSERT INTO calendar_event (dedup_key, calendar, title, start_at, end_at) VALUES (decode(md5('e1'), 'hex'), 'work', 'Budget review', now(), now())")
+                // All-day, stored as UTC midnights: shown as its days, not as the evening before in the home zone.
+                exec("INSERT INTO calendar_event (dedup_key, calendar, title, start_at, end_at, all_day) VALUES (decode(md5('e2'), 'hex'), 'work', 'Budget offsite', '2026-10-26T00:00:00Z', '2026-10-28T00:00:00Z', true)")
                 exec("INSERT INTO agent_run (reason, status, task, result) VALUES ('helper', 'done', to_jsonb('find the budget file'::text), 'The budget file is in Drive/Finance.')")
             }
             val hits = ok(r.memoryTools.searchMemory().invoke(argsOf("query" to "budget", "limit" to 10)))
-            hits shouldContain "[journal 2026-10-01 · journal:"
+            hits shouldContain "[journal 2026-10-01 (Thu) · journal:"
+            hits shouldContain "[event 2026-10-26 (Mon) to 2026-10-27 (Tue) · event:"
             hits shouldContain "[note "
             hits shouldContain "work: The budget owner is Dana."
             hits shouldContain "<untrusted source=\"message\">Budget"

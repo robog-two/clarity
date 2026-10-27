@@ -9,7 +9,6 @@ import kotlin.time.Instant
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
-import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
@@ -43,12 +42,12 @@ fun NotifyDecision.wire(): String = when (this) {
     is NotifyDecision.EveningBatch -> "evening_batch:$at"
 }
 
-/** Pure: what `send_to_user` tells the model happened. */
-fun NotifyDecision.describe(): String = when (this) {
+/** Pure: what `send_to_user` tells the model happened, with times on the person's clock ([zone]). */
+fun NotifyDecision.describe(zone: kotlinx.datetime.TimeZone): String = when (this) {
     NotifyDecision.PushNow -> "Delivered. The person is being notified now."
     NotifyDecision.ShowInApp -> "Delivered. It shows in the app without a notification."
-    is NotifyDecision.HoldUntil -> "Delivered in the app. The notification waits until $at because the person is in protected time."
-    is NotifyDecision.EveningBatch -> "Saved for the evening summary at $at; it is not shown before then."
+    is NotifyDecision.HoldUntil -> "Delivered in the app. The notification waits until ${agentTime(at, zone)} because the person is in protected time."
+    is NotifyDecision.EveningBatch -> "Saved for the evening summary at ${agentTime(at, zone)}; it is not shown before then."
 }
 
 /**
@@ -102,7 +101,7 @@ class OwnStateTools(
                         batchPending = decision is NotifyDecision.EveningBatch,
                     ),
                 )
-                ToolResult.Ok(decision.describe())
+                ToolResult.Ok(decision.describe(settings.homeZone()))
             }
         }
     }
@@ -247,10 +246,10 @@ class OwnStateTools(
         if (task == null) ToolResult.Error("No task with id ${input.id}.") else ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
 
-    private suspend fun today(): LocalDate = clock.now().toLocalDateTime(zoneOrUtc(settings.current().homeZone)).date
+    private suspend fun today(): LocalDate = journalDate(clock.now(), settings.current().homeZone)
 
     private companion object { const val MAX_FACT_CHARS = 240 }
 }
 
 /** Pure: the journal date for [now] in [zoneId]. */
-fun journalDate(now: Instant, zoneId: String): LocalDate = now.toLocalDateTime(zoneOrUtc(zoneId)).date
+fun journalDate(now: Instant, zoneId: String): LocalDate = net.robog.clarity.shared.time.ScheduleClock.homeDate(now, zoneOrUtc(zoneId))

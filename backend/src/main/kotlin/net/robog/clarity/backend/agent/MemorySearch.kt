@@ -9,7 +9,8 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Instant
 import kotlin.time.toKotlinInstant
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toLocalDateTime
+import kotlinx.datetime.LocalDate
+import net.robog.clarity.shared.time.LocalTimes
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -24,9 +25,10 @@ private val log = KotlinLogging.logger {}
 
 /**
  * Something memory search covers, as SQL fragments over its table: [from] (with alias `t`), [id],
- * [at] (a timestamptz), optional [day] (a date shown instead of [at]), [body] (the searchable text),
- * [filter] (live rows), [stamp] (changes when the row does, for re-embedding) and [untrusted]
- * (an SQL boolean: the text came from outside).
+ * [at] (a timestamptz), optional [day] (a date, or `first/last` dates, shown instead of [at]), [body]
+ * (the searchable text), [filter] (live rows), [stamp] (changes when the row does, for re-embedding),
+ * [untrusted] (an SQL boolean: the text came from outside) and optional [end] (a timestamptz: the
+ * hit spans [at] to [end]).
  */
 enum class MemorySource(
     val wire: String,
@@ -39,6 +41,7 @@ enum class MemorySource(
     val stamp: String,
     val untrusted: String,
     val day: String = "NULL",
+    val end: String = "NULL::timestamptz",
     /** The full-text vector; null means `to_tsvector('english', body)` computed on the fly. */
     val tsv: String? = null,
 ) {
@@ -47,7 +50,10 @@ enum class MemorySource(
         "note", "note", "memory_note t JOIN memory_collection c ON c.id = t.collection_id", "t.id", "t.updated_at",
         "c.name || ': ' || t.text", "true", "t.updated_at", "false", tsv = "t.tsv",
     ),
-    CONVERSATION("conversation", "conversation", "conversation_chunk t", "t.id", "t.started_at", "t.text", "true", "t.ended_at", "t.untrusted", tsv = "t.tsv"),
+    CONVERSATION(
+        "conversation", "conversation", "conversation_chunk t", "t.id", "t.started_at", "t.text", "true", "t.ended_at", "t.untrusted",
+        end = "t.ended_at", tsv = "t.tsv",
+    ),
     FEED("feed", "feed", "feed_item t", "t.id", "t.at", "t.cards::text", "t.batch_state IS NULL AND NOT t.streaming", "t.at", "false"),
     MESSAGE(
         "message", "message", "message t", "t.id", "t.sent_at", "coalesce(t.subject, '') || E'\\n' || t.body", "t.deleted_at IS NULL",
@@ -56,6 +62,10 @@ enum class MemorySource(
     EVENT(
         "event", "event", "calendar_event t", "t.id", "t.start_at",
         "t.title || coalesce(E'\\n' || t.location, '') || coalesce(E'\\n' || t.description, '')", "t.deleted_at IS NULL", "t.updated_at", "true",
+        // All-day events are stored as UTC midnights: their days are read in UTC (LocalTimes.allDayDates), end exclusive.
+        day = "CASE WHEN t.all_day THEN (t.start_at AT TIME ZONE 'UTC')::date::text || '/' || " +
+            "((t.end_at AT TIME ZONE 'UTC') - interval '1 microsecond')::date::text END",
+        end = "t.end_at",
     ),
     HELPER(
         "helper", "helper result", "agent_run t", "t.id", "coalesce(t.finished_at, t.started_at)",
@@ -66,8 +76,8 @@ enum class MemorySource(
 
     val vector: String get() = tsv ?: "to_tsvector('english', $body)"
 
-    /** The selected columns: source, ref, at, day, body, untrusted. */
-    val columns: String get() = "'$wire', $id::text, $at, $day, $body, $untrusted"
+    /** The selected columns: source, ref, at, day, body, untrusted, end. */
+    val columns: String get() = "'$wire', $id::text, $at, $day, $body, $untrusted, $end"
 
     /** Pure: [raw] (the [body] column) as text a person or a model reads. */
     fun readable(raw: String): String = if (this == FEED) feedText(raw) else raw
@@ -199,7 +209,7 @@ class MemorySearch(
     private fun ResultSet.hits(zone: TimeZone): List<MemoryHit> = buildList {
         while (next()) {
             val source = MemorySource.of(getString(1)) ?: continue
-            val at = getString(4) ?: getTimestamp(3)?.let { formatAt(it.toInstant().toKotlinInstant(), zone) } ?: ""
+            val at = hitTime(getString(4), getTimestamp(3)?.toInstant()?.toKotlinInstant(), getTimestamp(7)?.toInstant()?.toKotlinInstant(), zone)
             add(MemoryHit(MemoryKey(source.wire, getString(2)), at, source.readable(getString(5).orEmpty()), getBoolean(6)))
         }
     }
@@ -213,10 +223,23 @@ class MemorySearch(
     }
 }
 
-/** Pure: `2026-10-02 14:05` on [zone]'s clock. */
-fun formatAt(at: Instant, zone: TimeZone): String {
-    val t = at.toLocalDateTime(zone)
-    return "${t.date} ${t.hour.toString().padStart(2, '0')}:${t.minute.toString().padStart(2, '0')}"
+/** Pure: [at] on [zone]'s clock, as agents see every time: `2026-10-02T14:05-04:00 (Fri)` ([LocalTimes]). */
+fun formatAt(at: Instant, zone: TimeZone): String = LocalTimes.format(at, zone)
+
+/**
+ * Pure: when a memory hit happened, as the agent reads it. [day] (a journal's date, or an all-day
+ * event's `first/last` days) wins and shows as dates; otherwise [at], or the span [at] to [end], on
+ * [zone]'s clock.
+ */
+fun hitTime(day: String?, at: Instant?, end: Instant?, zone: TimeZone): String {
+    if (day != null) {
+        val parts = day.split('/').mapNotNull { runCatching { LocalDate.parse(it.trim()) }.getOrNull() }
+        val first = parts.firstOrNull() ?: return day
+        val last = maxOf(first, parts.getOrNull(1) ?: first)
+        return if (last == first) LocalTimes.formatDate(first) else "${LocalTimes.formatDate(first)} to ${LocalTimes.formatDate(last)}"
+    }
+    if (at == null) return ""
+    return if (end != null && end > at) LocalTimes.formatRange(at, end, zone) else LocalTimes.format(at, zone)
 }
 
 /**
