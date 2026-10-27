@@ -75,7 +75,9 @@ class PeriodicReviewJob(private val config: AgentConfig, private val inbox: Inbo
             InboxItem.JobDue(
                 job = name,
                 instruction = "Review what changed since $sinceLocal: look at new messages and calendar events in that window, " +
-                    "tell the person only what matters, and revisit anything that was waiting on information. Nothing to do is a fine outcome.",
+                    "tell the person only what matters, and revisit anything that was waiting on information. " +
+                    "Close stale tasks with update_task: mark a task done, failed or cancelled when a newer task superseded it or it is no longer waiting on anything. " +
+                    "Nothing to do is a fine outcome.",
                 priority = Priority.LOW,
             ),
             dedupKey = "job:$name:${context.scheduledFor}",

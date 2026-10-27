@@ -344,6 +344,12 @@ data class Amendment(
     val status: Status,
     /** How much the agent may do alone for one kind of action, changed along with the line. */
     val autonomy: AutonomyChange? = null,
+    /**
+     * Why a proposal is no longer waiting when nobody discarded it: an equal change was saved or the
+     * line changed since ("superseded"), or nobody acted on it in time ("expired"). Those arrive as
+     * [Status.DISCARDED], so apps that know only the three statuses keep working.
+     */
+    val closedReason: String? = null,
 ) {
     @Serializable
     enum class Status {

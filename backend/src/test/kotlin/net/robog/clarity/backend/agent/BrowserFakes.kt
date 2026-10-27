@@ -59,7 +59,8 @@ class MemoryVault(val credentials: List<CredentialMeta>) : VaultStore {
     override suspend fun markSignatureUsed(signatureHash: String, heldId: String, device: DeviceId) = true
     override suspend fun deviceKeys() = emptyList<DeviceVaultKey>()
     override suspend fun deviceKey(device: DeviceId): DeviceVaultKey? = null
-    override suspend fun createRequest(name: String, kind: CredentialKind, fields: List<FieldSpec>, site: String, purpose: String): CredentialRequest = error("unused")
+    override suspend fun createRequest(name: String, kind: CredentialKind, fields: List<FieldSpec>, site: String, purpose: String, replace: Boolean): net.robog.clarity.backend.vault.OpenedRequest = error("unused")
+    override suspend fun tidyRequests() = 0
     override suspend fun request(id: CredentialRequestId): CredentialRequest? = null
     override suspend fun cancelRequest(id: CredentialRequestId) = false
     override suspend fun createCredential(request: CredentialRequestId, hints: Map<String, String>, envelopes: List<VaultEnvelope>): CreateOutcome = error("unused")
