@@ -69,7 +69,46 @@ private val UTC = ZoneOffset.UTC
 
 object Ical {
 
-    fun parse(ics: String): Calendar = CalendarBuilder().build(StringReader(ics))
+    /**
+     * [ics] parsed. One unreadable property (say a Mail-made `URL:message:%3C…` with a broken
+     * escape, or a mangled ATTENDEE) should not cost the whole event: the failing line is dropped
+     * and the object parsed again, a few times at most. Lines that make the event (BEGIN, END,
+     * UID, DTSTART, DTEND, RRULE, RECURRENCE-ID) are never dropped; then the error stands.
+     */
+    fun parse(ics: String): Calendar {
+        var text = ics
+        repeat(MAX_DROPPED_LINES) {
+            try {
+                return CalendarBuilder().build(StringReader(text))
+            } catch (e: net.fortuna.ical4j.data.ParserException) {
+                val (name, rest) = withoutLine(text, e.lineNo) ?: throw e
+                log.warn { "dropped an unreadable $name line (line ${e.lineNo}) to read the rest: ${e.cause?.message?.substringBefore(':')}" }
+                text = rest
+            }
+        }
+        return CalendarBuilder().build(StringReader(text))
+    }
+
+    private const val MAX_DROPPED_LINES = 8
+
+    private val KEEP = setOf("BEGIN", "END", "UID", "DTSTART", "DTEND", "RRULE", "RECURRENCE-ID", "DURATION")
+
+    /**
+     * Pure: [ics] without the content line (and its folded continuations) that covers physical line
+     * [lineNo] (1-based), with that line's property name; null when it cannot or must not be dropped.
+     */
+    internal fun withoutLine(ics: String, lineNo: Int): Pair<String, String>? {
+        val lines = ics.split("\r\n", "\n")
+        val at = lineNo - 1
+        if (at !in lines.indices) return null
+        var start = at
+        while (start > 0 && (lines[start].startsWith(" ") || lines[start].startsWith("\t"))) start--
+        var end = at + 1
+        while (end < lines.size && (lines[end].startsWith(" ") || lines[end].startsWith("\t"))) end++
+        val name = lines[start].substringBefore(':').substringBefore(';').trim().uppercase()
+        if (name.isEmpty() || name in KEEP) return null
+        return name to (lines.subList(0, start) + lines.subList(end, lines.size)).joinToString("\r\n")
+    }
 
     /**
      * Events in [ics] as payloads for [calendarName]. Recurring events are expanded inside [window]
