@@ -5,6 +5,7 @@ import io.kotest.core.annotation.Condition
 import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.Spec
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -443,6 +444,67 @@ class ClarityIntegrationTest : FunSpec({
                 counts shouldBe mapOf("calendars" to 2)
             }
             listed.first { it.id.value == "b" }.lastTest shouldBe null
+        }
+    }
+
+    test("the phone's own manifest grants its nouns even without autoGrant, healing a pending grant, never a revoked one") {
+        val graph = createGraphFactory<AppGraph.Factory>().create(
+            config().copy(connectors = ConnectorsConfig(autoGrant = false, secretsDir = dir.resolve("secrets"))),
+        )
+        testApplication {
+            application { clarity(graph) }
+            val client = jsonClient()
+            val device = TestDevice()
+            val token = config().dataDir.resolve("enrollment-token").readText().trim()
+            val deviceId = client.post("/api/v1/enroll") {
+                contentType(ContentType.Application.Json)
+                setBody(EnrollmentRequest(device.spkiBase64Url, "Phone", token))
+            }.also { it.status shouldBe HttpStatusCode.OK }.body<EnrollmentResponse>().deviceId.value
+            fun auth() = "Bearer " + device.withId(deviceId).token(Clock.System.now())
+            val phone = ConnectorId("device-$deviceId")
+            val manifest = ConnectorManifest(kind = "phone", displayName = "This phone", version = "1", produces = setOf(Noun.MESSAGE))
+            suspend fun putManifest() = client.put("/ingest/v1/manifest") {
+                header(HttpHeaders.Authorization, auth())
+                contentType(ContentType.Application.Json)
+                setBody(manifest)
+            }.status shouldBe HttpStatusCode.NoContent
+            suspend fun setGrant(state: GrantState) = client.put("/api/v1/connectors/$phone/grants") {
+                header(HttpHeaders.Authorization, auth())
+                contentType(ContentType.Application.Json)
+                setBody(GrantsUpdate(mapOf(Noun.MESSAGE to state)))
+            }.status shouldBe HttpStatusCode.OK
+            suspend fun summary(): ConnectorSummary = client.get("/api/v1/connectors") { header(HttpHeaders.Authorization, auth()) }
+                .body<List<ConnectorSummary>>().single { it.id == phone }
+            suspend fun push(id: String): RecordOutcome = client.post("/ingest/v1/batches") {
+                header(HttpHeaders.Authorization, auth())
+                contentType(ContentType.Application.Json)
+                setBody(IngestBatch(listOf(upsert(id, "1", message("Text $id")))))
+            }.also { it.status shouldBe HttpStatusCode.OK }.body<IngestResponse>().results.single().outcome
+
+            // a key-provisioned connector still waits for the person (autoGrant is off)
+            client.put("/ingest/v1/manifest") {
+                header(HttpHeaders.Authorization, "Bearer $keyB")
+                contentType(ContentType.Application.Json)
+                setBody(manifest.copy(kind = "other", produces = setOf(Noun.CONTACT)))
+            }.status shouldBe HttpStatusCode.NoContent
+            client.get("/api/v1/connectors") { header(HttpHeaders.Authorization, auth()) }
+                .body<List<ConnectorSummary>>().single { it.id.value == "b" }.grants[Noun.CONTACT] shouldBe GrantState.PENDING
+
+            // the phone pushing before it announced itself: rejected, but the connector row exists and was seen
+            push("sms:1").shouldBeInstanceOf<RecordOutcome.Rejected>()
+            summary().lastSeenAt.shouldNotBeNull()
+
+            // the broken state older app versions left behind: the grant is pending
+            setGrant(GrantState.PENDING)
+            putManifest()
+            summary().grants shouldBe mapOf(Noun.MESSAGE to GrantState.GRANTED)
+            push("sms:1").shouldBeInstanceOf<RecordOutcome.Created>()
+
+            // a revoke is the person's decision: the next manifest leaves it alone
+            setGrant(GrantState.REVOKED)
+            putManifest()
+            summary().grants shouldBe mapOf(Noun.MESSAGE to GrantState.REVOKED)
+            push("sms:2").shouldBeInstanceOf<RecordOutcome.Rejected>()
         }
     }
 })

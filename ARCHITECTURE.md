@@ -174,7 +174,11 @@ file at boot). A connector's ingest is accepted **only for nouns the user grante
 
 **The phone as a connector**: an enrolled device may also push to `/ingest/v1` with its device
 JWT; it is treated as connector `device-<deviceId>` with its own grants, and receives actions
-addressed to it (set do-not-disturb).
+addressed to it (set do-not-disturb). It is never key-provisioned (`provisioned = false`, no
+`key_hash`: the JWT is its credential). A manifest PUT by the device itself grants the nouns it
+announces as if `autoGrant` were on (lifting `pending`, never overriding `revoked`): the person
+consented with the Android permission, and the same JWT could grant them on the app API anyway.
+The app also grants `message` explicitly when the person allows reading texts in Settings.
 
 **The model key** comes from `ANTHROPIC_API_KEY_FILE` (Podman secret) or, if absent, from the
 app's onboarding (`PUT /api/v1/setup/model-key`), validated with a Models API call and stored
