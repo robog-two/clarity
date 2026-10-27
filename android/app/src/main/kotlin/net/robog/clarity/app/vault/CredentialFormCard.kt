@@ -50,8 +50,28 @@ sealed interface FormCardState {
     data object Loading : FormCardState
     data class Failed(val message: String) : FormCardState
     data class Editing(val form: CredentialForm, val saving: Boolean = false, val error: String? = null) : FormCardState
-    /** Saved now, or already answered earlier. */
-    data class Done(val line: String) : FormCardState
+    /** Saved now, or already answered earlier; [kicker] says which ("saved", "no longer needed"). */
+    data class Done(val line: String, val kicker: String = "saved") : FormCardState
+}
+
+/**
+ * Pure: what a form card shows for a request that is no longer open. A request the server closed
+ * because the same login was saved another way, or because nobody filled it in, arrives as
+ * cancelled with a [CredentialRequest.closedReason]; it is not waiting for anything.
+ */
+fun closedFormState(request: CredentialRequest): FormCardState.Done = when (request.status) {
+    CredentialRequestStatus.FULFILLED -> FormCardState.Done("Saved. I can use it now.")
+    CredentialRequestStatus.CANCELLED -> request.closedReason
+        ?.let { FormCardState.Done("No longer needed: ${it.trimEnd('.')}.", kicker = "no longer needed") }
+        ?: FormCardState.Done("This request was cancelled.", kicker = "cancelled")
+    CredentialRequestStatus.OPEN -> FormCardState.Done("Waiting for you to fill it in.", kicker = "for you to fill in")
+}
+
+/** Pure: the action row for a login request in the chat: its title and, once settled, a supporting line. */
+fun credentialRowText(request: CredentialRequest?): Pair<String, String?> = when (request?.status) {
+    null, CredentialRequestStatus.OPEN -> "Save it in your vault" to null
+    CredentialRequestStatus.FULFILLED -> "Saved in your vault" to null
+    CredentialRequestStatus.CANCELLED -> "No longer needed" to request.closedReason
 }
 
 /** Drives one form card: load the request, edit, validate, seal and upload. Secrets stay in [state] until saved. */
@@ -68,10 +88,10 @@ class CredentialFormModel(
             is ApiResult.Failure -> FormCardState.Failed(r.error.sentence())
             is ApiResult.Success -> {
                 val request = r.value
-                when (request.status) {
-                    CredentialRequestStatus.OPEN -> FormCardState.Editing(CredentialForm(request, now().first, now().second))
-                    CredentialRequestStatus.FULFILLED -> FormCardState.Done("Saved. I can use it now.")
-                    CredentialRequestStatus.CANCELLED -> FormCardState.Done("This request was cancelled.")
+                if (request.status == CredentialRequestStatus.OPEN) {
+                    FormCardState.Editing(CredentialForm(request, now().first, now().second))
+                } else {
+                    closedFormState(request)
                 }
             }
         }
@@ -138,7 +158,7 @@ fun CredentialFormContent(
                 ErrorBox("Couldn’t load the form", state.message)
                 TextButton(onClick = onRetry) { Text("Try again") }
             }
-            is FormCardState.Done -> { Kicker("saved"); Text(state.line, style = MaterialTheme.clarityText.chat) }
+            is FormCardState.Done -> { Kicker(state.kicker); Text(state.line, style = MaterialTheme.clarityText.chat) }
             is FormCardState.Editing -> EditingForm(state, onEdit, onTouch, onSave)
         }
     }
