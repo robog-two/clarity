@@ -18,6 +18,8 @@ class ClarityApp : Application() {
     override fun onCreate() {
         super.onCreate()
         graph = createGraphFactory<AppGraph.Factory>().create(this)
+        // Every AsyncImage (the Agent's Path screenshots) loads through the authenticated client.
+        coil3.SingletonImageLoader.setSafe { graph.imageLoader }
         // A call going on shows as a call (the ongoing notification) whatever its screen does.
         processScope.launch { graph.ongoingCallStarter.run() }
     }

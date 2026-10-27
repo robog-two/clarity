@@ -57,6 +57,8 @@ import net.robog.clarity.shared.governance.ProposeAmendment
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestResponse
 import net.robog.clarity.shared.feed.FeedPage
+import net.robog.clarity.shared.feed.TaskId
+import net.robog.clarity.shared.path.AgentPath
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.UserInput
 import net.robog.clarity.shared.governance.ActivityEntry
@@ -163,6 +165,15 @@ interface ModelsApi {
     suspend fun resetRoleModel(role: String): ApiResult<ModelSettingsView>
 }
 
+/** The Agent's Path of a task or a helper run (`/api/v1/tasks/{id}/path`, `/api/v1/runs/{id}/path`). */
+interface PathApi {
+    suspend fun taskPath(id: TaskId, from: Int, limit: Int): ApiResult<AgentPath>
+    suspend fun runPath(id: String, from: Int, limit: Int): ApiResult<AgentPath>
+
+    /** The instance's address, for the screenshot URLs (fetched by the image loader over the same authenticated client). */
+    suspend fun baseUrl(): String?
+}
+
 /** The credential vault's routes and phone-signed decisions. */
 interface VaultApi {
     /** Registers this phone's vault key and approval key (replacing earlier ones). */
@@ -216,7 +227,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -345,6 +356,16 @@ class KtorClarityApi(
 
     override suspend fun discardAmendment(id: AmendmentId): ApiResult<Amendment> =
         authed { base -> client.post { url(base + "${ApiPaths.CONSTITUTION}/amendments/$id/discard") } }
+
+    // --- the Agent's Path ---
+
+    override suspend fun taskPath(id: TaskId, from: Int, limit: Int): ApiResult<AgentPath> =
+        get("${ApiPaths.TASKS}/${id.value}/path") { parameter("from", from); parameter("limit", limit) }
+
+    override suspend fun runPath(id: String, from: Int, limit: Int): ApiResult<AgentPath> =
+        get("${ApiPaths.RUNS}/$id/path") { parameter("from", from); parameter("limit", limit) }
+
+    override suspend fun baseUrl(): String? = sessions.session.first()?.instanceUrl
 
     // --- vault ---
 

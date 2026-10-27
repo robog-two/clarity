@@ -229,6 +229,20 @@ interface AppGraph : ViewModelGraph {
     @Provides fun instanceRepository(api: ClarityApi): InstanceRepository = DefaultInstanceRepository(api)
 
     @Provides fun todayRepository(api: ClarityApi): TodayRepository = DefaultTodayRepository(api)
+    @Provides fun pathRepository(api: KtorClarityApi): net.robog.clarity.app.data.PathRepository = net.robog.clarity.app.data.DefaultPathRepository(api)
+
+    /**
+     * Loads the Agent's Path screenshots over the app's own client (so each request carries the
+     * device's signed token), decoding off the main thread, with memory and disk caches.
+     */
+    @Provides @SingleIn(AppScope::class)
+    fun imageLoader(context: Context, client: HttpClient): coil3.ImageLoader = coil3.ImageLoader.Builder(context)
+        .components { add(coil3.network.ktor3.KtorNetworkFetcherFactory(httpClient = { client })) }
+        .memoryCache { coil3.memory.MemoryCache.Builder().maxSizePercent(context, 0.15).build() }
+        .diskCache { coil3.disk.DiskCache.Builder().directory(context.cacheDir.resolve("frames").absolutePath.let { okio.Path.Companion.run { it.toPath() } }).maxSizeBytes(64L * 1024 * 1024).build() }
+        .build()
+
+    val imageLoader: coil3.ImageLoader
     @Provides fun heldRepository(api: ClarityApi): HeldRepository = DefaultHeldRepository(api)
     @Provides fun amendmentsRepository(api: ClarityApi): AmendmentsRepository = DefaultAmendmentsRepository(api)
 

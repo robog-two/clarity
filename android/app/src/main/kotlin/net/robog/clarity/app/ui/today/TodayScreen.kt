@@ -106,10 +106,12 @@ fun TodayScreen(
     onReview: (HeldActionId) -> Unit,
     onOpenHeld: () -> Unit,
     modifier: Modifier = Modifier,
+    /** A task tapped: its thread (the Agent's Path). */
+    onOpenTask: (TaskId) -> Unit = {},
     viewModel: TodayViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain)
+    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain, onOpenTask = onOpenTask)
 }
 
 /**
@@ -129,6 +131,8 @@ fun TodayContent(
     quietExpanded: Boolean = false,
     /** "Call me again", while today's call is unfinished. */
     onCallAgain: () -> Unit = {},
+    /** A task tapped: its thread (the Agent's Path). */
+    onOpenTask: (TaskId) -> Unit = {},
 ) {
     val pull = rememberPullToRefreshState()
     PullToRefreshBox(
@@ -169,7 +173,7 @@ fun TodayContent(
                     Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
                     Phase.Unavailable -> Hint("Your server can’t show today yet. Your plan, what I’m doing and what’s parked will appear here.")
                     Phase.Nothing -> Unit
-                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded) }
+                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, onOpenTask) }
                 }
             }
         }
@@ -179,7 +183,14 @@ fun TodayContent(
 private enum class Phase { Loading, Unavailable, Nothing, Ready }
 
 @Composable
-private fun DayBody(today: Today, state: TodayUiState, onReview: (HeldActionId) -> Unit, onOpenHeld: () -> Unit, quietExpanded: Boolean) {
+private fun DayBody(
+    today: Today,
+    state: TodayUiState,
+    onReview: (HeldActionId) -> Unit,
+    onOpenHeld: () -> Unit,
+    quietExpanded: Boolean,
+    onOpenTask: (TaskId) -> Unit,
+) {
     Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         var order = 0
         when {
@@ -192,11 +203,11 @@ private fun DayBody(today: Today, state: TodayUiState, onReview: (HeldActionId) 
             if (doing.main.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     doing.main.forEachIndexed { i, row ->
-                        DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++))
+                        DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
                     }
                 }
             }
-            if (doing.quiet.isNotEmpty()) QuietTasks(doing.quiet, quietExpanded, Modifier.springIn(order++))
+            if (doing.quiet.isNotEmpty()) QuietTasks(doing.quiet, quietExpanded, Modifier.springIn(order++), onOpenTask)
         }
         HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.isEmpty) 10.dp else 4.dp).springIn(order++))
         if (today.parked.isNotEmpty()) {
@@ -312,6 +323,8 @@ internal fun DoingRowView(
     modifier: Modifier = Modifier,
     /** Whether the row shows the "needs you" shape: only when there is something to review. */
     needsYou: Boolean = row.review != null,
+    /** Opens the task's thread; Review stays its own button. */
+    onOpen: (() -> Unit)? = null,
 ) {
     TaskRow(
         title = row.task.title,
@@ -321,6 +334,7 @@ internal fun DoingRowView(
         // The one Peach element on the screen: the action that needs the person.
         trailing = { if (row.review != null) ReviewButton { onReview(row.review) } else TaskStatus(taskStatusLabel(row.task.status)) },
         modifier = modifier,
+        onClick = onOpen,
     )
 }
 
@@ -330,7 +344,7 @@ internal fun DoingRowView(
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun QuietTasks(rows: List<DoingRow>, expandedInitially: Boolean, modifier: Modifier = Modifier) {
+private fun QuietTasks(rows: List<DoingRow>, expandedInitially: Boolean, modifier: Modifier = Modifier, onOpenTask: (TaskId) -> Unit = {}) {
     var expanded by rememberSaveable { mutableStateOf(expandedInitially) }
     val colors = MaterialTheme.colorScheme
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "quiet chevron")
@@ -357,7 +371,10 @@ private fun QuietTasks(rows: List<DoingRow>, expandedInitially: Boolean, modifie
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 rows.forEachIndexed { i, row ->
                     val (mark, fill) = quietMark(row.task.status)
-                    CompactTaskRow(row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill)
+                    CompactTaskRow(
+                        row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill,
+                        onClick = { onOpenTask(row.task.id) },
+                    )
                 }
             }
         }
@@ -395,7 +412,7 @@ private fun solidFor(id: TaskId): Int = solids[Math.floorMod(id.value.hashCode()
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun StatusGlyph(task: AgentTask, needsYou: Boolean) {
+internal fun StatusGlyph(task: AgentTask, needsYou: Boolean) {
     val colors = MaterialTheme.colorScheme
     val size = Modifier.size(44.dp)
     when (task.status) {

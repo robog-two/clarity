@@ -104,6 +104,8 @@ dependencies {
     implementation(libs.bundles.ktor.client)
     implementation(libs.ktor.client.okhttp)
     implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.ktor3)
 
     screenshotTestImplementation(libs.compose.screenshot.validation.api)
     screenshotTestImplementation(libs.compose.ui.tooling)

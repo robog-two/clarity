@@ -23,6 +23,9 @@ import net.robog.clarity.app.ui.onboarding.ConnectorSetupViewModel
 import net.robog.clarity.app.ui.held.DraftReviewScreen
 import net.robog.clarity.app.ui.main.MainScaffold
 import net.robog.clarity.app.ui.onboarding.OnboardingFlow
+import net.robog.clarity.app.ui.path.RunPathScreen
+import net.robog.clarity.app.ui.path.TaskThreadScreen
+import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
 
 /**
@@ -88,6 +91,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     tab = tab,
                     onTab = { tab = it },
                     onReview = { push(DraftReview(it.value)) },
+                    onOpenTask = { push(TaskThread(it.value)) },
                     onOpenHeldItem = { push(DraftReview(it.value)) },
                     onOpenConstitution = { push(ConstitutionView) },
                     onOpenConnector = { push(ConnectorView(it)) },
@@ -116,6 +120,17 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     step = null,
                     backLabel = "← settings",
                 )
+            }
+            entry<TaskThread> { key ->
+                TaskThreadScreen(
+                    TaskId(key.taskId),
+                    onBack = { backStack.removeLastOrNull() },
+                    onReview = { push(DraftReview(it.value)) },
+                    onOpenRun = { push(RunPath(it)) },
+                )
+            }
+            entry<RunPath> { key ->
+                RunPathScreen(key.runId, onBack = { backStack.removeLastOrNull() }, onOpenRun = { push(RunPath(it)) })
             }
             entry<ConstitutionView> {
                 ConstitutionScreen(
