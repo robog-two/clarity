@@ -251,6 +251,26 @@ person managing a to-do list with a few assistants.
   helper resumes from its last completed turn. The lead can list, message and cancel helpers
   (`list_helpers`, `message_helper`, `cancel_helper`).
 
+### The review gate (decision model)
+
+The `periodic-review` job (every `CLARITY_REVIEW_INTERVAL`, 2h) used to wake the lead every time.
+Now, when an OpenRouter key is set, a **decision model** (`CLARITY_DECISION_MODEL`, default
+`microsoft/microsoft-decision-1`; OpenRouter `POST /api/alpha/decisions`, "System One" format,
+zero-data-retention preferences when `OPENROUTER_ZDR`) decides first. It answers fixed questions
+with probabilities, never text. The gate (`scheduler/ReviewGate.kt`) reads what changed since the
+lead last reviewed (the newest `job:periodic-review:*` inbox item): new messages, calendar events
+added, moved or cancelled, events starting before the next review plus an hour, and unconsumed inbox
+items. Held actions and open tasks go along as context. Nothing changed → skip with no call; the
+previous check already judged the same changes → skip; otherwise one call (`state` is bounded
+JSON with all outside text under `untrusted` keys, a `noul` "act now?" and a logged `choice` of
+urgency). It wakes the lead when p ≥ `CLARITY_REVIEW_GATE_THRESHOLD` (0.3), and always once
+`CLARITY_REVIEW_MAX_QUIET` (8h) has passed since the last review, if there is anything to look at.
+It **fails open**: gate off (`CLARITY_REVIEW_GATE=false`, `CLARITY_DECISIONS=false`), no key, an
+error, a refusal or a missing answer wakes the lead as before. A woken review covers everything
+since the last review, skipped windows included. Each call is a `model_call` row with role
+`decision`; each verdict is one info log line. The model has no tools, so injected text can at
+most flip the answer. That is why it is never used for the constitution guard.
+
 ### Durability (journal instead of a workflow engine)
 
 Temporal is the textbook answer, but for one person on one box it adds a server and a schema

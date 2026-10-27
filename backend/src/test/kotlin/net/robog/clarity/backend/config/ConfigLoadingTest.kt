@@ -114,6 +114,26 @@ class ConfigLoadingTest : FunSpec({
         ).create() shouldBe null
     }
 
+    test("decisions: Decision-1 gating the review at 0.3 with an 8h limit by default; blank means default; env changes them") {
+        load().getOrNull()!!.agent.decisions shouldBe DecisionConfig(true, "microsoft/microsoft-decision-1", true, 0.3, kotlin.time.Duration.parse("8h"))
+        load(mapOf("CLARITY_DECISION_MODEL" to "", "CLARITY_REVIEW_GATE_THRESHOLD" to "")).getOrNull()!!.agent.decisions shouldBe DecisionConfig()
+        val d = load(
+            mapOf(
+                "CLARITY_DECISIONS" to "false", "CLARITY_DECISION_MODEL" to "typesafe/jev-1.14", "CLARITY_REVIEW_GATE" to "false",
+                "CLARITY_REVIEW_GATE_THRESHOLD" to "0.5", "CLARITY_REVIEW_MAX_QUIET" to "6h",
+            ),
+        ).getOrNull()!!.agent.decisions
+        d shouldBe DecisionConfig(false, "typesafe/jev-1.14", false, 0.5, kotlin.time.Duration.parse("6h"))
+        load(mapOf("CLARITY_REVIEW_GATE_THRESHOLD" to "1.5")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>().key shouldBe "CLARITY_REVIEW_GATE_THRESHOLD"
+        // no client without an OpenRouter key, or when switched off
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(load().getOrNull()!!.agent).create() shouldBe null
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(load(mapOf("OPENROUTER_API_KEY" to "sk-or")).getOrNull()!!.agent).create()
+            .shouldBeInstanceOf<net.robog.clarity.backend.agent.OpenRouterDecisionClient>()
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(
+            load(mapOf("OPENROUTER_API_KEY" to "sk-or", "CLARITY_DECISIONS" to "false")).getOrNull()!!.agent,
+        ).create() shouldBe null
+    }
+
     test("OpenRouter routing: zdr, fp8 or better and cheapest first by default; blank turns a filter off") {
         load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, listOf("fp8", "bf16", "fp16"), "price")
         load(mapOf("OPENROUTER_ZDR" to "false", "OPENROUTER_QUANTIZATIONS" to " BF16, fp16 ,", "OPENROUTER_SORT" to "Latency"))
