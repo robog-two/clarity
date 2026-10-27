@@ -15,11 +15,12 @@ RUN apk add --no-cache squid=${SQUID_VERSION} \
     && rm -rf /etc/squid/squid.conf* /etc/squid/errorpage.css
 
 COPY computers/egress/entrypoint.sh /usr/local/bin/egress-entrypoint
+COPY computers/egress/health.sh /usr/local/bin/egress-health
 COPY computers/egress/squid.conf.tmpl /usr/local/share/egress/squid.conf.tmpl
 
 # Non-root. Everything Squid writes (config, logs, spool) goes to tmpfs under /tmp.
 USER 10001:10001
 EXPOSE 3128
 HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=5s \
-    CMD ["nc", "-z", "127.0.0.1", "3130"]
+    CMD ["/usr/local/bin/egress-health"]
 ENTRYPOINT ["/usr/local/bin/egress-entrypoint"]

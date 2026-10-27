@@ -6,6 +6,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -45,6 +46,21 @@ class McpServerTest : FunSpec({
             refused.isError shouldBe true
             refused.content.single().shouldBeInstanceOf<TextContent>().text shouldContain "outside /workspace"
             client.close()
+        }
+    }
+
+    test("GET and DELETE on the stateless endpoint answer 405 with Allow: POST, with or without a session header") {
+        testApplication {
+            application { sandboxModule(emptyList(), bearerKey = null) }
+            for (session in listOf(null, "unknown-session")) {
+                val get = client.get(MCP_PATH) {
+                    header(HttpHeaders.Accept, "text/event-stream")
+                    session?.let { header("Mcp-Session-Id", it) }
+                }
+                get.status shouldBe HttpStatusCode.MethodNotAllowed
+                get.headers[HttpHeaders.Allow] shouldBe "POST"
+                client.delete(MCP_PATH) { session?.let { header("Mcp-Session-Id", it) } }.status shouldBe HttpStatusCode.MethodNotAllowed
+            }
         }
     }
 

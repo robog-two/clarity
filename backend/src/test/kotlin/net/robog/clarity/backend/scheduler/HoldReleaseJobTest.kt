@@ -18,6 +18,22 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.yield
 import kotlinx.datetime.TimeZone
+import net.robog.clarity.backend.agent.ExposedTaskStore
+import net.robog.clarity.backend.agent.ExposedMemoryStore
+import net.robog.clarity.backend.agent.OwnStateTools
+import io.kotest.matchers.types.shouldBeInstanceOf
+import net.robog.clarity.harness.ToolResult
+import net.robog.clarity.shared.noun.Handle
+import net.robog.clarity.shared.governance.Person
+import net.robog.clarity.shared.ClarityJson
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import net.robog.clarity.backend.agent.ScheduledJobs
 import net.robog.clarity.backend.agent.SettingsProvider
 import net.robog.clarity.backend.config.DatabaseConfig
@@ -74,6 +90,12 @@ class HoldOutcomeTest : FunSpec({
         holdOutcome(sentAt, listOf(longer), utc, Settings(), at("2026-03-04T12:30:00Z")) shouldBe HoldOutcome.Wait
     }
 
+    test("someone who now gets through is released inside protected time; too old still drops") {
+        holdOutcome(sentAt, listOf(deepWork), utc, Settings(), at("2026-03-04T10:45:00Z"), getsThrough = true) shouldBe HoldOutcome.Release
+        holdOutcome(sentAt, listOf(deepWork), utc, Settings(pushUrgent = false), at("2026-03-04T10:45:00Z"), getsThrough = true) shouldBe HoldOutcome.Drop
+        holdOutcome(sentAt - 2.days, listOf(deepWork), utc, Settings(), at("2026-03-04T10:45:00Z"), getsThrough = true) shouldBe HoldOutcome.Drop
+    }
+
     test("too old, or urgent push turned off, drops to the app without a notification") {
         holdOutcome(sentAt, emptyList(), utc, Settings(), sentAt + 25.hours) shouldBe HoldOutcome.Drop
         holdOutcome(sentAt, emptyList(), utc, Settings(pushUrgent = false), at("2026-03-04T12:00:00Z")) shouldBe HoldOutcome.Drop
@@ -110,8 +132,11 @@ class HoldReleaseJobTest : FunSpec({
         val store = ExposedFeedStore(database, clock)
         val hub = FeedHub()
         val feed = FeedService(store, hub)
-        val constitutions = ConstitutionStore(database, clock, HeldActionStore(database, clock), GovernanceEvents())
+        val events = GovernanceEvents()
+        val constitutions = ConstitutionStore(database, clock, HeldActionStore(database, clock), events)
         val job = HoldReleaseJob(store, feed, constitutions)
+        var settings = Settings()
+        val own = OwnStateTools(feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock)
         val published = CopyOnWriteArrayList<FeedEvent>()
 
         suspend fun held(text: String = "Dana called twice", notify: String): FeedItem =
@@ -213,5 +238,60 @@ class HoldReleaseJobTest : FunSpec({
         val now = at("2026-03-04T12:00:00Z")
         rig.releaseAt(now) shouldHaveSize 1
         rig.store.releasedSince(now + 1.minutes).shouldBeEmpty()
+    }
+
+    test("adding the sender to who gets through releases what is already held from them, at once and once") {
+        val rig = Rig(database, at("2026-03-04T10:30:00Z"))
+        rig.constitutions.create(constitution(protectedTimes = listOf(deepWork)))
+        // held through the real send_to_user path, inside the deep-work block
+        suspend fun urgent(text: String, about: String) = rig.own.sendToUser().invoke(
+            buildJsonObject {
+                put("cards", ClarityJson.encodeToJsonElement<List<Card>>(listOf(Card.Text(text))))
+                put("urgency", "urgent")
+                put("about", JsonArray(listOf(JsonPrimitive(about))))
+            },
+        ).shouldBeInstanceOf<ToolResult.Ok>()
+        urgent("Dana called twice", "Dana <Dana@Example.com>")
+        urgent("Newsletter", "news@example.com")
+        val held = rig.store.heldNotifications()
+        held shouldHaveSize 2
+        val (dana, news) = held
+        rig.store.aboutOf(held.map { it.id }).getValue(dana.id).single().value shouldBe "dana@example.com"
+
+        rig.clock.now = at("2026-03-04T10:45:00Z")
+        val service = GetsThroughRelease(rig.events, rig.job, { rig.settings }, rig.clock)
+        rig.recording {
+            val running = launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) { service.run() }
+            rig.constitutions.saveVersion { c ->
+                c.copy(getsThrough = listOf(Person("Dana", listOf(Handle.email("dana@example.com")))))
+            }.isRight() shouldBe true
+            withTimeout(10.seconds) { while (rig.published.isEmpty()) delay(20) }
+
+            // another change and the minute job: nothing more for Dana, the newsletter keeps waiting
+            rig.constitutions.saveVersion { c -> c.copy(profile = c.profile + "Likes tea") }
+            rig.job.releaseDue(rig.settings, at("2026-03-04T10:46:00Z")).shouldBeEmpty()
+            delay(200)
+            running.cancelAndJoin()
+        }
+        rig.published.map { (it as FeedEvent.ItemFinal).item.id } shouldBe listOf(dana.id)
+        rig.store.notifyOf(dana.id) shouldBe "released:2026-03-04T10:45:00Z"
+        rig.store.notifyOf(news.id) shouldBe news.notify
+        rig.store.releasedSince(at("2026-03-04T10:00:00Z")).map { it.id } shouldBe listOf(dana.id)
+    }
+
+    test("the minute job also releases someone who gets through, and not one whose permission expired") {
+        val rig = Rig(database, at("2026-03-04T10:30:00Z"))
+        val expired = Person("Old", listOf(Handle.email("old@example.com")), until = at("2026-03-04T10:00:00Z"))
+        rig.constitutions.create(constitution(protectedTimes = listOf(deepWork)))
+        val dana = rig.feed.append(
+            FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Dana")), notify = holdUntil, about = listOf(Handle.email("dana@example.com"))),
+        ).item
+        val old = rig.feed.append(
+            FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Old")), notify = holdUntil, about = listOf(Handle.email("old@example.com"))),
+        ).item
+        rig.job.releaseDue(rig.settings, at("2026-03-04T10:40:00Z")).shouldBeEmpty()
+        rig.constitutions.saveVersion { c -> c.copy(getsThrough = listOf(expired, Person("Dana", listOf(Handle.email("DANA@example.com"))))) }
+        rig.recording { rig.job.releaseDue(rig.settings, at("2026-03-04T10:41:00Z")) }.map { it.id } shouldBe listOf(dana.id)
+        rig.store.notifyOf(old.id) shouldBe holdUntil
     }
 })

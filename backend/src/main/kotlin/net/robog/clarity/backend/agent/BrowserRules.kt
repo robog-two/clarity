@@ -92,6 +92,31 @@ fun parseSelectedUrl(text: String): String? {
     return line.substring(open + 2, line.length - 1).takeIf { it.isNotBlank() && it != "URL unavailable" }
 }
 
+/** Pure: no page: an empty tab, the start page, or unknown. */
+fun isBlankPage(url: String?): Boolean = url == null || url.isBlank() || url.trim().lowercase().let { it == "about:blank" || it == "about:newtab" || it == "about:home" }
+
+private val SNAPSHOT_UID = Regex("""uid=\S+""")
+
+/** Pure: a snapshot or page text with nothing on it (an empty tab gives `uid=e0 body` or 0 chars). */
+fun looksEmpty(remote: String, content: String): Boolean = when (remote) {
+    "take_snapshot" -> SNAPSHOT_UID.findAll(content).count() <= 1
+    "get_page_text" -> content.isBlank() || "[full content, 0 chars]" in content
+    else -> false
+}
+
+/**
+ * Pure: what to tell the agent when the selected tab is empty but it was last on [lastPage] (the
+ * browser restarted, or the tab was closed), so it says so and goes back instead of assuming.
+ */
+fun lostPageNote(selectedUrl: String?, lastPage: String?): String? =
+    if (isBlankPage(selectedUrl) && !isBlankPage(lastPage)) {
+        "Note: the selected tab is empty, but the browser was last on $lastPage (it may have restarted). " +
+            "Say so in your report. If list_pages shows that page, select_page it; otherwise navigate_page to it again " +
+            "and check where you are (still signed in? same step?) before going on."
+    } else {
+        null
+    }
+
 /** Pure: the element uids an acting call's [input] refers to. */
 fun targetUids(input: JsonObject): List<String> = buildList {
     for (key in listOf("uid", "fromUid", "toUid")) (input[key] as? JsonPrimitive)?.contentOrNull?.let(::add)

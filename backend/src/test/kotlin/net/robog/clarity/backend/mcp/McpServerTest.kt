@@ -5,6 +5,11 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.client.plugins.sse.SSE
+import io.ktor.client.request.delete
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
@@ -87,6 +92,21 @@ class McpServerTest : FunSpec({
             provider.close()
             adapted.invoke(buildJsonObject { put("text", JsonPrimitive("again")) }) shouldBe ToolResult.Ok("echo: again")
             provider.close()
+        }
+    }
+
+    test("GET and DELETE on the stateless endpoint answer 405 with Allow: POST, not a 500") {
+        testApplication {
+            application { appLikeServer(listOf(echo)) }
+            for (session in listOf(null, "unknown-session")) {
+                val get = client.get("/mcp") {
+                    header(HttpHeaders.Accept, "text/event-stream")
+                    session?.let { header("Mcp-Session-Id", it) }
+                }
+                get.status shouldBe HttpStatusCode.MethodNotAllowed
+                get.headers[HttpHeaders.Allow] shouldBe "POST"
+                client.delete("/mcp") { session?.let { header("Mcp-Session-Id", it) } }.status shouldBe HttpStatusCode.MethodNotAllowed
+            }
         }
     }
 })

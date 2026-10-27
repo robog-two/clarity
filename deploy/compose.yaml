@@ -169,7 +169,8 @@ services:
       # Extra hosts the backend may reach (comma separated), e.g. a self-hosted model gateway.
       CLARITY_BACKEND_EGRESS_ALLOW: ${CLARITY_BACKEND_EGRESS_ALLOW:-}
     healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "3130"]
+      # a real proxy request to the loopback health listener (a bare TCP connect spams the access log)
+      test: ["CMD", "/usr/local/bin/egress-health"]
       interval: 5s
       timeout: 3s
       retries: 12
