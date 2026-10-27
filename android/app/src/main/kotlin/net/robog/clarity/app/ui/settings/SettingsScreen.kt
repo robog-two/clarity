@@ -37,6 +37,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import net.robog.clarity.R
+import androidx.annotation.DrawableRes
+import net.robog.clarity.app.ui.components.Drawing
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.sentenceCase
 import android.Manifest
@@ -129,6 +131,8 @@ data class SettingsActions(
     val onAllowExactAlarms: () -> Unit = {},
     val onAllowFullScreen: () -> Unit = {},
     val onAllowSms: () -> Unit = {},
+    /** Texts are readable but the server refuses them: grant them there. */
+    val onAllowSmsOnServer: () -> Unit = {},
     val onAllowDnd: () -> Unit = {},
     val onRedoOnboarding: () -> Unit = {},
     val onForget: () -> Unit = {},
@@ -150,7 +154,18 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
         onDispose { lifecycle.removeObserver(observer) }
     }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.refreshDevice() }
-    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) viewModel.onSmsGranted() else viewModel.refreshDevice() }
+    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) {
+            viewModel.onSmsGranted()
+        } else {
+            viewModel.refreshDevice()
+            // Denied for good ("don't ask again"): the system no longer shows the dialog, so open the app's page.
+            val activity = context as? android.app.Activity
+            if (activity != null && !activity.shouldShowRequestPermissionRationale(Manifest.permission.READ_SMS)) {
+                context.openSystem(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, withPackage = true)
+            }
+        }
+    }
     SettingsContent(
         state = state,
         actions = SettingsActions(
@@ -178,6 +193,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
                 if (Build.VERSION.SDK_INT >= 34) context.openSystem(AndroidSettings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true)
             },
             onAllowSms = { sms.launch(Manifest.permission.READ_SMS) },
+            onAllowSmsOnServer = viewModel::onSmsGranted,
             onAllowDnd = { context.openSystem(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
             onRedoOnboarding = viewModel::redoOnboarding,
             onForget = viewModel::forgetInstance,
@@ -197,9 +213,10 @@ private fun Context.openSystem(action: String, withPackage: Boolean = false, ext
 }
 
 /** The pages of Settings: a home page of groups, and one page for each group's controls. */
-enum class SettingsPage(val title: String) {
+/** [drawing] is an optional hand-inked header for the page (its rows keep their Material icons on the home page). */
+enum class SettingsPage(val title: String, @DrawableRes val drawing: Int? = null) {
     Home("Settings"),
-    MorningCall("Morning call"),
+    MorningCall("Morning call", R.drawable.drawing_bell),
     Voice("Voice"),
     HeldActions("Held actions"),
     Push("Stay connected"),
@@ -241,7 +258,7 @@ fun SettingsContent(
         if (shown == SettingsPage.Home) {
             SettingsHome(state, open = { page = it }, onOpenConstitution = actions.onOpenConstitution)
         } else {
-            SettingsSubPage(shown.title, onBack = { page = SettingsPage.Home }) {
+            SettingsSubPage(shown.title, shown.drawing, onBack = { page = SettingsPage.Home }) {
                 when (shown) {
                     SettingsPage.Home -> Unit
                     SettingsPage.MorningCall -> settings?.let { MorningCallPage(state, it, actions) { pickingTime = TIME_CALL } } ?: LoadingSpinner()
@@ -363,7 +380,8 @@ private fun sourcesSummary(state: SettingsUiState): String {
         1 -> "1 on your server"
         else -> "${state.serverSources.size} on your server"
     }
-    return if (state.smsGranted) "$server · texts synced" else server
+    val textsOk = state.smsGranted && state.sms.ok
+    return if (textsOk) "$server · texts synced" else server
 }
 
 /** A titled group of rows on a raised surface. */
@@ -427,12 +445,13 @@ private fun GroupRow(
 // --- the pages ---
 
 @Composable
-private fun SettingsSubPage(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         BackLink("settings", onBack)
+        drawing?.let { Drawing(it, Modifier.padding(top = 8.dp).size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
         ScreenTitle(title, Modifier.padding(top = 8.dp, bottom = 16.dp))
         content()
     }
@@ -524,9 +543,14 @@ private fun SourcesPage(state: SettingsUiState, actions: SettingsActions) {
     Column {
         SelectRow(
             "messages",
-            if (state.smsGranted) "synced with your server" else "allow reading texts to sync them",
-            if (state.smsGranted) state.smsLastSync else "allow",
-            { if (!state.smsGranted) actions.onAllowSms() },
+            state.sms.sub,
+            state.sms.trailing,
+            {
+                when {
+                    !state.smsGranted -> actions.onAllowSms()
+                    state.sms.needsAllow -> actions.onAllowSmsOnServer()
+                }
+            },
         )
         SelectRow(
             "do not disturb",
@@ -582,7 +606,7 @@ private val previewState = SettingsUiState(
         SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
         SourceRow("files", "webdav", "never", "files"),
     ),
-    smsGranted = true, smsLastSync = "just now", notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
+    smsGranted = true, sms = SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )
 
 private val previewVault = VaultUiState(

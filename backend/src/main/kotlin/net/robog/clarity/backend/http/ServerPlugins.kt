@@ -67,6 +67,10 @@ class ServerPlugins(
             exception<BadRequestException> { call, e -> call.respondProblem(EdgeProblem.BadRequest(e.rootMessage())) }
             exception<ContentTransformationException> { call, e -> call.respondProblem(EdgeProblem.BadRequest(e.rootMessage())) }
             exception<SerializationException> { call, e -> call.respondProblem(EdgeProblem.BadRequest(e.rootMessage())) }
+            // The client went away mid-response (a phone dropping its event stream): nothing to answer, not an error.
+            exception<io.ktor.util.cio.ChannelWriteException> { call, _ ->
+                log.debug { "client disconnected during ${call.request.path()}" }
+            }
             exception<Throwable> { call, cause ->
                 log.error(cause) { "unhandled error on ${call.request.path()}" }
                 call.respondProblem(EdgeProblem.Internal)

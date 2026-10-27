@@ -52,7 +52,8 @@ class LeadModelSwitchTest : FunSpec({
         r.inbox.enqueue(InboxItem.UserInput(ClientInputId("u1"), "first"))
         r.lead.start()
         r.lead.step() shouldBe true
-        r.model.requests.map { it.model } shouldContainExactly listOf(LEAD_MODEL, LEAD_MODEL)
+        // "done" never reached the person, so the turn ends with one reply nudge, still on Opus.
+        r.model.requests.map { it.model } shouldContainExactly listOf(LEAD_MODEL, LEAD_MODEL, LEAD_MODEL)
         r.model.requests.map { it.effort }.toSet() shouldBe setOf("medium")
 
         r.inbox.enqueue(InboxItem.UserInput(ClientInputId("u2"), "second"))

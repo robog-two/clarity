@@ -71,7 +71,7 @@ fun ScheduleContent(
     StepScaffold(
         step = OnboardingStep.Schedule,
         title = "When should I call?",
-        footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading && !state.saving) },
+        footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading, busy = state.saving) },
     ) {
         Hint("Eight minutes. You talk, I take notes, then I set things up.")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {

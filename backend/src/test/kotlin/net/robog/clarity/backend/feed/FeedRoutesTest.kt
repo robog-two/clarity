@@ -81,6 +81,7 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun markSummarized(ids: Collection<FeedItemId>) = Unit
     override suspend fun notifyOf(id: FeedItemId): String? = null
     override suspend fun heldNotifications(): List<FeedItem> = emptyList()
+    override suspend fun aboutOf(ids: Collection<FeedItemId>): Map<FeedItemId, List<net.robog.clarity.shared.noun.Handle>> = emptyMap()
     override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? = null
     val released = CopyOnWriteArrayList<FeedItem>()
     override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()

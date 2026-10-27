@@ -4,6 +4,9 @@ import android.util.Log
 import java.security.Signature
 import java.util.Base64
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.net.VaultApi
@@ -47,6 +50,8 @@ class PhoneApprover(
     private val keys: VaultKeys,
     private val auth: PhoneAuth,
     private val vault: VaultRepository,
+    /** Keystore signing and key agreement block, so they run here rather than on the main thread. */
+    private val io: CoroutineDispatcher = Dispatchers.IO,
 ) : ApprovalGate {
 
     override suspend fun authorize(held: HeldAction, input: ApprovalInput): ApprovalResult {
@@ -67,7 +72,7 @@ class PhoneApprover(
     }
 
     private suspend fun approveOnPhone(listed: HeldAction, input: ApprovalInput): ApprovalResult {
-        if (keys.status() == VaultKeyStatus.INVALIDATED) throw KeysInvalidatedException(IllegalStateException("invalidated"))
+        if (vault.keyStatus() == VaultKeyStatus.INVALIDATED) throw KeysInvalidatedException(IllegalStateException("invalidated"))
         // Sign the server's current version of the action, not a cached copy.
         val held = when (val r = api.heldAction(listed.id)) {
             is ApiResult.Success -> r.value
@@ -101,7 +106,7 @@ class PhoneApprover(
                 // seconds, so one prompt is enough. A second prompt is only shown when that window has
                 // passed: two system prompts back to back often had the second one cancelled at once.
                 val opened = try {
-                    VaultCrypto.open(checkNotNull(envelope)) { keys.agree(it) }
+                    openEnvelope(checkNotNull(envelope))
                 } catch (_: NotAuthenticatedException) {
                     when (val o = open(envelope!!, action.site)) {
                         is Opened.Ok -> o.fields
@@ -124,10 +129,11 @@ class PhoneApprover(
 
     private suspend fun sign(held: HeldAction): Signed {
         val prompt = AuthPrompt("Approve with your fingerprint or face", held.action.summary)
-        return when (val r = auth.authenticate(prompt, keys.approvalSignature())) {
+        val unsigned = withContext(io) { keys.approvalSignature() }
+        return when (val r = auth.authenticate(prompt, unsigned)) {
             is AuthResult.Authenticated -> {
                 val authorized = r.signature ?: return Signed.No("Couldn’t approve that on this phone.")
-                Signed.Ok(signPayload(authorized, approvalPayload(held)))
+                Signed.Ok(withContext(io) { signPayload(authorized, approvalPayload(held)) })
             }
             AuthResult.Cancelled -> Signed.No("Not approved.")
             is AuthResult.Unavailable -> Signed.No(r.message)
@@ -144,12 +150,15 @@ class PhoneApprover(
         kotlinx.coroutines.delay(PROMPT_GAP_MS) // let the first system prompt finish closing
         val prompt = AuthPrompt("Open your saved login", "Release it to the agent for $site, for this task")
         return when (val r = auth.authenticate(prompt)) {
-            is AuthResult.Authenticated -> Opened.Ok(VaultCrypto.open(envelope) { keys.agree(it) })
+            is AuthResult.Authenticated -> Opened.Ok(openEnvelope(envelope))
             AuthResult.Cancelled -> Opened.No("Not approved.")
             is AuthResult.Unavailable -> Opened.No(r.message)
             is AuthResult.Failed -> Opened.No(r.message)
         }
     }
+
+    private suspend fun openEnvelope(envelope: net.robog.clarity.shared.vault.VaultEnvelope): Map<String, String> =
+        withContext(io) { VaultCrypto.open(envelope) { keys.agree(it) } }
 
     private companion object {
         const val TAG = "ClarityVault"

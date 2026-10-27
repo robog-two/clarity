@@ -6,6 +6,7 @@ import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import io.ktor.server.config.MapApplicationConfig
 import kotlin.io.path.Path
+import net.robog.clarity.harness.OpenRouterRouting
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 
@@ -93,6 +94,54 @@ class ConfigLoadingTest : FunSpec({
         val withYaml = MapApplicationConfig("clarity.agent.reviewInterval" to "2h", "clarity.agent.roles.triage.provider" to "openrouter")
         AppConfig.load(mapOf("OPENROUTER_API_KEY" to "sk-or"), withYaml).getOrNull()!!.agent.roles.triage.provider shouldBe ModelProvider.OPENROUTER
         load(mapOf("CLARITY_AGENT_TRIAGE_PROVIDER" to "openai")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
+    }
+
+    test("memory embeddings: on with qwen3-embedding-8b at 1024 values by default; env can switch them off or change them") {
+        load().getOrNull()!!.agent.memory shouldBe MemoryConfig(true, "qwen/qwen3-embedding-8b", 1024, listOf("deepinfra", "nebius"))
+        val m = load(
+            mapOf("CLARITY_MEMORY_EMBEDDINGS" to "false", "CLARITY_MEMORY_EMBEDDINGS_MODEL" to "x/y", "CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS" to "0"),
+        ).getOrNull()!!.agent.memory
+        m.embeddings shouldBe false
+        m.embeddingsModel shouldBe "x/y"
+        m.embeddingDimensions shouldBe 0
+        load(mapOf("CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS" to "-1")).shouldBeInstanceOf<Either.Left<*>>()
+        // no client without an OpenRouter key, or when switched off
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(load().getOrNull()!!.agent).create() shouldBe null
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(load(mapOf("OPENROUTER_API_KEY" to "sk-or")).getOrNull()!!.agent).create()
+            .shouldBeInstanceOf<net.robog.clarity.backend.agent.OpenRouterEmbeddingClient>()
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(
+            load(mapOf("OPENROUTER_API_KEY" to "sk-or", "CLARITY_MEMORY_EMBEDDINGS" to "false")).getOrNull()!!.agent,
+        ).create() shouldBe null
+    }
+
+    test("decisions: Decision-1 gating the review at 0.3 with an 8h limit by default; blank means default; env changes them") {
+        load().getOrNull()!!.agent.decisions shouldBe DecisionConfig(true, "microsoft/microsoft-decision-1", true, 0.3, kotlin.time.Duration.parse("8h"))
+        load(mapOf("CLARITY_DECISION_MODEL" to "", "CLARITY_REVIEW_GATE_THRESHOLD" to "")).getOrNull()!!.agent.decisions shouldBe DecisionConfig()
+        val d = load(
+            mapOf(
+                "CLARITY_DECISIONS" to "false", "CLARITY_DECISION_MODEL" to "typesafe/jev-1.14", "CLARITY_REVIEW_GATE" to "false",
+                "CLARITY_REVIEW_GATE_THRESHOLD" to "0.5", "CLARITY_REVIEW_MAX_QUIET" to "6h",
+            ),
+        ).getOrNull()!!.agent.decisions
+        d shouldBe DecisionConfig(false, "typesafe/jev-1.14", false, 0.5, kotlin.time.Duration.parse("6h"))
+        load(mapOf("CLARITY_REVIEW_GATE_THRESHOLD" to "1.5")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>().key shouldBe "CLARITY_REVIEW_GATE_THRESHOLD"
+        // no client without an OpenRouter key, or when switched off
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(load().getOrNull()!!.agent).create() shouldBe null
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(load(mapOf("OPENROUTER_API_KEY" to "sk-or")).getOrNull()!!.agent).create()
+            .shouldBeInstanceOf<net.robog.clarity.backend.agent.OpenRouterDecisionClient>()
+        net.robog.clarity.backend.agent.OpenRouterDecisionClientFactory(
+            load(mapOf("OPENROUTER_API_KEY" to "sk-or", "CLARITY_DECISIONS" to "false")).getOrNull()!!.agent,
+        ).create() shouldBe null
+    }
+
+    test("OpenRouter routing: zdr, fp8 or better and cheapest first by default; blank turns a filter off") {
+        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, listOf("fp8", "bf16", "fp16"), "price")
+        load(mapOf("OPENROUTER_ZDR" to "false", "OPENROUTER_QUANTIZATIONS" to " BF16, fp16 ,", "OPENROUTER_SORT" to "Latency"))
+            .getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(false, listOf("bf16", "fp16"), "latency")
+        load(mapOf("OPENROUTER_QUANTIZATIONS" to "", "OPENROUTER_SORT" to " ")).getOrNull()!!.agent.openRouterRouting shouldBe
+            OpenRouterRouting(true, emptyList(), null)
+        load(mapOf("OPENROUTER_SORT" to "fastest")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
+        load(mapOf("OPENROUTER_ZDR" to "maybe")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
     }
 
     test("environment overrides yaml") {

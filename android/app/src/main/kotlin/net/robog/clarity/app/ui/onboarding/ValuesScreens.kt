@@ -5,10 +5,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,9 +33,11 @@ import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
 import net.robog.clarity.app.ui.components.SecondaryButton
+import net.robog.clarity.app.ui.components.WorkingLine
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.voice.MicChipState
@@ -139,10 +139,7 @@ fun ValuesContent(
         when (val phase = state.phase) {
             InterviewPhase.Idle, InterviewPhase.Starting -> {
                 Text("How you work", style = MaterialTheme.typography.headlineMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
-                    Hint("Getting the first question ready…")
-                }
+                WorkingLine("Getting the first question ready…")
             }
             InterviewPhase.Unavailable -> {
                 Hint("This server can’t run the values interview yet. You can skip it for now and do it later.")
@@ -219,7 +216,7 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
         },
     ) {
         when (state) {
-            ConstitutionUi.Loading -> CircularProgressIndicator(strokeWidth = 2.dp)
+            ConstitutionUi.Loading -> LoadingSpinner()
             ConstitutionUi.Unavailable -> Hint("This server can’t show the constitution yet. You can read it in settings once it can.")
             is ConstitutionUi.Failed -> ErrorBox("Could not load the constitution.", "Check your connection and try again.")
             is ConstitutionUi.Loaded -> {

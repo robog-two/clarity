@@ -26,6 +26,7 @@ import net.robog.clarity.app.connector.PhoneConnectorKind
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.SelectRow
 import net.robog.clarity.app.ui.components.sentenceCase
@@ -212,11 +213,12 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
                     actions.onSave,
                     Modifier.fillMaxWidth(),
                     enabled = if (state.phone != null) state.canSave else !state.saving,
+                    busy = state.saving,
                 )
             }
         },
     ) {
-        if (state.loading) Hint("Loading…")
+        if (state.loading) LoadingSpinner()
         if (state.missing) ErrorBox("${state.title} isn’t on this server.", "Check that its container is part of your setup.")
         if (state.notRunning) {
             Hint(state.blurb)

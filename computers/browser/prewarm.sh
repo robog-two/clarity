@@ -27,7 +27,8 @@ kill -KILL "$pid" 2>/dev/null || true
 
 # Leave only what a clean start should inherit.
 cd "$profile"
-rm -rf lock .parentlock cache2 crashes minidumps datareporting sessionstore-backups sessionCheckpoints.json \
+# (No sessionstore: user.js restores the last session, and a fresh profile has none to restore.)
+rm -rf lock .parentlock cache2 crashes minidumps datareporting sessionstore.jsonlz4 sessionstore-backups sessionCheckpoints.json \
        saved-telemetry-pings Marionette* WebDriverBiDiServer.json bookmarkbackups thumbnails \
        places.sqlite* favicons.sqlite* cookies.sqlite* formhistory.sqlite*
 rm -rf "$HOME" /tmp/prewarm.log

@@ -84,6 +84,25 @@ class BrowserGateTest : FunSpec({
         rig.tools.getValue("browser__click_by_uid").description shouldContain "/workspace/downloads"
     }
 
+    test("an empty tab where a page was (browser restarted): list_pages and an empty snapshot say so and name the page; back on it, no note") {
+        val rig = Rig(lead = false)
+        rig.tools.getValue("browser__list_pages").description shouldContain "select_page"
+        rig.call("navigate_page", args("url" to "https://shop.example.com/booking/step-2"))
+        (rig.call("list_pages", JsonObject(emptyMap())) as ToolResult.Ok).content shouldNotContain "Note:"
+
+        // the browser container was recreated: an empty tab is selected
+        rig.browser.url = "about:blank"
+        rig.browser.snapshot = "uid=e0 body"
+        val pages = (rig.call("list_pages", JsonObject(emptyMap())) as ToolResult.Ok).content
+        pages shouldContain "the selected tab is empty, but the browser was last on https://shop.example.com/booking/step-2"
+        (rig.snapshot() as ToolResult.Ok).content shouldContain "last on https://shop.example.com/booking/step-2"
+
+        rig.call("navigate_page", args("url" to "https://shop.example.com/booking/step-2"))
+        (rig.call("list_pages", JsonObject(emptyMap())) as ToolResult.Ok).content shouldNotContain "Note:"
+        rig.browser.snapshot = "uid=e0 body"
+        (rig.snapshot() as ToolResult.Ok).content shouldNotContain "Note:" // an empty page that is the page we are on
+    }
+
     test("no grant: the placeholder is not substituted, the person is asked once per credential, and the browser is not called") {
         val rig = Rig()
         rig.snapshot()

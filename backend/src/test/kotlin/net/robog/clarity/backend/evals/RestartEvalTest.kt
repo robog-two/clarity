@@ -97,7 +97,8 @@ class RestartEvalTest : FunSpec({
 
         second.inbox.enqueue(InboxItem.UserInput(ClientInputId("u2"), "thanks"))
         second.lead.step() shouldBe true
-        second.model.requests.size shouldBe 2
+        // the answer, then one reply nudge ("fine" was plain text, which never reaches the person)
+        second.model.requests.size shouldBe 3
         second.model.requests.last().messages.count { m -> m.role == Role.USER && m.text().contains("thanks") } shouldBe 1
         second.lead.step() shouldBe false
         outboxRows() shouldBe 1

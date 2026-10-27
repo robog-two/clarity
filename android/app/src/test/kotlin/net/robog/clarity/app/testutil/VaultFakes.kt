@@ -64,6 +64,8 @@ class FakeVaultKeys(
     override fun agree(ephemeral: PublicKey): ByteArray =
         if (staleAgreements > 0) { staleAgreements--; throw NotAuthenticatedException(IllegalStateException("window")) } else KeyAgreement.getInstance("ECDH").apply { init(vault.private); doPhase(ephemeral, true) }.generateSecret()
     override fun reset() { resets++; status = VaultKeyStatus.READY }
+    var deletes = 0
+    override fun delete() { deletes++; status = VaultKeyStatus.MISSING }
 }
 
 /** Answers the prompts from a script and records what was asked. */
@@ -156,7 +158,7 @@ class FakeVault(
     val deleted = mutableListOf<CredentialId>()
     var registers = 0
     var rekeys = 0
-    override fun keyStatus() = status
+    override suspend fun keyStatus() = status
     override suspend fun register(): ApiResult<Unit> { registers++; return ApiResult.Success(Unit) }
     override suspend fun credentials() = list
     override suspend fun delete(id: CredentialId): ApiResult<Unit> { deleted += id; return ApiResult.Success(Unit) }

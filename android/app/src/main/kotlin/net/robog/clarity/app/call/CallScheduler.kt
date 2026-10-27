@@ -32,6 +32,9 @@ interface CallAlarms {
 interface CallSettingsCache {
     suspend fun load(): Settings?
     suspend fun save(settings: Settings)
+
+    /** The server was forgotten: its schedule must not re-arm the call after a reboot. */
+    suspend fun clear() {}
 }
 
 class DataStoreCallSettingsCache(private val store: DataStore<Preferences>) : CallSettingsCache {
@@ -40,6 +43,10 @@ class DataStoreCallSettingsCache(private val store: DataStore<Preferences>) : Ca
 
     override suspend fun save(settings: Settings) {
         store.edit { it[KEY] = ClarityJson.encodeToString(settings) }
+    }
+
+    override suspend fun clear() {
+        store.edit { it.remove(KEY) }
     }
 
     private companion object { val KEY = stringPreferencesKey("cached_settings") }
@@ -89,6 +96,12 @@ class CallScheduler(
     }
 
     fun cancelSnooze() = alarms.cancel(AlarmSlot.Snooze)
+
+    /** The server was forgotten: no call, heads-up or snoozed call from its schedule, now or after a reboot. */
+    suspend fun forgetServer() {
+        AlarmSlot.entries.forEach(alarms::cancel)
+        cache.clear()
+    }
 
     fun needsExactAlarmPermission(current: Settings): Boolean = shouldAskForExactAlarms(current, alarms.canScheduleExact())
 }

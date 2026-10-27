@@ -19,6 +19,9 @@ fun interface SettingsProvider {
     suspend fun current(): Settings
 }
 
+/** The person's home zone: every time an agent sees or gives is on this clock (see [net.robog.clarity.shared.time.LocalTimes]). */
+suspend fun SettingsProvider.homeZone(): kotlinx.datetime.TimeZone = net.robog.clarity.shared.time.zoneOrUtc(current().homeZone)
+
 @Inject
 @ContributesBinding(AppScope::class)
 class DefaultSettingsProvider : SettingsProvider {
@@ -50,7 +53,7 @@ class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = fals
 }
 
 /** Tools whose output carries content from outside (mail, contacts' notes, calendar descriptions, search hits). */
-val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_result")
+val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "read_result")
 
 /** Wraps [tool] so that running it marks [scope] as having seen untrusted content. */
 fun Tool.taintingScope(scope: RunScope): Tool {

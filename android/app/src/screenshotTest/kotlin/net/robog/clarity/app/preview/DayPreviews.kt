@@ -131,6 +131,17 @@ private val todayFull = TodayUiState(
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorLight() = TodayError(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorDark() = TodayError(true)
 
+// One "I'm doing" row per task status: running work gets a drawn solid, the rest a still shape.
+private val everyStatus = todayFull.copy(
+    doing = AgentTask.Status.entries.mapIndexed { i, status ->
+        val waiting = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
+        val held = if (waiting) "s$i" else null
+        DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, held), held?.let { HeldActionId(it) })
+    },
+)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
+@PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusDark() = Screen(true) { TodayContent(everyStatus, {}, {}, {}) }
+
 // ---------- Draft review ----------
 
 private val danaBody = """

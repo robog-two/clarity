@@ -14,7 +14,6 @@ user_pref("extensions.update.enabled", false);
 user_pref("extensions.update.autoUpdateDefault", false);
 // No first-run / what's-new pages, no default-browser nag, no prompts.
 user_pref("browser.startup.homepage", "about:blank");
-user_pref("browser.startup.page", 0);
 user_pref("startup.homepage_welcome_url", "");
 user_pref("startup.homepage_welcome_url.additional", "");
 user_pref("browser.startup.homepage_override.mstone", "ignore");
@@ -23,9 +22,24 @@ user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("browser.messaging-system.whatsNewPanel.enabled", false);
 user_pref("browser.newtabpage.enabled", false);
 user_pref("browser.tabs.warnOnClose", false);
-user_pref("browser.sessionstore.resume_from_crash", false);
-// Cookies live in the kept profile, so a sign-in survives a restart. Session restore keeps nothing
-// extra on disk (no form data, no session cookies): the agent types secrets into forms.
+// Restore the open tabs on start, so a restart (every deploy recreates the container, which kills
+// Firefox: to Firefox that is a crash) doesn't drop the page a helper was on. geckodriver writes its
+// own defaults (blank start page, no resume after a crash) over these, so entrypoint.sh also passes
+// them as --pref; they stay here for a Firefox started by hand on this profile. Under WebDriver the
+// tab selected at restore comes back empty, so firefox-wrapper.sh adds a spare one (session-prep.mjs).
+user_pref("browser.startup.page", 3);
+user_pref("browser.sessionstore.resume_from_crash", true);
+// Never the "Restore session?" page instead of the tabs, however many unclean stops in a row; never
+// the safe-mode prompt either (nobody is there to answer it).
+user_pref("browser.sessionstore.max_resumed_crashes", 1000000);
+// Load every restored tab right away: a tab waiting to be clicked has no browsing context yet, so
+// WebDriver (list_pages) wouldn't see it.
+user_pref("browser.sessionstore.restore_on_demand", false);
+user_pref("browser.sessionstore.restore_tabs_lazily", false);
+user_pref("toolkit.startup.max_resumed_crashes", -1);
+// Cookies live in the kept profile, so a sign-in survives a restart. Session restore keeps only the
+// tabs and their history, nothing extra on disk (privacy_level 2: no form data, no POST data, no
+// session cookies, on any site): the agent types secrets into forms.
 user_pref("browser.sessionstore.privacy_level", 2);
 user_pref("network.cookie.lifetimePolicy", 0);
 user_pref("privacy.sanitize.sanitizeOnShutdown", false);
