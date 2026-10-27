@@ -32,7 +32,8 @@ private val REEXPAND_AFTER: Duration = Duration.ofDays(7)
  * every resource refetched and re-expanded once (source ids do not change, so nothing duplicates).
  * 2: plain events of any age, series from a year back, [CollectionState.recurring], history kept.
  */
-const val CAL_STATE_VERSION = 2
+// 3: refetch once so objects that failed to parse before the bad-line fix are read again.
+const val CAL_STATE_VERSION = 3
 
 private const val CHUNK = 100
 private const val MAX_FILES = 5000
