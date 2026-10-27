@@ -11,3 +11,10 @@ deploy/.env
 **/*.apk
 **/*.aab
 **/local.properties
+# Not needed to build any image: tests, docs and design files.
+**/src/test
+**/src/*Test
+docs
+e2e
+README.md
+ARCHITECTURE.md

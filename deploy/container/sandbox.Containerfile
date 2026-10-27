@@ -8,9 +8,22 @@
 # ---- build ------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM docker.io/library/eclipse-temurin:25-jdk AS build
 WORKDIR /src
-COPY . .
+# Only what Gradle needs for the JVM modules (settings.gradle.kts names all of them), so a change to
+# the app, docs, deploy files or the browser image does not rebuild this image. Tests are left out
+# of the build context (.containerignore).
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./
+COPY gradle gradle
+COPY build-logic build-logic
+COPY shared shared
+COPY connector-sdk connector-sdk
+COPY backend backend
+COPY connectors connectors
+COPY computers/sandbox computers/sandbox
+# Capped like local builds: the deploy builds beside the running stack on a 7 GB host.
 RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew :computers:sandbox:installDist --no-daemon --console=plain \
+       -Dorg.gradle.jvmargs="-Xmx1536m -XX:+UseParallelGC -Dfile.encoding=UTF-8" \
+       -Pkotlin.compiler.execution.strategy=in-process --max-workers=2 \
     && cp -r computers/sandbox/build/install/sandboxd /sandboxd
 
 # ---- runtime ----------------------------------------------------------------
