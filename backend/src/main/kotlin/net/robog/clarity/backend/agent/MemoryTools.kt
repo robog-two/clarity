@@ -28,6 +28,7 @@ class MemoryTools(
     private val archive: ConversationArchive,
     private val constitutions: ConstitutionStore,
     private val settings: SettingsProvider,
+    private val gate: FailureGate,
 ) {
     @Serializable
     class SearchMemoryInput(
@@ -126,6 +127,7 @@ class MemoryTools(
         val text = input.text?.trim().orEmpty()
         if (text.isEmpty() || text.length > MAX_NOTE_CHARS) return@tool ToolResult.Error("`text` must be 1-$MAX_NOTE_CHARS characters.")
         rejection(text)?.let { return@tool ToolResult.Error(it) }
+        gate.check(GateKind.MEMORY, "save_note", text)?.let { return@tool ToolResult.Error(it) }
         if (input.id != null) {
             val target = input.collection?.let { findCollection(it) ?: return@tool ToolResult.Error(unknown(it)) }
             return@tool if (collections.editNote(input.id, text, target?.id)) ToolResult.Ok("Note #${input.id} updated.") else ToolResult.Error("No note #${input.id}.")
@@ -136,6 +138,7 @@ class MemoryTools(
                 ?: return@tool ToolResult.Error("There is no collection \"$name\". To create it, also give a one-line `description`; ${existingHint()}")
             if (description.length > MAX_DESCRIPTION_CHARS) return@tool ToolResult.Error("Keep the description to one line (at most $MAX_DESCRIPTION_CHARS characters).")
             rejection(description)?.let { return@tool ToolResult.Error(it) }
+            gate.check(GateKind.MEMORY, "save_note", description)?.let { return@tool ToolResult.Error(it) }
             collections.create(name, description) ?: collections.find(name) ?: return@tool ToolResult.Error("Could not create \"$name\".")
         }
         val duplicate = collections.notes(collection.id, text, 5).firstOrNull { it.text.equals(text, ignoreCase = true) }
@@ -164,6 +167,7 @@ class MemoryTools(
         input.description?.trim()?.takeIf { it.isNotEmpty() }?.let { d ->
             if (d.length > MAX_DESCRIPTION_CHARS) return@tool ToolResult.Error("Keep the description to one line (at most $MAX_DESCRIPTION_CHARS characters).")
             rejection(d)?.let { return@tool ToolResult.Error(it) }
+            gate.check(GateKind.MEMORY, "manage_collection", d)?.let { return@tool ToolResult.Error(it) }
             collections.describe(collection.name, d)
             done += "description updated"
         }
