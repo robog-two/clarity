@@ -53,6 +53,8 @@ ksp = "2.3.12"
 tink = "1.24.0"
 okhttp = "5.5.0"
 guava = "33.6.0-jre"
+# Image loading in the app (the Agent's Path screenshots), over the app's own authenticated Ktor client.
+coil = "3.6.3"
 
 [libraries]
 # Kotlin / kotlinx
@@ -155,6 +157,8 @@ compose-ui-tooling-preview = { module = "androidx.compose.ui:ui-tooling-preview"
 # Beta for the Expressive loading indicator (public from 1.5.0); drop the version when the BOM ships it.
 compose-material3 = { module = "androidx.compose.material3:material3", version = "1.5.0-beta02" }
 compose-material-icons-extended = { module = "androidx.compose.material:material-icons-extended" }
+coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
+coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
 
 # Gradle plugins as libraries (for build-logic convention plugins)
 kotlin-gradle-plugin = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }

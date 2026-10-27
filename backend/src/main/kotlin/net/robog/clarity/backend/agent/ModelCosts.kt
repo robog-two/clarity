@@ -13,6 +13,7 @@ import net.robog.clarity.harness.ModelGateway
 import net.robog.clarity.harness.ModelRequest
 import net.robog.clarity.harness.ModelResponse
 import net.robog.clarity.harness.Usage
+import net.robog.clarity.harness.currentRunId
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -44,6 +45,8 @@ object ModelCalls : Table("model_call") {
     val costMicros = long("cost_micros").nullable()
     /** Who called (`lead`, `helper`, `guard`, `triage`); null for calls made before roles were recorded. */
     val role = text("role").nullable()
+    /** The run (lead thread or helper) that made the call (V21); null outside a run and for older calls. */
+    val runId = text("run_id").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -58,6 +61,7 @@ fun interface UsageRecorder {
 class DbUsageRecorder(private val database: Database, private val clock: Clock) : UsageRecorder {
     override suspend fun record(model: String, usage: Usage, role: AgentRole?) {
         val (w5, w1) = cacheWrites(usage)
+        val run = currentRunId()
         database.tx {
             ModelCalls.insert {
                 it[at] = clock.now()
@@ -69,6 +73,7 @@ class DbUsageRecorder(private val database: Database, private val clock: Clock) 
                 it[cacheWrite1hTokens] = w1
                 it[costMicros] = costMicros(usage)
                 it[ModelCalls.role] = role?.wireName
+                it[ModelCalls.runId] = run
             }
         }
     }

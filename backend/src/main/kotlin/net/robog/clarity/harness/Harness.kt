@@ -166,7 +166,7 @@ class Harness(
         val pending = Channel<Message>(Channel.UNLIMITED)
         val collector = launch { interrupts.collect { batch -> batch.forEach { pending.send(it) } } }
         try {
-            drive(request, plan, history, pending, resumed)
+            withContext(CurrentRun(runId)) { drive(request, plan, history, pending, resumed) }
         } finally {
             collector.cancel()
         }

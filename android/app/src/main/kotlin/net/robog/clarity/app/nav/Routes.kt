@@ -15,6 +15,12 @@ import net.robog.clarity.shared.governance.HeldActionId
 
 @Serializable data object ConstitutionView : NavKey
 
+/** A task as a thread: its status and its Agent's Path. */
+@Serializable data class TaskThread(val taskId: String) : NavKey
+
+/** One helper run's Agent's Path, stepped into from a task. */
+@Serializable data class RunPath(val runId: String) : NavKey
+
 /** The screen of one server connector (accounts, passwords), opened from settings. */
 @Serializable data class ConnectorView(val connectorId: String) : NavKey
 

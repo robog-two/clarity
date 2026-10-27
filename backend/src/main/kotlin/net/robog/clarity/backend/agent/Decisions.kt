@@ -347,6 +347,7 @@ class Decisions(config: AgentConfig, factory: DecisionClientFactory, private val
 /** Records one decision call's usage in `model_call` as role `decision`; a failed record is logged, never thrown. */
 suspend fun recordDecisionCall(database: Database, clock: Clock, model: String, usage: DecisionUsage) {
     try {
+        val run = net.robog.clarity.harness.currentRunId()
         database.tx {
             ModelCalls.insert {
                 it[at] = clock.now()
@@ -358,6 +359,7 @@ suspend fun recordDecisionCall(database: Database, clock: Clock, model: String, 
                 it[cacheWrite1hTokens] = 0
                 it[costMicros] = usage.costMicros
                 it[role] = Decisions.DECISION_ROLE
+                it[runId] = run
             }
         }
     } catch (e: CancellationException) {
