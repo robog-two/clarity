@@ -4,17 +4,16 @@ import kotlin.time.Duration
 
 /** Agent subsystem configuration (`clarity.agent` in application.yaml). */
 data class AgentConfig(
-    /** Null/blank disables agents entirely (dispatcher logs and returns null). */
-    val anthropicApiKey: String?,
+    /**
+     * `OPENROUTER_API_KEY` (or `_FILE`): every role's model runs on OpenRouter. Configuration loading
+     * requires it; null only in tests, where agents then stay disabled.
+     */
+    val openRouterApiKey: String? = null,
     val maxTurns: Int = 30,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
     val roles: AgentRoles = AgentRoles(),
-    /** Overrides the Anthropic API base URL (`ANTHROPIC_BASE_URL`): a gateway or proxy, or a fake endpoint in tests. */
-    val anthropicBaseUrl: String? = null,
-    /** `OPENROUTER_API_KEY`; required when a role's [RoleConfig.provider] is [ModelProvider.OPENROUTER]. */
-    val openRouterApiKey: String? = null,
     /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
     val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
     /** Memory recall: semantic search over the agent's memory (`CLARITY_MEMORY_*`). */
@@ -24,9 +23,6 @@ data class AgentConfig(
     /** The decision model and the periodic review's gate (`CLARITY_DECISION*`, `CLARITY_REVIEW_GATE*`). */
     val decisions: DecisionConfig = DecisionConfig(),
 ) {
-    /** The providers some boot-time role runs on; the live set comes from [net.robog.clarity.backend.agent.ModelSettings]. */
-    val providersInUse: Set<ModelProvider> get() = roles.providersInUse
-
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
 
@@ -76,11 +72,6 @@ data class DecisionConfig(
 
 const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
 
-/**
- * Who serves a role's model. [OPENROUTER] speaks the OpenAI-compatible API without prompt-cache
- * breakpoints or server-side compaction; the lead runs there too and then compacts client-side.
- */
-enum class ModelProvider { ANTHROPIC, OPENROUTER }
 
 /**
  * Who is calling the model. A role's settings can change at runtime
@@ -90,14 +81,15 @@ enum class ModelProvider { ANTHROPIC, OPENROUTER }
  */
 enum class AgentRole { LEAD, HELPER, GUARD, TRIAGE }
 
-/** The efforts the Messages API takes (`output_config.effort`). */
+/** The efforts a role can run at (OpenRouter `reasoning.effort`; above `high` only Claude takes them as they are). */
 val EFFORTS: List<String> = net.robog.clarity.shared.session.ModelRoles.EFFORTS
 
 /**
- * Per-role model settings (from env or yaml, under any runtime override). [effort] is the Messages
- * API `output_config.effort` (one of [EFFORTS]); [cacheTtl] is `5m` or `1h`; [compaction] turns on
- * compaction (only the long-lived lead thread needs it: server-side on Anthropic, client-side on
- * OpenRouter); [compactAtTokens] is when.
+ * Per-role model settings (from env or yaml, under any runtime override). [model] is an OpenRouter
+ * model id (`vendor/model`, e.g. `xiaomi/mimo-v2.6-pro` or `anthropic/claude-opus-5.5`); [effort] is
+ * one of [EFFORTS]; [cacheTtl] is `5m` or `1h`, used by models that cache at explicit breakpoints
+ * (Claude); [compaction] turns on client-side compaction (only the long-lived lead thread needs it);
+ * [compactAtTokens] is when.
  */
 data class RoleConfig(
     val model: String,
@@ -107,25 +99,20 @@ data class RoleConfig(
     val compaction: Boolean = false,
     /**
      * Compact once the prompt reaches this many tokens (at least 50K). Smaller is cheaper per turn but
-     * forgets sooner. On OpenRouter (client-side compaction, no prompt cache) it is the main cost
-     * lever: each turn resends everything since the last summary at the full input price.
+     * forgets sooner. It is the main cost lever for a model without a prompt cache: each turn resends
+     * everything since the last summary at the full input price.
      */
     val compactAtTokens: Long = 150_000,
-    /**
-     * Also compact while the person is away ([net.robog.clarity.backend.agent.LeadAgent.compactIfIdle]). Off: a
-     * compact-now request sends different compaction settings, so it never reads the warm cache and
-     * rewrites the whole history at the cache-write price, and the next turn writes the summary again.
-     */
-    val idleCompaction: Boolean = false,
-    /** Who serves [model]; the model name is that provider's (`anthropic/claude-haiku-5.5` on OpenRouter). */
-    val provider: ModelProvider = ModelProvider.ANTHROPIC,
 )
 
+const val DEFAULT_LEAD_MODEL = "xiaomi/mimo-v2.6-pro"
+const val DEFAULT_HELPER_MODEL = "deepseek/deepseek-v4.1-flash-1017"
+
 data class AgentRoles(
-    val lead: RoleConfig = RoleConfig("claude-opus-5-5", effort = "medium", maxTokens = 64_000, cacheTtl = "1h", compaction = true, compactAtTokens = 60_000),
-    val helper: RoleConfig = RoleConfig("claude-sonnet-5-5", effort = "medium", maxTokens = 32_000),
-    val guard: RoleConfig = RoleConfig("claude-haiku-5-5", effort = "low", maxTokens = 4_000),
-    val triage: RoleConfig = RoleConfig("claude-haiku-5-5", effort = "low", maxTokens = 4_000),
+    val lead: RoleConfig = RoleConfig(DEFAULT_LEAD_MODEL, effort = "medium", maxTokens = 64_000, cacheTtl = "1h", compaction = true, compactAtTokens = 60_000),
+    val helper: RoleConfig = RoleConfig(DEFAULT_HELPER_MODEL, effort = "medium", maxTokens = 32_000),
+    val guard: RoleConfig = RoleConfig(DEFAULT_HELPER_MODEL, effort = "low", maxTokens = 4_000),
+    val triage: RoleConfig = RoleConfig(DEFAULT_HELPER_MODEL, effort = "low", maxTokens = 4_000),
 ) {
     operator fun get(role: AgentRole): RoleConfig = when (role) {
         AgentRole.LEAD -> lead
@@ -133,7 +120,5 @@ data class AgentRoles(
         AgentRole.GUARD -> guard
         AgentRole.TRIAGE -> triage
     }
-
-    /** The providers some role runs on; agents are enabled once each has a key. */
-    val providersInUse: Set<ModelProvider> get() = AgentRole.entries.mapTo(sortedSetOf()) { this[it].provider }
 }
+

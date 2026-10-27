@@ -64,21 +64,17 @@ import net.robog.clarity.shared.session.StartSession
 import net.robog.clarity.shared.session.Today
 import org.testcontainers.postgresql.PostgreSQLContainer
 
-private const val GOOD_KEY = "sk-ant-good-key-0123456789"
-private const val DOWN_KEY = "sk-ant-down"
+private const val OLD_APP_KEY = "sk-ant-good-key-0123456789"
 private const val ENROLL_TOKEN = "enroll-token-for-tests"
 
 /**
  * The real application graph: Metro wires the sessions and setup classes (and their replacement
- * bindings), the routes sit behind device authentication, and the model key is validated against a
- * fake Models endpoint, stored, and enables the agents without a restart. Never the real API.
+ * bindings), the routes sit behind device authentication, and the model key is the server's own
+ * (an app cannot set it). OpenRouter points at a closed local port: never the real API.
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SessionsWiringTest : FunSpec({
     val postgres = PostgreSQLContainer("postgres:18-alpine")
-    val modelRequests = AtomicInteger()
-    lateinit var models: io.ktor.server.engine.EmbeddedServer<*, *>
-    lateinit var baseUrl: String
     lateinit var dataDir: java.nio.file.Path
 
     fun config(apiKey: String? = null) = AppConfig(
@@ -88,38 +84,14 @@ class SessionsWiringTest : FunSpec({
         dataDir = dataDir,
         enrollment = EnrollmentConfig(EnrollmentMode.TOKEN, token = Secret(ENROLL_TOKEN)),
         connectors = ConnectorsConfig(autoGrant = true, secretsDir = dataDir.resolve("secrets")),
-        agent = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, anthropicBaseUrl = baseUrl),
+        agent = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, openRouterBaseUrl = "http://127.0.0.1:9/api/v1"),
     )
 
     beforeSpec {
         postgres.start()
         dataDir = Files.createTempDirectory("clarity-sessions").resolve("data")
-        models = embeddedServer(Netty, port = 0) {
-            routing {
-                get("/v1/models") {
-                    modelRequests.incrementAndGet()
-                    // the SDK presents the key as a bearer token (or x-api-key, depending on the client mode)
-                    val key = call.request.headers["x-api-key"] ?: call.request.headers[HttpHeaders.Authorization]?.removePrefix("Bearer ")
-                    when (key) {
-                        GOOD_KEY -> call.respondText(
-                            """{"data":[{"id":"claude-sonnet-5-5","type":"model","display_name":"Sonnet","created_at":"2026-01-01T00:00:00Z"}],"has_more":false,"first_id":"claude-sonnet-5-5","last_id":"claude-sonnet-5-5"}""",
-                            ContentType.Application.Json,
-                        )
-                        DOWN_KEY -> call.respondText("""{"type":"error","error":{"type":"api_error","message":"overloaded"}}""", ContentType.Application.Json, HttpStatusCode.InternalServerError)
-                        else -> call.respondText(
-                            """{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}""",
-                            ContentType.Application.Json, HttpStatusCode.Unauthorized,
-                        )
-                    }
-                }
-                // Whatever the lead asks of the model once it has a key: the test never answers it.
-                post("/v1/messages") { call.respondText("""{"type":"error","error":{"type":"api_error","message":"no model in tests"}}""", ContentType.Application.Json, HttpStatusCode.InternalServerError) }
-            }
-        }.start(wait = false)
-        baseUrl = "http://127.0.0.1:${models.engine.resolvedConnectors().first().port}"
     }
     afterSpec {
-        models.stop(100, 500)
         postgres.stop()
     }
 
@@ -203,65 +175,32 @@ class SessionsWiringTest : FunSpec({
         }
     }
 
-    test("the model key is validated with one Models call, stored 0600, never echoed, and survives a restart") {
-        val before = modelRequests.get()
-        val graph = createGraphFactory<AppGraph.Factory>().create(config())
+    test("the model key is the server's: valid with OPENROUTER_API_KEY, missing without, and an app cannot set or replace it") {
+        val graph = createGraphFactory<AppGraph.Factory>().create(config(apiKey = "sk-or-from-secret"))
         testApplication {
             application { clarity(graph) }
             val (client, jwt) = device()
             fun io.ktor.client.request.HttpRequestBuilder.asDevice() = header(HttpHeaders.Authorization, "Bearer $jwt")
-            suspend fun put(key: String) = client.put("/api/v1/setup/model-key") { asDevice(); contentType(ContentType.Application.Json); setBody(ModelKeyRequest(key)) }
-
-            val initial = client.get("/api/v1/setup") { asDevice() }.body<SetupStatus>()
-            initial.modelKey shouldBe SetupStatus.KeyState.MISSING
-            initial.connectorsReady shouldBe 0
-            initial.constitutionVersion shouldBe null
-
-            put("   ").status shouldBe HttpStatusCode.BadRequest
-            modelRequests.get() shouldBe before // a blank key never reaches Anthropic
-
-            val rejected = put("sk-ant-wrong")
-            rejected.status shouldBe HttpStatusCode.UnprocessableEntity
-            rejected.bodyAsText() shouldNotContain "sk-ant-wrong"
-            client.get("/api/v1/setup") { asDevice() }.body<SetupStatus>().modelKey shouldBe SetupStatus.KeyState.INVALID
-            Files.exists(dataDir.resolve("anthropic-api-key")) shouldBe false
-
-            val unreachable = put(DOWN_KEY)
-            unreachable.status shouldBe HttpStatusCode.BadGateway
-            Files.exists(dataDir.resolve("anthropic-api-key")) shouldBe false
-
-            val accepted = put(GOOD_KEY)
-            accepted.status shouldBe HttpStatusCode.OK
-            accepted.bodyAsText() shouldNotContain GOOD_KEY
-            accepted.body<SetupStatus>().modelKey shouldBe SetupStatus.KeyState.VALID
-            client.get("/api/v1/setup") { asDevice() }.body<SetupStatus>().modelKey shouldBe SetupStatus.KeyState.VALID
-
-            val file = dataDir.resolve("anthropic-api-key")
-            Files.readString(file).trim() shouldBe GOOD_KEY
-            PosixFilePermissions.toString(Files.getPosixFilePermissions(file)) shouldBe "rw-------"
-        }
-
-        // a restart picks the stored key up by itself
-        val restarted = createGraphFactory<AppGraph.Factory>().create(config())
-        testApplication {
-            application { clarity(restarted) }
-            val (client, jwt) = device()
-            client.get("/api/v1/setup") { header(HttpHeaders.Authorization, "Bearer $jwt") }.body<SetupStatus>().modelKey shouldBe SetupStatus.KeyState.VALID
-        }
-    }
-
-    test("a key from the server's own secret wins: the app cannot replace it") {
-        val graph = createGraphFactory<AppGraph.Factory>().create(config(apiKey = "sk-ant-from-secret"))
-        testApplication {
-            application { clarity(graph) }
-            val (client, jwt) = device()
-            fun io.ktor.client.request.HttpRequestBuilder.asDevice() = header(HttpHeaders.Authorization, "Bearer $jwt")
-            client.get("/api/v1/setup") { asDevice() }.body<SetupStatus>().modelKey shouldBe SetupStatus.KeyState.VALID
-            val before = runCatching { Files.readString(dataDir.resolve("anthropic-api-key")) }.getOrNull()
-            val attempt = client.put("/api/v1/setup/model-key") { asDevice(); contentType(ContentType.Application.Json); setBody(ModelKeyRequest(GOOD_KEY)) }
+            val status = client.get("/api/v1/setup") { asDevice() }.body<SetupStatus>()
+            status.modelKey shouldBe SetupStatus.KeyState.VALID
+            status.missingKeys shouldBe emptyList()
+            // An older app still offers to paste an Anthropic key: refused, not echoed, nothing stored.
+            val attempt = client.put("/api/v1/setup/model-key") { asDevice(); contentType(ContentType.Application.Json); setBody(ModelKeyRequest(OLD_APP_KEY)) }
             attempt.status shouldBe HttpStatusCode.Conflict
-            attempt.bodyAsText() shouldContain "ANTHROPIC_API_KEY_FILE"
-            runCatching { Files.readString(dataDir.resolve("anthropic-api-key")) }.getOrNull() shouldBe before
+            val body = attempt.bodyAsText()
+            body shouldContain "OPENROUTER_API_KEY_FILE"
+            body shouldNotContain OLD_APP_KEY
+            Files.exists(dataDir.resolve("anthropic-api-key")) shouldBe false
+        }
+
+        val keyless = createGraphFactory<AppGraph.Factory>().create(config())
+        testApplication {
+            application { clarity(keyless) }
+            val (client, jwt) = device()
+            val status = client.get("/api/v1/setup") { header(HttpHeaders.Authorization, "Bearer $jwt") }.body<SetupStatus>()
+            status.modelKey shouldBe SetupStatus.KeyState.MISSING
+            status.missingKeys shouldBe listOf("openrouter")
+            status.connectorsReady shouldBe 0
         }
     }
 })

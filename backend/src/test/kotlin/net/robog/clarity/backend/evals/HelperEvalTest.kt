@@ -76,7 +76,7 @@ class HelperEvalTest : FunSpec({
         val helperRequest = r.model.requestsFor(HELPER_MODEL).first()
         helperRequest.messages.first().text() shouldContain "Reply to Dana with the file she asked for."
         helperRequest.messages.first().text().contains("Dana asked") shouldBe false // none of the lead's thread leaks in
-        val names = (helperRequest.tools + helperRequest.deferredTools).map { it.name }
+        val names = helperRequest.tools.map { it.name }
         ("send_to_user" in names) shouldBe false
         ("delegate" in names) shouldBe false
         ("send_email" in names) shouldBe true

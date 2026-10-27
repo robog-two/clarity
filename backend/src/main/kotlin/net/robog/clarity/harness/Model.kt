@@ -22,9 +22,11 @@ val HarnessJson: Json = Json {
 
 /**
  * One content block of a conversation turn. This is the small provider-neutral subset the loop
- * needs to understand; everything else the model emits (thinking, redacted thinking, compaction,
- * server tool use and results, fallback markers) travels as [Raw] and is handed back to the
- * provider unchanged, which is what keeps the history append-only and preserved-thinking safe.
+ * needs to understand; anything else travels as [Raw]: today OpenRouter's `reasoning_details`
+ * ([OpenRouterModelGateway.REASONING_TYPE]), and in journals written before the direct Anthropic API
+ * was removed also Anthropic's own blocks (thinking with signatures, `compaction`, server tool use and
+ * results such as `tool_search_tool_result`). Those old blocks are never rewritten; they are read as
+ * they are when a request is built (a `compaction` block becomes its summary text, the rest is left out).
  */
 @Serializable
 sealed interface Block {
@@ -44,22 +46,26 @@ sealed interface Block {
      */
     @Serializable @SerialName("raw")
     data class Raw(val json: JsonObject) : Block {
-        /** The provider's `type` field (e.g. `compaction`, `server_tool_use`), if present. */
+        /** The provider's `type` field (e.g. `openrouter_reasoning`, or a stored Anthropic `compaction`), if present. */
         val type: String? get() = (json["type"] as? JsonPrimitive)?.contentOrNull
 
+        /**
+         * A server-side compaction block from the Anthropic API, kept in journals written before
+         * Clarity moved to OpenRouter only. It summarizes everything before it ([Message.isCompactionPoint]).
+         */
         val isCompaction: Boolean get() = type == "compaction"
 
-        /** The readable summary of an Anthropic `compaction` block (`content`); null when it has none (encrypted only). */
+        /** The readable summary of a stored Anthropic `compaction` block (`content`); null when it has none (encrypted only). */
         val compactionSummary: String? get() = if (isCompaction) (json["content"] as? JsonPrimitive)?.contentOrNull else null
 
         /**
-         * The provider that wrote this block when it is not Anthropic ([FOREIGN_PROVIDER_KEY]), e.g.
-         * `openrouter` for its reasoning. The Anthropic gateway never sends such a block.
+         * The provider that wrote this block ([FOREIGN_PROVIDER_KEY]), e.g. `openrouter` for its
+         * reasoning; null for the untagged Anthropic blocks of old journals.
          */
         val foreignProvider: String? get() = (json[FOREIGN_PROVIDER_KEY] as? JsonPrimitive)?.contentOrNull
 
         companion object {
-            /** Tags a [Raw] block written by a provider other than Anthropic. */
+            /** Tags a [Raw] block with the provider that wrote it (the name predates OpenRouter being the only one). */
             const val FOREIGN_PROVIDER_KEY = "clarity_provider"
         }
     }
@@ -70,8 +76,7 @@ enum class Role { USER, ASSISTANT, SYSTEM }
 
 /**
  * One turn. [Role.SYSTEM] is a mid-conversation operator message (injected events, triggers,
- * helper results): supported by current models without a beta header, does not break the prompt
- * cache, and must satisfy [systemPlacementViolations].
+ * helper results), sent as a `system` message in place; it must satisfy [systemPlacementViolations].
  */
 @Serializable
 data class Message(
@@ -79,8 +84,8 @@ data class Message(
     val content: List<Block>,
     /**
      * Only on [Role.SYSTEM] messages: the effort (`low|medium|high|xhigh|max`) the model uses from this
-     * point of the conversation on (beta `mid-conversation-output-config-2026-07-01`). Sent as the
-     * message's `output_config`; an effort-only message has empty [content].
+     * point of the conversation on. Not sent itself: each request runs at the effort in effect at its
+     * end ([effortIn]). An effort-only message has empty [content].
      */
     val effort: String? = null,
 ) {
@@ -88,7 +93,7 @@ data class Message(
         fun user(text: String) = Message(Role.USER, listOf(Block.Text(text)))
         fun system(text: String) = Message(Role.SYSTEM, listOf(Block.Text(text)))
 
-        /** An effort-only operator message: changes the effort for the rest of the conversation without breaking the cached prefix. */
+        /** An effort-only operator message: changes the effort for the rest of the conversation; the journal stays append-only. */
         fun effort(effort: String) = Message(Role.SYSTEM, emptyList(), effort)
 
         /** A client-side compaction summary ([isSummary]): what is sent to the model starts here. */
@@ -98,14 +103,13 @@ data class Message(
     /** A user message of one text block starting with [SUMMARY_MARKER]: a client-side compaction summary. */
     val isSummary: Boolean get() = role == Role.USER && (content.singleOrNull() as? Block.Text)?.text?.startsWith(SUMMARY_MARKER) == true
 
-    /** Summarizes everything before it: a client summary ([isSummary]) or a message holding an Anthropic `compaction` block. */
+    /** Summarizes everything before it: a client summary ([isSummary]) or a message holding a stored Anthropic `compaction` block. */
     val isCompactionPoint: Boolean get() = isSummary || content.any { it is Block.Raw && it.isCompaction }
 }
 
 /**
- * First line of a client-side compaction summary. Client compaction (for providers without
- * server-side compaction) appends the summary as a new user message, so the journal stays
- * append-only; every provider is sent the history from the latest one on ([sinceSummary]).
+ * First line of a client-side compaction summary. Compaction appends the summary as a new user
+ * message, so the journal stays append-only; requests start at the latest one ([sinceSummary]).
  */
 const val SUMMARY_MARKER = "[clarity:summary] A summary of the conversation before this point:"
 
@@ -120,8 +124,8 @@ fun sinceSummary(messages: List<Message>): List<Message> {
 
 /**
  * Pure: the part of [messages] the model still reads: from the latest compaction point
- * ([Message.isCompactionPoint]: a client summary, or an Anthropic `compaction` block, before which
- * Anthropic drops everything server-side) on, or all of them.
+ * ([Message.isCompactionPoint]: a client summary, or a stored Anthropic `compaction` block, which
+ * summarized everything before it) on, or all of them.
  */
 fun contextSince(messages: List<Message>): List<Message> {
     val last = messages.indexOfLast { it.isCompactionPoint }
@@ -149,26 +153,6 @@ fun systemPlacementViolations(messages: List<Message>): List<Int> = messages.ind
         null -> before != Role.USER
         else -> true
     }
-}
-
-/**
- * Pure: [messages] without tool-search references to tools that are no longer offered ([available]).
- * The API refuses a request whose history names a tool it was not sent (for example after the
- * lead stopped getting the browser tools). Applied the same way every time, so the prefix stays stable.
- */
-fun withoutMissingToolReferences(messages: List<Message>, available: Set<String>): List<Message> = messages.map { message ->
-    if (message.content.none { it is Block.Raw && it.json["type"]?.let { t -> (t as? JsonPrimitive)?.contentOrNull } == "tool_search_tool_result" }) message
-    else message.copy(content = message.content.map { block -> if (block is Block.Raw) dropMissingReferences(block, available) else block })
-}
-
-private fun dropMissingReferences(block: Block.Raw, available: Set<String>): Block.Raw {
-    if ((block.json["type"] as? JsonPrimitive)?.contentOrNull != "tool_search_tool_result") return block
-    val content = block.json["content"] as? JsonObject ?: return block
-    val refs = content["tool_references"] as? kotlinx.serialization.json.JsonArray ?: return block
-    val kept = refs.filter { ref -> ((ref as? JsonObject)?.get("tool_name") as? JsonPrimitive)?.contentOrNull in available }
-    if (kept.size == refs.size) return block
-    val newContent = JsonObject(content + ("tool_references" to kotlinx.serialization.json.JsonArray(kept)))
-    return Block.Raw(JsonObject(block.json + ("content" to newContent)))
 }
 
 /**
@@ -278,27 +262,8 @@ data class Usage(
     }
 }
 
-/**
- * Pure: what one response is billed for. With compaction the provider reports each sampling step in
- * `usage.iterations` and leaves the compaction step out of the top-level fields ([top]), so the bill
- * is the sum of the [iterations]. An iteration without a 5m/1h split of its cache writes takes
- * [top]'s 1 hour share (all writes of one request use the same TTLs).
- */
-fun billedUsage(top: Usage, iterations: List<Usage>): Usage {
-    if (iterations.isEmpty()) return top
-    val oneHourShare = if (top.cacheCreationInputTokens > 0) top.cacheCreation1hTokens.toDouble() / top.cacheCreationInputTokens else 0.0
-    return iterations.map { u ->
-        if (u.cacheCreation5mTokens + u.cacheCreation1hTokens > 0 || u.cacheCreationInputTokens == 0L) {
-            u
-        } else {
-            val oneHour = Math.round(u.cacheCreationInputTokens * oneHourShare)
-            u.copy(cacheCreation1hTokens = oneHour, cacheCreation5mTokens = u.cacheCreationInputTokens - oneHour)
-        }
-    }.reduce(Usage::plus)
-}
-
 /** Why the model stopped generating, normalised from the provider's stop reasons. */
-enum class StopReason { END_TURN, TOOL_USE, MAX_TOKENS, REFUSAL, PAUSE_TURN, COMPACTION, OTHER }
+enum class StopReason { END_TURN, TOOL_USE, MAX_TOKENS, REFUSAL, OTHER }
 
 /** What the model is told about a tool. */
 data class ToolDefinition(val name: String, val description: String, val inputSchema: JsonObject)
@@ -310,15 +275,11 @@ data class ToolDefinition(val name: String, val description: String, val inputSc
  */
 data class SystemBlock(val text: String, val cacheBreakpoint: Boolean = false)
 
-/** Server-executed tools the provider runs for us (results come back as opaque [Block.Raw]). */
-enum class ServerTool(val wireType: String, val wireName: String) {
-    WEB_SEARCH("web_search_20260209", "web_search"),
-    WEB_FETCH("web_fetch_20260209", "web_fetch"),
-}
-
 /**
- * Prompt caching. Explicit breakpoints come from [SystemBlock.cacheBreakpoint]; [automatic] adds
- * the top-level automatic breakpoint that follows the growing tail. Providers allow at most four
+ * Prompt caching, for models that take explicit `cache_control` breakpoints (Claude through
+ * OpenRouter, [usesCacheBreakpoints]); other models cache automatically and ignore it. Explicit
+ * breakpoints come from [SystemBlock.cacheBreakpoint] and [ModelRequest.messageBreakpoint];
+ * [automatic] adds the top-level automatic breakpoint that follows the growing tail. At most four
  * breakpoints in total. [ttl] is `5m` (default) or `1h`.
  */
 data class CachePolicy(val ttl: String = "5m", val automatic: Boolean = true) {
@@ -327,42 +288,28 @@ data class CachePolicy(val ttl: String = "5m", val automatic: Boolean = true) {
     }
 }
 
-/** Server-side compaction (beta `compact-2026-01-12`). */
-data class CompactionConfig(
-    /** Compact when the input reaches this many tokens. */
-    val triggerInputTokens: Long = 150_000,
-    val instructions: String? = null,
-    /** Stop after the compaction block so the caller can look at it ([StopReason.COMPACTION]). */
-    val pauseAfterCompaction: Boolean = false,
-)
+/** The smallest prompt size at which a role may be set to compact its thread (`compactAtTokens`). */
+const val MIN_COMPACT_AT_TOKENS = 50_000L
 
-/** The compaction settings for a [RunRequest.compactNow] run: compact at the provider's minimum and pause. */
-fun compactNowConfig(base: CompactionConfig?): CompactionConfig =
-    (base ?: CompactionConfig()).copy(triggerInputTokens = COMPACTION_MIN_TRIGGER_TOKENS, pauseAfterCompaction = true)
-
-/** The smallest trigger the compaction beta accepts. */
-const val COMPACTION_MIN_TRIGGER_TOKENS = 50_000L
+/**
+ * Pure: whether [model] (an OpenRouter id) caches only at explicit `cache_control` breakpoints:
+ * Anthropic's Claude models. OpenRouter passes the breakpoints through to them; most other
+ * providers cache automatically, and Gemini uses only the last breakpoint, so they get none.
+ */
+fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").startsWith("anthropic/")
 
 /** A single model call: the full (append-only) history plus the stable request prefix. */
 data class ModelRequest(
     val model: String,
     val system: List<SystemBlock>,
     val messages: List<Message>,
-    /** Loaded (non-deferred) client tools, in byte-stable order. */
+    /** Client tools, in byte-stable order. */
     val tools: List<ToolDefinition>,
     val maxTokens: Long,
     /** `low | medium | high | xhigh | max`; null leaves the model's default. */
     val effort: String?,
-    /** Client tools sent with `defer_loading: true`; the tool search tool is added automatically. */
-    val deferredTools: List<ToolDefinition> = emptyList(),
-    val serverTools: Set<ServerTool> = emptySet(),
-    /** Null disables caching. */
+    /** Null disables caching (no breakpoints are sent). */
     val cache: CachePolicy? = CachePolicy(),
-    val compaction: CompactionConfig? = null,
-    /** Server-side refusal fallback (`fallbacks: "default"`). */
-    val fallbacks: Boolean = true,
-    /** `summarized | omitted`; null leaves the provider default. */
-    val thinkingDisplay: String? = null,
     /** JSON schema the final text must conform to (single calls: guard, triage, summaries). */
     val structuredOutput: JsonObject? = null,
 ) {
@@ -391,7 +338,6 @@ data class ModelRequest(
             (if (messageBreakpoint != null) 1 else 0)
         require(cache != null || system.none { it.cacheBreakpoint }) { "cache breakpoints requested but caching is disabled" }
         require(breakpoints <= MAX_CACHE_BREAKPOINTS) { "at most $MAX_CACHE_BREAKPOINTS cache breakpoints, requested $breakpoints" }
-        require(tools.isNotEmpty() || deferredTools.isEmpty()) { "at least one tool must be non-deferred" }
     }
 
     companion object {

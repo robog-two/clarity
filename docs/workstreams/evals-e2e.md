@@ -26,13 +26,13 @@ scenario tests, governance flow tests) so you extend rather than duplicate them.
    - request-prefix stability: across 20 turns of a scenario, the tools + system bytes sent to the
      gateway never change except at a constitution amendment.
 2. **Live eval harness (opt-in)**: `-Pclarity.liveEvals` runs a small set of recorded scenarios
-   against the real API with the real gateway (only when `ANTHROPIC_API_KEY` is set), and grades
+   against the real API with the real gateway (only when `OPENROUTER_API_KEY` is set), and grades
    with a rubric via a `guard`-role model call (structured output): stays silent when nothing is
    worth saying; asks before sending as the person; uses context cards in a call; keeps answers
    short. Prints cost (usage incl. cache reads). Never runs in CI.
 3. **End-to-end stack test** (`e2e/run.sh`): bring up the compose stack under its own project name
    (postgres, backend, egress, example connector, computers profile) with generated throwaway
-   secrets and no Anthropic key; enroll a device with a generated EC key (a small Kotlin or JVM
+   secrets and an OpenRouter base URL on a closed port; enroll a device with a generated EC key (a small Kotlin or JVM
    CLI in `e2e/` signing ES256 JWTs like the app), check `/readyz`, setup status, connector
    manifest + grant + ingest through the example connector, feed SSE connects and receives the
    "no API key" note, sandbox + browser MCP reachable from the backend (tool listing logged at

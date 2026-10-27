@@ -27,13 +27,11 @@ data class RoleModelRow(
     val role: String,
     val title: String,
     val caption: String,
-    /** [ModelRoles.ANTHROPIC] or [ModelRoles.OPENROUTER]. */
-    val provider: String,
+    /** An OpenRouter model id (`vendor/model`). */
     val model: String,
     val effort: String,
     /** Nothing set in the app: the server's defaults. */
     val isDefault: Boolean,
-    val openRouterAllowed: Boolean,
     val suggestions: List<String>,
     /** A plain line under the role (the lead's "next turn"). */
     val note: String? = null,
@@ -46,7 +44,6 @@ data class ModelsUiState(
     /** False on a server without the models route: the section is hidden. */
     val available: Boolean = true,
     val rows: List<RoleModelRow> = emptyList(),
-    val openRouterKey: Boolean = false,
     val efforts: List<String> = ModelRoles.EFFORTS,
     val message: String? = null,
 )
@@ -72,31 +69,23 @@ fun effortLabel(effort: String): String = when (effort) {
     else -> effort.replaceFirstChar { it.titlecase() }
 }
 
-/** Pure: model names to offer for [provider]; any other name can be typed. */
-fun modelSuggestions(provider: String): List<String> = when (provider) {
-    ModelRoles.OPENROUTER -> listOf("anthropic/claude-haiku-5.5", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5")
-    else -> listOf("claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5")
-}
-
 /**
- * Pure: [model] named the way [provider] names it (`claude-haiku-5-5` ↔ `anthropic/claude-haiku-5.5`),
- * or that provider's first suggestion when there is no such name.
+ * Model ids to offer (OpenRouter's names: every model runs there); any other id can be typed. The
+ * server's defaults first, then Claude.
  */
-fun modelForProvider(model: String, provider: String): String {
-    val claude = Regex("""^(?:anthropic/)?(claude-[a-z]+)-(\d+)[-.](\d+)$""").matchEntire(model)
-    return when {
-        claude == null -> modelSuggestions(provider).first()
-        provider == ModelRoles.OPENROUTER -> "anthropic/${claude.groupValues[1]}-${claude.groupValues[2]}.${claude.groupValues[3]}"
-        else -> "${claude.groupValues[1]}-${claude.groupValues[2]}-${claude.groupValues[3]}"
-    }
-}
+val MODEL_SUGGESTIONS: List<String> = listOf(
+    "xiaomi/mimo-v2.6-pro",
+    "deepseek/deepseek-v4.1-flash-1017",
+    "anthropic/claude-haiku-5.5",
+    "anthropic/claude-sonnet-5.5",
+    "anthropic/claude-opus-5.5",
+)
 
-/** Pure: what the app has set for [view] now (only the overridden fields). */
+/** Pure: what the app has set for [view] now (only the overridden fields). Never a provider: there is only OpenRouter. */
 fun overrideOf(view: RoleModelView): RoleModelOverride {
     fun <T> set(field: String, value: T): T? = value.takeIf { view.sources[field] == SettingSource.OVERRIDE }
     val e = view.effective
     return RoleModelOverride(
-        provider = set("provider", e.provider),
         model = set("model", e.model),
         effort = set("effort", e.effort),
         maxTokens = set("maxTokens", e.maxTokens),
@@ -108,46 +97,35 @@ fun overrideOf(view: RoleModelView): RoleModelOverride {
 
 /**
  * Pure: the overrides after a change on the screen. A value equal to the server's default is left
- * unset, so the role keeps following the default; a new provider brings a model in its naming.
+ * unset, so the role keeps following the default.
  */
-fun changedOverride(view: RoleModelView, provider: String? = null, model: String? = null, effort: String? = null): RoleModelOverride {
+fun changedOverride(view: RoleModelView, model: String? = null, effort: String? = null): RoleModelOverride {
     val d = view.default
     val current = overrideOf(view)
-    val nextProvider = provider ?: view.effective.provider
-    val nextModel = model ?: if (provider != null && provider != view.effective.provider) {
-        if (provider == d.provider) d.model else modelForProvider(view.effective.model, provider)
-    } else {
-        view.effective.model
-    }
+    val nextModel = model ?: view.effective.model
     val nextEffort = effort ?: view.effective.effort
     return current.copy(
-        provider = nextProvider.takeIf { it != d.provider },
         model = nextModel.takeIf { it != d.model },
         effort = nextEffort.takeIf { it != d.effort },
     )
 }
 
-/** Under the lead: when a change applies, and what OpenRouter changes for it. */
-const val LEAD_NOTE = "Changes apply from its next turn. On OpenRouter it summarizes its own thread when the thread gets long."
+/** Under the lead: when a change applies, and what happens to a long thread. */
+const val LEAD_NOTE = "Changes apply from its next turn. It summarizes its own thread when the thread gets long."
 
 /** Pure: the rows the section shows. */
-fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap()): List<RoleModelRow> {
-    val openRouter = ModelRoles.OPENROUTER in view.providersWithKeys
-    return view.roles.map { r ->
-        RoleModelRow(
-            role = r.role,
-            title = roleTitle(r.role),
-            caption = roleCaption(r.role),
-            provider = r.effective.provider,
-            model = r.effective.model,
-            effort = r.effective.effort,
-            isDefault = r.sources.values.none { it == SettingSource.OVERRIDE },
-            openRouterAllowed = openRouter,
-            suggestions = modelSuggestions(r.effective.provider),
-            note = if (r.role == ModelRoles.LEAD) LEAD_NOTE else null,
-            error = errors[r.role],
-        )
-    }
+fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap()): List<RoleModelRow> = view.roles.map { r ->
+    RoleModelRow(
+        role = r.role,
+        title = roleTitle(r.role),
+        caption = roleCaption(r.role),
+        model = r.effective.model,
+        effort = r.effective.effort,
+        isDefault = r.sources.filterKeys { it != "provider" }.values.none { it == SettingSource.OVERRIDE },
+        suggestions = MODEL_SUGGESTIONS,
+        note = if (r.role == ModelRoles.LEAD) LEAD_NOTE else null,
+        error = errors[r.role],
+    )
 }
 
 /** Pure: the person-facing reason a change was refused (the server names each field). */
@@ -187,12 +165,11 @@ class ModelsViewModel(private val models: ModelsRepository) : ViewModel() {
         _state.update {
             it.copy(
                 loading = false, available = true, message = null,
-                rows = modelRows(next, errors), openRouterKey = ModelRoles.OPENROUTER in next.providersWithKeys, efforts = next.efforts,
+                rows = modelRows(next, errors), efforts = next.efforts,
             )
         }
     }
 
-    fun setProvider(role: String, provider: String) = change(role) { changedOverride(it, provider = provider) }
     fun setModel(role: String, model: String) = change(role) { changedOverride(it, model = model.trim()) }
     fun setEffort(role: String, effort: String) = change(role) { changedOverride(it, effort = effort) }
 
@@ -211,10 +188,8 @@ class ModelsViewModel(private val models: ModelsRepository) : ViewModel() {
         _state.update { s ->
             s.copy(rows = s.rows.map { row ->
                 if (row.role != role) row else row.copy(
-                    provider = next.provider ?: roleView.default.provider,
                     model = next.model ?: roleView.default.model,
                     effort = next.effort ?: roleView.default.effort,
-                    suggestions = modelSuggestions(next.provider ?: roleView.default.provider),
                     error = null,
                 )
             })

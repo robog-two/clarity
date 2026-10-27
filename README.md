@@ -30,7 +30,7 @@ To build from source also JDK 25 and, for the app, the Android SDK (platform 37)
 
 ```sh
 ./deploy/init-secrets.sh                     # once: generates deploy/secrets/* and loads them as Podman secrets
-echo -n 'sk-ant-...' > deploy/secrets/anthropic_api_key   # optional here: you can also paste the key in the app
+echo -n 'sk-or-...' > deploy/secrets/openrouter_api_key  # required: every model runs on OpenRouter
 ./deploy/init-secrets.sh                     # re-run to load the key
 
 # core stack: postgres, backend, egress proxy, caddy (TLS). Add profiles for what you use:
@@ -43,10 +43,9 @@ podman compose -f deploy/compose.yaml --profile mail --profile dav --profile com
 - The app reaches the backend through Caddy at `https://<CLARITY_DOMAIN>` (default `localhost`, which
   uses Caddy's own CA; use a real domain for a phone). The backend's plain HTTP port is loopback only.
 - **First run in the app**: enter the server address (and the setup code, i.e. the enrollment token from
-  `podman compose logs backend`, if the instance is not in trust-on-first-use mode), paste the Anthropic API key
-  (skip if you put it in the secret file), connect your sources, answer the values interview (it becomes your
-  constitution, version 1), and pick the time of the morning call. Without an API key everything else works and the
-  agent says it cannot work yet.
+  `podman compose logs backend`, if the instance is not in trust-on-first-use mode), check that the server has its
+  model key, connect your sources, answer the values interview (it becomes your constitution, version 1), and pick
+  the time of the morning call. The backend does not start without the OpenRouter key.
 - Nothing goes out as you without your review until you say so in the constitution; held actions show up in the app.
 
 Everything about running the stack (profiles, secrets, the agent's computers, outbound traffic, TLS, enrolling,
@@ -65,8 +64,8 @@ Tests, from cheapest to most expensive:
 |---|---|---|
 | Unit and route tests | `./gradlew :backend:test` (Postgres via Testcontainers; with Podman set `DOCKER_HOST=unix:///run/user/$(id -u)/podman/podman.sock TESTCONTAINERS_RYUK_DISABLED=true`) | no |
 | Scenario evals | `backend/src/test/.../evals/`: the lead against a real database and a scripted model gateway. Pre-emption, batching, prompt injection held by the guard, a morning call over the session routes, held to amend to constitution v2, helpers, restart without repeating actions, cache-prefix stability over 20 turns. Part of `:backend:test`, so part of CI | no |
-| Live evals | `ANTHROPIC_API_KEY=... ./gradlew :backend:test --tests '*LiveEvalTest' -Pclarity.liveEvals`. A few recorded scenarios against the real API, graded by a rubric (guard-role model call). Costs money, prints token usage including cache reads. Never runs in CI | yes |
-| End-to-end stack | `e2e/run.sh`. Brings up the compose stack under its own project name with throwaway secrets and no Anthropic key, enrolls a device (`e2e/DeviceCli.java` signs ES256 JWTs like the app), exercises the API, a connector, the feed and the egress policy, tears everything down. Needs Podman, curl, jq, a JDK; `E2E_SKIP_BROWSER=1` saves 1.5 GB of RAM. Runs as the `e2e` job in CI | no |
+| Live evals | `OPENROUTER_API_KEY=... ./gradlew :backend:test --tests '*LiveEvalTest' -Pclarity.liveEvals` (`CLARITY_AGENT_LEAD_MODEL=anthropic/claude-opus-5.5` for another lead). A few recorded scenarios against the real models, graded by a rubric (guard-role model call). Costs money, prints token usage including cache reads. Never runs in CI | yes |
+| End-to-end stack | `e2e/run.sh`. Brings up the compose stack under its own project name with throwaway secrets (no model call leaves the machine), enrolls a device (`e2e/DeviceCli.java` signs ES256 JWTs like the app), exercises the API, a connector, the feed and the egress policy, tears everything down. Needs Podman, curl, jq, a JDK; `E2E_SKIP_BROWSER=1` saves 1.5 GB of RAM. Runs as the `e2e` job in CI | no |
 
 ## Branches and releases
 

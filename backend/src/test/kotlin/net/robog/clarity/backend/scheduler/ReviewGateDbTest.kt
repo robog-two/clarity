@@ -157,7 +157,7 @@ class ReviewGateDbTest : FunSpec({
         inbox.enqueue(InboxItem.JobDue("periodic-review", "review"), "job:periodic-review:earlier")
         inbox.markConsumed(inbox.pending().map { it.seq })
         message("Weekly deals", Clock.System.now())
-        val config = AgentConfig(anthropicApiKey = null, reviewInterval = 2.hours, openRouterApiKey = "k")
+        val config = AgentConfig(reviewInterval = 2.hours, openRouterApiKey = "k")
         val client = DecisionClient { _, _ ->
             DecisionResult(
                 mapOf("act_now" to DecisionAnswer.Noul(0.02), "urgency" to DecisionAnswer.Choice("none", emptyMap(), null)),

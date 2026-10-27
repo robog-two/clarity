@@ -34,20 +34,10 @@ data class RunRequest(
     val effort: String? = "medium",
     /** Journal key. Stable across a crash: resume with the same id. */
     val runId: String = UUID.randomUUID().toString(),
-    /** Tools sent with `defer_loading` behind the tool search tool. Ignored when [tools] is empty (never all deferred). */
-    val deferredTools: List<Tool> = emptyList(),
-    val serverTools: Set<ServerTool> = emptySet(),
+    /** Null sends no cache breakpoints (only models that take them use them, [usesCacheBreakpoints]). */
     val cache: CachePolicy? = CachePolicy(),
-    val compaction: CompactionConfig? = null,
-    val fallbacks: Boolean = true,
-    val thinkingDisplay: String? = null,
     /** Truncates and stores oversized tool results. */
     val resultSink: ToolResultSink? = null,
-    /**
-     * Housekeeping run: ask the provider to compact the history right now and stop at the
-     * compaction block ([FinishReason.COMPACTED]) instead of answering. Used while the cache is warm.
-     */
-    val compactNow: Boolean = false,
 ) {
     constructor(
         model: String,
@@ -117,28 +107,21 @@ sealed interface HarnessEvent {
 suspend fun Flow<HarnessEvent>.awaitTerminal(): HarnessEvent.Terminal =
     first { it is HarnessEvent.Terminal } as HarnessEvent.Terminal
 
-/** The tools of a run after policy and the "never all deferred" rule, each list sorted by name. */
-data class ToolPlan(val loaded: List<Tool>, val deferred: List<Tool>) {
-    val byName: Map<String, Tool> = (loaded + deferred).associateBy { it.name }
+/** The tools of a run after policy, sorted by name. */
+data class ToolPlan(val tools: List<Tool>) {
+    val byName: Map<String, Tool> = tools.associateBy { it.name }
 }
 
-/**
- * Pure: hides what the policy hides, sorts (a byte-stable tool list is part of the cached prefix),
- * and refuses to defer everything: with no loaded tool the deferred ones are loaded after all.
- */
-fun planTools(tools: List<Tool>, deferred: List<Tool>, policy: ToolPolicy): ToolPlan {
-    fun visible(list: List<Tool>) = list.filter { policy.accessFor(it) != Access.HIDDEN }.sortedBy { it.name }
-    val loaded = visible(tools)
-    val later = visible(deferred).filter { d -> loaded.none { it.name == d.name } }
-    return if (loaded.isEmpty()) ToolPlan(later, emptyList()) else ToolPlan(loaded, later)
-}
+/** Pure: hides what the policy hides, drops duplicate names and sorts (a byte-stable tool list is part of the cached prefix). */
+fun planTools(tools: List<Tool>, policy: ToolPolicy): ToolPlan =
+    ToolPlan(tools.filter { policy.accessFor(it) != Access.HIDDEN }.distinctBy { it.name }.sortedBy { it.name })
 
 /**
  * The agent loop. It owns the conversation (so cost, data and approvals stay ours): stream a model
  * turn, run the requested tools in parallel, return every result in ONE user message, repeat until
  * the model finishes or a limit hits. History is append-only: assistant content is replayed
- * exactly as received (thinking, compaction and server-tool blocks included), which preserved
- * thinking requires and which keeps the prompt cache warm; only JSON key order is normalised
+ * exactly as received (reasoning blocks included), which keeps the prompt cache warm and lets the
+ * gateway hand reasoning back to the model that wrote it; only JSON key order is normalised
  * ([journalStable]), once, so a replay from a `jsonb` journal is byte-identical to one from memory.
  *
  * A client-side compaction summary ([Message.summary]) in the journal cuts what is sent: every
@@ -169,7 +152,7 @@ class Harness(
         channelFlow { loop(request.copy(runId = runId), interrupts, resumed = true) }.buffer(Channel.UNLIMITED)
 
     private suspend fun ProducerScope<HarnessEvent>.loop(request: RunRequest, interrupts: Flow<List<Message>>, resumed: Boolean) {
-        val plan = planTools(request.tools, request.deferredTools, request.policy)
+        val plan = planTools(request.tools, request.policy)
         val runId = request.runId
 
         var history: List<Message> = if (resumed) journal.load(runId) else emptyList()
@@ -233,16 +216,11 @@ class Harness(
                 val modelRequest = ModelRequest(
                     model = request.model,
                     system = request.system,
-                    messages = withoutMissingToolReferences(wireOrder(sinceSummary(history)),(plan.loaded + plan.deferred).map { it.definition.name }.toSet()),
-                    tools = plan.loaded.map { it.definition },
+                    messages = wireOrder(sinceSummary(history)),
+                    tools = plan.tools.map { it.definition },
                     maxTokens = request.maxTokens,
                     effort = request.effort,
-                    deferredTools = plan.deferred.map { it.definition },
-                    serverTools = request.serverTools,
                     cache = request.cache,
-                    compaction = if (request.compactNow) compactNowConfig(request.compaction) else request.compaction,
-                    fallbacks = request.fallbacks,
-                    thinkingDisplay = request.thinkingDisplay,
                 )
 
                 when (val outcome = callModel(modelRequest, pending)) {
@@ -269,10 +247,6 @@ class Harness(
                         append(listOf(Message(Role.ASSISTANT, journalStable(response.content))))
                         if (response.text.isNotEmpty()) send(HarnessEvent.AssistantText(response.text))
 
-                        if (request.compactNow && response.stopReason == StopReason.COMPACTION) {
-                            send(HarnessEvent.Finished(RunResult(FinishReason.COMPACTED, usage, history, response.text)))
-                            return
-                        }
                         when (val decision = decide(response, turn, request.maxTurns)) {
                             is Decision.Stop -> {
                                 val late = drain()
@@ -283,7 +257,6 @@ class Harness(
                                 send(HarnessEvent.Finished(RunResult(decision.reason, usage, history, response.text)))
                                 return
                             }
-                            Decision.Resume -> continue
                             is Decision.RunTools -> calls = decision.calls
                         }
                     }

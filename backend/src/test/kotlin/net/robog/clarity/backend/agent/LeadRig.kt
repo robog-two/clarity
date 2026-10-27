@@ -77,26 +77,32 @@ fun callTool(id: String, name: String, input: JsonObject = buildJsonObject { }) 
 
 fun args(vararg pairs: Pair<String, String>): JsonObject = buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } }
 
-const val LEAD_MODEL = "claude-opus-5-5"
-const val HELPER_MODEL = "claude-sonnet-5-5"
+/** Claude through OpenRouter, so the lead's requests carry cache breakpoints as in production with Claude. */
+const val LEAD_MODEL = "anthropic/claude-opus-5.5"
+const val HELPER_MODEL = "anthropic/claude-sonnet-5.5"
+
+/** The default roles with the lead and helper on [LEAD_MODEL] and [HELPER_MODEL] (the scripted model tells them apart by name). */
+val TEST_ROLES: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles().let {
+    it.copy(lead = it.lead.copy(model = LEAD_MODEL), helper = it.helper.copy(model = HELPER_MODEL))
+}
 
 /** Everything the lead needs, wired by hand against a real database (what Metro does in production). */
 class LeadRig(
     val database: Database,
     val clock: Clock = Clock.System,
-    apiKey: String? = "sk-test",
-    roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles(),
-    openRouterKey: String? = null,
+    /** The OpenRouter key; null leaves the agents disabled. */
+    apiKey: String? = "sk-or-test",
+    roles: net.robog.clarity.backend.config.AgentRoles = TEST_ROLES,
     /** The lead's effort override; null for the real one (a live morning call). */
     effortOverride: EffortOverride? = null,
     /** The embeddings API (a fake); null runs memory search full-text only. */
     embeddingClient: EmbeddingClient? = null,
 ) {
-    /** Answers for every provider (tell them apart by the model name). */
+    /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
-    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, openRouterApiKey = openRouterKey)
+    val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
-    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { _, _ -> model }, UsageRecorder { _, _, _ -> })
+    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, UsageRecorder { _, _, _ -> })
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)

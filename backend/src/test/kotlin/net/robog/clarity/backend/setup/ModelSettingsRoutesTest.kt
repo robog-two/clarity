@@ -45,10 +45,10 @@ private const val TOKEN = "Bearer device"
 private const val PATH = "/api/v1/settings/models"
 
 class ModelSettingsRoutesTest : FunSpec({
-    fun rig(openRouterKey: String? = "sk-or"): AgentRuntime {
-        val config = AgentConfig(anthropicApiKey = "sk-ant", reviewInterval = 2.hours, openRouterApiKey = openRouterKey)
+    fun rig(): AgentRuntime {
+        val config = AgentConfig(openRouterApiKey = "sk-or", reviewInterval = 2.hours)
         val model = FakeModel()
-        return AgentRuntime(config, ModelSettings(config, InMemoryRoleOverrideStore()), ModelGatewayFactory { _, _ -> model }, UsageRecorder { _, _, _ -> })
+        return AgentRuntime(config, ModelSettings(config, InMemoryRoleOverrideStore()), ModelGatewayFactory { model }, UsageRecorder { _, _, _ -> })
     }
 
     fun ApplicationTestBuilder.setup(runtime: AgentRuntime): HttpClient {
@@ -77,17 +77,22 @@ class ModelSettingsRoutesTest : FunSpec({
         }
     }
 
-    test("GET shows each role's settings in effect, their defaults and sources, and the providers with a key") {
+    test("GET shows each role's model settings in effect, their defaults and sources; provider fields stay for older apps") {
         testApplication {
             val client = setup(rig())
             val view = client.get(PATH) { header(HttpHeaders.Authorization, TOKEN) }.body<ModelSettingsView>()
             view.roles.map { it.role } shouldContainExactly listOf("lead", "helper", "guard", "triage")
-            view.providersWithKeys shouldContainExactly listOf("anthropic", "openrouter")
+            view.providersWithKeys shouldContainExactly listOf("openrouter")
             val lead = view.roles.first()
             lead.effective shouldBe lead.default
-            lead.effective.model shouldBe "claude-opus-5-5"
+            lead.effective.model shouldBe "xiaomi/mimo-v2.6-pro"
+            lead.effective.provider shouldBe "openrouter"
             lead.sources.values.toSet() shouldBe setOf(SettingSource.DEFAULT)
             lead.updatedAt shouldBe null
+            // An older app decodes `provider` and `providersWithKeys` as required fields: they are on the wire.
+            val raw = client.get(PATH) { header(HttpHeaders.Authorization, TOKEN) }.bodyAsText()
+            raw shouldContain "\"providersWithKeys\":[\"openrouter\"]"
+            raw shouldContain "\"provider\":\"openrouter\""
         }
     }
 
@@ -95,12 +100,11 @@ class ModelSettingsRoutesTest : FunSpec({
         val runtime = rig()
         testApplication {
             val client = setup(runtime)
-            val saved = client.putRole("guard", RoleModelOverride(provider = "openrouter", model = "anthropic/claude-haiku-5.5", effort = "medium"))
+            val saved = client.putRole("guard", RoleModelOverride(model = "anthropic/claude-haiku-5.5", effort = "medium"))
             saved.status shouldBe HttpStatusCode.OK
             val guard = saved.body<ModelSettingsView>().roles.single { it.role == "guard" }
-            guard.effective.provider shouldBe "openrouter"
             guard.effective.model shouldBe "anthropic/claude-haiku-5.5"
-            guard.default.model shouldBe "claude-haiku-5-5"
+            guard.default.model shouldBe "deepseek/deepseek-v4.1-flash-1017"
             guard.sources["model"] shouldBe SettingSource.OVERRIDE
             guard.sources["maxTokens"] shouldBe SettingSource.DEFAULT
             (guard.updatedAt != null) shouldBe true
@@ -108,50 +112,37 @@ class ModelSettingsRoutesTest : FunSpec({
 
             val cleared = client.delete("$PATH/guard") { header(HttpHeaders.Authorization, TOKEN) }
             cleared.status shouldBe HttpStatusCode.OK
-            cleared.body<ModelSettingsView>().roles.single { it.role == "guard" }.effective.model shouldBe "claude-haiku-5-5"
-            runtime.settings[AgentRole.GUARD].provider.name shouldBe "ANTHROPIC"
+            cleared.body<ModelSettingsView>().roles.single { it.role == "guard" }.effective.model shouldBe "deepseek/deepseek-v4.1-flash-1017"
         }
     }
 
-    test("the lead can move to OpenRouter") {
+    test("an older app's provider field is ignored; a vendorless Anthropic API name is refused") {
         val runtime = rig()
         testApplication {
             val client = setup(runtime)
-            val saved = client.putRole("lead", RoleModelOverride(provider = "openrouter", model = "anthropic/claude-opus-5.5"))
-            saved.status shouldBe HttpStatusCode.OK
-            saved.body<ModelSettingsView>().roles.single { it.role == "lead" }.effective.provider shouldBe "openrouter"
-            runtime.bind(AgentRole.LEAD)!!.config.provider.name shouldBe "OPENROUTER"
+            client.putRole("lead", RoleModelOverride(provider = "openrouter", model = "anthropic/claude-opus-5.5")).status shouldBe HttpStatusCode.OK
+            runtime.bind(AgentRole.LEAD)!!.config.model shouldBe "anthropic/claude-opus-5.5"
+            // An old app switching a role "to Anthropic" sends the Anthropic API name.
+            val old = client.putRole("helper", RoleModelOverride(provider = "anthropic", model = "claude-sonnet-5-5"))
+            old.status shouldBe HttpStatusCode.UnprocessableEntity
+            ClarityJson.decodeFromString(Problem.serializer(), old.bodyAsText()).errors!!.map { it.field } shouldContainExactly listOf("model")
+            client.putRole("helper", RoleModelOverride(provider = "bedrock", effort = "high")).status shouldBe HttpStatusCode.OK
         }
     }
 
     test("refused changes are 422 problems naming each field; an unknown role is 404") {
         testApplication {
-            val client = setup(rig(openRouterKey = null))
-            val lead = client.putRole("lead", RoleModelOverride(provider = "openrouter", model = "anthropic/claude-opus-5.5"))
-            lead.status shouldBe HttpStatusCode.UnprocessableEntity
-            val problem = ClarityJson.decodeFromString(Problem.serializer(), lead.bodyAsText())
-            problem.errors!!.single().field shouldBe "provider"
-            problem.errors!!.single().message shouldContain "OPENROUTER_API_KEY"
-
-            val noKey = ClarityJson.decodeFromString(
-                Problem.serializer(),
-                client.putRole("guard", RoleModelOverride(provider = "openrouter", model = "a/b")).bodyAsText(),
-            )
-            noKey.errors!!.single().message shouldContain "OPENROUTER_API_KEY"
-
-            val many = client.putRole("helper", RoleModelOverride(provider = "bedrock", effort = "extreme"))
-            many.status shouldBe HttpStatusCode.UnprocessableEntity
-            ClarityJson.decodeFromString(Problem.serializer(), many.bodyAsText()).errors!!.map { it.field } shouldContainExactly listOf("provider")
-
+            val client = setup(rig())
             val values = client.putRole("helper", RoleModelOverride(effort = "extreme", cacheTtl = "2h", compactAtTokens = 10))
+            values.status shouldBe HttpStatusCode.UnprocessableEntity
             ClarityJson.decodeFromString(Problem.serializer(), values.bodyAsText()).errors!!.map { it.field } shouldContainExactly
                 listOf("effort", "cacheTtl", "compactAtTokens")
+            val model = ClarityJson.decodeFromString(Problem.serializer(), client.putRole("guard", RoleModelOverride(model = "no-vendor")).bodyAsText())
+            model.errors!!.single().field shouldBe "model"
+            model.errors!!.single().message shouldContain "vendor/model"
 
-            client.putRole("chef", RoleModelOverride(model = "x")).status shouldBe HttpStatusCode.NotFound
+            client.putRole("chef", RoleModelOverride(model = "x/y")).status shouldBe HttpStatusCode.NotFound
             client.delete("$PATH/chef") { header(HttpHeaders.Authorization, TOKEN) }.status shouldBe HttpStatusCode.NotFound
-
-            // Changing the lead between Claude models is allowed.
-            client.putRole("lead", RoleModelOverride(model = "claude-sonnet-5-5")).status shouldBe HttpStatusCode.OK
         }
     }
 })
