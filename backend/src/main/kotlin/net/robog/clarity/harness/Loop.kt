@@ -1,15 +1,12 @@
 package net.robog.clarity.harness
 
 /** Why a run ended. */
-enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER, COMPACTED }
+enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER }
 
 /** What the loop does after a model turn. */
 sealed interface Decision {
     /** Execute these tool calls (all of them, in parallel) and call the model again. */
     data class RunTools(val calls: List<Block.ToolUse>) : Decision
-
-    /** Nothing to execute but the model has not finished (server-side pause): call it again as-is. */
-    data object Resume : Decision
 
     data class Stop(val reason: FinishReason) : Decision
 }
@@ -27,11 +24,9 @@ fun decide(response: ModelResponse, turn: Int, maxTurns: Int): Decision = when (
     StopReason.MAX_TOKENS -> Decision.Stop(FinishReason.MAX_TOKENS)
     StopReason.END_TURN -> Decision.Stop(FinishReason.END_TURN)
     StopReason.OTHER -> Decision.Stop(FinishReason.OTHER)
-    StopReason.TOOL_USE, StopReason.PAUSE_TURN, StopReason.COMPACTION -> when {
+    StopReason.TOOL_USE -> when {
         turn >= maxTurns -> Decision.Stop(FinishReason.MAX_TURNS)
         response.toolUses.isNotEmpty() -> Decision.RunTools(response.toolUses)
-        // Server-side pause, or paused right after a compaction block: call again as-is.
-        response.stopReason != StopReason.TOOL_USE -> Decision.Resume
         // tool_use stop with no tool_use block is a provider anomaly; treat as finished.
         else -> Decision.Stop(FinishReason.OTHER)
     }

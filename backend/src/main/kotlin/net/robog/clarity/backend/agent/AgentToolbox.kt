@@ -12,18 +12,8 @@ import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 
-/** Loaded tools are sent with every request; deferred ones are found through tool search. */
-data class ToolSet(val loaded: List<Tool>, val deferred: List<Tool>)
-
-/** Names the lead gets loaded; everything else is deferred so adding a tool never touches the cache. */
-val LEAD_LOADED = setOf(
-    "list_messages", "list_calendar_events", "search_contacts",
-    "save_draft", "send_email", "create_event",
-    "send_to_user", "delegate", "list_helpers", "message_helper", "cancel_helper",
-    "remember_fact", "write_journal", "read_journal", "set_scratch", "search_memory", "read_memory", "open_collection", "save_note",
-    "update_task", "read_result",
-    "request_credential", "list_credentials", "ask_code",
-) + SESSION_TOOL_NAMES
+/** The tools of a run, sorted by name; all of them are sent with every request. */
+data class ToolSet(val tools: List<Tool>)
 
 /** What a helper may use unless the lead narrows it: reads and the gated external tools. */
 val HELPER_BASE = setOf(
@@ -142,16 +132,10 @@ class AgentToolbox(
     }.let { guarded(scope, it) }
 
     /**
-     * The lead's tools: the common ones loaded, the rest behind tool search. The lead gets no MCP
-     * tools (the browser, the sandbox): it hands that work to a helper on a cheaper model.
+     * The lead's tools, all sent with every request. The lead gets no MCP tools (the browser, the
+     * sandbox): it hands that work to a helper on a cheaper model.
      */
-    fun leadTools(scope: RunScope): ToolSet {
-        val all = everything(scope, forLead = true)
-        return ToolSet(
-            loaded = all.filter { it.name in LEAD_LOADED }.sortedBy { it.name },
-            deferred = all.filter { it.name !in LEAD_LOADED }.sortedBy { it.name },
-        )
-    }
+    fun leadTools(scope: RunScope): ToolSet = ToolSet(everything(scope, forLead = true).sortedBy { it.name })
 
     /**
      * A helper's tools: [requested] (or [HELPER_BASE] plus every MCP tool) that exist, never
@@ -164,8 +148,8 @@ class AgentToolbox(
         val chosen = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }
         else candidates.filter { it.name in requested }
         val unknown = requested.orEmpty().filter { name -> candidates.none { it.name == name } }
-        val (deferred, loaded) = chosen.partition { it in mcpAll }
-        return HelperToolSet(ToolSet(loaded.sortedBy { it.name }, deferred.sortedBy { it.name }), unknown)
+        return HelperToolSet(ToolSet(chosen.sortedBy { it.name }), unknown)
+
     }
 
     private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile(), memory.saveNote(), memory.manageCollection()))

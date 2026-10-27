@@ -4,7 +4,7 @@ import kotlin.time.Instant
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-/** Wire names of the model roles and providers, shared so the app and server can't drift. */
+/** Wire names of the model roles, shared so the app and server can't drift. */
 object ModelRoles {
     const val LEAD = "lead"
     const val HELPER = "helper"
@@ -12,7 +12,7 @@ object ModelRoles {
     const val TRIAGE = "triage"
     val ALL: List<String> = listOf(LEAD, HELPER, GUARD, TRIAGE)
 
-    const val ANTHROPIC = "anthropic"
+    /** The only model provider; still named on the wire for apps that show a provider. */
     const val OPENROUTER = "openrouter"
 
     /** The efforts a role can use, least first. */
@@ -22,9 +22,7 @@ object ModelRoles {
 /** One role's model settings in full. */
 @Serializable
 data class RoleModelSettings(
-    /** [ModelRoles.ANTHROPIC] or [ModelRoles.OPENROUTER]. */
-    val provider: String,
-    /** That provider's model name (`claude-haiku-5-5`, or `anthropic/claude-haiku-5.5` on OpenRouter). */
+    /** An OpenRouter model id (`vendor/model`, e.g. `anthropic/claude-haiku-5.5`). */
     val model: String,
     val effort: String,
     val maxTokens: Long,
@@ -32,6 +30,8 @@ data class RoleModelSettings(
     val cacheTtl: String,
     val compaction: Boolean,
     val compactAtTokens: Long,
+    /** Always [ModelRoles.OPENROUTER]; kept because older apps require the field. */
+    val provider: String = ModelRoles.OPENROUTER,
 )
 
 /**
@@ -40,6 +40,7 @@ data class RoleModelSettings(
  */
 @Serializable
 data class RoleModelOverride(
+    /** Ignored: older apps send the provider they show; every model runs on OpenRouter. */
     val provider: String? = null,
     val model: String? = null,
     val effort: String? = null,
@@ -74,11 +75,11 @@ data class RoleModelView(
     val updatedAt: Instant? = null,
 )
 
-/** `GET /api/v1/settings/models` (and the answer to a change): every role, and which providers have a key. */
+/** `GET /api/v1/settings/models` (and the answer to a change): every role. */
 @Serializable
 data class ModelSettingsView(
     val roles: List<RoleModelView>,
-    /** Providers this server has a key for; a role can move only to one of these. */
-    val providersWithKeys: List<String>,
+    /** Always `[openrouter]` (the server does not start without its key); kept because older apps require the field. */
+    val providersWithKeys: List<String> = listOf(ModelRoles.OPENROUTER),
     val efforts: List<String> = ModelRoles.EFFORTS,
 )

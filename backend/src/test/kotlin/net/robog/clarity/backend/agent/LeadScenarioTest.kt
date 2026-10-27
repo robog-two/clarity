@@ -78,7 +78,7 @@ class LeadScenarioTest : FunSpec({
     suspend fun rig(
         clock: kotlin.time.Clock = kotlin.time.Clock.System,
         apiKey: String? = "sk-test",
-        roles: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles(),
+        roles: net.robog.clarity.backend.config.AgentRoles = TEST_ROLES,
     ): LeadRig = LeadRig(database, clock, apiKey, roles).also { it.reset() }
 
     fun user(text: String, id: String = text) = InboxItem.UserInput(ClientInputId(id), text)
@@ -136,11 +136,10 @@ class LeadScenarioTest : FunSpec({
         val request = r.model.requests.single()
         request.tools.map { it.name } shouldBe request.tools.map { it.name }.sorted()
         request.system.map { it.cacheBreakpoint } shouldBe listOf(true, true)
-        request.deferredTools.map { it.name } shouldBe request.deferredTools.map { it.name }.sorted()
-        (request.tools.map { it.name }.containsAll(listOf("send_to_user", "delegate", "remember_fact"))) shouldBe true
-        (request.deferredTools.map { it.name }.containsAll(listOf("create_reminder", "move_event"))) shouldBe true
+        // every tool is sent with every request (no tool search)
+        (request.tools.map { it.name }.containsAll(listOf("send_to_user", "delegate", "remember_fact", "create_reminder", "move_event"))) shouldBe true
         // the lead dispatches: no browser or sandbox tools of its own, and its prompt says to delegate them
-        (request.tools + request.deferredTools).none { it.name.contains("__") } shouldBe true
+        request.tools.none { it.name.contains("__") } shouldBe true
         AgentPrompts.LEAD_SYSTEM shouldContain "You have no browser or sandbox yourself"
     }
 
@@ -176,7 +175,7 @@ class LeadScenarioTest : FunSpec({
         val helperRequest = r.model.requestsFor(HELPER_MODEL).single()
         helperRequest.system.single().text shouldBe AgentPrompts.HELPER_SYSTEM
         allText(helperRequest) shouldContain "Find Dana's contract"
-        val helperTools = helperRequest.tools.map { it.name } + helperRequest.deferredTools.map { it.name }
+        val helperTools = helperRequest.tools.map { it.name }
         ("send_to_user" in helperTools) shouldBe false
         ("delegate" in helperTools) shouldBe false
 
@@ -474,59 +473,6 @@ class LeadScenarioTest : FunSpec({
         r.large.sink.limit("run-1", "toolu_big", "list_messages", big) shouldContain id
     }
 
-    test("idle compaction is off by default: a compact-now request cannot read the warm cache") {
-        val clock = MovableClock()
-        val r = rig(clock)
-        r.lead.start()
-        r.inbox.enqueue(user("x".repeat(250_000), id = "long"))
-        r.lead.step()
-        clock.advance(5.minutes)
-        r.lead.compactIfIdle() shouldBe false
-        // the turn and its reply nudge; no compaction call
-        r.model.requests shouldHaveSize 2
-        r.model.requests.none { it.compaction?.pauseAfterCompaction == true } shouldBe true
-    }
-
-    test("idle compaction (when on) runs once, only when the person is away, the thread is long and the cache is warm") {
-        val clock = MovableClock()
-        val defaults = net.robog.clarity.backend.config.AgentRoles()
-        val r = rig(clock, roles = defaults.copy(lead = defaults.lead.copy(idleCompaction = true)))
-        r.model.handler = { request ->
-            if (request.compaction?.pauseAfterCompaction == true) {
-                net.robog.clarity.harness.ModelResponse(
-                    listOf(Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "summary of the day") })),
-                    net.robog.clarity.harness.StopReason.COMPACTION,
-                    net.robog.clarity.harness.Usage(100, 10),
-                )
-            } else end("noted")
-        }
-        r.lead.start()
-        r.lead.compactIfIdle() shouldBe false // no turn yet
-
-        r.inbox.enqueue(user("x".repeat(250_000), id = "long"))
-        r.lead.step()
-        r.lead.compactIfIdle() shouldBe false // the person just spoke
-
-        clock.advance(5.minutes)
-        r.lead.compactIfIdle() shouldBe true
-        val compaction = r.model.requests.last()
-        compaction.compaction!!.pauseAfterCompaction shouldBe true
-        compaction.compaction!!.triggerInputTokens shouldBe 50_000
-        (r.threads.ensure().compactedAt != null) shouldBe true
-        r.lead.compactIfIdle() shouldBe false // already compacted since the last turn
-
-        // and a person's message after compaction continues from it
-        r.inbox.enqueue(user("what did I miss?"))
-        r.lead.step()
-        r.model.requests.last().messages.any { m -> m.content.any { it is Block.Raw && it.isCompaction } } shouldBe true
-
-        // the history before the compaction block no longer counts: a short thread since is not compacted again
-        clock.advance(5.minutes)
-        val before = r.model.requests.size
-        r.lead.compactIfIdle() shouldBe false
-        r.model.requests.size shouldBe before
-    }
-
     test("the next turn replays the last one byte for byte from the jsonb journal, with a breakpoint where the last request ended") {
         val r = rig()
         r.model.handler = { request ->
@@ -542,16 +488,22 @@ class LeadScenarioTest : FunSpec({
         r.lead.step() shouldBe true
 
         fun wire(request: net.robog.clarity.harness.ModelRequest): List<String> {
-            val body = net.robog.clarity.harness.AnthropicModelGateway.bodyJson(net.robog.clarity.harness.AnthropicModelGateway.buildParams(request))
+            val body = net.robog.clarity.harness.OpenRouterModelGateway.buildBody(request)
             return body["messages"]!!.let { it as JsonArray }.map { message ->
-                // breakpoints move from request to request; they are not part of the cached prefix
-                message.toString().replace(Regex(""","cache_control":\{[^}]*\}"""), "")
+                // Breakpoints move from request to request; they are not part of the cached prefix. A user
+                // text with one is sent as a one-part array instead of a string: the same text block upstream.
+                val m = message as kotlinx.serialization.json.JsonObject
+                val parts = m["content"] as? JsonArray
+                val single = (parts?.singleOrNull() as? kotlinx.serialization.json.JsonObject)?.takeIf { it["type"]?.toString() == "\"text\"" }
+                val plain = if (single != null) kotlinx.serialization.json.JsonObject(m + ("content" to single["text"]!!)) else m
+                plain.toString().replace(Regex(""","cache_control":\{[^}]*\}"""), "")
             }
         }
         val inMemory = r.model.requests[1] // turn 1, after the tool result (history held in memory)
         val reloaded = r.model.requests[2] // turn 2, history loaded from the journal
         val shared = inMemory.messages.size
-        wire(reloaded).take(shared) shouldBe wire(inMemory)
+        val before = wire(inMemory)
+        wire(reloaded).take(before.size) shouldBe before
         // the explicit breakpoint sits on the tool result: the end of the previous request's prompt
         val (index, block) = reloaded.messageBreakpoint!!
         reloaded.messages[index].content[block].shouldBeInstanceOf<Block.Result>()

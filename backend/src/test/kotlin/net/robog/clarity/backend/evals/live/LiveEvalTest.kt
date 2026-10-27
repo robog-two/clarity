@@ -8,8 +8,7 @@ import io.kotest.matchers.shouldBe
 import kotlin.reflect.KClass
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
-import net.robog.clarity.backend.agent.ProviderGatewayFactory
-import net.robog.clarity.backend.config.ModelProvider
+import net.robog.clarity.backend.agent.openRouterGateway
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.LeadRig
 import net.robog.clarity.backend.agent.args
@@ -36,17 +35,19 @@ import net.robog.clarity.shared.session.StartSession
 import org.jetbrains.exposed.v1.jdbc.selectAll
 
 /**
- * Opt-in: runs only with `-Pclarity.liveEvals`, an `ANTHROPIC_API_KEY` in the environment and no
- * `CI` variable. Never part of CI. Each scenario drives the real lead (real gateway, real prompts
- * and tools, a real Postgres) and is judged twice: by hard checks on the outcome, and by a rubric
- * graded by a model call with the guard role (structured output). Costs money; prints the usage.
+ * Opt-in: runs only with `-Pclarity.liveEvals`, an `OPENROUTER_API_KEY` in the environment and no
+ * `CI` variable. Never part of CI. Each scenario drives the real lead (the real OpenRouter gateway
+ * with the default roles' models, real prompts and tools, a real Postgres) and is judged twice: by
+ * hard checks on the outcome, and by a rubric graded by a model call with the guard role
+ * (structured output). Costs money; prints the usage. `CLARITY_AGENT_LEAD_MODEL` picks another lead
+ * model (e.g. `anthropic/claude-opus-5.5`).
  *
- *     ANTHROPIC_API_KEY=... ./gradlew :backend:test --tests '*LiveEvalTest' -Pclarity.liveEvals
+ *     OPENROUTER_API_KEY=... ./gradlew :backend:test --tests '*LiveEvalTest' -Pclarity.liveEvals
  */
 class LiveEvalsEnabled : Condition {
     override fun evaluate(kclass: KClass<out Spec>): Boolean =
         System.getProperty("clarity.liveEvals") == "true" &&
-            !System.getenv("ANTHROPIC_API_KEY").isNullOrBlank() &&
+            !System.getenv("OPENROUTER_API_KEY").isNullOrBlank() &&
             System.getenv("CI").isNullOrBlank()
 }
 
@@ -64,9 +65,12 @@ private class MeteredGateway(private val inner: ModelGateway) : ModelGateway {
 
 @EnabledIf(LiveEvalsEnabled::class)
 class LiveEvalTest : FunSpec({
-    val apiKey = System.getenv("ANTHROPIC_API_KEY").orEmpty()
-    val config = AgentConfig(anthropicApiKey = apiKey, reviewInterval = 2.hours)
-    val real = MeteredGateway(ProviderGatewayFactory(config).create(ModelProvider.ANTHROPIC, apiKey))
+    val apiKey = System.getenv("OPENROUTER_API_KEY").orEmpty()
+    val roles = net.robog.clarity.backend.config.AgentRoles().let { defaults ->
+        System.getenv("CLARITY_AGENT_LEAD_MODEL")?.takeIf(String::isNotBlank)?.let { defaults.copy(lead = defaults.lead.copy(model = it)) } ?: defaults
+    }
+    val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, roles = roles)
+    val real = MeteredGateway(openRouterGateway(apiKey, config))
     val grand = mutableListOf<Usage>()
 
     afterSpec {
@@ -188,7 +192,7 @@ class LiveEvalTest : FunSpec({
 
     scenarios.forEach { s ->
         test(s.name) {
-            val r = EvalDb.rig(apiKey = apiKey)
+            val r = EvalDb.rig(apiKey = apiKey, roles = roles)
             r.model.handler = { request -> real.generate(request) }
             r.lead.start()
             s.setup(r)

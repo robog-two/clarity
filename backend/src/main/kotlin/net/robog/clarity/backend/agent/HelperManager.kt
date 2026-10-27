@@ -50,7 +50,7 @@ fun helperOwesResult(event: HarnessEvent.Terminal?): Boolean =
 /** Pure: what a finished helper reports back to the lead. */
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
     is HarnessEvent.Finished -> when (event.reason) {
-        FinishReason.END_TURN, FinishReason.COMPACTED -> true to event.result.finalText.ifBlank { "(the helper finished without a result)" }
+        FinishReason.END_TURN -> true to event.result.finalText.ifBlank { "(the helper finished without a result)" }
         FinishReason.MAX_TURNS -> false to "The helper ran out of steps. Last words: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.MAX_TOKENS -> false to "The helper's answer was cut off: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.REFUSAL -> false to "The model declined to do this task."
@@ -108,7 +108,7 @@ class HelperManager(
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
-        return delegatedText(id, roleName, tools, granted.tools.loaded.map { it.name } + granted.tools.deferred.map { it.name }).right()
+        return delegatedText(id, roleName, tools, granted.tools.tools.map { it.name }).right()
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
@@ -161,8 +161,7 @@ class HelperManager(
                 runId = run.id,
                 system = helperSystemBlocks(),
                 messages = listOf(Message.user(helperPrompt(run.task, clock.now(), settings.homeZone()))),
-                tools = set.loaded,
-                deferred = set.deferred,
+                tools = set.tools,
                 maxTurns = config.maxTurns,
                 sink = large.sink,
             )

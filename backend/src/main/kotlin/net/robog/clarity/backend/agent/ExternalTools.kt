@@ -232,12 +232,6 @@ class ExternalTools(
         json = ClarityJson,
     ) { i -> propose(scope, "set_do_not_disturb", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.doNotDisturb(k, i, zone) } }
 
-    /** Names of the tools [all] returns; for tool-set planning without a scope. */
-    companion object {
-        val LOADED = setOf("save_draft", "send_email", "create_event")
-        val DEFERRED = setOf("move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb")
-    }
-
     fun all(scope: RunScope): List<Tool> = listOf(
         saveDraft(scope), sendEmail(scope), createEvent(scope), moveEvent(scope), respondToInvite(scope),
         createReminder(scope), setDoNotDisturb(scope),

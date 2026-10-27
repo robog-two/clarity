@@ -23,7 +23,6 @@ import net.robog.clarity.backend.agent.HelperManager
 import net.robog.clarity.backend.agent.journalDate
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.InboxStore
-import net.robog.clarity.backend.agent.LeadAgent
 import net.robog.clarity.backend.agent.MEMORY_GC_TOOLS
 import net.robog.clarity.backend.agent.MemoryStore
 import net.robog.clarity.backend.agent.Priority
@@ -201,27 +200,5 @@ class MemoryIndexJob(
             running.unlock()
         }
         return true
-    }
-}
-
-/** Every minute: compact the lead thread if the person is away and the prompt cache is still warm. */
-@Inject
-@ContributesIntoSet(AppScope::class)
-class IdleCompactionJob(private val lead: LeadAgent, private val scope: CoroutineScope) : ScheduledJob {
-    override val name = "idle-compaction"
-
-    override fun schedule(settings: Settings) = Schedule.Every(1.minutes)
-
-    override suspend fun fire(context: FireContext) {
-        // Compaction is a model call: do not hold the job's row lock for it.
-        scope.launch {
-            try {
-                lead.compactIfIdle()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                log.warn(e) { "idle compaction failed" }
-            }
-        }
     }
 }
