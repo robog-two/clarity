@@ -23,6 +23,8 @@ import net.robog.clarity.app.call.CallAlarms
 import net.robog.clarity.app.call.CallNotifier
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.call.CallService
+import net.robog.clarity.app.call.CallTracker
+import net.robog.clarity.app.call.OngoingCallStarter
 import net.robog.clarity.app.call.CallSettingsCache
 import net.robog.clarity.app.call.DataStoreCallSettingsCache
 import net.robog.clarity.app.connector.AndroidDndAlarms
@@ -269,10 +271,25 @@ interface AppGraph : ViewModelGraph {
         CallScheduler(settings, cache, alarms, clock)
 
     @Provides @SingleIn(AppScope::class)
-    fun callNotifier(context: Context): CallNotifier = AndroidCallNotifier(context)
+    fun androidCallNotifier(context: Context): AndroidCallNotifier = AndroidCallNotifier(context)
 
-    @Provides fun callService(sessions: SessionsRepository, scheduler: CallScheduler, notifier: CallNotifier): CallService =
-        CallService(sessions, scheduler, notifier)
+    @Provides fun callNotifier(notifier: AndroidCallNotifier): CallNotifier = notifier
+
+    /** The morning call app-wide, so it outlives its screen. */
+    @Provides @SingleIn(AppScope::class)
+    fun callTracker(sessions: SessionsRepository, clock: AppClock): CallTracker = CallTracker(sessions, clock)
+
+    @Provides @SingleIn(AppScope::class)
+    fun ongoingCallStarter(context: Context, tracker: CallTracker, clock: AppClock): OngoingCallStarter =
+        OngoingCallStarter(context, tracker, clock)
+
+    @Provides fun callService(
+        sessions: SessionsRepository,
+        scheduler: CallScheduler,
+        notifier: CallNotifier,
+        tracker: CallTracker,
+        capabilities: DeviceCapabilities,
+    ): CallService = CallService(sessions, scheduler, notifier, tracker, capabilities)
 
     @Provides fun callAlarmHandler(
         cache: CallSettingsCache,
@@ -281,7 +298,8 @@ interface AppGraph : ViewModelGraph {
         capabilities: DeviceCapabilities,
         scheduler: CallScheduler,
         clock: AppClock,
-    ): CallAlarmHandler = CallAlarmHandler(cache, feed, notifier, capabilities, scheduler, clock)
+        tracker: CallTracker,
+    ): CallAlarmHandler = CallAlarmHandler(cache, feed, notifier, capabilities, scheduler, clock, tracker)
 
     // --- the phone connector ---
 
@@ -334,10 +352,13 @@ interface AppGraph : ViewModelGraph {
     @Provides fun seenOnScreen(front: FrontScreen, store: FeedStore, ledger: NotifiedLedger): SeenOnScreen =
         SeenOnScreen(front.front, store, ledger)
 
-    /** The app in front and the push service share one feed connection and one action loop. */
+    /**
+     * The app in front, the push service and the ongoing call share one feed connection, one action
+     * loop and one notification listener.
+     */
     @Provides @SingleIn(AppScope::class)
-    fun connectionHolder(sync: FeedSync, phone: PhoneConnector): ConnectionHolder =
-        ConnectionHolder(CoroutineScope(SupervisorJob() + Dispatchers.Default), sync::run, phone::runActionLoop)
+    fun connectionHolder(sync: FeedSync, phone: PhoneConnector, listener: PushListener): ConnectionHolder =
+        ConnectionHolder(CoroutineScope(SupervisorJob() + Dispatchers.Default), sync::run, phone::runActionLoop, listener::run)
 
     @Provides @SingleIn(AppScope::class)
     fun pushNotifier(context: Context): PushNotifier = AndroidPushNotifier(context)
@@ -351,10 +372,12 @@ interface AppGraph : ViewModelGraph {
         notifier: PushNotifier,
         ledger: NotifiedLedger,
         store: FeedStore,
+        call: CallTracker,
     ): PushListener = PushListener(
         sync.arrivals, { front.front.value }, capabilities::notificationsEnabled, clock, notifier, ledger,
         batches = sync.caughtUp,
         cached = { store.notifiable() },
+        call = { call.live()?.id },
     )
 
     /** The periodic catch-up for when the service is not running. */
@@ -382,6 +405,10 @@ interface AppGraph : ViewModelGraph {
 
     // Entry points for receivers and workers, which are not created by the graph.
     val callAlarmHandler: CallAlarmHandler
+    val callTracker: CallTracker
+    val androidCallNotifier: AndroidCallNotifier
+    val ongoingCallStarter: OngoingCallStarter
+    val appClock: AppClock
     val callService: CallService
     val callScheduler: CallScheduler
     val phoneConnector: PhoneConnector

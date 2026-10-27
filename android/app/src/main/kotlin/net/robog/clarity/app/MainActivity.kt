@@ -56,6 +56,10 @@ class MainActivity : FragmentActivity() {
         lifecycleScope.launch(Dispatchers.Default) {
             if (graph.sessionStore.session.first() != null) graph.vaultRepository.register()
         }
+        // A call still going on (its screen swiped away, or the process restarted) shows as a call again.
+        lifecycleScope.launch(Dispatchers.Default) {
+            if (graph.sessionStore.session.first() != null) graph.ongoingCallStarter.ensure()
+        }
     }
 
     override fun onStop() {

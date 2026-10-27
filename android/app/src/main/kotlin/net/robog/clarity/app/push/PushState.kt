@@ -11,11 +11,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import net.robog.clarity.app.data.OnboardingFlagStore
 import net.robog.clarity.app.data.SessionStore
 import net.robog.clarity.app.data.feed.FeedStore
 import net.robog.clarity.app.nav.MainTab
+import net.robog.clarity.shared.session.SessionId
 
 /** The person's own push choices, kept on this phone. */
 interface PushPrefs {
@@ -64,9 +65,17 @@ interface PushController {
 /** The tracker, for screens that report where the person is. Null in previews and tests. */
 val LocalFrontScreen = androidx.compose.runtime.staticCompositionLocalOf<FrontScreen?> { null }
 
-/** Tracks what is on screen so that a notification is not posted for something the person is looking at. */
+/**
+ * Tracks what is on screen so that a notification is not posted for something the person is looking at.
+ * The main activity and the call (its own task) report separately; the call wins while it is in front.
+ */
 class FrontScreen {
-    private data class State(val started: Boolean = false, val place: Place = Place.Other)
+    private data class State(
+        val started: Boolean = false,
+        val place: Place = Place.Other,
+        val callShown: Boolean = false,
+        val call: SessionId? = null,
+    )
 
     private val state = MutableStateFlow(State())
     private val _front = MutableStateFlow<Front>(Front.Background)
@@ -80,10 +89,16 @@ class FrontScreen {
 
     fun showingTab(tab: MainTab) = showing(Place.Tab(tab))
 
+    /** The call screen is in front ([shown]) with the call [sessionId], or left the front. */
+    fun callShowing(shown: Boolean, sessionId: SessionId?) = set { it.copy(callShown = shown, call = sessionId) }
+
     private fun set(change: (State) -> State) {
-        state.update(change)
-        val s = state.value
-        _front.value = if (s.started) Front.Showing(s.place) else Front.Background
+        val s = state.updateAndGet(change)
+        _front.value = when {
+            s.callShown -> Front.Showing(Place.Call(s.call))
+            s.started -> Front.Showing(s.place)
+            else -> Front.Background
+        }
     }
 }
 

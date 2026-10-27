@@ -1,6 +1,7 @@
 package net.robog.clarity.app.ui.call
 
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
@@ -69,3 +70,20 @@ fun formatClock(at: Instant, zone: TimeZone): String = formatTime(at.toLocalDate
 
 /** Whether the session is over. */
 fun callEnded(session: Session?): Boolean = session?.state == Session.State.ENDED
+
+/** The seqs of the agent's finished replies among [items] (a streaming reply counts once it is done). */
+fun agentReplies(items: List<FeedItem>): Set<Long> =
+    items.filter { it.author == FeedItem.Author.AGENT && !it.streaming }.mapTo(HashSet()) { it.seq }
+
+/** A reply older than this when it shows up is history catching up (say after a reconnect), not an answer. */
+val BLIP_FRESH: Duration = 1.minutes
+
+/**
+ * Whether [items] hold a reply that deserves the haptic blip: a finished agent reply not among
+ * [before] (the replies already accounted for) and written just now. [before] is null for the first
+ * look at a call (the history shown when it opens), which never blips.
+ */
+fun shouldBlip(before: Set<Long>?, items: List<FeedItem>, now: Instant, fresh: Duration = BLIP_FRESH): Boolean =
+    before != null && items.any {
+        it.author == FeedItem.Author.AGENT && !it.streaming && it.seq !in before && now - it.at <= fresh
+    }

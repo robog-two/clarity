@@ -12,6 +12,7 @@ import net.robog.clarity.app.data.feed.FeedStore
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.Urgency
+import net.robog.clarity.shared.session.SessionId
 
 /** Posts the notification (or removes it); the Android side is [AndroidPushNotifier]. */
 interface PushNotifier {
@@ -32,6 +33,9 @@ interface PushNotifier {
  * runs it live; the background fallback hands it what a catch-up found. Both claim each arrival in
  * [ledger] first, so the same thing is never decided (or notified) twice.
  *
+ * Both the push service and the ongoing call hold it through [ConnectionHolder.holdNotifications], so
+ * it runs once however many of them want it.
+ *
  * Besides the live [arrivals], [batches] are what a reconnect's gap fill brought in one go, and
  * [cached] is what the cache holds that might never have been claimed (stored while neither the
  * service nor the fallback was listening, such as with the app open on another screen while the
@@ -47,6 +51,8 @@ class PushListener(
     private val ledger: NotifiedLedger = NotifiedLedger.None,
     private val batches: Flow<List<Arrival>> = emptyFlow(),
     private val cached: suspend () -> List<Arrival> = { emptyList() },
+    /** The morning call still running, whose messages lead back to it (see [decideNotification]). */
+    private val call: () -> SessionId? = { null },
 ) {
     /** Runs until cancelled. On start it posts what was missed while nothing was running. */
     suspend fun run() {
@@ -61,7 +67,7 @@ class PushListener(
     /** Posts what [arrival] earns, unless either path already handled it. Returns whether it posted. */
     suspend fun deliver(arrival: Arrival): Boolean {
         if (!ledger.claim(arrival)) return false
-        val plan = decideNotification(arrival, front(), canPost(), clock.now()) ?: return false
+        val plan = decideNotification(arrival, front(), canPost(), clock.now(), call = call()) ?: return false
         notifier.post(plan)
         return true
     }
@@ -76,7 +82,7 @@ class PushListener(
         if (candidates.isEmpty()) return 0
         val fresh = ledger.claimAll(candidates)
         if (fresh.isEmpty()) return 0
-        val plans = decideMissed(fresh, front(), canPost(), clock.now(), ledger.since())
+        val plans = decideMissed(fresh, front(), canPost(), clock.now(), ledger.since(), call = call())
         plans.forEach(notifier::post)
         return plans.size
     }

@@ -20,6 +20,16 @@ import kotlinx.coroutines.test.runTest
 import net.robog.clarity.app.call.AlarmSlot
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.call.CallService
+import net.robog.clarity.app.call.CallTracker
+import net.robog.clarity.app.push.Front
+import net.robog.clarity.app.push.FrontScreen
+import net.robog.clarity.app.push.Place
+import net.robog.clarity.app.push.SeenOnScreen
+import net.robog.clarity.app.testutil.FakeCapabilities
+import net.robog.clarity.app.testutil.InMemoryFeedStore
+import net.robog.clarity.app.testutil.RecordingLedger
+import net.robog.clarity.app.testutil.callService
+import kotlin.time.Duration.Companion.days
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.feed.SyncSignal
@@ -64,7 +74,7 @@ import net.robog.clarity.shared.session.Settings
 
 private val call = SessionId("call1")
 
-private class CallRig(active: Session? = null, settings: Settings = Settings(homeZone = "UTC")) {
+private class CallRig(active: Session? = null, settings: Settings = Settings(homeZone = "UTC"), ringing: Boolean = false) {
     val clock = FixedClock(T0)
     val sessions = ScriptedSessions(active)
     val feed = ScreenFeed()
@@ -80,7 +90,14 @@ private class CallRig(active: Session? = null, settings: Settings = Settings(hom
         feed = { feedOpens++; awaitCancellation() },
         actions = { awaitCancellation() },
     )
-    val vm = CallViewModel(sessions, feed, settingsRepo, CallService(sessions, scheduler, notifier), notifier, speech, clock, connection)
+    val tracker = CallTracker(sessions, clock).also { if (ringing) it.ring(true) }
+    val front = FrontScreen()
+    val store = InMemoryFeedStore()
+    val ledger = RecordingLedger()
+    val vm = CallViewModel(
+        sessions, feed, settingsRepo, CallService(sessions, scheduler, notifier, tracker, FakeCapabilities()), notifier, speech, clock, connection,
+        tracker, front, SeenOnScreen(front.front, store, ledger),
+    )
     val state: CallUiState get() = vm.state.value
 }
 
@@ -280,14 +297,80 @@ class CallViewModelTest {
         assertEquals(listOf("start(false)", "start(false)"), r.speech.calls)
     }
 
-    @Test fun leavingTheScreenStopsTheMicAndShowsTheOngoingNotification() = withMain {
+    @Test fun leavingTheScreenStopsTheMicButTheCallCarriesOn() = withMain {
         val r = CallRig(active = callSession())
+        assertEquals(Front.Showing(Place.Call(call)), r.front.front.value, "the call screen reports itself with its call")
+        assertEquals(call, r.tracker.live()?.id)
         r.vm.setForeground(false)
         assertEquals("stop", r.speech.calls.last())
-        assertTrue("ongoing:call1" in r.notifier.log)
+        assertEquals(Front.Background, r.front.front.value)
+        assertEquals(call, r.tracker.live()?.id, "the call is still going on app-wide (the ongoing notification follows it)")
         r.vm.setForeground(true)
         assertEquals("start(true)", r.speech.calls.last())
-        assertEquals("cancelOngoing", r.notifier.log.last())
+        assertEquals(Front.Showing(Place.Call(call)), r.front.front.value)
+    }
+
+    @Test fun aRingForARunningCallAsksToAnswerBeforeRejoining() = withMain {
+        val r = CallRig(active = callSession(stage = CallStage.CHOOSE), ringing = true)
+        assertEquals(CallScreen.Incoming, r.state.screen)
+        assertTrue(r.speech.calls.isEmpty(), "the mic does not open on a screen that just woke up")
+        r.vm.answer()
+        assertEquals(CallScreen.InCall, r.state.screen)
+        assertTrue(r.sessions.started.isEmpty(), "answering picks the running call back up")
+        assertEquals(CallStage.CHOOSE, r.state.stage)
+        assertFalse(r.tracker.ringing.value)
+    }
+
+    @Test fun notNowOnARingForACallUnderWayKeepsItRunningAndRingsAgain() = withMain {
+        val r = CallRig(active = callSession(stage = CallStage.CHOOSE), ringing = true)
+        r.vm.decline()
+        assertEquals(CallScreen.Snoozed, r.state.screen)
+        assertTrue(r.sessions.controls.isEmpty(), "the server cannot snooze a call under way")
+        assertNotNull(r.alarms.set[AlarmSlot.Snooze])
+        assertEquals(call, r.tracker.live()?.id)
+        r.vm.answer()
+        assertEquals(CallScreen.InCall, r.state.screen)
+        assertTrue(r.sessions.started.isEmpty())
+    }
+
+    @Test fun aCallFromAnEarlierDayIsNotRejoined() = withMain {
+        val r = CallRig(active = callSession(stage = CallStage.CHOOSE).copy(startedAt = T0 - 1.days))
+        assertEquals(CallScreen.Incoming, r.state.screen)
+        assertNull(r.state.session)
+        r.vm.answer()
+        assertEquals(1, r.sessions.started.size, "answering starts today's call afresh")
+    }
+
+    @Test fun eachNewAgentReplyBlipsWhileTheCallIsInFront() = withMain {
+        val r = CallRig(active = callSession())
+        r.feed.itemsFlow.value = listOf(sessionItem(1, Card.Text("Morning.")).copy(at = T0 - 60.minutes)) // the history, arriving after the screen opened
+        val blips = mutableListOf<Unit>()
+        val collector = CoroutineScope(Dispatchers.Unconfined).launch { r.vm.blips.collect { blips += it } }
+        assertTrue(blips.isEmpty(), "the history shown on open does not blip")
+
+        r.feed.itemsFlow.value = r.feed.itemsFlow.value + sessionItem(2, Card.Said("the spec"), author = FeedItem.Author.USER)
+        assertTrue(blips.isEmpty(), "the person's own words do not blip")
+
+        r.feed.itemsFlow.value = r.feed.itemsFlow.value + sessionItem(3, Card.Text("Got it."))
+        assertEquals(1, blips.size)
+
+        r.vm.setForeground(false)
+        r.feed.itemsFlow.value = r.feed.itemsFlow.value + sessionItem(4, Card.Text("Anything else?"))
+        assertEquals(1, blips.size, "away from the screen the reply is a notification instead")
+        collector.cancel()
+    }
+
+    @Test fun whatTheCallScreenShowsIsClaimedSoItNeverNotifiesLater() = withMain {
+        val r = CallRig(active = callSession())
+        val reply = sessionItem(1, Card.Text("Morning."))
+        r.feed.itemsFlow.value = listOf(reply)
+        runBlocking { r.store.upsertItem(reply) }
+        runTest {
+            val sync = launch { r.vm.keepInSync() }
+            runCurrent()
+            assertEquals(listOf(1L), r.ledger.claimedSeqs)
+            sync.cancel()
+        }
     }
 
     @Test fun endedScreenShowsPlanAndLiveTaskStatusesAndCanReplay() = withMain {
@@ -326,25 +409,38 @@ class CallViewModelTest {
 class CallServiceTest {
     @Test fun hangUpEndsTheRunningCall() = runBlocking {
         val sessions = ScriptedSessions(callSession())
-        val notifier = RecordingNotifier()
-        val clock = FixedClock(T0)
-        val scheduler = CallScheduler(ScreenSettings(), MemorySettingsCache(), FakeAlarms(), clock)
-        CallService(sessions, scheduler, notifier).hangUp()
+        val tracker = CallTracker(sessions, FixedClock(T0)).also { it.report(callSession()) }
+        callService(sessions, tracker = tracker).hangUp()
         assertEquals(listOf<SessionControl>(SessionControl.End), sessions.controls)
-        assertTrue("cancelOngoing" in notifier.log)
+        assertNull(tracker.live(), "the ongoing call goes away with the session")
         Unit
     }
 
     @Test fun snoozeFromTheNotificationReusesARunningSession() = runBlocking {
         val sessions = ScriptedSessions(callSession())
-        val clock = FixedClock(T0)
         val alarms = FakeAlarms()
-        val scheduler = CallScheduler(ScreenSettings(), MemorySettingsCache(), alarms, clock)
-        CallService(sessions, scheduler, RecordingNotifier()).snooze()
+        callService(sessions, alarms = alarms).snooze()
         assertTrue(sessions.started.isEmpty())
         assertEquals(listOf<SessionControl>(SessionControl.Snooze(15)), sessions.controls)
         assertNotNull(alarms.set[AlarmSlot.Snooze])
         Unit
+    }
+
+    @Test fun callMeAgainRingsLikeTheMorningCall() {
+        val sessions = ScriptedSessions(callSession(stage = CallStage.COMMIT))
+        val notifier = RecordingNotifier()
+        val tracker = CallTracker(sessions, FixedClock(T0))
+        assertTrue(callService(sessions, tracker = tracker, notifier = notifier).ringAgain())
+        assertEquals(listOf("incoming:FullScreenCall@"), notifier.log)
+        assertTrue(tracker.ringing.value)
+
+        val headsUp = RecordingNotifier()
+        callService(sessions, notifier = headsUp, capabilities = FakeCapabilities(fullScreen = false)).ringAgain()
+        assertEquals(listOf("incoming:HeadsUpCall@"), headsUp.log)
+
+        val off = RecordingNotifier()
+        assertFalse(callService(sessions, notifier = off, capabilities = FakeCapabilities(notifications = false)).ringAgain())
+        assertTrue(off.log.isEmpty())
     }
 
     @Test fun theIncomingSliderActsOnlyNearEitherEnd() {

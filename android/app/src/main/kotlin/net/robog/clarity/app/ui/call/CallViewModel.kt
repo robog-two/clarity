@@ -8,7 +8,13 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -17,7 +23,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.call.CallNotifier
+import net.robog.clarity.app.call.CallEntry
 import net.robog.clarity.app.call.CallService
+import net.robog.clarity.app.call.CallTracker
+import net.robog.clarity.app.call.callEntry
 import net.robog.clarity.app.call.SNOOZE_MINUTES
 import net.robog.clarity.app.data.seenSettings
 import net.robog.clarity.app.data.ApiResult
@@ -27,6 +36,8 @@ import net.robog.clarity.app.data.SessionsRepository
 import net.robog.clarity.app.data.SettingsRepository
 import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.push.ConnectionHolder
+import net.robog.clarity.app.push.FrontScreen
+import net.robog.clarity.app.push.SeenOnScreen
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.voice.MicChipState
@@ -43,6 +54,7 @@ import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.session.CallStage
 import net.robog.clarity.shared.session.Session
+import net.robog.clarity.shared.session.SessionId
 import net.robog.clarity.shared.session.SessionKind
 
 /** The screens of `Call.dc.html`. */
@@ -93,13 +105,28 @@ class CallViewModel(
     speech: SpeechInput,
     private val clock: AppClock,
     private val connection: ConnectionHolder,
+    private val tracker: CallTracker,
+    private val frontScreen: FrontScreen,
+    private val seen: SeenOnScreen,
 ) : ViewModel() {
     private val _state = MutableStateFlow(CallUiState())
     val state: StateFlow<CallUiState> = _state.asStateFlow()
 
     private val zone: TimeZone get() = clock.zone()
     private var micAlwaysOn = true
-    private var foreground = true
+    private val inFront = MutableStateFlow(true)
+    private val foreground: Boolean get() = inFront.value
+
+    private val _blips = Channel<Unit>(Channel.CONFLATED)
+
+    /**
+     * One light haptic tick per new answer from the agent while the call screen is in front (it is not
+     * notified then): never for the person's own words or for the history shown when the call opens.
+     */
+    val blips: Flow<Unit> = _blips.receiveAsFlow()
+
+    /** The finished agent replies of the call already accounted for; null until its history has loaded. */
+    private var replied: Pair<SessionId, Set<Long>>? = null
 
     private val voice = VoiceCapture(speech) { text ->
         val id = _state.value.session?.id ?: return@VoiceCapture
@@ -122,8 +149,14 @@ class CallViewModel(
                     held.associateBy { it.id },
                 )
             }.collect { (items, tasks, held) ->
+                noteReplies(items)
                 _state.update { if (it.items == items && it.tasks == tasks && it.held == held) it else it.copy(items = items, tasks = tasks, held = held) }
             }
+        }
+        // The call screen in front, for the push decisions: its messages show here, not as notifications.
+        viewModelScope.launch {
+            combine(inFront, _state.map { it.session?.id }.distinctUntilChanged()) { front, id -> front to id }
+                .collect { (front, id) -> frontScreen.callShowing(front, id) }
         }
         viewModelScope.launch {
             feed.signals.filterIsInstance<SyncSignal.SessionChanged>().collect { signal ->
@@ -141,11 +174,22 @@ class CallViewModel(
             _state.update { it.copy(callTime = formatTime(seen.morningCall.at), pushToTalk = !s.micAlwaysOn) }
         }
         val active = (sessions.active(SessionKind.MORNING_CALL) as? ApiResult.Success)?.value
-        when (active?.state) {
-            null, Session.State.ENDED -> _state.update { it.copy(screen = CallScreen.Incoming) }
-            Session.State.SNOOZED -> _state.update { it.copy(screen = CallScreen.Snoozed, session = active) }
-            Session.State.ACTIVE, Session.State.BUSY -> enterCall(active)
+        active?.let(tracker::report)
+        val entry = callEntry(active, tracker.ringing.value, clock.now(), zone)
+        when (entry.screen) {
+            CallEntry.Screen.Incoming -> _state.update { it.copy(screen = CallScreen.Incoming, session = entry.session) }
+            CallEntry.Screen.Snoozed -> _state.update { it.copy(screen = CallScreen.Snoozed, session = entry.session) }
+            CallEntry.Screen.InCall -> enterCall(entry.session ?: return)
         }
+    }
+
+    /** Counts the call's finished agent replies and blips for each new one, once its history is in. */
+    private fun noteReplies(items: List<FeedItem>) {
+        val id = _state.value.session?.id ?: return
+        val replies = agentReplies(items)
+        val before = replied?.takeIf { it.first == id }?.second
+        replied = id to replies
+        if (shouldBlip(before, items, clock.now()) && foreground && _state.value.screen == CallScreen.InCall) _blips.trySend(Unit)
     }
 
     /** "answer" / "call me now". Starts the session unless one is already running. */
@@ -164,6 +208,8 @@ class CallViewModel(
 
     private fun enterCall(session: Session) {
         notifier.cancelIncoming()
+        tracker.ring(false)
+        tracker.report(session)
         _state.update { it.copy(screen = CallScreen.InCall, session = session, working = false, message = null, snoozedUntil = null) }
         if (foreground) voice.start(keepOn = micAlwaysOn)
     }
@@ -215,19 +261,15 @@ class CallViewModel(
     fun replay() = _state.update { it.copy(screen = CallScreen.Replay) }
     fun closeReplay() = _state.update { it.copy(screen = CallScreen.Ended) }
 
-    /** The call screen left or came back to the foreground; the mic only listens in front. */
-    fun setForeground(inFront: Boolean) {
-        if (inFront == foreground) return
-        foreground = inFront
-        val s = _state.value
-        if (s.screen != CallScreen.InCall) return
-        if (inFront) {
-            notifier.cancelOngoing()
-            voice.start(keepOn = micAlwaysOn)
-        } else {
-            voice.stop()
-            s.session?.let { notifier.ongoing(it.id.value) }
-        }
+    /**
+     * The call screen left or came back to the foreground; the mic only listens in front. The call
+     * itself carries on either way: [CallTracker] and the ongoing call notification keep it.
+     */
+    fun setForeground(front: Boolean) {
+        if (front == inFront.value) return
+        inFront.value = front
+        if (_state.value.screen != CallScreen.InCall) return
+        if (front) voice.start(keepOn = micAlwaysOn) else voice.stop()
     }
 
     /** Called when the system microphone dialog closes. */
@@ -240,11 +282,9 @@ class CallViewModel(
     }
 
     private fun applySession(session: Session) {
+        tracker.report(session)
         val ended = callEnded(session)
-        if (ended) {
-            voice.stop()
-            notifier.cancelOngoing()
-        }
+        if (ended) voice.stop()
         _state.update {
             it.copy(
                 session = session,
@@ -260,12 +300,18 @@ class CallViewModel(
 
     /**
      * Keeps the cache current while the call screen is in front. Holds the feed connection that the
-     * main app and the push service share, so the phone never has two streams open at once.
+     * main app, the push service and the ongoing call share, so the phone never has two streams open
+     * at once, and claims what the screen shows so it never notifies afterwards.
      */
-    suspend fun keepInSync() = connection.holdFeed()
+    suspend fun keepInSync() = coroutineScope {
+        launch { connection.holdFeed() }
+        // What the person reads here must not notify later.
+        launch { seen.track() }
+    }
 
+    /** The screen is gone (finished or swiped away): the mic stops, and the call carries on without it. */
     override fun onCleared() {
         voice.stop()
-        notifier.cancelOngoing()
+        frontScreen.callShowing(false, null)
     }
 }

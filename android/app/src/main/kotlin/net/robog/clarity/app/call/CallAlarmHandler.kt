@@ -12,10 +12,8 @@ import net.robog.clarity.shared.session.Settings
 interface CallNotifier {
     fun headsUp(title: String, body: String)
     fun incoming(presentation: IncomingPresentation, callTime: String)
-    fun ongoing(sessionId: String)
     fun cancelHeadsUp()
     fun cancelIncoming()
-    fun cancelOngoing()
 }
 
 /** Reacts to the alarms: posts the heads-up or the call, then arms the next alarm. */
@@ -26,6 +24,7 @@ class CallAlarmHandler(
     private val capabilities: DeviceCapabilities,
     private val scheduler: CallScheduler,
     private val clock: AppClock,
+    private val tracker: CallTracker,
 ) {
     suspend fun onAlarm(slot: AlarmSlot) {
         val settings = cache.load() ?: Settings()
@@ -46,7 +45,11 @@ class CallAlarmHandler(
                 val presentation = incomingPresentation(
                     call.mode, capabilities.canUseFullScreenIntent(), capabilities.notificationsEnabled(),
                 )
-                if (presentation != IncomingPresentation.None) notifier.incoming(presentation, formatTime(seenAt))
+                if (presentation != IncomingPresentation.None) {
+                    // Opened from this ring, the call screen asks to answer before rejoining a running call.
+                    tracker.ring(true)
+                    notifier.incoming(presentation, formatTime(seenAt))
+                }
                 notifier.cancelHeadsUp()
             }
         }

@@ -182,7 +182,7 @@ class TodayViewModelTest {
         )
         val repo = FakeToday(ApiResult.Success(today))
         val feed = ScreenFeed()
-        val vm = TodayViewModel(repo, feed, clock)
+        val vm = todayVm(repo, feed, clock)
         val s = vm.state.value
         assertEquals(today, s.today)
         assertEquals(HeldActionId("h1"), s.doing.main.single().review)
@@ -199,20 +199,20 @@ class TodayViewModelTest {
                 task("run", AgentTask.Status.WORKING, at = T0 - 1.hours),
             ),
         )
-        val vm = TodayViewModel(FakeToday(ApiResult.Success(today)), ScreenFeed(), clock)
+        val vm = todayVm(FakeToday(ApiResult.Success(today)), ScreenFeed(), clock)
         assertEquals(listOf("run"), vm.state.value.doing.main.map { it.task.id.value })
         assertEquals(listOf("old"), vm.state.value.doing.quiet.map { it.task.id.value })
     }
 
     @Test fun anOlderServerWithoutTodayIsNotAnError() = withMain {
-        val vm = TodayViewModel(FakeToday(ApiResult.Failure(ApiError.NotFound(null))), ScreenFeed(), clock)
+        val vm = todayVm(FakeToday(ApiResult.Failure(ApiError.NotFound(null))), ScreenFeed(), clock)
         assertTrue(vm.state.value.unavailable)
         assertNull(vm.state.value.error)
         assertFalse(vm.state.value.loading)
     }
 
     @Test fun otherFailuresShowAMessage() = withMain {
-        val vm = TodayViewModel(FakeToday(ApiResult.Failure(ApiError.Unreachable("down"))), ScreenFeed(), clock)
+        val vm = todayVm(FakeToday(ApiResult.Failure(ApiError.Unreachable("down"))), ScreenFeed(), clock)
         assertNotNull(vm.state.value.error)
     }
 
@@ -220,7 +220,7 @@ class TodayViewModelTest {
         val today = Today(LocalDate(2026, 10, 26), doing = listOf(task("t1", AgentTask.Status.WORKING)))
         val repo = FakeToday(ApiResult.Success(today))
         val feed = ScreenFeed()
-        val vm = TodayViewModel(repo, feed, clock)
+        val vm = todayVm(repo, feed, clock)
         assertEquals(1, repo.calls)
         feed.tasksFlow.value = listOf(task("t1", AgentTask.Status.DRAFTED, at = T0 + 1.minutes))
         assertEquals(AgentTask.Status.DRAFTED, vm.state.value.doing.main.single().task.status)
@@ -230,14 +230,14 @@ class TodayViewModelTest {
     @Test fun heldBadgeFollowsTheLiveFeed() = withMain {
         val repo = FakeToday(ApiResult.Success(Today(LocalDate(2026, 10, 26), heldCount = 0)))
         val feed = ScreenFeed()
-        val vm = TodayViewModel(repo, feed, clock)
+        val vm = todayVm(repo, feed, clock)
         feed.heldFlow.value = listOf(heldAction("h1"), heldAction("h2"))
         assertEquals(2, vm.state.value.heldWaiting)
     }
 
     @Test fun pullToRefreshFetchesAgain() = withMain {
         val repo = FakeToday()
-        val vm = TodayViewModel(repo, ScreenFeed(), clock)
+        val vm = todayVm(repo, ScreenFeed(), clock)
         vm.refresh()
         assertEquals(2, repo.calls)
         assertFalse(vm.state.value.refreshing)

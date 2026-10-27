@@ -14,8 +14,9 @@ import net.robog.clarity.R
 import net.robog.clarity.app.MainActivity
 import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.toUri
+import net.robog.clarity.shared.session.Session
 
-/** Posts the heads-up, the incoming call (`CallStyle`, full-screen intent) and the ongoing-call notification. */
+/** Posts the heads-up and the incoming call (`CallStyle`, full-screen intent), and builds the ongoing-call notification. */
 @SuppressLint("MissingPermission") // POST_NOTIFICATIONS is checked through DeviceCapabilities before posting
 class AndroidCallNotifier(private val context: Context) : CallNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
@@ -79,28 +80,34 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
         }
     }
 
-    override fun ongoing(sessionId: String) {
+    /**
+     * The ongoing call, for [OngoingCallService] to run in the foreground with: a `CallStyle` that
+     * Android shows as a call (the status-bar chip, pinned at the top of the shade), with the call's
+     * running time, a tap that goes back to the call and a hang-up button.
+     */
+    fun ongoingNotification(session: Session?): Notification {
         val hangUp = PendingIntent.getBroadcast(
             context, 6,
             Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_HANG_UP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_ONGOING)
+        val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentText("morning meeting")
+            .setContentText(ongoingCallText(session?.stage))
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setOngoing(true)
-            .setUsesChronometer(true)
             .setOnlyAlertOnce(true)
-            .setContentIntent(callScreen(answer = false, code = 7, fresh = false))
+            .setSilent(true)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            // Back to the call; "answer" also picks it up from the incoming or snoozed screen.
+            .setContentIntent(callScreen(answer = true, code = 7, fresh = false))
             .setStyle(NotificationCompat.CallStyle.forOngoingCall(agent, hangUp))
-            .build()
-        manager.notify(ID_ONGOING, notification)
+        session?.startedAt?.let { builder.setWhen(it.toEpochMilliseconds()).setShowWhen(true).setUsesChronometer(true) }
+        return builder.build()
     }
 
     override fun cancelHeadsUp() = manager.cancel(ID_HEADS_UP)
     override fun cancelIncoming() = manager.cancel(ID_INCOMING)
-    override fun cancelOngoing() = manager.cancel(ID_ONGOING)
 
     private fun decline(): PendingIntent = PendingIntent.getBroadcast(
         context, 8,
@@ -124,13 +131,14 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
         return PendingIntent.getActivity(context, code, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    private companion object {
-        const val AGENT_NAME = "Personal Agent"
-        const val CHANNEL_HEADS_UP = "heads_up"
-        const val CHANNEL_CALL = "morning_call"
-        const val CHANNEL_ONGOING = "call_in_progress"
-        const val ID_HEADS_UP = 9101
-        const val ID_INCOMING = 9102
+    companion object {
+        /** The ongoing call notification, which [OngoingCallService] runs in the foreground with. */
         const val ID_ONGOING = 9103
+        private const val AGENT_NAME = "Personal Agent"
+        private const val CHANNEL_HEADS_UP = "heads_up"
+        private const val CHANNEL_CALL = "morning_call"
+        private const val CHANNEL_ONGOING = "call_in_progress"
+        private const val ID_HEADS_UP = 9101
+        private const val ID_INCOMING = 9102
     }
 }
