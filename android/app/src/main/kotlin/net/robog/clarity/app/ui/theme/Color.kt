@@ -6,106 +6,107 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 
 /**
- * Material 3 colour roles taken from the prototype's `.app` CSS variables
- * (`--primary`, `--pc`, `--surface`, ... in the prototype .dc.html files).
- * The dark scheme keeps the same hues (warm neutral, teal primary, peach tertiary).
+ * The brand palette mapped onto Material 3 colour roles.
+ *
+ * Four brand colours:
+ * - [Charcoal] is the page in dark mode and the text in light mode.
+ * - [Bone] is the text in dark mode; a lighter tint of it is the page in light mode.
+ * - [Sage] is the secondary surface ([ColorScheme.secondaryContainer]): single cells, the selected tab, whole views.
+ * - [Peach] is the accent: primary action, focus and selection.
+ *
+ * Peach is too light to read as text on a light page, so in light mode it is [ColorScheme.primaryContainer]
+ * (filled buttons and highlights) and a deep burnt peach is [ColorScheme.primary] for text and icons.
+ * In dark mode Peach is [ColorScheme.primary] itself.
  */
 object ClarityPalette {
-    // Light, one entry per prototype variable.
-    val surface = Color(0xFFFBF8F4)          // --surface
-    val surfaceContainerLow = Color(0xFFF5F1EB) // --scl
-    val surfaceContainer = Color(0xFFEFEAE2) // --sc
-    val surfaceContainerHigh = Color(0xFFE8E2D9) // --sch
-    val onSurface = Color(0xFF1F1D1A)        // --on
-    val onSurfaceVariant = Color(0xFF54514B) // --osv
-    val outlineVariant = Color(0xFFD6D0C6)   // --ov
-    val outline = Color(0xFF7D7972)          // --outline
-    val primary = Color(0xFF466660)          // --primary
-    val onPrimary = Color(0xFFFFFFFF)        // --onp
-    val primaryContainer = Color(0xFFCDE7DF) // --pc
-    val onPrimaryContainer = Color(0xFF0E2B26) // --opc
-    val secondaryContainer = Color(0xFFDDE6E2) // --secc
-    val tertiaryContainer = Color(0xFFFFDDC4) // --tc
-    val onTertiaryContainer = Color(0xFF3B1F08) // --otc
-    val error = Color(0xFFB3261E)            // --err
-    val errorContainer = Color(0xFFF9DEDC)   // --errc
-    val onErrorContainer = Color(0xFF410E0B) // --onerrc
-    val inverseSurface = Color(0xFF33302C)   // --inv
-    val inverseOnSurface = Color(0xFFF5F0E9) // --oninv
+    val Charcoal = Color(0xFF343434)
+    val Bone = Color(0xFFECE7DF)
+    val Sage = Color(0xFF7F9C96)
+    val Peach = Color(0xFFFFBE85)
+
+    /** Near-black with a hint of sage, for text on [Sage]. */
+    private val OnSage = Color(0xFF121716)
 
     val light: ColorScheme = lightColorScheme(
-        primary = primary,
-        onPrimary = onPrimary,
-        primaryContainer = primaryContainer,
-        onPrimaryContainer = onPrimaryContainer,
-        secondary = Color(0xFF4A635D),
+        // Peach: deep tone for text and icons, the brand peach as the filled container.
+        primary = Color(0xFF8A4C14),
+        onPrimary = Color.White,
+        primaryContainer = Peach,
+        onPrimaryContainer = Color(0xFF2B1604),
+        inversePrimary = Peach,
+        // Sage: deep tone for text, the brand sage as the surface.
+        secondary = Color(0xFF4B6661),
         onSecondary = Color.White,
-        secondaryContainer = secondaryContainer,
-        onSecondaryContainer = Color(0xFF05201B),
-        tertiary = Color(0xFF7A4B26),
+        secondaryContainer = Sage,
+        onSecondaryContainer = OnSage,
+        // A pale sage for quieter highlights (info boxes, chips).
+        tertiary = Color(0xFF4B6661),
         onTertiary = Color.White,
-        tertiaryContainer = tertiaryContainer,
-        onTertiaryContainer = onTertiaryContainer,
-        error = error,
+        tertiaryContainer = Color(0xFFC8DDD8),
+        onTertiaryContainer = Color(0xFF14231F),
+        error = Color(0xFFB3261E),
         onError = Color.White,
-        errorContainer = errorContainer,
-        onErrorContainer = onErrorContainer,
-        background = surface,
-        onBackground = onSurface,
-        surface = surface,
-        onSurface = onSurface,
-        surfaceVariant = surfaceContainerHigh,
-        onSurfaceVariant = onSurfaceVariant,
-        surfaceDim = Color(0xFFDDD8CF),
-        surfaceBright = surface,
-        surfaceContainerLowest = Color.White,
-        surfaceContainerLow = surfaceContainerLow,
-        surfaceContainer = surfaceContainer,
-        surfaceContainerHigh = surfaceContainerHigh,
-        surfaceContainerHighest = Color(0xFFE2DCD2),
-        outline = outline,
-        outlineVariant = outlineVariant,
-        inverseSurface = inverseSurface,
-        inverseOnSurface = inverseOnSurface,
-        inversePrimary = Color(0xFFAFCBC3),
+        errorContainer = Color(0xFFF9DEDC),
+        onErrorContainer = Color(0xFF410E0B),
+        // Bone neutrals, from lightest to darkest.
+        background = Color(0xFFF6F2EC),
+        onBackground = Charcoal,
+        surface = Color(0xFFF6F2EC),
+        onSurface = Charcoal,
+        surfaceVariant = Color(0xFFE3DDD3),
+        onSurfaceVariant = Color(0xFF5E5B56),
+        surfaceBright = Color(0xFFF6F2EC),
+        surfaceDim = Color(0xFFDAD4CA),
+        surfaceContainerLowest = Color(0xFFFCFAF7),
+        surfaceContainerLow = Color(0xFFF1EDE6),
+        surfaceContainer = Bone,
+        surfaceContainerHigh = Color(0xFFE6E0D7),
+        surfaceContainerHighest = Color(0xFFE0D9CF),
+        outline = Color(0xFF85817A),
+        outlineVariant = Color(0xFFD3CCC1),
+        inverseSurface = Charcoal,
+        inverseOnSurface = Bone,
         scrim = Color.Black,
     )
 
     val dark: ColorScheme = darkColorScheme(
-        primary = Color(0xFFAFCBC3),
-        onPrimary = Color(0xFF14332D),
-        primaryContainer = Color(0xFF2E4D47),
-        onPrimaryContainer = primaryContainer,
-        secondary = Color(0xFFB1CCC4),
-        onSecondary = Color(0xFF1C352F),
-        secondaryContainer = Color(0xFF334A44),
-        onSecondaryContainer = secondaryContainer,
-        tertiary = Color(0xFFF1BC94),
-        onTertiary = Color(0xFF462A10),
-        tertiaryContainer = Color(0xFF5E3C1F),
-        onTertiaryContainer = tertiaryContainer,
+        // Peach is the accent as-is; Charcoal reads on it at 7.7:1.
+        primary = Peach,
+        onPrimary = Charcoal,
+        primaryContainer = Color(0xFF5A3A1F),
+        onPrimaryContainer = Color(0xFFFFDCC2),
+        inversePrimary = Color(0xFF8A4C14),
+        // Sage as the surface; a lighter sage for sage-coloured text on Charcoal.
+        secondary = Color(0xFFA3BDB7),
+        onSecondary = Charcoal,
+        secondaryContainer = Sage,
+        onSecondaryContainer = OnSage,
+        tertiary = Color(0xFFA3BDB7),
+        onTertiary = Charcoal,
+        tertiaryContainer = Color(0xFF34443F),
+        onTertiaryContainer = Color(0xFFD3E4E0),
         error = Color(0xFFF2B8B5),
         onError = Color(0xFF601410),
         errorContainer = Color(0xFF8C1D18),
-        onErrorContainer = errorContainer,
-        background = Color(0xFF141311),
-        onBackground = Color(0xFFE8E2D9),
-        surface = Color(0xFF141311),
-        onSurface = Color(0xFFE8E2D9),
-        surfaceVariant = Color(0xFF3A3731),
-        onSurfaceVariant = Color(0xFFCDC6BC),
-        surfaceDim = Color(0xFF141311),
-        surfaceBright = Color(0xFF3B3835),
-        surfaceContainerLowest = Color(0xFF0F0E0C),
-        surfaceContainerLow = Color(0xFF1C1B18),
-        surfaceContainer = Color(0xFF21201C),
-        surfaceContainerHigh = Color(0xFF2B2926),
-        surfaceContainerHighest = Color(0xFF363330),
-        outline = Color(0xFF979089),
-        outlineVariant = Color(0xFF4A4741),
-        inverseSurface = Color(0xFFE8E2D9),
-        inverseOnSurface = Color(0xFF33302C),
-        inversePrimary = primary,
+        onErrorContainer = Color(0xFFF9DEDC),
+        // Charcoal neutrals: containers step lighter, as Material 3 dark schemes do.
+        background = Charcoal,
+        onBackground = Bone,
+        surface = Charcoal,
+        onSurface = Bone,
+        surfaceVariant = Color(0xFF4A4A4A),
+        onSurfaceVariant = Color(0xFFC4BFB7),
+        surfaceBright = Color(0xFF555555),
+        surfaceDim = Color(0xFF2A2A2A),
+        surfaceContainerLowest = Color(0xFF2A2A2A),
+        surfaceContainerLow = Color(0xFF3A3A3A),
+        surfaceContainer = Color(0xFF3F3F3F),
+        surfaceContainerHigh = Color(0xFF474747),
+        surfaceContainerHighest = Color(0xFF505050),
+        outline = Color(0xFF9A968F),
+        outlineVariant = Color(0xFF545250),
+        inverseSurface = Bone,
+        inverseOnSurface = Charcoal,
         scrim = Color.Black,
     )
 }

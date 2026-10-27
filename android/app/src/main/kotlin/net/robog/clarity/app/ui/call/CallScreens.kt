@@ -36,6 +36,23 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import net.robog.clarity.app.ui.today.DoingRow
+import net.robog.clarity.app.ui.today.DoingRowView
+import net.robog.clarity.app.ui.today.PlanHero
+import net.robog.clarity.app.ui.today.TodayLabel
+import net.robog.clarity.app.ui.today.groupShape
+import net.robog.clarity.app.ui.today.springIn
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalInspectionMode
+import net.robog.clarity.R
+import net.robog.clarity.app.ui.components.Drawing
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -45,10 +62,8 @@ import kotlinx.coroutines.delay
 import net.robog.clarity.app.ui.cards.CardEnv
 import net.robog.clarity.app.ui.cards.FeedItemView
 import net.robog.clarity.app.ui.cards.LiveBubble
-import net.robog.clarity.app.ui.cards.taskStatusLabel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
-import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
@@ -99,10 +114,44 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         Text("Personal Agent", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
         Hint("Morning call · about 8 min")
         Spacer(Modifier.weight(1f))
+        RingingBell()
+        Spacer(Modifier.weight(1f))
         state.message?.let { ErrorBox(it) }
         Hint("You talk. I answer in text, on screen.", Modifier.padding(bottom = 24.dp))
         SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working)
     }
+}
+
+/** The ringing bell: a few quick swings from the handle, then a pause, like a hand bell being rung. */
+@Composable
+private fun RingingBell() {
+    val angle = if (LocalInspectionMode.current) 0f else {
+        val ring = rememberInfiniteTransition(label = "bell")
+        ring.animateFloat(
+            initialValue = 0f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                keyframes {
+                    durationMillis = 2_000
+                    0f at 0
+                    14f at 120
+                    -12f at 260
+                    9f at 400
+                    -6f at 540
+                    3f at 680
+                    0f at 820
+                },
+            ),
+            label = "swing",
+        ).value
+    }
+    Drawing(
+        R.drawable.drawing_bell_ringing,
+        Modifier.size(180.dp).graphicsLayer {
+            transformOrigin = TransformOrigin(0.5f, 0.15f)
+            rotationZ = angle
+        },
+    )
 }
 
 @Composable
@@ -242,51 +291,37 @@ private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * "Your Morning", right after the call: the same plan card and task group as Today, so what was just
+ * agreed looks exactly like what Today will show.
+ */
 @Composable
 private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () -> Unit) {
     val elapsed = state.session?.let { s -> s.endedAt?.let { formatElapsed(it - s.startedAt) } }
-    Column(
-        Modifier.fillMaxSize().statusBarsPadding().padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Kicker(if (elapsed == null) "call ended" else "call ended · $elapsed")
-        Text("Your Morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
-        if (state.plan.isNotEmpty()) {
-            InfoBox(container = MaterialTheme.colorScheme.primaryContainer, content = MaterialTheme.colorScheme.onPrimaryContainer, border = null, shape = MaterialTheme.shapes.large) {
-                Kicker("your plan", color = MaterialTheme.colorScheme.onPrimaryContainer)
-                state.plan.forEach { Text(it.sentence(), style = MaterialTheme.clarityText.reading.copy(fontSize = 15.sp)) }
-            }
-        }
-        Kicker("setting up", Modifier.padding(top = 4.dp))
-        LazyColumn(Modifier.weight(1f)) {
+    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+        Column(
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            var order = 0
+            Kicker(if (elapsed == null) "call ended" else "call ended · $elapsed")
+            Text("Your Morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
+            if (state.plan.isNotEmpty()) PlanHero(state.plan, Modifier.springIn(order++))
+            TodayLabel("Setting up", Modifier.padding(top = 10.dp).springIn(order++))
             if (state.setup.isEmpty()) {
-                item { Hint("Nothing to set up yet.") }
+                Hint("Nothing to set up yet.")
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    state.setup.forEachIndexed { i, task ->
+                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++))
+                    }
+                }
             }
-            items(state.setup, key = { it.id.value }) { SetupRow(it) }
         }
-        PrimaryButton("Open the app", onOpenApp, Modifier.fillMaxWidth())
-        SecondaryButton("replay the call", onReplay, Modifier.fillMaxWidth())
-    }
-}
-
-@Composable
-private fun SetupRow(task: AgentTask) {
-    val working = task.status == AgentTask.Status.WORKING
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-    Row(
-        Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(task.title, style = MaterialTheme.clarityText.chat)
-            Kicker(task.detail)
+        Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            PrimaryButton("Open the app", onOpenApp, Modifier.fillMaxWidth())
+            SecondaryButton("replay the call", onReplay, Modifier.fillMaxWidth())
         }
-        Text(
-            if (working) "working…" else taskStatusLabel(task.status),
-            color = MaterialTheme.colorScheme.primary.copy(alpha = if (working) .6f else 1f),
-            style = MaterialTheme.typography.labelLarge,
-        )
     }
 }
 

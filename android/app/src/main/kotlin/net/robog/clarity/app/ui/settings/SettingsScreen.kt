@@ -37,6 +37,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import net.robog.clarity.R
+import androidx.annotation.DrawableRes
+import net.robog.clarity.app.ui.components.Drawing
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.sentenceCase
 import android.Manifest
@@ -197,9 +199,10 @@ private fun Context.openSystem(action: String, withPackage: Boolean = false, ext
 }
 
 /** The pages of Settings: a home page of groups, and one page for each group's controls. */
-enum class SettingsPage(val title: String) {
+/** [drawing] is an optional hand-inked header for the page (its rows keep their Material icons on the home page). */
+enum class SettingsPage(val title: String, @DrawableRes val drawing: Int? = null) {
     Home("Settings"),
-    MorningCall("Morning call"),
+    MorningCall("Morning call", R.drawable.drawing_bell),
     Voice("Voice"),
     HeldActions("Held actions"),
     Push("Stay connected"),
@@ -241,7 +244,7 @@ fun SettingsContent(
         if (shown == SettingsPage.Home) {
             SettingsHome(state, open = { page = it }, onOpenConstitution = actions.onOpenConstitution)
         } else {
-            SettingsSubPage(shown.title, onBack = { page = SettingsPage.Home }) {
+            SettingsSubPage(shown.title, shown.drawing, onBack = { page = SettingsPage.Home }) {
                 when (shown) {
                     SettingsPage.Home -> Unit
                     SettingsPage.MorningCall -> settings?.let { MorningCallPage(state, it, actions) { pickingTime = TIME_CALL } } ?: LoadingSpinner()
@@ -427,12 +430,13 @@ private fun GroupRow(
 // --- the pages ---
 
 @Composable
-private fun SettingsSubPage(title: String, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         BackLink("settings", onBack)
+        drawing?.let { Drawing(it, Modifier.padding(top = 8.dp).size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
         ScreenTitle(title, Modifier.padding(top = 8.dp, bottom = 16.dp))
         content()
     }

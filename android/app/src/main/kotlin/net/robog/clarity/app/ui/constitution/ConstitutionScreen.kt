@@ -1,6 +1,9 @@
 package net.robog.clarity.app.ui.constitution
 
 import net.robog.clarity.app.ui.components.ScreenGutter
+import net.robog.clarity.R
+import net.robog.clarity.app.ui.components.Drawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -185,6 +188,7 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
     ) {
         BackLink("Settings", onBack)
         val c = state.constitution
+        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = 4.dp).size(120.dp))
         if (c != null) Kicker(versionKicker(c.version))
         ScreenTitle("How I want to work")
         state.error?.let { ErrorBox(it) }
