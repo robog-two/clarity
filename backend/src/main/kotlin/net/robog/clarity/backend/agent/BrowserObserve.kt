@@ -175,6 +175,8 @@ data class SignInState(
     val phase: SignInPhase = SignInPhase.UNKNOWN,
     /** The labels of the steps that sent a code ("Continue", "Resend"): pressing one again sends another. */
     val triggers: Set<String> = emptySet(),
+    /** Codes typed and not accepted (wrong or mistyped): the person is asked again, the site never for a new one. */
+    val codeTries: Int = 0,
 )
 
 /** How long after a code was sent a step that would send another is refused. */
@@ -182,6 +184,9 @@ val CODE_GUARD_WINDOW: kotlin.time.Duration = kotlin.time.Duration.parse("10m")
 
 /** At most this many codes per site per run; then the person takes over. */
 const val MAX_CODES_PER_SITE = 2
+
+/** At most this many typed codes per site per run that the site rejects; then the person takes over. */
+const val MAX_CODE_TRIES = 3
 
 private val RESEND = Regex(
     "\\b(resend|re-send|send (it )?again|send (me )?(a |another |the )?(new )?code|get (a )?new code|new code|request (a )?(new )?code|didn'?t (get|receive)|" +
@@ -408,6 +413,26 @@ fun candidates(items: List<SeenElement>, intent: String, max: Int = 20): List<Se
     val (near, far) = acting.partition { e -> words(e.name).any { it in want } }
     return (near + far).take(max)
 }
+
+/**
+ * Pure: the element to ask Jev about again by its own name when it did not see [intent]: the exact
+ * match, else the one control sharing the most words with the intent (null when none, or a tie).
+ */
+fun renameCandidate(items: List<SeenElement>, intent: String): SeenElement? {
+    exactMatch(items, intent)?.let { return it }
+    val want = words(intent).toSet()
+    val scored = items.filter { it.role != "text" && it.role != "heading" && it.name.isNotBlank() }
+        .map { it to words(it.name).count { w -> w in want } }
+        .filter { it.second > 0 }
+    val best = scored.maxOfOrNull { it.second } ?: return null
+    return scored.filter { it.second == best }.singleOrNull()?.first
+}
+
+/** Pure: the second grounding question's target, by the element's own visible name. */
+fun namedIntent(element: SeenElement): String = "the control labelled \"${element.name}\""
+
+/** Pure: [a] is [b] (same ref, or same role and name on a re-rendered page). */
+fun sameElement(a: SeenElement, b: SeenElement): Boolean = a.ref == b.ref || (a.role == b.role && words(a.name) == words(b.name))
 
 /** Pure: the observation script's arguments: [extra] plus the refs whose values are secrets. */
 fun observeArgs(secretRefs: Collection<String>, extra: Map<String, Any?> = emptyMap()): JsonObject = buildJsonObject {

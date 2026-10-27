@@ -93,6 +93,8 @@ data class BrowserPilotConfig(
     val jevMayApprove: Boolean = false,
     val textGrounding: Boolean = false,
     val maxActions: Int = 25,
+    /** How long step screenshots are kept in the audit trail (`CLARITY_BROWSER_FRAME_RETENTION`); the rows stay. */
+    val frameRetention: kotlin.time.Duration = kotlin.time.Duration.parse("30d"),
 )
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */

@@ -6,6 +6,7 @@ import dev.zacsweers.metro.SingleIn
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import arrow.core.Either
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
@@ -474,18 +475,45 @@ class BrowserPilot(
             if (settings.textGrounding) exactMatch(before.items, intent)?.let { exact -> textGround(intent, before, exact, trail)?.let { return it } }
             val png = frame.png ?: return Ground.Failed(frame.why ?: "no screenshot")
             val jev = models.jev ?: return Ground.Failed("no screen model is configured")
-            val answer = trail.ask("ground", models.jevModel, jev, groundingAsk(intent, png))
-            val result = answer.getOrNull() ?: return Ground.Failed("Jev: ${answer.leftOrNull()?.message?.take(120)}")
-            val g = groundingOf(result) ?: return Ground.Failed("Jev did not answer")
-            if (g.pVisible < settings.visibleThreshold) return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f)".format(g.pVisible))
+            val g = when (val r = askGrounding("ground", intent, png, jev, trail)) {
+                is Either.Left -> return r.value
+                is Either.Right -> r.value
+            }
+            if (g.pVisible >= settings.visibleThreshold) return locate(g, intent, before, frame, trail, expected = null)
+            // Second step: Jev may not share the helper's words ("link" for a link styled as a button). Ask again by the
+            // name the page gives the likeliest element, and act only if Jev sees it and its box lands on that element.
+            val candidate = renameCandidate(before.items, intent)
+                ?: return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f)".format(g.pVisible))
+            val named = namedIntent(candidate)
+            val second = when (val r = askGrounding("ground_named", named, png, jev, trail)) {
+                is Either.Left -> return r.value
+                is Either.Right -> r.value
+            }
+            if (second.pVisible < settings.visibleThreshold) {
+                return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f; as $named p=%.2f)".format(g.pVisible, second.pVisible))
+            }
+            return locate(second, intent, before, frame, trail, expected = candidate)
+        }
+
+        private suspend fun askGrounding(label: String, intent: String, png: ByteArray, jev: DecisionClient, trail: Trail): Either<Ground, Grounding> {
+            val answer = trail.ask(label, models.jevModel, jev, groundingAsk(intent, png))
+            val result = answer.getOrNull() ?: return Either.Left(Ground.Failed("Jev: ${answer.leftOrNull()?.message?.take(120)}"))
+            return groundingOf(result)?.let { Either.Right(it) } ?: Either.Left(Ground.Failed("Jev did not answer"))
+        }
+
+        /** The element under the box centre; with [expected] (the second step) it must be that element. */
+        private suspend fun locate(g: Grounding, intent: String, before: PageObservation, frame: Frame, trail: Trail, expected: SeenElement?): Ground {
             val box = g.box ?: return Ground.Failed("Jev gave no box")
             val vw = before.vw.takeIf { it > 0 } ?: frame.width.toDouble()
             val vh = before.vh.takeIf { it > 0 } ?: frame.height.toDouble()
             val x = (box.left + box.right) / 2 * vw
             val y = (box.top + box.bottom) / 2 * vh
             val hit = page("point", mapOf("x" to x, "y" to y))?.hit ?: return Ground.NotFound("nothing to act on where \"$intent\" is on the screen")
+            if (expected != null && !sameElement(hit, expected)) {
+                return Ground.NotFound("\"$intent\" is not clearly on the screen: Jev's box for \"${expected.name}\" landed on ${hit.role} \"${hit.name}\"")
+            }
             trail.box = box
-            return Ground.Hit(hit, boxPixels(box, frame.width, frame.height), "screen")
+            return Ground.Hit(hit, boxPixels(box, frame.width, frame.height), if (expected == null) "screen" else "screen, by name")
         }
 
         /** The cheaper text path: Decision-1 confirms the exact match among up to 20 candidates; null falls back to the screenshot. */
@@ -686,8 +714,9 @@ class BrowserPilot(
                 when {
                     fields.otp != null -> {
                         val current = state.signIn[domain] ?: SignInState()
+                        if (current.codeTries >= MAX_CODE_TRIES) return ToolResult.Ok("The site rejected the code ${current.codeTries} times. Stop and report back so the person can finish signing in; do not ask the site for a new code.")
                         if (current.codesSent == 0) state.signIn[domain] = current.copy(codesSent = 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT)
-                        val ask = governance.askCode(url, "the sign-in code $domain just sent", scope.provenance())
+                        val ask = governance.askCode(url, if (current.codeTries == 0) "the sign-in code $domain just sent" else "the sign-in code $domain sent, again: the last one typed was not accepted", scope.provenance())
                         val heldId = ask.heldId ?: return ToolResult.Error(ask.text)
                         val placeholder = "[secret:code_${heldId.value}]"
                         messages += "Asked the person for the code $domain sent."
@@ -772,7 +801,9 @@ class BrowserPilot(
             val sign = signInState(domain, frame, trail)
             val current = state.signIn[domain] ?: SignInState()
             val codeArrived = after.otp && !before.otp
-            val next = when (sign?.first) {
+            // The code page is still there after typing the code: the site did not take it.
+            val rejected = step == "code" && after.otp && sign?.first != "signed_in"
+            val next = if (rejected) current.copy(phase = SignInPhase.CODE_SENT, codeTries = current.codeTries + 1) else when (sign?.first) {
                 "signed_in" -> current.copy(phase = SignInPhase.SIGNED_IN)
                 "needs_code" -> if (codeArrived) current.copy(codesSent = current.codesSent + 1, lastSentAt = clock.now(), phase = SignInPhase.CODE_SENT) else current.copy(phase = SignInPhase.CODE_SENT)
                 "choose_method" -> current.copy(phase = SignInPhase.CHOOSE_METHOD)
@@ -782,7 +813,11 @@ class BrowserPilot(
             }
             state.signIn[domain] = next
             val p = sign?.second?.let { " (Jev p=%.2f)".format(it) }.orEmpty()
-            val message = (tabNotes + when (sign?.first) {
+            val tries = current.codeTries + 1
+            val message = (tabNotes + if (rejected) {
+                if (tries < MAX_CODE_TRIES) "The site did not accept the code$p (attempt $tries of $MAX_CODE_TRIES). Call sign_in again: it asks the person to type the code again. It does not ask the site for a new code; do not press Resend."
+                else "The site rejected the code $tries times$p. Stop and report back so the person can finish signing in; do not ask the site for a new code."
+            } else when (sign?.first) {
                 null -> "Submitted the ${if (step == "code") "code" else "login"}. I could not check the screen (${frame.why ?: "Jev did not answer"}); call look to see where the sign-in stands."
                 "signed_in" -> "Signed in to $domain$p."
                 "needs_code" -> if (codeArrived || after.otp) "The site sent a one-time code$p." else "The site asks for a one-time code$p, but I see no code field. Call look."

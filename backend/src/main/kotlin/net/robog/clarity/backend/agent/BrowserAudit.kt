@@ -31,6 +31,10 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.isNotNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.or
+import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -63,6 +67,7 @@ object BrowserSteps : Table("browser_step") {
     val afterWithheld = bool("after_withheld")
     val changeReport = text("change_report").nullable()
     val costMicros = long("cost_micros").nullable()
+    val framesDroppedAt = timestamp("frames_dropped_at").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -104,6 +109,9 @@ interface BrowserAudit {
 
     /** A stored screenshot of step [id]: [after] false for the one before the step. */
     suspend fun screenshot(id: Long, after: Boolean): ByteArray?
+
+    /** Drops the screenshots of steps taken before [cutoff] (the rows stay); how many rows lost frames. */
+    suspend fun dropFrames(cutoff: Instant, now: Instant): Int
 }
 
 @Inject
@@ -158,7 +166,7 @@ class PgBrowserAudit(private val database: Database) : BrowserAudit {
                     beforeShot = r[hasBefore], beforeWithheld = r[BrowserSteps.beforeWithheld], box = r[BrowserSteps.box],
                     hitRole = r[BrowserSteps.hitRole], hitName = r[BrowserSteps.hitName], jev = r[BrowserSteps.jev], gate = r[BrowserSteps.gate],
                     action = r[BrowserSteps.action], afterShot = r[hasAfter], afterWithheld = r[BrowserSteps.afterWithheld],
-                    changeReport = r[BrowserSteps.changeReport], costMicros = r[BrowserSteps.costMicros],
+                    changeReport = r[BrowserSteps.changeReport], costMicros = r[BrowserSteps.costMicros], framesDroppedAt = r[BrowserSteps.framesDroppedAt],
                 )
             }
     }
@@ -167,6 +175,15 @@ class PgBrowserAudit(private val database: Database) : BrowserAudit {
         val col = if (after) BrowserSteps.afterPng else BrowserSteps.beforePng
         BrowserSteps.select(col).where { BrowserSteps.id eq id }.singleOrNull()?.get(col)
     }
+
+    // Only this table's two screenshot columns are touched: nothing else is ever deleted here.
+    override suspend fun dropFrames(cutoff: Instant, now: Instant): Int = database.tx {
+        BrowserSteps.update({ (BrowserSteps.at less cutoff) and (BrowserSteps.beforePng.isNotNull() or BrowserSteps.afterPng.isNotNull()) }) {
+            it[beforePng] = null
+            it[afterPng] = null
+            it[framesDroppedAt] = now
+        }
+    }
 }
 
 /** In memory, for tests. */
@@ -174,6 +191,12 @@ class MemoryBrowserAudit : BrowserAudit {
     val rows = CopyOnWriteArrayList<BrowserStepRecord>()
 
     override suspend fun record(step: BrowserStepRecord) { rows += step }
+
+    override suspend fun dropFrames(cutoff: Instant, now: Instant): Int {
+        var n = 0
+        rows.replaceAll { r -> if (r.at < cutoff && (r.beforePng != null || r.afterPng != null)) { n++; r.copy(beforePng = null, afterPng = null) } else r }
+        return n
+    }
 
     override suspend fun steps(runId: String): List<BrowserStepView> = rows.withIndex().filter { it.value.runId == runId }.map { (i, s) ->
         BrowserStepView(

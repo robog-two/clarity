@@ -263,6 +263,7 @@ private class Lookup(
                     jevMayApprove = bool("CLARITY_JEV_MAY_APPROVE", "agent.browser.jevMayApprove", false),
                     textGrounding = bool("CLARITY_BROWSER_TEXT_GROUNDING", "agent.browser.textGrounding", false),
                     maxActions = int("CLARITY_BROWSER_MAX_ACTIONS", "agent.browser.maxActions", 25),
+                    frameRetention = duration("CLARITY_BROWSER_FRAME_RETENTION", "agent.browser.frameRetention", Duration.parse("30d")),
                 ),
             ),
         )

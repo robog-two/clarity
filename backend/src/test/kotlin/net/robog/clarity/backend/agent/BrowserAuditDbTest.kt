@@ -55,6 +55,23 @@ class BrowserAuditDbTest : FunSpec({
         audit.steps("other") shouldBe emptyList()
     }
 
+    test("retention clears old rows' screenshots only, and keeps the rows and newer frames") {
+        val audit = PgBrowserAudit(database)
+        val clock = StepClock()
+        audit.record(row(10, byteArrayOf(7), withheld = false).copy(runId = "run-r", at = clock.now() - kotlin.time.Duration.parse("40d")))
+        audit.record(row(11, byteArrayOf(8), withheld = false).copy(runId = "run-r", at = clock.now() - kotlin.time.Duration.parse("1d")))
+        audit.dropFrames(clock.now() - kotlin.time.Duration.parse("30d"), clock.now()) shouldBe 1
+        audit.dropFrames(clock.now() - kotlin.time.Duration.parse("30d"), clock.now()) shouldBe 0
+        val steps = audit.steps("run-r")
+        steps.map { it.seq } shouldBe listOf(10, 11)
+        steps[0].beforeShot shouldBe false
+        steps[0].afterShot shouldBe false
+        steps[0].framesDroppedAt shouldBe clock.now()
+        steps[0].changeReport shouldBe "Page changed"
+        steps[1].beforeShot shouldBe true
+        steps[1].framesDroppedAt shouldBe null
+    }
+
     test("a withheld frame can never be stored") {
         shouldThrow<IllegalArgumentException> { row(3, byteArrayOf(1), withheld = true) }
     }

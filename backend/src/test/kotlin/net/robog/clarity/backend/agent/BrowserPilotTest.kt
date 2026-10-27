@@ -284,4 +284,68 @@ class BrowserPilotTest : FunSpec({
         text shouldNotContain "correct horse"
         rig.jev.asked.size shouldBeGreaterThan 0
     }
+
+    test("a low first p gets a second ask by the element's own name, and acts only when that box lands on the element") {
+        val rig = PilotRig()
+        // Jev does not see "the Sign in link" (it is drawn as a button), but sees the control by its name.
+        rig.jev.visible = { intent -> if ("labelled" in intent) rig.site.find(intent) else null }
+        rig.act("the Sign in link", "a sign-in form") shouldContain "Page changed"
+        rig.audit.rows.last().jev!!.keys shouldContain "ground_named"
+        rig.site.clicked shouldBe listOf("Sign in")
+
+        // The second box lands on another element: not found, nothing clicked.
+        val other = PilotRig()
+        other.jev.visible = { intent -> if ("labelled" in intent) other.site.page.els.first { it.name == "Details" } else null }
+        other.act("the Sign in link", "a sign-in form") shouldContain "Not found"
+        other.site.clicked.shouldBeEmpty()
+
+        // Nothing on the page shares a word with the intent: no second ask.
+        val none = PilotRig()
+        none.jev.visible = { null }
+        none.act("the Checkout button", "the cart") shouldContain "Not found"
+        none.audit.rows.last().jev!!.keys shouldBe setOf("ground")
+    }
+
+    test("a wrong code leads back to ask_code without a new code from the site; three rejections hand back") {
+        val rig = PilotRig()
+        rig.site.open(rig.site.method(false))
+        rig.act("the SMS option", "SMS is selected")
+        rig.act("the Continue button", "a code page")
+        rig.site.codesSent shouldBe 1
+
+        rig.grants.put("code", "example.com", mapOf("h-code" to "000000"), 5.minutes)
+        val first = rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text()
+        first shouldContain "did not accept the code"
+        first shouldContain "attempt 1 of 3"
+        first shouldContain "do not press Resend"
+        rig.act("the Resend button", "a new code") shouldContain "use ask_code"
+        rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text() shouldContain "attempt 2 of 3"
+        rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text() shouldContain "rejected the code 3 times"
+        rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text() shouldContain "Stop and report back"
+        rig.site.codesSent shouldBe 1
+        rig.site.clicked.count { it == "Verify" } shouldBe 3
+        rig.site.clicked shouldNotContain "Resend"
+    }
+
+    test("a wrong code then the right one signs in, still with one code sent") {
+        val rig = PilotRig()
+        rig.site.open(rig.site.code(false))
+        rig.grants.put("code", "example.com", mapOf("h-code" to "000000"), 5.minutes)
+        rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text() shouldContain "did not accept the code"
+        rig.grants.put("code", "example.com", mapOf("h-code" to FakeSite.CODE), 5.minutes)
+        rig.call("sign_in", buildJsonObject { put("credential", "clarity_login") }).text() shouldContain "Signed in to example.com"
+        rig.site.codesSent shouldBe 0
+    }
+
+    test("frame retention drops old screenshots and keeps the rows") {
+        val rig = PilotRig()
+        rig.act("the Sign in link", "a sign-in form")
+        rig.audit.dropFrames(rig.clock.now() - 1.minutes, rig.clock.now()) shouldBe 0
+        rig.clock.advance(kotlin.time.Duration.parse("31d"))
+        rig.audit.dropFrames(rig.clock.now() - kotlin.time.Duration.parse("30d"), rig.clock.now()) shouldBe 1
+        val row = rig.audit.rows.single()
+        row.beforePng.shouldBeNull()
+        row.afterPng.shouldBeNull()
+        row.changeReport.shouldNotBeNull() shouldContain "Page changed"
+    }
 })

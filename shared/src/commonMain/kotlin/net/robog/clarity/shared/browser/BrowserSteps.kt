@@ -34,4 +34,6 @@ data class BrowserStepView(
     @SerialName("after_withheld") val afterWithheld: Boolean = false,
     @SerialName("change_report") val changeReport: String? = null,
     @SerialName("cost_micros") val costMicros: Long? = null,
+    /** When the screenshots were dropped by the retention rule; the row itself stays. */
+    @SerialName("frames_dropped_at") val framesDroppedAt: Instant? = null,
 )

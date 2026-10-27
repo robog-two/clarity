@@ -113,7 +113,7 @@ class FakeSite(val popup: Boolean = false) {
                 if (values["c31"] == CODE) {
                     signedIn = true
                     if (inPopup) { val opener = 0; tabs.removeAt(selected); selected = opener; open(account()) } else open(account())
-                }
+                } else open(code(inPopup)) // wrong code: the code page again, nothing sent
             },
             El("c33", "button", "Resend", depth = 13, x = 240.0, y = 200.0) { codesSent++; open(code(inPopup)) },
         ),
