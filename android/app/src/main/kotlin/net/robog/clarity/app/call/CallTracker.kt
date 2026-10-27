@@ -2,7 +2,9 @@ package net.robog.clarity.app.call
 
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -70,6 +72,41 @@ fun callEntry(active: Session?, ringing: Boolean, now: Instant, zone: TimeZone):
     else -> CallEntry(CallEntry.Screen.InCall, active)
 }
 
+/** How the main app was opened, for [resumeOnLaunch]. */
+enum class LaunchKind {
+    /** From the launcher (or recents after the process was gone): `ACTION_MAIN` with no link. */
+    Launcher,
+    /** Brought back from the background (recents) with nothing new asked for. */
+    Returned,
+    /** A link or notification to a particular screen, or the call's "open the app". */
+    Link,
+    /** Anything else (a configuration change, a system intent): never a reason to switch screens. */
+    Other,
+}
+
+/** What the intent asked for: a link to a screen, or the plain launcher action. */
+fun launchKind(action: String?, hasLink: Boolean): LaunchKind = when {
+    hasLink -> LaunchKind.Link
+    action == "android.intent.action.MAIN" -> LaunchKind.Launcher
+    else -> LaunchKind.Other
+}
+
+/**
+ * Whether opening the app should go straight back into the call [live] (today's, still going on;
+ * see [liveCall]): yes from the launcher or recents, so a meeting closed half way picks up where it
+ * was instead of a new one starting. Never when the person asked for another screen (a link, a
+ * notification) or chose the app over this very call ([choseAppOver], the call screen's "open the
+ * app"); Today's "call me again" is their way back then.
+ */
+fun resumeOnLaunch(kind: LaunchKind, live: Session?, choseAppOver: SessionId?): Boolean =
+    live != null && (kind == LaunchKind.Launcher || kind == LaunchKind.Returned) && live.id != choseAppOver
+
+/** A call state confirmed this recently is trusted when the app opens. */
+val FRESH_FOR: Duration = 30.seconds
+
+/** How long opening the app waits for the server before showing Today as usual. */
+val QUICK_REFRESH: Duration = 2.seconds
+
 // --- the call, app-wide ---
 
 /**
@@ -92,14 +129,27 @@ class CallTracker(private val sessions: SessionsRepository, private val clock: A
     /** The call going on right now, if any (see [liveCall]). */
     fun live(): Session? = liveCall(_session.value, clock.now(), clock.zone())
 
+    /** When [session] was last confirmed by the server (or by the app acting on it); null before. */
+    @Volatile private var confirmedAt: Instant? = null
+
+    /** The call the person left for the rest of the app on purpose ("open the app", a link elsewhere). */
+    @Volatile var choseAppOver: SessionId? = null
+        private set
+
     /** A session the app just got from the server. Only morning calls count; others leave it alone. */
     fun report(session: Session) {
         if (session.kind != SessionKind.MORNING_CALL) return
         _session.value = session
+        confirmedAt = clock.now()
     }
 
     fun ring(on: Boolean) {
         _ringing.value = on
+    }
+
+    /** The person chose the app over the call [id] (null: they went back into it). */
+    fun choseApp(id: SessionId?) {
+        choseAppOver = id
     }
 
     /** Asks the server for the running morning call. Returns false when it could not be reached. */
@@ -107,9 +157,20 @@ class CallTracker(private val sessions: SessionsRepository, private val clock: A
         is ApiResult.Success -> {
             val active = r.value
             if (active != null) report(active) else _session.value = null
+            confirmedAt = clock.now()
             true
         }
         is ApiResult.Failure -> false
+    }
+
+    /**
+     * The call going on, from what is known if it was confirmed within [maxAge], else after a quick
+     * refresh of at most [timeout]. Null when there is none, or when the server could not say in time.
+     */
+    suspend fun liveNow(maxAge: Duration = FRESH_FOR, timeout: Duration = QUICK_REFRESH): Session? {
+        val at = confirmedAt
+        if (at != null && clock.now() - at <= maxAge) return live()
+        return if (withTimeoutOrNull(timeout) { refresh() } == true) live() else null
     }
 
     /** Follows session changes from the feed until cancelled. */

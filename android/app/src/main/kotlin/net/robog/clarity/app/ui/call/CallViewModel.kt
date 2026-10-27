@@ -27,6 +27,7 @@ import net.robog.clarity.app.call.CallEntry
 import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.call.CallTracker
 import net.robog.clarity.app.call.callEntry
+import net.robog.clarity.app.call.liveCall
 import net.robog.clarity.app.call.SNOOZE_MINUTES
 import net.robog.clarity.app.data.seenSettings
 import net.robog.clarity.app.data.ApiResult
@@ -173,8 +174,11 @@ class CallViewModel(
             val seen = seenSettings(s, zone, clock.now())
             _state.update { it.copy(callTime = formatTime(seen.morningCall.at), pushToTalk = !s.micAlwaysOn) }
         }
-        val active = (sessions.active(SessionKind.MORNING_CALL) as? ApiResult.Success)?.value
-        active?.let(tracker::report)
+        // Unreachable server: what the app already knows, so a running call is never replaced by a new one.
+        val active = when (val r = sessions.active(SessionKind.MORNING_CALL)) {
+            is ApiResult.Success -> r.value?.also(tracker::report)
+            is ApiResult.Failure -> tracker.live()
+        }
         val entry = callEntry(active, tracker.ringing.value, clock.now(), zone)
         when (entry.screen) {
             CallEntry.Screen.Incoming -> _state.update { it.copy(screen = CallScreen.Incoming, session = entry.session) }
@@ -198,7 +202,10 @@ class CallViewModel(
         if (s.working || s.screen == CallScreen.InCall) return
         _state.update { it.copy(working = true, message = null) }
         viewModelScope.launch {
+            // Today's call still going on is picked back up, never replaced (the server would end it).
             val running = s.session?.takeIf { it.state == Session.State.ACTIVE || it.state == Session.State.BUSY }
+                ?.takeIf { liveCall(it, clock.now(), zone) != null }
+                ?: tracker.live()
             when (val r = if (running != null) ApiResult.Success(running) else sessions.start(SessionKind.MORNING_CALL)) {
                 is ApiResult.Success -> enterCall(r.value)
                 is ApiResult.Failure -> _state.update { it.copy(working = false, message = r.error.sentence()) }
@@ -210,6 +217,7 @@ class CallViewModel(
         notifier.cancelIncoming()
         tracker.ring(false)
         tracker.report(session)
+        tracker.choseApp(null) // back in the call
         _state.update { it.copy(screen = CallScreen.InCall, session = session, working = false, message = null, snoozedUntil = null) }
         if (foreground) voice.start(keepOn = micAlwaysOn)
     }

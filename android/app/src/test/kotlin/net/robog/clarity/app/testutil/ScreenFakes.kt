@@ -120,6 +120,8 @@ class ScriptedSessions(var active: Session? = null) : SessionsRepository {
     val controls = mutableListOf<SessionControl>()
     var startResult: ApiResult<Session>? = null
     var controlFailure: ApiError? = null
+    /** When set, asking for the active session fails (the server is unreachable). */
+    var activeFailure: ApiError? = null
     /** After `Next` the session is BUSY until [finishStage] (the agent is producing the stage). */
     var busyAfterNext = false
     var current: Session? = active
@@ -152,7 +154,8 @@ class ScriptedSessions(var active: Session? = null) : SessionsRepository {
     }
 
     override suspend fun active(kind: SessionKind): ApiResult<Session?> =
-        ApiResult.Success(current?.takeIf { it.kind == kind && it.state != Session.State.ENDED })
+        activeFailure?.let { ApiResult.Failure(it) }
+            ?: ApiResult.Success(current?.takeIf { it.kind == kind && it.state != Session.State.ENDED })
 
     fun finishStage() { current = current?.copy(state = Session.State.ACTIVE) }
 }

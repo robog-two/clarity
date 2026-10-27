@@ -74,9 +74,9 @@ import net.robog.clarity.shared.session.Settings
 
 private val call = SessionId("call1")
 
-private class CallRig(active: Session? = null, settings: Settings = Settings(homeZone = "UTC"), ringing: Boolean = false) {
+private class CallRig(active: Session? = null, settings: Settings = Settings(homeZone = "UTC"), ringing: Boolean = false, known: Session? = null, offline: Boolean = false) {
     val clock = FixedClock(T0)
-    val sessions = ScriptedSessions(active)
+    val sessions = ScriptedSessions(active).also { if (offline) it.activeFailure = ApiError.Unreachable("down") }
     val feed = ScreenFeed()
     val speech = ScreenSpeech()
     val settingsRepo = ScreenSettings(ApiResult.Success(settings))
@@ -90,7 +90,10 @@ private class CallRig(active: Session? = null, settings: Settings = Settings(hom
         feed = { feedOpens++; awaitCancellation() },
         actions = { awaitCancellation() },
     )
-    val tracker = CallTracker(sessions, clock).also { if (ringing) it.ring(true) }
+    val tracker = CallTracker(sessions, clock).also { t ->
+        if (ringing) t.ring(true)
+        known?.let(t::report)
+    }
     val front = FrontScreen()
     val store = InMemoryFeedStore()
     val ledger = RecordingLedger()
@@ -331,6 +334,23 @@ class CallViewModelTest {
         r.vm.answer()
         assertEquals(CallScreen.InCall, r.state.screen)
         assertTrue(r.sessions.started.isEmpty())
+    }
+
+    @Test fun anUnreachableServerStillRejoinsTheCallTheAppKnows() = withMain {
+        val r = CallRig(active = callSession(stage = CallStage.CHOOSE), known = callSession(stage = CallStage.CHOOSE), offline = true)
+        assertEquals(CallScreen.InCall, r.state.screen)
+        assertTrue(r.sessions.started.isEmpty(), "never a new session over today's")
+    }
+
+    @Test fun answeringWithoutTheScreenKnowingTheCallStillResumesIt() = withMain {
+        // The server could not be asked and nothing was known: the incoming screen. Then the app learns of the call.
+        val r = CallRig(active = callSession(stage = CallStage.COMMIT), offline = true)
+        assertEquals(CallScreen.Incoming, r.state.screen)
+        r.tracker.report(callSession(stage = CallStage.COMMIT))
+        r.vm.answer()
+        assertEquals(CallScreen.InCall, r.state.screen)
+        assertTrue(r.sessions.started.isEmpty())
+        assertEquals(CallStage.COMMIT, r.state.stage)
     }
 
     @Test fun aCallFromAnEarlierDayIsNotRejoined() = withMain {

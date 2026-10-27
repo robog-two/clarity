@@ -154,4 +154,67 @@ class CallTrackerTest {
         assertNull(tracker.live(), "hung up elsewhere: the ongoing call goes")
         job.cancel()
     }
+
+    @Test fun openingTheAppUsesAFreshStateOrAQuickRefresh() = runBlocking {
+        val clock = FixedClock(morning + 1.hours, berlin)
+        val sessions = CountingSessions(ScriptedSessions(call()))
+        val tracker = CallTracker(sessions, clock)
+        assertEquals(call(), tracker.liveNow(), "nothing known yet: asks the server")
+        assertEquals(1, sessions.actives)
+        clock.now += 10.seconds
+        assertEquals(call(), tracker.liveNow())
+        assertEquals(1, sessions.actives, "confirmed moments ago: no second request")
+        clock.now += 5.minutes
+        tracker.liveNow()
+        assertEquals(2, sessions.actives, "stale: asks again")
+    }
+
+    @Test fun anUnreachableServerOnOpenMeansNoCall() = runBlocking {
+        val sessions = ScriptedSessions(call())
+        val down = object : net.robog.clarity.app.data.SessionsRepository by sessions {
+            override suspend fun active(kind: SessionKind) =
+                net.robog.clarity.app.data.ApiResult.Failure(net.robog.clarity.app.data.ApiError.Unreachable("down"))
+        }
+        assertNull(CallTracker(down, FixedClock(morning, berlin)).liveNow(), "Today shows as usual")
+    }
+}
+
+private class CountingSessions(private val inner: ScriptedSessions) : net.robog.clarity.app.data.SessionsRepository by inner {
+    var actives = 0
+    override suspend fun active(kind: SessionKind): net.robog.clarity.app.data.ApiResult<Session?> {
+        actives++
+        return inner.active(kind)
+    }
+}
+
+class ResumeOnLaunchTest {
+    private val live = call()
+
+    @Test fun theLauncherOrRecentsGoStraightBackIntoTodaysCall() {
+        assertTrue(resumeOnLaunch(LaunchKind.Launcher, live, choseAppOver = null))
+        assertTrue(resumeOnLaunch(LaunchKind.Returned, live, choseAppOver = null))
+    }
+
+    @Test fun noCallGoingOnOpensTheAppAsUsual() {
+        assertFalse(resumeOnLaunch(LaunchKind.Launcher, null, null))
+    }
+
+    @Test fun aLinkOrNotificationOpensWhatItAskedFor() {
+        assertFalse(resumeOnLaunch(LaunchKind.Link, live, null))
+        assertFalse(resumeOnLaunch(LaunchKind.Other, live, null))
+    }
+
+    @Test fun leavingTheCallForTheAppIsRespected() {
+        assertFalse(resumeOnLaunch(LaunchKind.Launcher, live, choseAppOver = live.id))
+        assertFalse(resumeOnLaunch(LaunchKind.Returned, live, choseAppOver = live.id))
+        // That choice was about another call: today's new one still comes back.
+        assertTrue(resumeOnLaunch(LaunchKind.Launcher, live, choseAppOver = SessionId("yesterday")))
+    }
+
+    @Test fun theLaunchKindComesFromTheIntent() {
+        assertEquals(LaunchKind.Launcher, launchKind("android.intent.action.MAIN", hasLink = false))
+        assertEquals(LaunchKind.Link, launchKind("android.intent.action.VIEW", hasLink = true))
+        assertEquals(LaunchKind.Link, launchKind("android.intent.action.MAIN", hasLink = true))
+        assertEquals(LaunchKind.Other, launchKind(null, hasLink = false))
+    }
 }

@@ -113,6 +113,9 @@ class CallActivity : ComponentActivity() {
     }
 
     private fun openApp() {
+        // Chosen on purpose: opening the app later does not bounce back into this call.
+        val tracker = (application as ClarityApp).graph.callTracker
+        tracker.live()?.let { tracker.choseApp(it.id) }
         startActivity(
             Intent(Intent.ACTION_VIEW, DeepLink.Today.toUri().toUri(), this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
