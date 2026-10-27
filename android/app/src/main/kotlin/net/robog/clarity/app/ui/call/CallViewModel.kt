@@ -77,6 +77,8 @@ data class CallUiState(
     val mic: MicChipState = MicChipState.Off,
     val pushToTalk: Boolean = false,
     val micProblem: SpeechError? = null,
+    /** What the person is typing in the call. */
+    val draft: String = "",
     /** True while a control request is in flight. */
     val working: Boolean = false,
     val message: String? = null,
@@ -263,6 +265,23 @@ class CallViewModel(
             s.pushToTalk -> voice.start(keepOn = false)
             s.muted -> voice.unmute()
             else -> voice.mute()
+        }
+    }
+
+    fun onDraft(text: String) = _state.update { it.copy(draft = text) }
+
+    /** The composer's send: typed text goes to the call like speech does. A failed send gives the text back. */
+    fun sendTyped() {
+        val s = _state.value
+        val id = s.session?.id ?: return
+        val text = s.draft.trim()
+        if (text.isEmpty()) return
+        _state.update { it.copy(draft = "") }
+        viewModelScope.launch {
+            when (val r = feed.send(text, InputSource.TYPED, id)) {
+                is ApiResult.Success -> _state.update { it.copy(message = null) }
+                is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence(), draft = it.draft.ifEmpty { text }) }
+            }
         }
     }
 

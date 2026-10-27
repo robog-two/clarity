@@ -33,7 +33,20 @@ import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Urgency
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import net.robog.clarity.app.ui.ask.AskContent
+import net.robog.clarity.app.ui.ask.AskUiState
+import net.robog.clarity.app.ui.ask.askEntries
+import net.robog.clarity.app.ui.ask.askItems
+import net.robog.clarity.app.ui.components.ChatComposer
+import net.robog.clarity.app.ui.components.ChatPill
+import net.robog.clarity.app.ui.components.ComposerMic
+import net.robog.clarity.app.voice.MicAccess
+import net.robog.clarity.shared.session.CallStage
+import net.robog.clarity.shared.session.Session
+import net.robog.clarity.shared.session.SessionId
+import net.robog.clarity.shared.session.SessionKind
 
 private val at = Instant.parse("2026-10-26T14:04:00Z")
 
@@ -121,4 +134,76 @@ fun HeldList() = ClarityTheme(darkTheme = false) {
     Surface(color = MaterialTheme.colorScheme.surface) {
         HeldContent(HeldUiState(rows = heldRows(listOf(waiting, done), TimeZone.UTC), waiting = 1, allowedCount = 14), {}, {})
     }
+}
+
+// ---------- Ask: the main conversation with a morning meeting in it ----------
+
+private val meeting = Session(SessionId("m1"), SessionKind.MORNING_CALL, Session.State.ENDED, Instant.parse("2026-10-26T13:00:00Z"), stage = CallStage.HAND_OFF)
+
+private fun inMeeting(seq: Long, author: FeedItem.Author, vararg cards: Card) =
+    FeedItem(FeedItemId("f$seq"), seq, at, author, sessionId = meeting.id, cards = cards.toList())
+
+private val askThread = listOf(
+    item(1, FeedItem.Author.USER, Card.Said("Book my Ulta hair appointment for Friday", InputSource.TYPED)),
+    item(2, FeedItem.Author.AGENT, Card.Text("Booked Friday 4:30 at Ulta.")),
+    // The lead compacted here; the marker titles the stretch above it.
+    FeedItem(FeedItemId("f3"), 3, at, FeedItem.Author.AGENT, cards = emptyList(), topic = "Ulta Hair Appt"),
+    inMeeting(4, FeedItem.Author.AGENT, Card.Text("Morning. Dana’s contract came in overnight.")),
+    inMeeting(5, FeedItem.Author.USER, Card.Said("Let’s do Dana first.", InputSource.VOICE)),
+    inMeeting(6, FeedItem.Author.AGENT, Card.Text("Found the thread. Thursday 2:00 is clear for both of you."), Card.Proposal(waiting.id)),
+    item(7, FeedItem.Author.USER, Card.Said("what are you working on?", InputSource.TYPED)),
+    item(8, FeedItem.Author.AGENT, Card.Text("Nothing is running right now. Here’s what’s open."), waitingOn, plan),
+)
+
+private val askSessions = mapOf(meeting.id to meeting)
+
+@Composable
+private fun AskMeeting(dark: Boolean) = ClarityTheme(darkTheme = dark) {
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        val items = askItems(askThread, askSessions)
+        AskContent(
+            AskUiState(
+                items = items,
+                entries = askEntries(items, askSessions, TimeZone.UTC, LocalDate(2026, 10, 26)),
+                held = env.held,
+                draft = "and remind me about the school form",
+            ),
+            MicAccess(granted = true, refused = false, request = {}, openSettings = {}),
+            {}, {}, {}, {}, { _, _ -> },
+        )
+    }
+}
+
+@PreviewTest
+@Preview(widthDp = 412, heightDp = 915)
+@Composable
+fun AskWithMeetingLight() = AskMeeting(dark = false)
+
+@PreviewTest
+@Preview(widthDp = 412, heightDp = 915)
+@Composable
+fun AskWithMeetingDark() = AskMeeting(dark = true)
+
+/** The two pills: a compaction topic and a meeting, light and dark. */
+@PreviewTest
+@Preview(widthDp = 412)
+@Composable
+fun ChatPills() = Column {
+    Frame(dark = false) {
+        ChatPill("Ulta Hair Appt")
+        ChatPill("Morning meeting · 9:00 am")
+    }
+    Frame(dark = true) {
+        ChatPill("Ulta Hair Appt")
+        ChatPill("Morning meeting · Oct 26, 9:00 am")
+    }
+}
+
+/** The composer empty (send disabled) and with the mic muted in a call. */
+@PreviewTest
+@Preview(widthDp = 412)
+@Composable
+fun ComposerStates() = Frame(dark = false) {
+    ChatComposer("", {}, {}, ComposerMic(live = false, description = "talk"), {})
+    ChatComposer("", {}, {}, ComposerMic(live = false, muted = true, description = "Unmute"), {})
 }

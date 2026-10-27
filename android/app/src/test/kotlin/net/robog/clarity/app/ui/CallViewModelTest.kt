@@ -283,6 +283,31 @@ class CallViewModelTest {
         assertNull(r.state.live)
     }
 
+    @Test fun typedTextIsSentAsTypedInputOnTheSessionAndKeepsTheMic() = withMain {
+        val r = CallRig(active = callSession())
+        r.vm.onDraft("  and the school form  ")
+        r.vm.sendTyped()
+        assertEquals(listOf(Triple<String, InputSource, SessionId?>("and the school form", InputSource.TYPED, call)), r.feed.sent)
+        assertEquals("", r.state.draft)
+        assertEquals(listOf("start(true)"), r.speech.calls, "typing leaves the mic alone")
+    }
+
+    @Test fun aFailedTypedSendGivesTheTextBack() = withMain {
+        val r = CallRig(active = callSession())
+        r.feed.sendResult = ApiResult.Failure(ApiError.Unreachable("x"))
+        r.vm.onDraft("hello")
+        r.vm.sendTyped()
+        assertEquals("hello", r.state.draft)
+        assertNotNull(r.state.message)
+    }
+
+    @Test fun blankTypedTextIsNotSent() = withMain {
+        val r = CallRig(active = callSession())
+        r.vm.onDraft("   ")
+        r.vm.sendTyped()
+        assertTrue(r.feed.sent.isEmpty())
+    }
+
     @Test fun muteAndUnmuteFollowTheMicState() = withMain {
         val r = CallRig(active = callSession())
         r.vm.toggleMute()

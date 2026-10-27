@@ -54,6 +54,7 @@ object FeedItems : Table("feed_item") {
     val batchState = text("batch_state").nullable()
     val releasedAt = timestamp("released_at").nullable()
     val notifyAbout = jsonb<List<Handle>>("notify_about", ClarityJson).nullable()
+    val topic = text("topic").nullable()
     override val primaryKey = PrimaryKey(seq)
 }
 

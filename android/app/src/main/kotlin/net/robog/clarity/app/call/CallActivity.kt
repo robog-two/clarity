@@ -91,6 +91,8 @@ class CallActivity : ComponentActivity() {
                         onReplay = viewModel::replay,
                         onCloseReplay = viewModel::closeReplay,
                         onOpenApp = ::openApp,
+                        onDraft = viewModel::onDraft,
+                        onSend = viewModel::sendTyped,
                     )
                 }
             }

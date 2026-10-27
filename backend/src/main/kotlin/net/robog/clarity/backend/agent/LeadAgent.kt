@@ -387,6 +387,8 @@ class LeadAgent(
         trackedJournal.append(threadId, Message.summary(summary))
         lastPromptTokens = null
         threads.markCompacted(clock.now())
+        // A pill in the app's chat names what the compacted stretch was about.
+        postCompactionTopic(runtime.bind(AgentRole.TRIAGE), feed, summary)
     }
 
     private suspend fun afterTurn(terminal: HarnessEvent.Terminal?) {

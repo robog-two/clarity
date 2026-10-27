@@ -42,6 +42,12 @@ data class FeedItem(
      * Optional on the wire; absent means "show in the app", so old stored JSON and old servers still decode.
      */
     val notify: String = NOTIFY_IN_APP,
+    /**
+     * Set on a topic marker: a 2–4 word title ("Ulta Hair Appt") for the stretch of the lead's
+     * conversation that ended in a compaction. A marker has no cards, so apps that predate the
+     * field show nothing for it.
+     */
+    val topic: String? = null,
 ) {
     @Serializable
     enum class Author {
