@@ -187,11 +187,6 @@ class ExposedTaskStore(
         rows.map { it.toTask(runs[it[AgentTasks.id]].orEmpty()) }
     }
 
-    override suspend fun get(id: TaskId): AgentTask? {
-        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
-        return database.tx { AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask() }
-    }
-
     override suspend fun createdAt(id: TaskId): Instant? {
         val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx { AgentTasks.select(AgentTasks.createdAt).where { AgentTasks.id eq uuid }.singleOrNull()?.get(AgentTasks.createdAt) }
@@ -212,6 +207,13 @@ class ExposedTaskStore(
         } ?: return false
         feed.publish(FeedEvent.TaskChanged(linked))
         return true
+    }
+
+    override suspend fun get(id: TaskId): AgentTask? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx {
+            AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask(runsOf(listOf(uuid))[uuid].orEmpty())
+        }
     }
 }
 

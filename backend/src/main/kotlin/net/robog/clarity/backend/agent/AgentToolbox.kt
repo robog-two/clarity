@@ -127,6 +127,7 @@ class AgentToolbox(
     private val session: SessionTools,
     private val vault: VaultTools,
     private val browser: BrowserPilot,
+    private val nudges: NudgeTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -150,6 +151,7 @@ class AgentToolbox(
         }
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
+        if (forLead) addAll(nudges.all())
     }.let { guarded(scope, it) }
 
     /**
