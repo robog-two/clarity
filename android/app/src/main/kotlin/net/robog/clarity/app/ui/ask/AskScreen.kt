@@ -1,50 +1,37 @@
 package net.robog.clarity.app.ui.ask
 
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.LoadingIndicator
-import androidx.compose.ui.unit.sp
-import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.cards.CardEnv
-import net.robog.clarity.app.ui.cards.FeedItemView
-import net.robog.clarity.app.ui.cards.LiveBubble
+import net.robog.clarity.app.ui.components.ChatComposer
+import net.robog.clarity.app.ui.components.ChatTranscript
+import net.robog.clarity.app.ui.components.ComposerMic
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
-import net.robog.clarity.app.ui.components.PrimaryButton
-import net.robog.clarity.app.ui.components.SecondaryButton
-import net.robog.clarity.app.ui.components.FollowNewest
+import net.robog.clarity.app.ui.components.ScreenGutter
 import net.robog.clarity.app.ui.components.arrivingItem
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.voice.MicAccess
@@ -88,8 +75,7 @@ fun AskContent(
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
 ) {
     val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message)
-    val listState = rememberLazyListState()
-    FollowNewest(listState, state.items.size)
+    val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     Column(modifier.fillMaxSize().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 12.dp),
@@ -97,7 +83,7 @@ fun AskContent(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Ask", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 24.sp, lineHeight = 30.sp))
-            if (state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn) MicStateChip(state.mic)
+            if (listening) MicStateChip(state.mic)
             else if (state.busy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 LoadingIndicator(Modifier.size(24.dp))
                 Kicker("working…")
@@ -105,35 +91,33 @@ fun AskContent(
             else Kicker("replies in text")
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        // Built bottom-up (newest first, reverseLayout) so the thread opens at the latest message and a
-        // reply that grows while streaming stays pinned to the bottom without any scrolling.
-        LazyColumn(
-            Modifier.weight(1f).fillMaxWidth(),
-            state = listState,
-            reverseLayout = true,
-            contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
-        ) {
-            if (state.suggestions.isNotEmpty()) {
-                item(key = "suggestions") {
-                    Column(arrivingItem().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Kicker("try saying")
-                        state.suggestions.forEach { s ->
-                            OutlinedButton(
-                                onClick = { onSuggest(s) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                shape = MaterialTheme.shapes.extraLarge,
-                            ) { Text("“$s”", style = MaterialTheme.clarityText.readingSmall) }
+        ChatTranscript(
+            entries = state.entries,
+            live = state.live,
+            env = env,
+            modifier = Modifier.weight(1f),
+            newest = {
+                if (state.suggestions.isNotEmpty()) {
+                    item(key = "suggestions") {
+                        Column(arrivingItem().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Kicker("try saying")
+                            state.suggestions.forEach { s ->
+                                OutlinedButton(
+                                    onClick = { onSuggest(s) },
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                                    shape = MaterialTheme.shapes.extraLarge,
+                                ) { Text("“$s”", style = MaterialTheme.clarityText.readingSmall) }
+                            }
                         }
                     }
                 }
-            }
-            state.live?.let { live -> item(key = "live") { LiveBubble(live, arrivingItem()) } }
-            items(state.items.asReversed(), key = { it.seq }) { FeedItemView(it, arrivingItem(), env = env) }
-            if (state.items.isEmpty() && state.live == null) {
-                item(key = "empty") { Hint("Ask me anything about your day. I’ll check your sources and answer here.") }
-            }
-        }
+            },
+            oldest = {
+                if (state.entries.isEmpty() && state.live == null) {
+                    item(key = "empty") { Hint("Ask me anything about your day. I’ll check your sources and answer here.") }
+                }
+            },
+        )
         if (state.sync == SyncState.Unauthorized) {
             ErrorBox("Your server doesn’t accept this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
@@ -142,32 +126,12 @@ fun AskContent(
             MicRationale(mic.refused, mic.request, mic.openSettings, Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            TextField(
-                value = state.draft,
-                onValueChange = onDraft,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp).semantics { contentDescription = "ask anything" },
-                placeholder = { Text("Type, or tap talk", style = MaterialTheme.clarityText.chat) },
-                textStyle = MaterialTheme.clarityText.chat,
-                shape = MaterialTheme.shapes.extraLarge,
-                colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSubmit() }),
-                maxLines = 4,
-            )
-            if (state.canSend) PrimaryButton("send", onSubmit) else SecondaryButton(
-                if (state.mic == MicChipState.Off) "talk" else "stop",
-                onTalk,
-            )
-        }
+        ChatComposer(
+            draft = state.draft,
+            onDraft = onDraft,
+            onSend = onSubmit,
+            mic = ComposerMic(live = listening, description = if (state.mic == MicChipState.Off) "talk" else "stop"),
+            onMic = onTalk,
+        )
     }
 }

@@ -7,6 +7,18 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
+import net.robog.clarity.app.data.AppClock
+import net.robog.clarity.app.data.SessionsRepository
+import net.robog.clarity.app.ui.components.ChatEntry
+import net.robog.clarity.app.ui.onboarding.formatTime
+import net.robog.clarity.shared.session.Session
+import net.robog.clarity.shared.session.SessionId
+import net.robog.clarity.shared.session.SessionKind
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
@@ -40,14 +52,65 @@ val AskSuggestions: List<String> = listOf(
     "Did Alex send the deck yet?",
 )
 
-/** The main feed: everything that is not part of a call, interview or amendment. */
-fun askItems(items: List<FeedItem>): List<FeedItem> = items.filter { it.sessionId == null }.sortedBy { it.seq }
+/**
+ * Sessions whose items also show in Ask. Calls, interviews and amendments all run on the lead
+ * agent's one thread, so they are part of the same conversation.
+ */
+val AskSessionKinds: Set<SessionKind> = setOf(SessionKind.MORNING_CALL, SessionKind.VALUES_INTERVIEW, SessionKind.AMEND)
+
+/**
+ * The main conversation: items outside any session, plus items of sessions in [AskSessionKinds].
+ * An item of a session not in [sessions] yet stays hidden until its kind is known.
+ */
+fun askItems(items: List<FeedItem>, sessions: Map<SessionId, Session> = emptyMap()): List<FeedItem> =
+    items.filter { item -> item.sessionId.let { it == null || sessions[it]?.kind in AskSessionKinds } }.sortedBy { it.seq }
+
+/** The sessions [items] belong to. */
+fun sessionIds(items: List<FeedItem>): Set<SessionId> = items.mapNotNullTo(mutableSetOf()) { it.sessionId }
+
+/** "Morning meeting · 9:00 am", with the date when it was not [today]. */
+fun sessionLabel(session: Session, zone: TimeZone, today: LocalDate): String {
+    val name = when (session.kind) {
+        SessionKind.MORNING_CALL -> "Morning meeting"
+        SessionKind.VALUES_INTERVIEW -> "Values interview"
+        SessionKind.AMEND -> "Talking it through"
+    }
+    val local = session.startedAt.toLocalDateTime(zone)
+    val time = formatTime(local.time)
+    val day = local.date
+    val month = day.month.name.lowercase().replaceFirstChar { it.titlecase() }.take(3)
+    return if (day == today) "$name · $time" else "$name · $month ${day.day}, $time"
+}
+
+/**
+ * [items] (from [askItems], oldest first) with a labelled divider where a session starts and a
+ * plain one where the main conversation picks up again.
+ */
+fun askEntries(items: List<FeedItem>, sessions: Map<SessionId, Session>, zone: TimeZone, today: LocalDate): List<ChatEntry> {
+    val entries = mutableListOf<ChatEntry>()
+    var current: SessionId? = null
+    for (item in items) {
+        val id = item.sessionId
+        if (id != current) {
+            val session = id?.let { sessions[it] }
+            when {
+                session != null -> entries += ChatEntry.Divider("start-$id-${item.seq}", sessionLabel(session, zone, today))
+                current != null -> entries += ChatEntry.Divider("end-$current-${item.seq}", null)
+            }
+            current = id
+        }
+        entries += ChatEntry.Message(item)
+    }
+    return entries
+}
 
 /** Suggestions only while there is nothing else on screen and the agent is not working. */
 fun showSuggestions(items: List<FeedItem>, busy: Boolean, live: String?): Boolean = items.isEmpty() && !busy && live == null
 
 data class AskUiState(
     val items: List<FeedItem> = emptyList(),
+    /** [items] with the session dividers, for the transcript. */
+    val entries: List<ChatEntry> = emptyList(),
     val held: Map<HeldActionId, HeldAction> = emptyMap(),
     val tasks: Map<TaskId, AgentTask> = emptyMap(),
     val draft: String = "",
@@ -72,9 +135,14 @@ class AskViewModel(
     private val gate: ApprovalGate,
     speech: SpeechInput,
     private val alwaysAllow: AlwaysAllow,
+    private val sessions: SessionsRepository,
+    private val clock: AppClock,
 ) : ViewModel() {
     private val _state = MutableStateFlow(AskUiState())
     val state: StateFlow<AskUiState> = _state.asStateFlow()
+
+    /** Sessions seen in the feed, looked up once each; a session's kind never changes. */
+    private val known = MutableStateFlow<Map<SessionId, Session>>(emptyMap())
 
     private val voice = VoiceCapture(speech) { text -> deliver(text, InputSource.VOICE) }
 
@@ -84,16 +152,30 @@ class AskViewModel(
         viewModelScope.launch { voice.error.collect { e -> _state.update { it.copy(micProblem = e) } } }
         viewModelScope.launch { voice.mic.collect { m -> _state.update { it.copy(mic = micChipState(m)) } } }
         viewModelScope.launch {
-            combine(feed.items, feed.held, feed.tasks, feed.agentBusy, feed.syncState) { items, held, tasks, busy, sync ->
+            // Looks sessions up as their ids appear; one that failed is tried again when the set of ids changes.
+            feed.items.map(::sessionIds).distinctUntilChanged().collect { ids ->
+                for (id in ids - known.value.keys) {
+                    (sessions.get(id) as? ApiResult.Success)?.value?.let { s -> known.update { it + (id to s) } }
+                }
+            }
+        }
+        viewModelScope.launch {
+            val conversation = combine(feed.items, known) { items, sessions ->
+                val zone = clock.zone()
+                val shown = askItems(items, sessions)
+                shown to askEntries(shown, sessions, zone, clock.now().toLocalDateTime(zone).date)
+            }
+            combine(conversation, feed.held, feed.tasks, feed.agentBusy, feed.syncState) { (items, entries), held, tasks, busy, sync ->
                 AskUiState(
-                    items = askItems(items),
+                    items = items,
+                    entries = entries,
                     held = held.associateBy { it.id },
                     tasks = tasks.associateBy { it.id },
                     busy = busy,
                     sync = sync,
                 )
             }.collect { fresh ->
-                _state.update { it.copy(items = fresh.items, held = fresh.held, tasks = fresh.tasks, busy = fresh.busy, sync = fresh.sync) }
+                _state.update { it.copy(items = fresh.items, entries = fresh.entries, held = fresh.held, tasks = fresh.tasks, busy = fresh.busy, sync = fresh.sync) }
             }
         }
     }
