@@ -49,6 +49,8 @@ object Amendments : Table("amendment") {
     val status = text("status")
     val createdAt = timestamp("created_at")
     val autonomy = jsonb<AutonomyChange>("autonomy", ClarityJson).nullable()
+    val closedReason = text("closed_reason").nullable()
+    val closedAt = timestamp("closed_at").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 

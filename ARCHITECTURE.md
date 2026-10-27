@@ -427,6 +427,12 @@ The person can approve (optionally with an edited draft), decline, or **talk abo
 session where they explain, and the agent either revises the action or proposes an
 **amendment** (old line → new line, with reason). Saving an amendment bumps the constitution
 version; the lead gets a system message with the change.
+Proposals do not pile up: proposing an equal change (same line, normalized text, tier change and
+held action) returns the one already waiting; saving one supersedes waiting proposals with the same
+text or for the same line (as does any change to that line); a proposal expires when the amend talk
+that made it ends unsaved (only that talk can save it) or after 7 days. A startup pass and a
+10-minute job apply the same rules. Closed rows keep their history (`superseded`/`expired` with a
+`closed_reason`) and reach the app as `discarded` with `closedReason`.
 
 ### Action outbox
 
@@ -451,6 +457,10 @@ The agent can log in and pay for things without ever seeing a password or card n
   check, expiry, CVC, name, address, phone, OTP) validated on the phone (validators are pure
   Kotlin in `:shared`). The phone encrypts before upload. The agent only learns the new
   credential's id and metadata.
+  One form per site (registrable domain) and kind is open at a time: asking again returns it.
+  Saving a credential closes the other open forms for that site and kind (`superseded`), and
+  forms nobody fills in close after 7 days (`expired`); the app sees them as cancelled with a
+  `closedReason`.
 - **Using a credential.** The agent never sees a secret. It writes placeholders such as
   `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g. "type
   `[secret:bank_login_password]` into uid e12". The backend's browser tool wrapper finds the
