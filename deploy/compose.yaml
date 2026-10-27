@@ -93,6 +93,13 @@ services:
       CLARITY_MEMORY_EMBEDDINGS: ${CLARITY_MEMORY_EMBEDDINGS:-}
       CLARITY_MEMORY_EMBEDDINGS_MODEL: ${CLARITY_MEMORY_EMBEDDINGS_MODEL:-}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
+      # Review gate: before each periodic review a decision model (OpenRouter, on whenever it has a key)
+      # judges whether what changed needs the lead now; any error wakes the lead. Blank = default.
+      CLARITY_DECISIONS: ${CLARITY_DECISIONS:-}
+      CLARITY_DECISION_MODEL: ${CLARITY_DECISION_MODEL:-}
+      CLARITY_REVIEW_GATE: ${CLARITY_REVIEW_GATE:-}
+      CLARITY_REVIEW_GATE_THRESHOLD: ${CLARITY_REVIEW_GATE_THRESHOLD:-}
+      CLARITY_REVIEW_MAX_QUIET: ${CLARITY_REVIEW_MAX_QUIET:-}
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}

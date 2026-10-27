@@ -42,17 +42,36 @@ import net.robog.clarity.shared.time.zoneOrUtc
 
 private val log = KotlinLogging.logger {}
 
-/** Asks the lead to look over what changed since the last review and revisit anything waiting on information. */
+/**
+ * Asks the lead to look over what changed since its last review and revisit anything waiting on
+ * information. With the review gate on ([ReviewGate]) a decision model first judges whether
+ * anything needs the lead now; a skipped review leaves its window open, so the next review covers
+ * it. Any failure of the gate wakes the lead as if there were no gate.
+ */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class PeriodicReviewJob(private val config: AgentConfig, private val inbox: InboxStore) : ScheduledJob {
-    override val name = "periodic-review"
+class PeriodicReviewJob(private val config: AgentConfig, private val inbox: InboxStore, private val gate: ReviewGate) : ScheduledJob {
+    override val name = REVIEW_JOB
 
     override fun schedule(settings: Settings) = Schedule.Every(config.reviewInterval)
 
     override suspend fun fire(context: FireContext) {
-        val since = context.lastRunAt ?: (context.now - config.reviewInterval)
-        val sinceLocal = LocalTimes.format(since, zoneOrUtc(context.settings.homeZone))
+        val zone = zoneOrUtc(context.settings.homeZone)
+        var since = context.lastRunAt ?: (context.now - config.reviewInterval)
+        if (gate.active) {
+            val (verdict, lastWake) = try {
+                gate.check(context.lastRunAt, context.now, zone)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn(e) { "review gate failed; reviewing as usual" }
+                GateVerdict(true, "gate failed") to null
+            }
+            if (!verdict.wake) return
+            // Cover everything since the lead last reviewed, including skipped windows.
+            if (lastWake != null && lastWake < since) since = lastWake
+        }
+        val sinceLocal = LocalTimes.format(since, zone)
         inbox.enqueue(
             InboxItem.JobDue(
                 job = name,

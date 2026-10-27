@@ -85,6 +85,14 @@ private class Lookup(
     }
 
     context(_: Raise<ConfigError>)
+    fun fraction(envName: String, path: String, default: Double): Double {
+        val raw = string(envName, path) ?: return default
+        val value = raw.toDoubleOrNull()
+        if (value == null || value !in 0.0..1.0) raise(ConfigError.Invalid(envName, raw, "expected a number from 0 to 1"))
+        return value
+    }
+
+    context(_: Raise<ConfigError>)
     fun bool(envName: String, path: String, default: Boolean): Boolean {
         val raw = string(envName, path) ?: return default
         return raw.lowercase().toBooleanStrictOrNull()
@@ -238,6 +246,13 @@ private class Lookup(
                     embeddingDimensions = int("CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS", "agent.memory.embeddingDimensions", 1024, min = 0),
                 ),
                 openRouterRouting = openRouterRouting(),
+                decisions = DecisionConfig(
+                    enabled = bool("CLARITY_DECISIONS", "agent.decisions.enabled", true),
+                    model = string("CLARITY_DECISION_MODEL", "agent.decisions.model") ?: DEFAULT_DECISION_MODEL,
+                    reviewGate = bool("CLARITY_REVIEW_GATE", "agent.decisions.reviewGate", true),
+                    reviewThreshold = fraction("CLARITY_REVIEW_GATE_THRESHOLD", "agent.decisions.reviewThreshold", 0.3),
+                    reviewMaxQuiet = duration("CLARITY_REVIEW_MAX_QUIET", "agent.decisions.reviewMaxQuiet", Duration.parse("8h")),
+                ),
             ),
         )
     }
