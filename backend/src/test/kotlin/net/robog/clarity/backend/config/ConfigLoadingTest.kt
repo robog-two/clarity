@@ -222,4 +222,34 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_MCP_SERVERS" to "browser=http://b/mcp")).getOrNull()!!.agent.mcpServers shouldBe
             listOf(McpServerConfig("browser", "http://b/mcp"))
     }
+
+    test("web search: on, parallel in fast mode, 10 searches a helper run; firecrawl is refused (zero data retention)") {
+        load().getOrNull()!!.agent.webSearch shouldBe WebSearchConfig()
+        val custom = load(
+            mapOf(
+                "CLARITY_WEB_SEARCH_ENGINE" to "exa",
+                "CLARITY_WEB_SEARCH_MODE" to "",
+                "CLARITY_WEB_SEARCH_MAX_SEARCHES" to "4",
+                "CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS" to "Pinterest.com, quora.com",
+            ),
+        ).getOrNull()!!.agent.webSearch
+        custom.engine shouldBe "exa"
+        custom.mode shouldBe null
+        custom.maxSearchesPerRun shouldBe 4
+        custom.excludedDomains shouldBe listOf("pinterest.com", "quora.com")
+        load(mapOf("CLARITY_WEB_SEARCH" to "false")).getOrNull()!!.agent.webSearch.tool() shouldBe null
+        load(mapOf("CLARITY_WEB_SEARCH_ENGINE" to "firecrawl")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+        load(mapOf("CLARITY_WEB_SEARCH_MAX_RESULTS" to "40")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+    }
+
+    test("reports: the render service and a 500 MB cache by default") {
+        val reports = load().getOrNull()!!.reports
+        reports.renderUrl shouldBe "http://render:8950"
+        reports.renderKeyFile shouldBe "/run/secrets/render_key"
+        reports.cacheMaxBytes shouldBe 500L * 1024 * 1024
+        val custom = load(mapOf("CLARITY_REPORTS_CACHE_MAX_MB" to "50", "CLARITY_RENDER_URL" to "http://127.0.0.1:18950", "CLARITY_RENDER_TIMEOUT" to "2m")).getOrNull()!!.reports
+        custom.cacheMaxBytes shouldBe 50L * 1024 * 1024
+        custom.renderUrl shouldBe "http://127.0.0.1:18950"
+        custom.renderTimeout shouldBe 2.minutes
+    }
 })

@@ -208,7 +208,7 @@ class HelperManager(
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
-                if (event is HarnessEvent.Called && event.usage.webSearchRequests > 0) runScope.taint()
+                if (searchedIn(event)) runScope.taint()
                 if (event is HarnessEvent.Terminal) terminal = event
             }
             harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { onEvent(it) }
@@ -248,6 +248,9 @@ data class HelperRunPlan(val tools: List<String>?, val webSearch: WebSearchTool?
 fun helperRunPlan(stored: List<String>?, search: WebSearchTool?): HelperRunPlan =
     if (stored != null && WEB_SEARCH in stored) HelperRunPlan(researchTools(stored).first, search)
     else HelperRunPlan(stored, null)
+
+/** Pure: whether [event] is a model call that ran web searches (the run has then read outside content). */
+fun searchedIn(event: HarnessEvent): Boolean = event is HarnessEvent.Called && event.usage.webSearchRequests > 0
 
 /** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost. */
 fun searchGrantText(dropped: List<String>): String =

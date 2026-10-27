@@ -313,6 +313,13 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "create_trigger" -> "Set up a watch" to arg("name")
         "delete_trigger" -> "Removed a watch" to null
         "list_triggers" -> "Checked watches" to null
+        "create_report" -> "Wrote a document" to arg("title")
+        "edit_report" -> "Edited a document" to null
+        "set_report_style" -> "Changed how a document looks" to null
+        "read_report" -> "Read a document" to null
+        "list_reports" -> "Checked documents" to null
+        "present_report" -> "Showed you a document" to null
+        "cite_sources" -> "Attached sources to a document" to null
         else -> "Used " + tool.replace("__", " ").replace('_', ' ') to safeArgs(input)
     }
 }
