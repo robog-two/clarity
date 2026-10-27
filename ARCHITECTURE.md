@@ -275,6 +275,78 @@ since the last review, skipped windows included. Each call is a `model_call` row
 `decision`; each verdict is one info log line. The model has no tools, so injected text can at
 most flip the answer. That is why it is never used for the constitution guard.
 
+### The helper's browser (pilot)
+
+A helper does not see the browser MCP's raw tools. It gets a small planner surface
+(`agent/BrowserPilot.kt`): `look(scope?)`, `act(intent, expect, value?)`, `read(scope?)`,
+`tabs(select?|close?)`, `go(url)`, `back()`, `wait(text|seconds)`, `sign_in(credential)`,
+`screenshot` and `downloads`. The text model plans in words; **Jev** (`CLARITY_JEV_MODEL`, default
+the dated `typesafe/jev-1.14-20261014`, the same decisions endpoint and zero-data-retention
+preferences as the review gate) grounds, double-checks and verifies each step on a screenshot. What
+Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny print never reach it.
+
+- **look** runs Clarity's observation script (`resources/browser/observe.js`, `evaluate_script` in
+  the isolated `clarity` sandbox realm) instead of the MCP snapshot, which stops at DOM depth 10.
+  It walks every element, open shadow roots and same-origin frames. It keeps visible controls,
+  headings and short text with role, name (80 chars), value or state, autocomplete and link
+  target, stamps a stable ref on each, and stays within about 1.5k tokens ("N more – narrow with
+  scope"). Its header shows the tabs with their openers, any dialog, the page, and the sign-in
+  state of each site in the run (phase, codes sent and when). It never returns password values or
+  the values of fields Clarity typed a secret into.
+- **act** takes one screenshot and makes one Jev call: a `noul` "is <intent> visible?" and a `box`.
+  A box always comes back, so the noul decides. Below `CLARITY_JEV_VISIBLE_THRESHOLD` (0.5) the
+  answer is "not found" plus the text view, and nothing is clicked. The target is the element under
+  the box centre (`elementFromPoint`, through shadow roots). With `CLARITY_BROWSER_TEXT_GROUNDING`,
+  the text decision model can confirm an exact name match from the text view instead (a Decision-1
+  `choice` over up to 20 refs); the screenshot path stays the default. The target is clicked or
+  filled with trusted input: by the snapshot uid of a one-time `data-clarity-ref` token, or, in a
+  shadow root or frame the selector cannot reach, by focusing it and sending keys.
+- **Gate.** Every pilot step goes through `BrowserGate.perform`. Placeholders, the deterministic
+  rules (`BrowserRules`), held approvals, never-alone payments, code waits and scrubbing work as
+  before. Jev adds a `choice` of `browse | sign_in | commit | unsure`, asked on the screenshot with
+  the target outlined in red (`combineVerdict`). Rules that ask always win. A Jev error asks the
+  person, and so does a commit (p ≥ 0.5). A step the rules pass also needs Jev to be sure
+  (p ≥ 0.9) that it is `browse` (or `sign_in` under a released login); otherwise it goes to the
+  triage. With `CLARITY_JEV_MAY_APPROVE` (default false), a sure `browse` also passes steps the
+  rules leave to the triage.
+- **Change report.** Built in code after every step: address and title, tabs opened or closed (a
+  `list_pages` diff), dialogs, new visible text (from a MutationObserver the script installs), the
+  target's new state, a code field appearing, and Jev's `noul` "did this happen: <expect>?" on the
+  after-screenshot. It says "No visible change" outright. After two of those in a row, `act`
+  refuses until the helper calls `look`. A helper's browser task stops after
+  `CLARITY_BROWSER_MAX_ACTIONS` (25) actions.
+- **Tabs.** A tab that a step opens is selected at once ("Opened tab 1 (opener 0)"). When a popup
+  closes, its opener is selected again. While a popup that a tab opened is still open, `go` and
+  `back` in that tab are refused ("finish or close the sign-in tab first").
+- **Code guard.** Kept per run and site: the codes sent, when, the labels that sent them, and the
+  phase. Once a code was sent, a step is refused for 10 minutes ("a code was sent at HH:MM – use
+  ask_code") when the rules flag it (a resend-like label, or a label that already sent a code) or
+  Jev does (a `noul` "would this send another code or restart sign-in?" with p ≥
+  `CLARITY_JEV_RESEND_THRESHOLD`, 0.3). After two codes for a site such a step is refused for good,
+  and the helper hands back to the person.
+- **sign_in** fills the fields it finds by autocomplete and type with the credential's
+  placeholders, submits, and asks Jev where the sign-in stands (`signed_in | needs_code |
+  choose_method | needs_login | error | other`). On a code page it asks the person through
+  `ask_code`, types the code placeholder (the fill waits for the person) and verifies. Its own
+  steps go through the rules and the triage without a Jev step check.
+- **Secrets on screen.** For 8 actions on a site after a secret was typed (the screenshot quiet
+  period), `screenshot` is still refused to the model. Jev gets those frames with the
+  secret-filled fields painted black, and they are never stored.
+- **Audit trail** (`browser_step`, V20). Per step: the run, sequence, page, intent and expect, the
+  before screenshot and Jev's box, the element hit, every Jev and Decision answer with its
+  probabilities, latency and cost, the gate outcome, the action sent (placeholders only), the after
+  screenshot and the change report. Frames from the quiet period are not stored (`*_withheld`). The
+  app can read it, read-only and device-authenticated: `GET /api/v1/browser/steps?run=<id>`,
+  `GET …/{id}/before.png`, `…/{id}/after.png`. Each Jev and Decision call is also a `model_call`
+  row (role `decision`).
+- **Fails closed.** With no decision model, an error or a refusal, the step is not taken ("I never
+  click blind") or it goes to the person.
+
+Follow-ups. The harness keeps tool results append-only, because the prompt cache depends on it, so
+older `look` results are not collapsed. The screenshot is always of the selected tab: the MCP has
+no per-tab capture and no coordinate click, and `send_bidi_command` is not in its default tool
+preset.
+
 ### Durability (journal instead of a workflow engine)
 
 Temporal is the textbook answer, but for one person on one box it adds a server and a schema
@@ -400,8 +472,8 @@ Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remembe
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls. External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
-plus acting browser tools (click, type, fill, …), which pass a fast guard check with page
-context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
+plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
+Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
 network, no credentials).
 
 ## Governance
@@ -477,8 +549,9 @@ The agent can log in and pay for things without ever seeing a password or card n
   forms nobody fills in close after 7 days (`expired`); the app sees them as cancelled with a
   `closedReason`.
 - **Using a credential.** The agent never sees a secret. It writes placeholders such as
-  `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g. "type
-  `[secret:bank_login_password]` into uid e12". The backend's browser tool wrapper finds the
+  `[secret:credit_card_1_cvv]` (credential name + field) into browser tool inputs, e.g.
+  `act(intent="the password field", value="[secret:bank_login_password]")`, or lets `sign_in`
+  write them. The backend's browser tool wrapper finds the
   placeholders, checks there is a live **grant**, substitutes the values, and calls the browser
   MCP; the model's tool call, the journal and logs only ever hold the placeholder.
   A grant is created by an approval: the first placeholder for a credential on a site makes a
@@ -534,8 +607,10 @@ Two containers on the internal `tools` network, each an MCP server the backend c
   Badger preinstalled in a fixed profile (ad/tracker blocking makes pages lighter and the
   accessibility snapshot shorter), driven by Mozilla's Firefox DevTools MCP server over WebDriver
   BiDi; exposed as streamable HTTP. Reaches the public internet only through the egress proxy;
-  no access to other internal networks. Page reading order: accessibility/DOM snapshot with element uids first, screenshot
-  only when needed. Screenshots and long pages go to a helper, not the lead.
+  no access to other internal networks. Only helpers browse, through the pilot (see "The
+  helper's browser"): Clarity's observation script for text, screenshots for Jev. The lead never
+  browses. `computers/browser/pilot-e2e/` starts a throwaway copy with a test login site for the
+  pilot's live test.
 
 The cheapest-first ladder in the system prompt: what the agent already knows → domain tools →
 web search/fetch (server tools) → browser → sandbox → ask the person.

@@ -247,6 +247,8 @@ data class LookHeader(
     val openers: Map<Int, Int>,
     val signIn: SignInState?,
     val zone: TimeZone,
+    /** Sign-ins on other sites in this run (an identity provider's, once back on the shop). */
+    val others: Map<String, SignInState> = emptyMap(),
 )
 
 /** About 1.5k tokens of text. */
@@ -282,6 +284,7 @@ fun formatLook(page: PageObservation, header: LookHeader, budget: Int = LOOK_BUD
     appendLine("Page: ${page.title.take(80)} — ${page.url.take(200)}")
     page.dialog?.let { appendLine("Dialog open: \"$it\"") }
     signInLine(Sites.registrableDomain(page.url), header.signIn, header.zone)?.let { appendLine(it) }
+    header.others.forEach { (domain, state) -> signInLine(domain, state, header.zone)?.let { appendLine(it) } }
     if (page.error != null) { appendLine(page.error); return@buildString }
     appendLine("--")
     val lines = page.items.map { it to it.line() }

@@ -308,7 +308,7 @@ class BrowserPilot(
             state.noChange = 0
             state.mustLook = false
             updatePhase(obs)
-            val header = LookHeader(lastTabs, openers, state.signIn[Sites.registrableDomain(obs.url).orEmpty()], zone.zone())
+            val header = header(obs)
             return ToolResult.Ok(gate.scrub((notes.joinToString("\n").let { if (it.isEmpty()) "" else "$it\n" }) + formatLook(obs, header, scoped = scopeRef != null)))
         }
 
@@ -656,8 +656,13 @@ class BrowserPilot(
             state.signIn[domain] = current.copy(phase = phase)
         }
 
+        private suspend fun header(obs: PageObservation): LookHeader {
+            val domain = Sites.registrableDomain(obs.url).orEmpty()
+            return LookHeader(lastTabs, openers, state.signIn[domain], zone.zone(), state.signIn.filterKeys { it != domain }.toSortedMap())
+        }
+
         private suspend fun lookText(obs: PageObservation): String =
-            formatLook(obs, LookHeader(lastTabs, openers, state.signIn[Sites.registrableDomain(obs.url).orEmpty()], zone.zone()), budget = LOOK_BUDGET / 2)
+            formatLook(obs, header(obs), budget = LOOK_BUDGET / 2)
 
         // ---- sign_in --------------------------------------------------------------------------
 
@@ -673,6 +678,7 @@ class BrowserPilot(
                 val domain = Sites.registrableDomain(url) ?: return ToolResult.Error("Cannot tell which site this page is.")
                 state.actions++
                 val before = page("look") ?: PageObservation(url = url)
+                val beforeFrame = frame(url)
                 val trail = Trail()
                 val tabsBefore = listTabs()
                 val token = newToken()
@@ -703,7 +709,7 @@ class BrowserPilot(
                 observe("arm", mapOf("token" to token))
                 val submitted = submit(fields, url)
                 if (submitted != null) return ToolResult.Ok(gate.scrub((messages + submitted).joinToString("\n")))
-                val outcome = afterSignInStep(domain, step, before, tabsBefore, token, trail)
+                val outcome = afterSignInStep(domain, step, before, beforeFrame, tabsBefore, token, trail)
                 messages += outcome.first
                 if (!outcome.second) return ToolResult.Ok(gate.scrub(messages.joinToString("\n")))
             }
@@ -754,7 +760,7 @@ class BrowserPilot(
         }
 
         /** Where a sign-in step left the site, by Jev on the screenshot: the message, and whether to go straight on to the code. */
-        private suspend fun afterSignInStep(domain: String, step: String, before: PageObservation, tabsBefore: List<Tab>, token: String, trail: Trail): Pair<String, Boolean> {
+        private suspend fun afterSignInStep(domain: String, step: String, before: PageObservation, beforeFrame: Frame, tabsBefore: List<Tab>, token: String, trail: Trail): Pair<String, Boolean> {
             delay(settle)
             val tabNotes = mutableListOf<String>()
             val tabsAfter = listTabs()
@@ -780,13 +786,13 @@ class BrowserPilot(
                 null -> "Submitted the ${if (step == "code") "code" else "login"}. I could not check the screen (${frame.why ?: "Jev did not answer"}); call look to see where the sign-in stands."
                 "signed_in" -> "Signed in to $domain$p."
                 "needs_code" -> if (codeArrived || after.otp) "The site sent a one-time code$p." else "The site asks for a one-time code$p, but I see no code field. Call look."
-                "choose_method" -> "The site asks where to send a sign-in code$p. Pick one with act (for example act(intent=\"the SMS option\"…)), continue with act, then call sign_in again for the code."
+                "choose_method" -> "The site asks where to send a sign-in code$p. Pick one with act, say act(intent=\"the SMS option\"…), continue with act, then call sign_in again for the code."
                 "needs_login" -> if (step == "login") "The site still asks for the login$p: the email or password may be wrong. Report back; do not retry." else "The site asks for the login again$p."
                 "error" -> "The site shows an error$p. Call read to see it and report back; do not retry."
                 else -> "Submitted the ${if (step == "code") "code" else "login"}; the page shows something else$p. Call look."
             }).joinToString("\n")
             val action = if (step == "code") "sign_in: fill the code, submit" else "sign_in: fill the login, submit"
-            record("sign_in", before, step, sign?.first, null, null, frame, "passed", action, trail, message)
+            record("sign_in", before, step, sign?.first, beforeFrame, null, frame, "passed", action, trail, message)
             // Straight on to the code only when it is the login that led to a code page, and only once.
             return message to (step == "login" && (sign?.first == "needs_code") && after.otp)
         }

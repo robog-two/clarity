@@ -33,6 +33,8 @@ tasks.test {
     if (providers.gradleProperty("clarity.liveEvals").isPresent) systemProperty("clarity.liveEvals", "true")
     // The decision model's live shape check (LiveDecisionTest, OpenRouter, synthetic text, three calls): -Pclarity.liveDecisions.
     if (providers.gradleProperty("clarity.liveDecisions").isPresent) systemProperty("clarity.liveDecisions", "true")
+    // The browser pilot's end-to-end run (LiveBrowserPilotTest: real Jev and Decision-1 calls, a throwaway test browser): -Pclarity.livePilot.
+    if (providers.gradleProperty("clarity.livePilot").isPresent) systemProperty("clarity.livePilot", "true")
     // The OpenRouter replay of real journal points (ReplayFeasibilityTest): -Pclarity.replay=<points.json>, -Pclarity.replayOut=<results.json>.
     providers.gradleProperty("clarity.replay").orNull?.let { systemProperty("clarity.replay", it) }
     providers.gradleProperty("clarity.replayOut").orNull?.let { systemProperty("clarity.replayOut", it) }
