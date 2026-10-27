@@ -311,7 +311,8 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     state.setup.forEachIndexed { i, task ->
-                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++))
+                        // No Review button in the call, but a task holding something for review keeps its shape.
+                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++), needsYou = task.heldActionId != null)
                     }
                 }
             }
