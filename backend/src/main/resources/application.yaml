@@ -15,40 +15,37 @@ clarity:
     autoGrant: false
     secretsDir: /run/secrets
   agent:
-    # Per-role model settings. CLARITY_AGENT_<ROLE>_PROVIDER / _MODEL / _EFFORT / _MAX_TOKENS / _CACHE_TTL /
-    # _COMPACTION override these; the legacy CLARITY_AGENT_MODEL / CLARITY_AGENT_EFFORT set the lead's.
-    # provider: anthropic or openrouter (OPENROUTER_API_KEY; model names are OpenRouter's then, e.g.
-    # anthropic/claude-haiku-5.5). On OpenRouter the lead compacts its thread client-side at compactAtTokens
-    # (there is no prompt cache there, so that threshold is the main cost lever).
+    # Per-role model settings; every model runs on OpenRouter (OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE
+    # is required) and is named by its OpenRouter id (Claude: anthropic/claude-opus-5.5).
+    # CLARITY_AGENT_<ROLE>_MODEL / _EFFORT / _MAX_TOKENS / _CACHE_TTL / _COMPACTION / _COMPACT_AT_TOKENS
+    # override these; the legacy CLARITY_AGENT_MODEL / CLARITY_AGENT_EFFORT set the lead's. The lead compacts
+    # its thread client-side at compactAtTokens. cacheTtl applies to models that cache at explicit
+    # breakpoints (Claude); the others cache on their own.
     # OpenRouter routing: OPENROUTER_ZDR (default true: zero data retention endpoints only),
     # OPENROUTER_QUANTIZATIONS (default fp8,bf16,fp16; blank: any) and OPENROUTER_SORT (default price;
     # blank: OpenRouter's balancing), or agent.openRouter.zdr / quantizations / sort here.
-    # These are the defaults: the app's Settings can override provider, model and effort per role at runtime.
+    # These are the defaults: the app's Settings can override model and effort per role at runtime.
     roles:
       lead:
-        provider: anthropic
-        model: claude-opus-5-5
+        model: xiaomi/mimo-v2.6-pro
         effort: medium
         maxTokens: 64000
         cacheTtl: 1h
         compaction: true
       helper:
-        provider: anthropic
-        model: claude-sonnet-5-5
+        model: deepseek/deepseek-v4.1-flash-1017
         effort: medium
         maxTokens: 32000
         cacheTtl: 5m
         compaction: false
       guard:
-        provider: anthropic
-        model: claude-haiku-5-5
+        model: deepseek/deepseek-v4.1-flash-1017
         effort: low
         maxTokens: 4000
         cacheTtl: 5m
         compaction: false
       triage:
-        provider: anthropic
-        model: claude-haiku-5-5
+        model: deepseek/deepseek-v4.1-flash-1017
         effort: low
         maxTokens: 4000
         cacheTtl: 5m

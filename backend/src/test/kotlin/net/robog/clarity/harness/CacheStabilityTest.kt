@@ -1,14 +1,10 @@
 package net.robog.clarity.harness
 
-import com.anthropic.core.JsonValue
-import com.anthropic.models.beta.messages.BetaMessage
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -85,9 +81,9 @@ class CacheStabilityTest : FunSpec({
             val image = Message(Role.USER, listOf(Block.Raw(buildJsonObject { put("type", "image") })))
             messageCacheBreakpoint(listOf(image, done, Message.user("x"))) shouldBe null
         }
-        test("on the wire: cache_control with the request's ttl on that block only; four breakpoints at most") {
+        test("four breakpoints at most: none left for the message when the system and automatic ones take them") {
             val request = ModelRequest(
-                model = "claude-opus-5-5",
+                model = "anthropic/claude-opus-5.5",
                 system = listOf(SystemBlock("static", cacheBreakpoint = true), SystemBlock("constitution", cacheBreakpoint = true)),
                 messages = listOf(user, call, results, done, Message.user("again")),
                 tools = listOf(ToolDefinition("a", "A", buildJsonObject { put("type", "object") })),
@@ -95,45 +91,10 @@ class CacheStabilityTest : FunSpec({
                 effort = "medium",
                 cache = CachePolicy(ttl = "1h"),
             )
-            val messages = AnthropicModelGateway.bodyJson(AnthropicModelGateway.buildParams(request))["messages"]!!.jsonArray
-            val marked = messages.flatMapIndexed { i, m ->
-                m.jsonObject["content"]!!.jsonArray.mapIndexedNotNull { j, b -> if ("cache_control" in b.jsonObject) i to j else null }
-            }
-            marked shouldBe listOf(2 to 0)
-            messages[2].jsonObject["content"]!!.jsonArray[0].jsonObject["cache_control"] shouldBe
-                buildJsonObject { put("type", "ephemeral"); put("ttl", "1h") }
+            request.messageBreakpoint shouldBe (2 to 0)
             // three system breakpoints and the automatic one leave no room: no message breakpoint
             request.copy(system = request.system + SystemBlock("more", cacheBreakpoint = true)).messageBreakpoint shouldBe null
             request.copy(cache = null, system = listOf(SystemBlock("static"))).messageBreakpoint shouldBe null
-        }
-    }
-
-    context("billed usage") {
-        test("without iterations: the top-level fields") {
-            val top = Usage(2, 10, 100, 50, 0, 100)
-            billedUsage(top, emptyList()) shouldBe top
-        }
-        test("with compaction: the sum of every iteration, the compaction step included") {
-            val message = Json.parseToJsonElement(
-                """
-                {"id":"msg_3","type":"message","role":"assistant","model":"claude-opus-5-5",
-                 "content":[{"type":"compaction","content":"s"},{"type":"text","text":"ok"}],
-                 "stop_reason":"end_turn","stop_sequence":null,
-                 "usage":{"input_tokens":2,"output_tokens":100,
-                   "cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":5000},
-                   "cache_creation_input_tokens":5000,"cache_read_input_tokens":13000,
-                   "iterations":[
-                     {"type":"compaction","input_tokens":4,"output_tokens":3000,"cache_read_input_tokens":13000,"cache_creation_input_tokens":47000,
-                      "cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":47000}},
-                     {"type":"message","input_tokens":2,"output_tokens":100,"cache_read_input_tokens":13000,"cache_creation_input_tokens":5000,
-                      "cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":5000}}]}}
-                """.trimIndent(),
-            ).toJavaValue().let { JsonValue.from(it).convert(BetaMessage::class.java) }!!
-            AnthropicModelGateway.toModelResponse(message).usage shouldBe Usage(6, 3100, 52_000, 26_000, 0, 52_000)
-        }
-        test("an iteration without the 5m/1h split takes the top-level share") {
-            val top = Usage(2, 10, 100, 0, 0, 100)
-            billedUsage(top, listOf(Usage(1, 5, 40, 0), Usage(1, 5, 100, 0, 0, 100))) shouldBe Usage(2, 10, 140, 0, 0, 140)
         }
     }
 })

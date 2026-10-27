@@ -51,23 +51,16 @@ ensure_file sandbox_key   # bearer keys for the agent computers (sandbox, browse
 ensure_file browser_key
 for id in example mail dav "$@"; do ensure_file "connector_${id}_key"; done
 
-# Provided by you. An empty file keeps the backend running with the agent disabled.
-if [ ! -e "$dir/anthropic_api_key" ]; then
-    (umask 077 && : >"$dir/anthropic_api_key")
-    echo "created anthropic_api_key (EMPTY: put your Anthropic API key in deploy/secrets/anthropic_api_key, then re-run this script, to enable the agent)"
-else
-    echo "keep    anthropic_api_key"
-fi
-chmod 600 "$dir/anthropic_api_key"
-
-# Optional: OpenRouter, for roles set to CLARITY_AGENT_<ROLE>_PROVIDER=openrouter. Empty means unused.
+# Provided by you: OpenRouter runs every model, and the backend does not start until this holds a key
+# (or OPENROUTER_API_KEY is set in deploy/.env).
 if [ ! -e "$dir/openrouter_api_key" ]; then
     (umask 077 && : >"$dir/openrouter_api_key")
-    echo "created openrouter_api_key (EMPTY: only needed for roles that run on OpenRouter)"
+    echo "created openrouter_api_key (EMPTY: put your OpenRouter API key in deploy/secrets/openrouter_api_key, then re-run this script; the backend needs it to start)"
 else
     echo "keep    openrouter_api_key"
 fi
 chmod 600 "$dir/openrouter_api_key"
+
 
 # Your own TLS certificates: each <name>.pem with a matching <name>.key becomes the bundle
 # tls/<name>.pem, which Caddy loads (deploy/caddy/Caddyfile). Bundles whose pair is gone are removed.

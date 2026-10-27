@@ -69,15 +69,16 @@ services:
       CLARITY_SECRETS_DIR: /run/secrets
       CLARITY_ENROLLMENT_MODE: ${CLARITY_ENROLLMENT_MODE:-tofu}
       CLARITY_CONNECTORS_AUTO_GRANT: ${CLARITY_CONNECTORS_AUTO_GRANT:-false}
-      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
-      # The model API is reached only through the egress proxy (api.anthropic.com is all it allows).
+      # The model API (OpenRouter) is reached only through the egress proxy (openrouter.ai is all it allows).
       CLARITY_HTTPS_PROXY: http://egress:3128
-      CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-claude-opus-5-5}
+      # Legacy lead model/effort (blank = the backend default); CLARITY_AGENT_LEAD_MODEL wins.
+      CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
-      # OpenRouter for the one-shot roles (empty = unused). The egress proxy must allow it:
-      # CLARITY_BACKEND_EGRESS_ALLOW=openrouter.ai. The key can also be a file (OPENROUTER_API_KEY_FILE).
+      # OpenRouter runs every model and the backend does not start without its key: the
+      # openrouter_api_key secret (deploy/init-secrets.sh), or OPENROUTER_API_KEY in deploy/.env.
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_API_KEY_FILE: ${OPENROUTER_API_KEY_FILE:-/run/secrets/openrouter_api_key}
+      OPENROUTER_BASE_URL: ${OPENROUTER_BASE_URL:-}   # blank = https://openrouter.ai/api/v1 (e2e points it at a closed port)
       # Routing: zero data retention, no fp4/int4 endpoints, cheapest first; ORDER pins providers so the prompt cache stays warm.
       # Defaults repeat the backend's: a blank QUANTIZATIONS/SORT would mean "any" there.
       OPENROUTER_ZDR: ${OPENROUTER_ZDR:-true}
@@ -85,14 +86,10 @@ services:
       OPENROUTER_SORT: ${OPENROUTER_SORT:-price}
       OPENROUTER_PROVIDER_ORDER: ${OPENROUTER_PROVIDER_ORDER:-}
       OPENROUTER_ALLOW_FALLBACKS: ${OPENROUTER_ALLOW_FALLBACKS:-}
-      # Per-role provider/model (anthropic or openrouter); blank keeps the backend default.
-      CLARITY_AGENT_LEAD_PROVIDER: ${CLARITY_AGENT_LEAD_PROVIDER:-}
+      # Per-role OpenRouter model ids (e.g. anthropic/claude-opus-5.5); blank keeps the backend default.
       CLARITY_AGENT_LEAD_MODEL: ${CLARITY_AGENT_LEAD_MODEL:-}
-      CLARITY_AGENT_HELPER_PROVIDER: ${CLARITY_AGENT_HELPER_PROVIDER:-}
       CLARITY_AGENT_HELPER_MODEL: ${CLARITY_AGENT_HELPER_MODEL:-}
-      CLARITY_AGENT_GUARD_PROVIDER: ${CLARITY_AGENT_GUARD_PROVIDER:-}
       CLARITY_AGENT_GUARD_MODEL: ${CLARITY_AGENT_GUARD_MODEL:-}
-      CLARITY_AGENT_TRIAGE_PROVIDER: ${CLARITY_AGENT_TRIAGE_PROVIDER:-}
       CLARITY_AGENT_TRIAGE_MODEL: ${CLARITY_AGENT_TRIAGE_MODEL:-}
       # Step limits: the lead's turns, and a helper's (browsing takes many small steps).
       CLARITY_AGENT_MAX_TURNS: ${CLARITY_AGENT_MAX_TURNS:-30}
@@ -115,8 +112,7 @@ services:
     # so each connector's key secret is mounted here AND into that connector.
     secrets:
       - postgres_password
-      - anthropic_api_key
-      - openrouter_api_key   # empty unless a role runs on OpenRouter
+      - openrouter_api_key   # required: every model runs on OpenRouter
       - connector_example_key
       - connector_mail_key
       - connector_dav_key
@@ -172,7 +168,7 @@ services:
   egress:
     <<: *hardened
     # Squid, the single door to the internet for the browser, the sandbox and the backend
-    # (computers/egress). Public hosts only for the browser and the sandbox; api.anthropic.com only
+    # (computers/egress). Public hosts only for the browser and the sandbox; openrouter.ai only
     # for the backend. Each client
     # network gets its own listener, bound to this container's address on it (hence the aliases).
     image: ghcr.io/robog-two/clarity-egress:${CLARITY_TAG:-latest}
@@ -387,9 +383,8 @@ secrets:
   # Created by deploy/init-secrets.sh (`podman secret create <name>`; podman-compose mounts them at /run/secrets/<name>).
   postgres_password:
     external: true
-  anthropic_api_key:
-    external: true
   openrouter_api_key:
+
     external: true
   connector_example_key:
     external: true

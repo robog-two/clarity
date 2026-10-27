@@ -164,7 +164,7 @@ class DecisionsTest : FunSpec({
     }
 
     test("Decisions is unavailable when off or without an OpenRouter key, and never throws") {
-        val off = AgentConfig(anthropicApiKey = null, reviewInterval = 2.seconds, openRouterApiKey = KEY, decisions = DecisionConfig(enabled = false))
+        val off = AgentConfig(reviewInterval = 2.seconds, openRouterApiKey = KEY, decisions = DecisionConfig(enabled = false))
         OpenRouterDecisionClientFactory(off).create() shouldBe null
         OpenRouterDecisionClientFactory(off.copy(openRouterApiKey = null, decisions = DecisionConfig())).create() shouldBe null
         OpenRouterDecisionClientFactory(off.copy(decisions = DecisionConfig())).create().shouldBeInstanceOf<OpenRouterDecisionClient>()

@@ -21,7 +21,6 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
 
     // Agent harness (net.robog.clarity.harness)
-    implementation(libs.anthropic.java)
     implementation(libs.mcp.kotlin.sdk)
 
     testImplementation(libs.ktor.server.test.host)
@@ -29,7 +28,7 @@ dependencies {
     testImplementation(libs.testcontainers.postgresql)
 }
 
-// Live evals (real Anthropic API, costs money) run only on request: -Pclarity.liveEvals. Never in CI.
+// Live evals (real OpenRouter calls, cost money) run only on request: -Pclarity.liveEvals. Never in CI.
 tasks.test {
     if (providers.gradleProperty("clarity.liveEvals").isPresent) systemProperty("clarity.liveEvals", "true")
     // The decision model's live shape check (LiveDecisionTest, OpenRouter, synthetic text, three calls): -Pclarity.liveDecisions.

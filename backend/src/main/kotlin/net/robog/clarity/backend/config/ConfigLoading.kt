@@ -23,6 +23,10 @@ sealed interface ConfigError {
     data class UnreadableFile(val key: String, val path: String, val cause: String) : ConfigError {
         override val message get() = "cannot read $key file $path: $cause"
     }
+
+    data class Missing(val key: String, val reason: String) : ConfigError {
+        override val message get() = "missing configuration $key: $reason"
+    }
 }
 
 /** Reads a secret file; returns the failure reason on error. Injected so loading stays testable. */
@@ -43,7 +47,7 @@ fun loadYamlConfig(resource: String = "application.yaml"): ApplicationConfig =
 /**
  * Resolves configuration as a pure function of ([env], [yaml]): an environment variable wins,
  * then the YAML value, then the built-in default. Secrets additionally honour the `*_FILE`
- * convention (`CLARITY_DB_PASSWORD_FILE`), which takes precedence over the plain variable.
+ * convention (`CLARITY_DB_PASSWORD_FILE`), which takes precedence over the plain variable unless the file is empty.
  */
 fun AppConfig.Companion.load(
     env: Map<String, String>,
@@ -68,10 +72,11 @@ private class Lookup(
     fun secret(envName: String, path: String): String? {
         val file = env["${envName}_FILE"]?.takeIf(String::isNotBlank)
         if (file != null) {
+            // An empty file (an unfilled Podman secret) falls back to the plain variable.
             return files.read(Path(file)).fold(
                 { raise(ConfigError.UnreadableFile("${envName}_FILE", file, it)) },
                 { it.trim() },
-            ).takeIf(String::isNotEmpty)
+            ).takeIf(String::isNotEmpty) ?: string(envName, path)
         }
         return string(envName, path)
     }
@@ -110,10 +115,12 @@ private class Lookup(
     }
 
     /**
-     * `CLARITY_AGENT_<ROLE>_PROVIDER|_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION|_COMPACT_AT_TOKENS` (yaml
-     * `agent.roles.<role>.provider|model|effort|maxTokens|cacheTtl|compaction|compactAtTokens`). The legacy
+     * `CLARITY_AGENT_<ROLE>_MODEL|_EFFORT|_MAX_TOKENS|_CACHE_TTL|_COMPACTION|_COMPACT_AT_TOKENS` (yaml
+     * `agent.roles.<role>.model|effort|maxTokens|cacheTtl|compaction|compactAtTokens`). The legacy
      * `CLARITY_AGENT_MODEL` / `CLARITY_AGENT_EFFORT` (yaml `agent.model` / `agent.effort`) are the
-     * lead's fallback.
+     * lead's fallback. Every model is an OpenRouter id (`vendor/model`). The former
+     * `CLARITY_AGENT_<ROLE>_PROVIDER` may still say `openrouter` (ignored); `anthropic` is refused,
+     * since the direct Anthropic API is gone (Claude runs through OpenRouter as `anthropic/...`).
      */
     context(_: Raise<ConfigError>)
     fun agentRoles(): AgentRoles {
@@ -130,22 +137,21 @@ private class Lookup(
                 return roleEnv ?: oldEnv ?: roleYaml ?: oldYaml
             }
             val model = pick("MODEL", "CLARITY_AGENT_MODEL", "agent.model") ?: base.model
+            if ('/' !in model || model.any(Char::isWhitespace)) {
+                raise(ConfigError.Invalid("CLARITY_AGENT_${name}_MODEL", model, "expected an OpenRouter model id such as $DEFAULT_LEAD_MODEL or anthropic/claude-opus-5.5"))
+            }
             val effort = pick("EFFORT", "CLARITY_AGENT_EFFORT", "agent.effort") ?: base.effort
             val ttl = string("CLARITY_AGENT_${name}_CACHE_TTL", "agent.roles.$yamlKey.cacheTtl") ?: base.cacheTtl
             if (ttl != "5m" && ttl != "1h") raise(ConfigError.Invalid("CLARITY_AGENT_${name}_CACHE_TTL", ttl, "expected 5m or 1h"))
             val compactAt = int(
                 "CLARITY_AGENT_${name}_COMPACT_AT_TOKENS", "agent.roles.$yamlKey.compactAtTokens", base.compactAtTokens.toInt(),
-                min = net.robog.clarity.harness.COMPACTION_MIN_TRIGGER_TOKENS.toInt(),
+                min = net.robog.clarity.harness.MIN_COMPACT_AT_TOKENS.toInt(),
             ).toLong()
             val providerRaw = string("CLARITY_AGENT_${name}_PROVIDER", "agent.roles.$yamlKey.provider")
-            val provider = when (providerRaw?.lowercase()) {
-                null -> base.provider
-                "anthropic" -> ModelProvider.ANTHROPIC
-                "openrouter" -> ModelProvider.OPENROUTER
-                else -> raise(ConfigError.Invalid("CLARITY_AGENT_${name}_PROVIDER", providerRaw, "expected anthropic or openrouter"))
+            if (providerRaw != null && providerRaw.trim().lowercase() != "openrouter") {
+                raise(ConfigError.Invalid("CLARITY_AGENT_${name}_PROVIDER", providerRaw, "every model runs on OpenRouter now; remove this setting (Claude models are anthropic/... there)"))
             }
             return RoleConfig(
-                provider = provider,
                 model = model,
                 effort = effort,
                 maxTokens = int("CLARITY_AGENT_${name}_MAX_TOKENS", "agent.roles.$yamlKey.maxTokens", base.maxTokens.toInt()).toLong(),
@@ -207,11 +213,7 @@ private class Lookup(
         val mcpRaw = string("CLARITY_MCP_SERVERS", "agent.mcpServers").orEmpty()
         val roles = agentRoles()
         val openRouterKey = secret("OPENROUTER_API_KEY", "agent.openRouterApiKey")
-        if (openRouterKey == null) {
-            AgentRole.entries.firstOrNull { roles[it].provider == ModelProvider.OPENROUTER }?.let {
-                raise(ConfigError.Invalid("CLARITY_AGENT_${it.name}_PROVIDER", "openrouter", "set OPENROUTER_API_KEY (or OPENROUTER_API_KEY_FILE) to use OpenRouter"))
-            }
-        }
+            ?: raise(ConfigError.Missing("OPENROUTER_API_KEY", "every model runs on OpenRouter; set OPENROUTER_API_KEY or OPENROUTER_API_KEY_FILE"))
         return AppConfig(
             instance = InstanceConfig(string("CLARITY_INSTANCE_NAME", "instance.name") ?: "Clarity"),
             http = HttpConfig(int("CLARITY_HTTP_PORT", "http.port", 8080, min = 0)),
@@ -231,15 +233,14 @@ private class Lookup(
                 secretsDir = Path(string("CLARITY_SECRETS_DIR", "connectors.secretsDir") ?: "/run/secrets"),
             ),
             agent = AgentConfig(
-                anthropicApiKey = secret("ANTHROPIC_API_KEY", "agent.anthropicApiKey"),
                 roles = roles,
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
-                anthropicBaseUrl = string("ANTHROPIC_BASE_URL", "agent.anthropicBaseUrl"),
                 openRouterApiKey = openRouterKey,
+
                 openRouterBaseUrl = string("OPENROUTER_BASE_URL", "agent.openRouterBaseUrl") ?: DEFAULT_OPENROUTER_BASE_URL,
                 memory = MemoryConfig(
                     embeddings = bool("CLARITY_MEMORY_EMBEDDINGS", "agent.memory.embeddings", true),

@@ -32,7 +32,6 @@ import net.robog.clarity.backend.agent.RunScope
 import net.robog.clarity.backend.agent.leadSystemBlocks
 import net.robog.clarity.backend.agent.roleRequest
 import net.robog.clarity.backend.config.AgentRoles
-import net.robog.clarity.backend.config.ModelProvider
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Harness
 import net.robog.clarity.harness.HarnessJson
@@ -97,8 +96,8 @@ class ReplayFeasibilityTest : FunSpec({
 
         // The lead's real tools: the same toolbox the production lead gets (no MCP: the lead has none).
         // The database is never touched here (only tool definitions are built), so it points nowhere.
-        val roles = AgentRoles().let { it.copy(lead = it.lead.copy(provider = ModelProvider.OPENROUTER, model = MIMO)) }
-        val rig = LeadRig(Database.connect("jdbc:postgresql://127.0.0.1:9/none", driver = "org.postgresql.Driver"), roles = roles, openRouterKey = "unused")
+        val roles = AgentRoles().let { it.copy(lead = it.lead.copy(model = MIMO)) }
+        val rig = LeadRig(Database.connect("jdbc:postgresql://127.0.0.1:9/none", driver = "org.postgresql.Driver"), apiKey = "unused", roles = roles)
         val tools = rig.toolbox.leadTools(RunScope("replay", isLead = true))
 
         /** The first request the lead's harness would send for [history] (point's journal since its compaction). */
@@ -108,12 +107,12 @@ class ReplayFeasibilityTest : FunSpec({
             history.forEach { journal.append("lead", it) }
             // Real system prompt; the constitution lives in the production DB, so it is "none yet" here.
             val system = leadSystemBlocks(null, HomeClock(TimeZone.UTC, kotlin.time.Clock.System.now()))
-            val run = roleRequest(roles.lead.copy(model = model), "lead", system, emptyList(), tools.loaded, tools.deferred, 40, null)
+            val run = roleRequest(roles.lead.copy(model = model), "lead", system, emptyList(), tools.tools, 40, null)
             Harness(capture, journal).resume("lead", run).collect()
             return capture.request!!.copy(maxTokens = REPLAY_MAX_TOKENS)
         }
 
-        val schemas = (tools.loaded + tools.deferred).associate { it.name to it.inputSchema }
+        val schemas = tools.tools.associate { it.name to it.inputSchema }
 
         fun history(point: JsonObject) = point["messages"]!!.jsonArray.map { HarnessJson.decodeFromJsonElement(Message.serializer(), it) }
 
@@ -161,7 +160,7 @@ class ReplayFeasibilityTest : FunSpec({
             estimate += usd
             Triple(call, tokens.toLong(), usd)
         }
-        println("REPLAY tools: loaded=${tools.loaded.size} deferred=${tools.deferred.size} (all sent as functions)")
+        println("REPLAY tools: ${tools.tools.size} (all sent as functions)")
         estimates.forEach { (c, t, u) -> println("REPLAY estimate ${c.label} point#${c.pointIndex} ~${t} in tokens ~$${"%.4f".format(u)}") }
         println("REPLAY estimate total ~$${"%.4f".format(estimate)} (budget $BUDGET_USD)")
 

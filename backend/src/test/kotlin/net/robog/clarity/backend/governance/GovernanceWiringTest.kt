@@ -71,7 +71,7 @@ class GovernanceWiringTest : FunSpec({
             dataDir = dir.resolve("data"),
             enrollment = EnrollmentConfig(EnrollmentMode.TOFU, token = null),
             connectors = ConnectorsConfig(autoGrant = true, secretsDir = dir.resolve("secrets")),
-            agent = AgentConfig(anthropicApiKey = null, reviewInterval = 2.hours),
+            agent = AgentConfig(reviewInterval = 2.hours),
         )
     }
     afterSpec { postgres.stop() }
