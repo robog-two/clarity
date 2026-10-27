@@ -29,6 +29,14 @@ import net.robog.clarity.app.ui.ask.showSuggestions
 import net.robog.clarity.app.ui.today.TodayViewModel
 import net.robog.clarity.app.ui.today.dateKicker
 import net.robog.clarity.app.ui.today.doingRows
+import net.robog.clarity.app.ui.today.Doing
+import net.robog.clarity.app.ui.today.DoingGroup
+import net.robog.clarity.app.ui.today.DoingRow
+import net.robog.clarity.app.ui.today.QUIET_STALE_AFTER
+import net.robog.clarity.app.ui.today.QUIET_WAITING_AFTER
+import net.robog.clarity.app.ui.today.quietLine
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import net.robog.clarity.app.ui.today.heldLine
 import net.robog.clarity.app.ui.today.mergeTasks
 import net.robog.clarity.app.ui.today.parkedLine
@@ -52,7 +60,8 @@ class TodayRulesTest {
         val rows = doingRows(
             listOf(task("t1", AgentTask.Status.DRAFTED, "h1"), task("t2", AgentTask.Status.SCHEDULED)),
             mapOf(HeldActionId("h1") to heldAction("h1")),
-        )
+            T0,
+        ).main
         assertEquals(HeldActionId("h1"), rows[0].review)
         assertNull(rows[1].review)
     }
@@ -61,13 +70,14 @@ class TodayRulesTest {
         val rows = doingRows(
             listOf(task("t1", AgentTask.Status.DRAFTED, "h1")),
             mapOf(HeldActionId("h1") to heldAction("h1", status = HeldAction.Status.EXECUTED)),
-        )
+            T0,
+        ).rows
         assertNull(rows.single().review)
     }
 
     @Test fun unknownHeldActionStillOffersReviewWhileTheTaskWaits() {
-        assertEquals(HeldActionId("h9"), doingRows(listOf(task("t1", AgentTask.Status.WAITING_FOR_YOU, "h9")), emptyMap()).single().review)
-        assertNull(doingRows(listOf(task("t1", AgentTask.Status.DONE, "h9")), emptyMap()).single().review)
+        assertEquals(HeldActionId("h9"), doingRows(listOf(task("t1", AgentTask.Status.WAITING_FOR_YOU, "h9")), emptyMap(), T0).rows.single().review)
+        assertNull(doingRows(listOf(task("t1", AgentTask.Status.DONE, "h9")), emptyMap(), T0).rows.single().review)
     }
 
     @Test fun liveTasksOverrideTheServerListWhenNewer() {
@@ -84,6 +94,77 @@ class TodayRulesTest {
         assertEquals("2 held today", heldLine(2))
         assertEquals("Feedback for Alex, expense report. Back in tomorrow’s call.", parkedLine(listOf("feedback for Alex", "expense report")))
         assertNull(parkedLine(emptyList()))
+    }
+}
+
+private val Doing.rows: List<DoingRow> get() = main + quiet
+
+class DoingGroupsTest {
+    private fun groups(vararg tasks: AgentTask, held: Map<HeldActionId, HeldAction> = emptyMap(), now: kotlin.time.Instant = T0) =
+        doingRows(tasks.toList(), held, now).let { d -> d.main.map { it.task.id.value } to d.quiet.map { it.task.id.value } }
+
+    @Test fun groupsGoNeedsYouRunningScheduledNewestFirstWithin() {
+        val (main, quiet) = groups(
+            task("sched-old", AgentTask.Status.SCHEDULED, at = T0 - 3.hours),
+            task("run-old", AgentTask.Status.WORKING, at = T0 - 2.hours),
+            task("review-old", AgentTask.Status.DRAFTED, "h1", at = T0 - 1.hours),
+            task("run-new", AgentTask.Status.WORKING, at = T0 - 1.minutes),
+            task("sched-new", AgentTask.Status.SCHEDULED, at = T0 - 5.minutes),
+            task("review-new", AgentTask.Status.WAITING_FOR_YOU, "h2", at = T0 - 10.minutes),
+        )
+        assertEquals(listOf("review-new", "review-old", "run-new", "run-old", "sched-new", "sched-old"), main)
+        assertEquals(emptyList(), quiet)
+    }
+
+    @Test fun aFreshQuestionWithoutAHeldActionStaysOnTopUntilItAges() {
+        val asked = task("asked", AgentTask.Status.WAITING_FOR_YOU, at = T0 - 1.hours)
+        val (main, _) = groups(asked, task("run", AgentTask.Status.WORKING, at = T0))
+        assertEquals(listOf("asked", "run"), main, "a fresh question sits with the needs-you group")
+        val rows = doingRows(listOf(asked), emptyMap(), T0).main
+        assertEquals(DoingGroup.NEEDS_YOU, rows.single().group)
+        assertNull(rows.single().review, "but it has nothing to review")
+
+        val later = T0 - 1.hours + QUIET_WAITING_AFTER
+        assertEquals(emptyList<String>() to listOf("asked"), groups(asked, now = later))
+        assertEquals(listOf("asked") to emptyList(), groups(asked, now = later - 1.minutes))
+    }
+
+    @Test fun waitingOrDraftedWithASettledHeldActionGoesQuietAfterTwelveHours() {
+        val held = mapOf(HeldActionId("h1") to heldAction("h1", status = HeldAction.Status.EXECUTED))
+        val (main, quiet) = groups(
+            task("nick", AgentTask.Status.WAITING_FOR_YOU, at = T0 - 13.hours),
+            task("drafted", AgentTask.Status.DRAFTED, "h1", at = T0 - 12.hours),
+            held = held,
+        )
+        assertEquals(emptyList(), main)
+        assertEquals(listOf("drafted", "nick"), quiet, "newest first among the quiet too")
+    }
+
+    @Test fun aLiveHeldActionNeverGoesQuiet() {
+        val (main, quiet) = groups(task("old-review", AgentTask.Status.DRAFTED, "h1", at = T0 - 5.days), held = mapOf(HeldActionId("h1") to heldAction("h1")))
+        assertEquals(listOf("old-review"), main)
+        assertEquals(emptyList(), quiet)
+    }
+
+    @Test fun runningWorkGoesQuietAfterTwoDaysButScheduledNeverDoes() {
+        val (main, quiet) = groups(
+            task("stuck", AgentTask.Status.WORKING, at = T0 - QUIET_STALE_AFTER),
+            task("busy", AgentTask.Status.WORKING, at = T0 - QUIET_STALE_AFTER + 1.minutes),
+            task("next-week", AgentTask.Status.SCHEDULED, at = T0 - 10.days),
+        )
+        assertEquals(listOf("busy", "next-week"), main)
+        assertEquals(listOf("stuck"), quiet)
+    }
+
+    @Test fun settledTasksFromTheLiveFeedAreQuiet() {
+        val (main, quiet) = groups(task("done", AgentTask.Status.DONE, at = T0), task("failed", AgentTask.Status.FAILED, at = T0 - 1.minutes))
+        assertEquals(emptyList(), main)
+        assertEquals(listOf("done", "failed"), quiet)
+    }
+
+    @Test fun quietLineCountsTasks() {
+        assertEquals("1 quieter task", quietLine(1))
+        assertEquals("3 quieter tasks", quietLine(3))
     }
 }
 
@@ -104,10 +185,23 @@ class TodayViewModelTest {
         val vm = TodayViewModel(repo, feed, clock)
         val s = vm.state.value
         assertEquals(today, s.today)
-        assertEquals(HeldActionId("h1"), s.doing.single().review)
+        assertEquals(HeldActionId("h1"), s.doing.main.single().review)
         assertEquals(1, s.heldWaiting)
         assertFalse(s.loading)
         assertTrue(s.kicker.startsWith("monday, October 26"))
+    }
+
+    @Test fun staleTasksFoldIntoQuietByTheInjectedClock() = withMain {
+        val today = Today(
+            LocalDate(2026, 10, 26),
+            doing = listOf(
+                task("old", AgentTask.Status.WAITING_FOR_YOU, at = T0 - 20.hours),
+                task("run", AgentTask.Status.WORKING, at = T0 - 1.hours),
+            ),
+        )
+        val vm = TodayViewModel(FakeToday(ApiResult.Success(today)), ScreenFeed(), clock)
+        assertEquals(listOf("run"), vm.state.value.doing.main.map { it.task.id.value })
+        assertEquals(listOf("old"), vm.state.value.doing.quiet.map { it.task.id.value })
     }
 
     @Test fun anOlderServerWithoutTodayIsNotAnError() = withMain {
@@ -129,7 +223,7 @@ class TodayViewModelTest {
         val vm = TodayViewModel(repo, feed, clock)
         assertEquals(1, repo.calls)
         feed.tasksFlow.value = listOf(task("t1", AgentTask.Status.DRAFTED, at = T0 + 1.minutes))
-        assertEquals(AgentTask.Status.DRAFTED, vm.state.value.doing.single().task.status)
+        assertEquals(AgentTask.Status.DRAFTED, vm.state.value.doing.main.single().task.status)
         assertEquals(2, repo.calls, "a task event refreshes Today")
     }
 

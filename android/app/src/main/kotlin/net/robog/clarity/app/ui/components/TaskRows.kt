@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.graphics.shapes.RoundedPolygon
@@ -78,6 +79,32 @@ fun TaskRow(
                 Text(sentenceCase(detail), style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             trailing()
+        }
+    }
+}
+
+/**
+ * A compact, quiet row for tasks folded under a group (Today's quieter tasks): smaller, one line of
+ * title and detail, a small still shape, the status word and nothing to press.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun CompactTaskRow(title: String, detail: String, status: String, shape: Shape, mark: RoundedPolygon, markFill: Color, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(modifier.fillMaxWidth(), color = colors.surfaceContainerLow, contentColor = colors.onSurfaceVariant, shape = shape) {
+        Row(
+            Modifier.heightIn(min = 48.dp).padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(14.dp).background(markFill, mark.toShape()))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (detail.isNotBlank()) {
+                    Text(sentenceCase(detail), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            Text(sentenceCase(status), style = MaterialTheme.typography.labelMedium)
         }
     }
 }
