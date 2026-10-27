@@ -7,6 +7,9 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.coroutines.cancellation.CancellationException
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.InboxStore
+import net.robog.clarity.backend.agent.SettingsProvider
+import net.robog.clarity.backend.agent.homeZone
+import net.robog.clarity.backend.agent.localizeTimes
 import net.robog.clarity.backend.ingest.IngestEventBus
 import net.robog.clarity.backend.ingest.Ingested
 import net.robog.clarity.backend.lifecycle.BackgroundService
@@ -24,6 +27,7 @@ class TriggerMatcher(
     private val bus: IngestEventBus,
     private val triggers: TriggerStore,
     private val inbox: InboxStore,
+    private val settings: SettingsProvider = SettingsProvider { net.robog.clarity.shared.session.Settings() },
 ) : BackgroundService {
     override val name = "trigger-matcher"
 
@@ -52,7 +56,8 @@ class TriggerMatcher(
                         triggerId = trigger.id,
                         triggerName = trigger.spec.name,
                         instruction = trigger.spec.instruction,
-                        record = json.toString(),
+                        // Matched on the stored record; shown to the lead with its times on the person's clock.
+                        record = localizeTimes(json, settings.homeZone()).toString(),
                         recordSource = "${event.payload.noun.name.lowercase()} from connector ${event.connectorId}",
                     ),
                     dedupKey = "trigger:${trigger.id}:${event.entityId}",

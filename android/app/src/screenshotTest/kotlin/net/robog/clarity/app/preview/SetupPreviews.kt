@@ -316,7 +316,7 @@ private val settingsState = SettingsUiState(
         SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
         SourceRow("files", "webdav", "never", "files"),
     ),
-    smsGranted = true, smsLastSync = "just now", notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
+    smsGranted = true, sms = net.robog.clarity.app.ui.settings.SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )
 
 @Composable

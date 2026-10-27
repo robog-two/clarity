@@ -14,4 +14,10 @@ object AuthProviders {
 /** [expiresAt] is the verified JWT's `exp`; long-lived connections (SSE) close when it passes. */
 data class DevicePrincipal(val deviceId: DeviceId, val expiresAt: kotlin.time.Instant? = null)
 
-data class ConnectorPrincipal(val connectorId: ConnectorId)
+/**
+ * A connector, or an enrolled device acting as its own `device-<id>` connector ([device] set: the
+ * person's own phone, whose JWT may also manage grants on the app API).
+ */
+data class ConnectorPrincipal(val connectorId: ConnectorId, val device: DeviceId? = null) {
+    val isOwnDevice: Boolean get() = device != null
+}

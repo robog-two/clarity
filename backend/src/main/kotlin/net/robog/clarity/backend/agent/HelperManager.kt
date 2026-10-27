@@ -30,11 +30,14 @@ import net.robog.clarity.harness.FinishReason
 import net.robog.clarity.harness.HarnessEvent
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.shared.time.LocalTimes
 
 private val log = KotlinLogging.logger {}
 
-/** The task text a helper starts from. Pure. */
-fun helperPrompt(task: String, now: kotlin.time.Instant): String = "Current time: $now\n\nTask from the lead agent:\n$task"
+/** The task text a helper starts from: the current time on the person's clock ([zone]), then the task. Pure. */
+fun helperPrompt(task: String, now: kotlin.time.Instant, zone: kotlinx.datetime.TimeZone): String =
+    "Current time: ${LocalTimes.now(now, zone)} (the person's local time; every time you see and give is on this clock)" +
+        "\n\nTask from the lead agent:\n$task"
 
 /** Appended once when a helper finished with no result text (its plain final text IS its result). */
 const val HELPER_RESULT_NUDGE: String =
@@ -75,6 +78,7 @@ class HelperManager(
     private val toolbox: Lazy<AgentToolbox>,
     private val large: LargeResults,
     private val clock: Clock,
+    private val settings: SettingsProvider = SettingsProvider { net.robog.clarity.shared.session.Settings() },
 ) : BackgroundService {
     override val name = "helpers"
 
@@ -156,7 +160,7 @@ class HelperManager(
                 role = bound.config,
                 runId = run.id,
                 system = helperSystemBlocks(),
-                messages = listOf(Message.user(helperPrompt(run.task, clock.now()))),
+                messages = listOf(Message.user(helperPrompt(run.task, clock.now(), settings.homeZone()))),
                 tools = set.loaded,
                 deferred = set.deferred,
                 maxTurns = config.maxTurns,

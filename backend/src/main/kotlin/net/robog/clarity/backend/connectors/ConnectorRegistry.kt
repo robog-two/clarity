@@ -78,19 +78,24 @@ class ConnectorRegistry(
         }
     }
 
-    /** Stores the manifest and creates grant rows for newly announced nouns. */
-    suspend fun acceptManifest(id: ConnectorId, manifest: ConnectorManifest) = database.tx {
+    /**
+     * Stores the manifest and creates grant rows for newly announced nouns.
+     *
+     * [ownDevice]: the manifest comes from an enrolled phone acting as its own `device-<id>`
+     * connector. Its nouns are granted like with `autoGrant`: the person allowed the phone to read
+     * them (the Android permission), and the same device credential could grant them on the app API
+     * anyway. This also heals device connectors left `pending` by app versions that never asked.
+     */
+    suspend fun acceptManifest(id: ConnectorId, manifest: ConnectorManifest, ownDevice: Boolean = false) = database.tx {
         val now = clock.now()
         Connectors.update({ Connectors.id eq id.value }) {
             it[Connectors.manifest] = manifest
             it[lastSeenAt] = now
         }
         val existing = grantsOf(id)
-        val initial = if (autoGrant) GrantState.GRANTED else GrantState.PENDING
         manifest.produces.forEach { noun ->
-            // never override a user's explicit decision; autoGrant only lifts `pending`
-            val current = existing[noun]
-            if (current == null || (autoGrant && current == GrantState.PENDING)) writeGrant(id, noun, initial)
+            val next = initialGrant(existing[noun], autoGrant || ownDevice)
+            if (next != null) writeGrant(id, noun, next)
         }
     }
 
@@ -160,4 +165,14 @@ class ConnectorRegistry(
             it[updatedAt] = clock.now()
         }
     }
+}
+
+/**
+ * The grant to write for an announced noun whose grant is [current], or null to leave it. A user's
+ * explicit decision (granted or revoked) is never overridden; [grantByDefault] only lifts `pending`.
+ */
+internal fun initialGrant(current: GrantState?, grantByDefault: Boolean): GrantState? = when {
+    current == null -> if (grantByDefault) GrantState.GRANTED else GrantState.PENDING
+    current == GrantState.PENDING && grantByDefault -> GrantState.GRANTED
+    else -> null
 }

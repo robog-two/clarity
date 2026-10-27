@@ -89,6 +89,8 @@ class LeadRig(
     openRouterKey: String? = null,
     /** The lead's effort override; null for the real one (a live morning call). */
     effortOverride: EffortOverride? = null,
+    /** The embeddings API (a fake); null runs memory search full-text only. */
+    embeddingClient: EmbeddingClient? = null,
 ) {
     /** Answers for every provider (tell them apart by the model name). */
     val model = FakeModel()
@@ -123,6 +125,13 @@ class LeadRig(
     val mcp = McpToolSources(config)
     val large = LargeResults(database, mcp, clock)
     val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock)
+    val collections = ExposedCollectionStore(database, clock)
+    val embeddings = Embeddings(config, { embeddingClient }, database, clock)
+    val vectors = VectorIndex(database, embeddings)
+    val memorySearch = MemorySearch(database, embeddings, vectors, settingsProvider)
+    val embeddingIndexer = EmbeddingIndexer(database, embeddings, vectors)
+    val archive = ConversationArchive(database)
+    val memoryTools = MemoryTools(memorySearch, collections, archive, constitutions, settingsProvider)
     val external = ExternalTools(gate)
     private val reader = ExposedNounReader(database)
     val domain = DomainTools(reader, ExposedTriggerStore(database, clock), DocumentTools(reader) { DocumentFetch.Unavailable("none") })
@@ -144,10 +153,10 @@ class LeadRig(
 
     init {
         val helperTools = HelperTools(lazy { helpers })
-        toolbox = AgentToolbox(domain, own, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserGate)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserGate)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
-            config, runtime, journal, inbox, signals, threads, constitutions, memory, toolbox, large, feed, settingsProvider, clock,
+            config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
             effortOverride ?: CallEffortOverride(sessionService),
         )
     }
@@ -157,7 +166,7 @@ class LeadRig(
         database.tx {
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
-                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, agent_task, scheduled_job, tool_result, message, " +
+                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, scheduled_job, tool_result, message, " +
                     "agent_session, day_plan, settings " +
                     "RESTART IDENTITY CASCADE",
             )

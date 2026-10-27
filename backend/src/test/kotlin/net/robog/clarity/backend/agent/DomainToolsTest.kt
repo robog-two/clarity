@@ -53,8 +53,10 @@ private class FakeReader : NounReader {
 
     override suspend fun calendarEvents(range: TimeRange, limit: Int): List<Stored<CalendarEventPayload>> {
         lastRange = range
-        return listOf(Stored(EntityId("e1"), CalendarEventPayload(null, "work", "Standup", t0, t0, false), t0, t0))
+        return events ?: listOf(Stored(EntityId("e1"), CalendarEventPayload(null, "work", "Standup", t0, t0, false), t0, t0))
     }
+
+    var events: List<Stored<CalendarEventPayload>>? = null
 
     override suspend fun searchContacts(query: String, limit: Int) =
         listOf(Stored(EntityId("c1"), ContactPayload("Bob", listOf(Handle.email("bob@x.org"))), t0, t0))
@@ -160,6 +162,49 @@ class DomainToolsTest : FunSpec({
     test("list_calendar_events reads a date in the person's home zone unless told otherwise") {
         tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-24"}""")).shouldBeInstanceOf<ToolResult.Ok>()
         reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-24T04:00:00Z"), Instant.parse("2026-10-25T04:00:00Z"))
+    }
+
+    test("list_messages shows when a message was sent on the person's clock") {
+        val result = tools.getValue("list_messages").invoke(obj("""{"from":"2026-10-24","until":"2026-10-24"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+        // 09:00Z is 05:00 in New York (EDT).
+        Json.parseToJsonElement(result.content).let { it as kotlinx.serialization.json.JsonArray }.first().jsonObject["sentAt"]
+            .toString() shouldBe "\"2026-10-24T05:00-04:00 (Sat)\""
+        // A plain date as from and until is that whole local day.
+        reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-24T04:00:00Z"), Instant.parse("2026-10-25T04:00:00Z"))
+    }
+
+    test("list_messages reads times without an offset as the person's local time, and still takes Z and offsets") {
+        tools.getValue("list_messages").invoke(obj("""{"from":"2026-10-26T19:00","until":"2026-10-26T21:30:00"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+        reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-26T23:00:00Z"), Instant.parse("2026-10-27T01:30:00Z"))
+        tools.getValue("list_messages").invoke(obj("""{"from":"2026-10-26T23:00:00Z","until":"2026-10-26T21:30-04:00 (Mon)"}"""))
+            .shouldBeInstanceOf<ToolResult.Ok>()
+        reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-26T23:00:00Z"), Instant.parse("2026-10-27T01:30:00Z"))
+        tools.getValue("list_messages").invoke(obj("""{"from":"tonight","until":"2026-10-26"}""")).shouldBeInstanceOf<ToolResult.Error>()
+            .message shouldContain "America/New_York"
+    }
+
+    test("list_calendar_events shows a 7 pm event at 7 pm on its own day, and all-day events as dates") {
+        reader.events = listOf(
+            // 19:00-20:00 EDT on Monday: 23:00Z-00:00Z, which is already Tuesday in UTC.
+            Stored(EntityId("e1"), CalendarEventPayload(null, "work", "Dinner", Instant.parse("2026-10-26T23:00:00Z"), Instant.parse("2026-10-27T00:00:00Z")), t0, t0),
+            // All-day Monday, stored as UTC midnights.
+            Stored(EntityId("e2"), CalendarEventPayload(null, "home", "Holiday", Instant.parse("2026-10-26T00:00:00Z"), Instant.parse("2026-10-27T00:00:00Z"), allDay = true), t0, t0),
+        )
+        try {
+            val result = tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-26"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+            val events = Json.parseToJsonElement(result.content) as kotlinx.serialization.json.JsonArray
+            events[0].jsonObject["start"].toString() shouldBe "\"2026-10-26T19:00-04:00 (Mon)\""
+            events[0].jsonObject["end"].toString() shouldBe "\"2026-10-26T20:00-04:00 (Mon)\""
+            events[1].jsonObject["start"].toString() shouldBe "\"2026-10-26 (Mon)\""
+            events[1].jsonObject["end"].toString() shouldBe "\"2026-10-26 (Mon)\""
+            // Sunday in New York ends at 04:00Z Monday, overlapping Monday's all-day instants: it is not Sunday's.
+            val sunday = tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-25"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+            sunday.content shouldContain "Dinner" // the fake returns everything; the real reader filters by instants
+            sunday.content.contains("Holiday") shouldBe false
+            tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-26","timezone":"Mars/Base"}""")).shouldBeInstanceOf<ToolResult.Error>()
+        } finally {
+            reader.events = null
+        }
     }
 
     test("search_contacts returns handles") {

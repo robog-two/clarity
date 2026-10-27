@@ -21,6 +21,7 @@ import net.robog.clarity.shared.governance.Decision
 import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Provenance
+import net.robog.clarity.shared.time.LocalTimes
 
 private val log = KotlinLogging.logger {}
 
@@ -31,6 +32,8 @@ data class GuardQuestion(
     /** The agent's own stated reason ("what I think"). Untrusted text. */
     val agentReason: String,
     val deterministic: GuardVerdict,
+    /** The person's home zone: the constitution's protected times are on its clock, and the action's times are shown there too. */
+    val zone: TimeZone = TimeZone.UTC,
 )
 
 /**
@@ -58,12 +61,18 @@ class Guard(private val model: GuardModel) {
     ): GuardVerdict {
         val deterministic = deterministicVerdict(action, constitution, provenance, zone)
         if (deterministic.decision == Decision.DENY) return deterministic // nothing stricter exists
-        return withPhoneApproval(modelCheck(action, constitution, agentReason, deterministic), action, constitution)
+        return withPhoneApproval(modelCheck(action, constitution, agentReason, deterministic, zone), action, constitution)
     }
 
-    private suspend fun modelCheck(action: ProposedAction, constitution: Constitution, agentReason: String, deterministic: GuardVerdict): GuardVerdict {
+    private suspend fun modelCheck(
+        action: ProposedAction,
+        constitution: Constitution,
+        agentReason: String,
+        deterministic: GuardVerdict,
+        zone: TimeZone,
+    ): GuardVerdict {
         val review = try {
-            model.review(GuardQuestion(action, constitution, agentReason, deterministic))
+            model.review(GuardQuestion(action, constitution, agentReason, deterministic, zone))
                 .let { v -> v.copy(lines = v.lines.filter { id -> constitution.lines.any { it.id == id } }) }
         } catch (e: CancellationException) {
             throw e
@@ -120,6 +129,7 @@ class GatewayGuardModel(
             appendLine("<action>")
             appendLine(json.encodeToString(ProposedAction.serializer(), q.action))
             appendLine("</action>")
+            appendLine(localTimesNote(q.action, q.zone))
             appendLine("<agent_reason>")
             appendLine(q.agentReason)
             appendLine("</agent_reason>")
@@ -134,6 +144,28 @@ class GatewayGuardModel(
             return json.decodeFromString(GuardVerdict.serializer(), text.substring(start, end + 1))
         }
     }
+}
+
+/** Pure: the times of [action] with their meaning on the person's clock ([zone]); the action JSON itself keeps UTC instants. */
+fun actionTimes(action: ProposedAction): List<Pair<String, kotlin.time.Instant>> = when (action) {
+    is ProposedAction.CreateEvent -> listOf("start" to action.start, "end" to action.end)
+    is ProposedAction.MoveEvent -> listOf("start" to action.start, "end" to action.end)
+    is ProposedAction.CreateReminder -> listOf("at" to action.at)
+    is ProposedAction.SetDoNotDisturb -> listOf("until" to action.until)
+    else -> emptyList()
+}
+
+/** Pure: the `<local_times>` note for the guard model: the zone, and the action's times read on that clock. */
+fun localTimesNote(action: ProposedAction, zone: TimeZone): String = buildString {
+    append("<local_times zone=\"").append(zone.id).append("\">")
+    append("Protected times in the constitution are on the person's local clock in this zone.")
+    val times = actionTimes(action)
+    if (times.isNotEmpty()) {
+        append(" The action's times (UTC instants above) read there as: ")
+        append(times.joinToString { (name, at) -> "$name ${LocalTimes.format(at, zone)}" })
+        append('.')
+    }
+    append("</local_times>")
 }
 
 /** Wires [GatewayGuardModel] to the guard role's current gateway and settings; without a key every check fails and so asks. */

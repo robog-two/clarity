@@ -81,13 +81,15 @@ private class FakeConstitutionRepo(val result: ApiResult<Constitution>) : Consti
 
 private class FakePhoneConnector : PhoneConnector {
     var synced = 0
-    val last = MutableStateFlow<Instant?>(null)
+    var enabled = 0
+    val last = MutableStateFlow(net.robog.clarity.app.connector.SmsSyncStatus())
     override suspend fun syncOnce(): Int { synced++; return 0 }
+    override suspend fun enableMessages(): Int { enabled++; return 0 }
     override suspend fun actionPass(waitSeconds: Int) = 0
     override suspend fun runPass() = Unit
     override suspend fun runActionLoop() = Unit
     override fun schedule() = Unit
-    override val lastSyncAt: Flow<Instant?> = last
+    override val status: Flow<net.robog.clarity.app.connector.SmsSyncStatus> = last
 }
 
 private class RecordingFlag : OnboardingFlagStore {
@@ -245,9 +247,22 @@ class SettingsViewModelTest {
         r.caps.sms = true
         r.vm.onSmsGranted()
         assertTrue(r.state.smsGranted)
-        assertEquals(1, r.phone.synced, "granting messages starts the sync")
-        r.phone.last.value = T0 + 1.hours - 5.minutes
-        assertEquals("5 min ago", r.state.smsLastSync)
+        assertEquals(1, r.phone.enabled, "granting messages allows them on the server and starts the sync")
+        assertEquals("never", r.state.sms.trailing)
+        r.phone.last.value = net.robog.clarity.app.connector.SmsSyncStatus(lastSyncAt = T0 + 1.hours - 5.minutes, sent = 1204)
+        assertEquals("5 min ago", r.state.sms.trailing)
+        assertEquals("1,204 texts synced with your server", r.state.sms.sub)
+        assertTrue(r.state.sms.ok)
+    }
+
+    @Test fun aServerThatRefusesTextsIsShownAndOffersToAllowThem() = withMain {
+        val r = SettingsRig()
+        r.caps.sms = true
+        r.vm.refreshDevice()
+        r.phone.last.value = net.robog.clarity.app.connector.SmsSyncStatus(problem = net.robog.clarity.app.connector.SmsSyncProblem.NOT_ALLOWED)
+        assertTrue(r.state.sms.needsAllow)
+        assertFalse(r.state.sms.ok)
+        assertEquals("allow", r.state.sms.trailing)
     }
 
     @Test fun warnsWhenExactAlarmsOrNotificationsAreOff() = withMain {

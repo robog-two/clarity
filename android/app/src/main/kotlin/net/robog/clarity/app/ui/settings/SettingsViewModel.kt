@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.datetime.LocalTime
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.connector.PhoneConnector
+import net.robog.clarity.app.connector.SmsSyncStatus
 import net.robog.clarity.app.data.seenSettings
 import net.robog.clarity.app.data.storedSettings
 import net.robog.clarity.app.data.ApiError
@@ -54,7 +55,8 @@ data class SettingsUiState(
     val constitution: String? = null,
     val serverSources: List<SourceRow> = emptyList(),
     val smsGranted: Boolean = false,
-    val smsLastSync: String = "never",
+    /** The messages row: last sync, how many, or what went wrong. */
+    val sms: SmsRowText = SmsRowText("allow reading texts to sync them", "allow", needsAllow = true),
     val dndGranted: Boolean = false,
     val notificationsOn: Boolean = true,
     val fullScreenOk: Boolean = true,
@@ -89,6 +91,9 @@ class SettingsViewModel(
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
+    /** The phone connector's last sync report (declared before `init`, which reads it). */
+    private var smsStatus = SmsSyncStatus()
+
     init {
         viewModelScope.launch {
             sessions.session.collect { s ->
@@ -96,7 +101,10 @@ class SettingsViewModel(
             }
         }
         viewModelScope.launch {
-            phone.lastSyncAt.collect { at -> _state.update { it.copy(smsLastSync = relativeTime(at, clock.now())) } }
+            phone.status.collect { status ->
+                smsStatus = status
+                _state.update { it.copy(sms = smsRowText(it.smsGranted, status, clock.now())) }
+            }
         }
         viewModelScope.launch { push.enabled.collect { on -> _state.update { it.copy(pushOn = on) } } }
         viewModelScope.launch { load() }
@@ -153,9 +161,11 @@ class SettingsViewModel(
 
     /** Re-reads what the phone allows; call it when the screen comes back from a system dialog. */
     fun refreshDevice() {
+        val smsGranted = device.smsGranted()
         _state.update {
             it.copy(
-                smsGranted = device.smsGranted(),
+                smsGranted = smsGranted,
+                sms = smsRowText(smsGranted, smsStatus, clock.now()),
                 dndGranted = device.dndAccessGranted(),
                 notificationsOn = device.notificationsEnabled(),
                 fullScreenOk = device.canUseFullScreenIntent(),
@@ -165,10 +175,10 @@ class SettingsViewModel(
         }
     }
 
-    /** SMS permission was just granted: start syncing. */
+    /** SMS permission was just granted (or the server is not taking texts yet): allow them there too and sync. */
     fun onSmsGranted() {
         refreshDevice()
-        viewModelScope.launch { phone.syncOnce() }
+        viewModelScope.launch { phone.enableMessages() }
     }
 
     // --- edits ---
