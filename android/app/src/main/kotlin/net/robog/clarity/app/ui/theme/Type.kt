@@ -97,6 +97,8 @@ data class ClarityTextStyles(
     val contextBody: TextStyle,
     /** Big onboarding headings (`h1` 40 / 36). */
     val hero: TextStyle,
+    /** Top-level titles (the tabs, the call screens): Libre Caslon italic with its decorative ligatures. */
+    val heroTitle: TextStyle,
     /** Chat bubbles and the rows under them (sans, like the rest of Material). */
     val chat: TextStyle,
     /** Secondary lines in chat rows. */
@@ -110,6 +112,8 @@ fun clarityTextStyles(uiFamily: FontFamily, readingFamily: FontFamily): ClarityT
     kicker = ui(500, 12, 16, 0.4f, uiFamily),
     contextBody = ui(500, 14, 20, 0f, uiFamily),
     hero = ui(600, 40, 44, 0f, uiFamily),
+    // Always the serif, even though the rest of the theme is sans.
+    heroTitle = ui(600, 32, 38, 0f, ClarityFonts.reading).copy(fontStyle = FontStyle.Italic, fontFeatureSettings = "liga, dlig"),
     chat = ui(400, 16, 24, 0f, uiFamily),
     chatSmall = ui(400, 14, 20, 0.1f, uiFamily),
 )

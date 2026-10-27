@@ -31,6 +31,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -69,6 +70,15 @@ fun sentenceCase(text: String): String {
 @Composable
 fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
     Text(sentenceCase(text), modifier, color = color, style = MaterialTheme.clarityText.kicker)
+}
+
+/** The Material 3 Expressive loading indicator, centred in the width it is given. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun LoadingSpinner(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+        androidx.compose.material3.LoadingIndicator()
+    }
 }
 
 /** `.h`: the screen heading. */

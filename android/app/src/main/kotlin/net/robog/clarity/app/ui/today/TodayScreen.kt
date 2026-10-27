@@ -38,7 +38,6 @@ import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
-import net.robog.clarity.app.ui.components.ScreenTitle
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.governance.HeldActionId
 
@@ -67,7 +66,7 @@ fun TodayContent(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
-            ScreenTitle("Today")
+            Text("Today", style = MaterialTheme.clarityText.heroTitle)
             state.error?.let {
                 ErrorBox(it)
                 androidx.compose.material3.TextButton(onClick = onRefresh) { Text("Try again") }

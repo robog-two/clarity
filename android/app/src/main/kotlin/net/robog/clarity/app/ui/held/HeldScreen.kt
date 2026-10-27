@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.components.alignListItemToContent
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.clickable
@@ -24,7 +25,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
-import net.robog.clarity.app.ui.components.ScreenTitle
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.shared.governance.HeldActionId
 
@@ -52,7 +52,7 @@ fun HeldContent(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Kicker(state.kicker)
-        ScreenTitle("Held for you")
+        Text("Held for you", style = MaterialTheme.clarityText.heroTitle)
         Hint("Things I tried that hit one of your lines. Tap one to review it.")
         Column {
             if (state.rows.isEmpty()) Hint("Nothing is held right now.")

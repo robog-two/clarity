@@ -17,6 +17,14 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MicOff
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.FilledTonalIconToggleButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -88,15 +96,12 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Kicker(if (state.callTime.isEmpty()) "incoming call" else "incoming call · ${state.callTime}")
-        Text("Personal Agent", style = MaterialTheme.typography.displaySmall.copy(fontSize = 34.sp), textAlign = TextAlign.Center)
+        Text("Personal Agent", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
         Hint("Morning call · about 8 min")
         Spacer(Modifier.weight(1f))
         state.message?.let { ErrorBox(it) }
         Hint("You talk. I answer in text, on screen.", Modifier.padding(bottom = 24.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            SecondaryButton("not now", onDecline, Modifier.weight(1f).heightIn(min = 64.dp), enabled = !state.working)
-            PrimaryButton("answer", onAnswer, Modifier.weight(1f).heightIn(min = 64.dp), enabled = !state.working)
-        }
+        SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working)
     }
 }
 
@@ -150,19 +155,38 @@ private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Un
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Row(
             Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 14.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            SecondaryButton(
-                when {
-                    state.pushToTalk -> "talk"
-                    state.muted -> "unmute"
-                    else -> "mute"
-                },
-                onToggleMute,
-                Modifier.weight(1f),
-            )
-            PrimaryButton(primaryLabel(state.stage), onAdvance, Modifier.weight(1f), enabled = state.canAdvance)
+            MicButton(state, onToggleMute)
+            PrimaryButton(primaryLabel(state.stage), onAdvance, Modifier.weight(1f).heightIn(min = 56.dp), enabled = state.canAdvance)
         }
+    }
+}
+
+/**
+ * The mic as an icon-only toggle. It's "on" while the mic is live, and its shape changes from
+ * round to squarer when it is. Muted shows the crossed-out mic.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun MicButton(state: CallUiState, onToggle: () -> Unit) {
+    val live = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
+    FilledTonalIconToggleButton(
+        checked = live,
+        onCheckedChange = { onToggle() },
+        shapes = IconButtonDefaults.toggleableShapes(),
+        modifier = Modifier.size(IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Wide)),
+    ) {
+        Icon(
+            if (state.muted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
+            contentDescription = when {
+                state.pushToTalk -> "Talk"
+                state.muted -> "Unmute"
+                else -> "Mute"
+            },
+            modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
+        )
     }
 }
 
@@ -226,7 +250,7 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Kicker(if (elapsed == null) "call ended" else "call ended · $elapsed")
-        Text("Your Morning", style = MaterialTheme.typography.headlineMedium.copy(fontSize = 28.sp, lineHeight = 32.sp))
+        Text("Your Morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
         if (state.plan.isNotEmpty()) {
             InfoBox(container = MaterialTheme.colorScheme.primaryContainer, content = MaterialTheme.colorScheme.onPrimaryContainer, border = null, shape = MaterialTheme.shapes.large) {
                 Kicker("your plan", color = MaterialTheme.colorScheme.onPrimaryContainer)

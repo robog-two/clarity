@@ -1,6 +1,8 @@
 package net.robog.clarity.app.ui
 
 import kotlin.test.Test
+import net.robog.clarity.app.ui.call.SlideOutcome
+import net.robog.clarity.app.ui.call.slideOutcome
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -343,5 +345,14 @@ class CallServiceTest {
         assertEquals(listOf<SessionControl>(SessionControl.Snooze(15)), sessions.controls)
         assertNotNull(alarms.set[AlarmSlot.Snooze])
         Unit
+    }
+
+    @Test fun theIncomingSliderActsOnlyNearEitherEnd() {
+        assertEquals(SlideOutcome.None, slideOutcome(0f, 100f))
+        assertEquals(SlideOutcome.None, slideOutcome(79f, 100f))
+        assertEquals(SlideOutcome.Answer, slideOutcome(80f, 100f))
+        assertEquals(SlideOutcome.None, slideOutcome(-79f, 100f))
+        assertEquals(SlideOutcome.Decline, slideOutcome(-80f, 100f))
+        assertEquals(SlideOutcome.None, slideOutcome(0f, 0f))
     }
 }

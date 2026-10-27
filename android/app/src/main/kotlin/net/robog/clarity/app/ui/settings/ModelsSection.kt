@@ -10,6 +10,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -39,6 +40,7 @@ import net.robog.clarity.app.ui.components.ClarityDropdown
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.sentenceCase
 import net.robog.clarity.app.ui.today.SectionTitle
 import net.robog.clarity.shared.session.ModelRoles
@@ -53,15 +55,23 @@ data class ModelsActions(
 
 /** The "Models" section of Settings. */
 @Composable
-fun ModelsSection(viewModel: ModelsViewModel = metroViewModel()) {
+fun ModelsSection(showTitle: Boolean = true, viewModel: ModelsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    ModelsSectionContent(state, ModelsActions(viewModel::setProvider, viewModel::setModel, viewModel::setEffort, viewModel::reset))
+    ModelsSectionContent(state, ModelsActions(viewModel::setProvider, viewModel::setModel, viewModel::setEffort, viewModel::reset), showTitle)
 }
 
+/** [showTitle] is off when the section is a page of its own and the page already names it. */
 @Composable
-fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions) {
-    if (!state.available || (state.loading && state.rows.isEmpty())) return
-    SectionTitle("Models")
+fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions, showTitle: Boolean = true) {
+    if (!state.available) {
+        if (!showTitle) Hint("Your server doesn’t let you choose models yet.")
+        return
+    }
+    if (state.loading && state.rows.isEmpty()) {
+        if (!showTitle) LoadingSpinner()
+        return
+    }
+    if (showTitle) SectionTitle("Models")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Hint("Which model does each part of the work. Changes are saved on your server.")
         state.message?.let { ErrorBox(it) }
