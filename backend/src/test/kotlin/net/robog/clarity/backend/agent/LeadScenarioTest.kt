@@ -42,6 +42,18 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 private fun userText(m: net.robog.clarity.harness.Message) = m.content.filterIsInstance<Block.Text>().joinToString("\n") { it.text }
 private fun allText(request: net.robog.clarity.harness.ModelRequest) = request.messages.joinToString("\n---\n") { "${it.role}: ${userText(it)}" }
 
+private fun reply(id: String, text: String) = callTool(
+    id, "send_to_user",
+    buildJsonObject { put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", text) }))) },
+)
+
+/** The lead's reply nudge is the last thing the model sees. */
+private fun isNudge(request: net.robog.clarity.harness.ModelRequest) =
+    request.messages.last().let { it.role == Role.SYSTEM && userText(it) == REPLY_NUDGE }
+
+private fun lastResultFor(request: net.robog.clarity.harness.ModelRequest, id: String) =
+    request.messages.last().content.any { it is Block.Result && it.toolUseId == id }
+
 /**
  * The lead against real Postgres with a scripted model: pre-emption, batching, helpers, gated
  * external tools, crash-resume, memory, compaction. The model is never a real one.
@@ -89,7 +101,9 @@ class LeadScenarioTest : FunSpec({
         r.inbox.enqueue(user("move my 3pm to 4pm"))
         withTimeout(30.seconds) { turn.await() } shouldBe true
 
-        r.model.requests shouldHaveSize 2
+        // the person's words came in mid-turn and "on it" never reached them: one reply nudge follows
+        r.model.requests shouldHaveSize 3
+        isNudge(r.model.requests[2]) shouldBe true
         val second = allText(r.model.requests[1])
         second shouldContain "a background note"
         // the person's words go in a user message ahead of the operator update, never after it (the API refuses that)
@@ -135,6 +149,8 @@ class LeadScenarioTest : FunSpec({
         r.model.handler = { request ->
             when {
                 request.model == HELPER_MODEL -> end("The contract is in Dana's mail from Tuesday.")
+                lastResultFor(request, "toolu_ack") -> end("told them")
+                isNudge(request) -> reply("toolu_ack", "Looking for it.")
                 request.messages.last().content.any { it is Block.Result } -> end("delegated")
                 allText(request).contains("find Dana's contract") -> callTool("toolu_d", "delegate", args("task" to "Find Dana's contract in the mail and report where it is."))
                 else -> end("noted")
@@ -201,6 +217,116 @@ class LeadScenarioTest : FunSpec({
         result.content shouldContain "Held for review"
         result.content shouldContain "Don't retry"
         r.outbox.findByKey(held.single().action.idempotencyKey) shouldBe null
+    }
+
+    test("reply guard: the person wrote, the model did the work but ended without send_to_user; one nudge, then it answers") {
+        val r = rig()
+        r.model.handler = { request ->
+            when {
+                isNudge(request) -> reply("toolu_reply", "Noted: you're vegetarian.")
+                lastResultFor(request, "toolu_reply") -> end("done")
+                lastResultFor(request, "toolu_fact") -> end("Saved the fact.")
+                else -> callTool("toolu_fact", "remember_fact", args("fact" to "Vegetarian."))
+            }
+        }
+        r.inbox.enqueue(user("I'm vegetarian, remember that"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+
+        // remember_fact, plain end, the nudged reply, its end: the nudge cost one model step (plus the tool round it asked for)
+        r.model.requests shouldHaveSize 4
+        r.model.requests.count(::isNudge) shouldBe 1
+        // appended at the end, after a placeholder user turn: valid placement, and every earlier message is the previous request's prefix
+        val nudged = r.model.requests[2].messages
+        net.robog.clarity.harness.systemPlacementViolations(nudged) shouldBe emptyList()
+        nudged.subList(0, r.model.requests[1].messages.size) shouldBe r.model.requests[1].messages
+        nudged.takeLast(2).map { it.role } shouldBe listOf(Role.USER, Role.SYSTEM)
+        val page = r.feed.page(0, 50).items
+        page.map { it.author } shouldBe listOf(FeedItem.Author.AGENT)
+        page.single().cards shouldBe listOf(Card.Text("Noted: you're vegetarian."))
+        r.inbox.pending().shouldBeEmpty()
+    }
+
+    test("reply guard: the model answers in the same turn; no nudge") {
+        val r = rig()
+        r.model.handler = { request ->
+            if (lastResultFor(request, "toolu_reply")) end("done") else reply("toolu_reply", "Moved.")
+        }
+        r.inbox.enqueue(user("move my 3pm to 4pm"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.requests shouldHaveSize 2
+        r.model.requests.count(::isNudge) shouldBe 0
+    }
+
+    test("reply guard: a turn made only of jobs and events is never nudged; silence is fine there") {
+        val r = rig()
+        r.model.handler = { end("nothing worth saying") }
+        r.inbox.enqueue(InboxItem.JobDue("periodic_review", "Look over the day."))
+        r.inbox.enqueue(InboxItem.HeldDecided("h1", "declined", "Move the review"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.requests shouldHaveSize 1
+        r.feed.page(0, 50).items.shouldBeEmpty()
+    }
+
+    test("reply guard: a model that ignores the nudge is nudged once, never again, and its plain text is not shown") {
+        val r = rig()
+        r.model.handler = { end("I would tell them it's done.") }
+        r.inbox.enqueue(user("did you get that?"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.requests shouldHaveSize 2
+        r.model.requests.count(::isNudge) shouldBe 1
+        r.feed.page(0, 50).items.shouldBeEmpty()
+        // the turn is closed: nothing is resumed or retried
+        needsResume(r.journal.load(r.threads.ensure().id)) shouldBe false
+        r.lead.step() shouldBe false
+        r.model.requests shouldHaveSize 2
+    }
+
+    test("reply guard: a send_to_user that failed is not a reply") {
+        val r = rig()
+        r.model.handler = { request ->
+            when {
+                isNudge(request) -> reply("toolu_ok", "Here it is.")
+                lastResultFor(request, "toolu_bad") || lastResultFor(request, "toolu_ok") -> end("done")
+                else -> callTool("toolu_bad", "send_to_user", buildJsonObject { put("cards", JsonArray(emptyList())) })
+            }
+        }
+        r.inbox.enqueue(user("what's next?"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.requests.count(::isNudge) shouldBe 1
+        r.feed.page(0, 50).items.single().cards shouldBe listOf(Card.Text("Here it is."))
+    }
+
+    test("reply guard: a helper that ends with no result text is asked once for it; one that ignores that reports the gap") {
+        val r = rig()
+        var ignore = false
+        r.model.handler = { request ->
+            when {
+                request.model != HELPER_MODEL -> end("ok")
+                !ignore && request.messages.last().let { m -> m.role == Role.USER && userText(m) == HELPER_RESULT_NUDGE } -> end("The contract is in Tuesday's mail.")
+                else -> end("")
+            }
+        }
+        val helperJob = scope.launch { r.helpers.run() }
+        suspend fun runHelper(): HelperRun {
+            r.helpers.delegate("Find the contract.", null, null, RunScope("lead", isLead = true)).isRight() shouldBe true
+            withTimeout(20.seconds) { while (r.runs.open().isNotEmpty()) delay(50) }
+            r.helpers.joinAll()
+            return r.runs.list(openOnly = false).first()
+        }
+        runHelper().result shouldBe "The contract is in Tuesday's mail."
+        r.model.requestsFor(HELPER_MODEL) shouldHaveSize 2
+
+        r.reset()
+        r.model.requests.clear()
+        ignore = true
+        runHelper().result shouldBe "(the helper finished without a result)"
+        r.model.requestsFor(HELPER_MODEL) shouldHaveSize 2
+        helperJob.cancelAndJoin()
     }
 
     test("send_to_user: normal items show in the feed, batch items wait for the evening summary") {
@@ -309,7 +435,7 @@ class LeadScenarioTest : FunSpec({
         r.inbox.enqueue(user("morning"))
         r.lead.start()
         r.lead.step()
-        val seen = allText(r.model.requests.single())
+        val seen = allText(r.model.requests.first())
         seen shouldContain "Journal, today:"
         seen shouldContain "postpone the budget review"
         seen shouldContain "waiting on Dana's reply"
@@ -356,7 +482,9 @@ class LeadScenarioTest : FunSpec({
         r.lead.step()
         clock.advance(5.minutes)
         r.lead.compactIfIdle() shouldBe false
-        r.model.requests shouldHaveSize 1
+        // the turn and its reply nudge; no compaction call
+        r.model.requests shouldHaveSize 2
+        r.model.requests.none { it.compaction?.pauseAfterCompaction == true } shouldBe true
     }
 
     test("idle compaction (when on) runs once, only when the person is away, the thread is long and the cache is warm") {

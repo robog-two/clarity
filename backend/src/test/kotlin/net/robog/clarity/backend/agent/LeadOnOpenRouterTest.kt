@@ -89,11 +89,11 @@ class LeadOnOpenRouterTest : FunSpec({
         r.lead.step() shouldBe true
         r.model.requests.none { it.isSummaryCall() } shouldBe true
 
-        // Over it: the turn runs to its end (two calls), then the one summarizing call.
+        // Over it: the turn runs to its end (two calls, then the reply nudge: "ok" never reached the person), then the one summarizing call.
         promptTokens = 61_000
         r.inbox.enqueue(user("a long one"))
         r.lead.step() shouldBe true
-        r.model.requests.map { it.isSummaryCall() } shouldContainExactly listOf(false, false, false, true)
+        r.model.requests.map { it.isSummaryCall() } shouldContainExactly listOf(false, false, false, false, false, false, true)
         val summaryCall = r.model.requests.last()
         summaryCall.model shouldBe OR_LEAD
         summaryCall.cache shouldBe null
@@ -138,7 +138,7 @@ class LeadOnOpenRouterTest : FunSpec({
         r.lead.start()
         r.inbox.enqueue(user("before the compaction"))
         r.lead.step() shouldBe true
-        r.model.requests.single().compaction!!.triggerInputTokens shouldBe 60_000
+        r.model.requests.first().compaction!!.triggerInputTokens shouldBe 60_000
 
         r.modelSettings.set(AgentRole.LEAD, RoleOverride(provider = ModelProvider.OPENROUTER, model = OR_LEAD))
         r.inbox.enqueue(user("what do I drink?"))
@@ -201,6 +201,34 @@ class LeadOnOpenRouterTest : FunSpec({
         orEffort(r.model.requests.last()) shouldBe "medium"
         val efforts = r.journal.load(r.threads.ensure().id).mapNotNull { it.effort }
         efforts shouldContainExactly listOf("low", "medium")
+    }
+
+    test("an open model that saves a fact but never answers is nudged once on the wire as a trailing system message, then replies") {
+        val mimo = "xiaomi/mimo-v2.6-pro"
+        val r = rig(roles = onOpenRouter.copy(lead = onOpenRouter.lead.copy(model = mimo)))
+        fun last(request: ModelRequest) = request.messages.last()
+        r.model.handler = { request ->
+            when {
+                last(request).role == Role.SYSTEM && text(last(request)) == REPLY_NUDGE -> ModelResponse(
+                    listOf(Block.ToolUse("call_reply", "send_to_user", buildJsonObject {
+                        put("cards", kotlinx.serialization.json.JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Noted.") })))
+                    })),
+                    StopReason.TOOL_USE, Usage(100, 10),
+                )
+                last(request).content.any { it is Block.Result } -> end("")
+                else -> ModelResponse(listOf(Block.ToolUse("call_fact", "remember_fact", buildJsonObject { put("fact", "Drinks tea.") })), StopReason.TOOL_USE, Usage(100, 10))
+            }
+        }
+        r.lead.start()
+        r.inbox.enqueue(user("I drink tea, remember that"))
+        r.lead.step() shouldBe true
+
+        r.model.requests.map { it.model }.toSet() shouldBe setOf(mimo)
+        r.model.requests.size shouldBe 4
+        val wire = orMessages(r.model.requests[2])
+        wire.takeLast(2).map { it["role"]!!.jsonPrimitive.content } shouldContainExactly listOf("user", "system")
+        wire.last()["content"]!!.jsonPrimitive.content shouldBe REPLY_NUDGE
+        r.feed.page(0, 10).items.single().cards shouldBe listOf(net.robog.clarity.shared.feed.Card.Text("Noted."))
     }
 
     test("idle compaction never runs on OpenRouter") {

@@ -39,6 +39,14 @@ fun helperPrompt(task: String, now: kotlin.time.Instant, zone: kotlinx.datetime.
     "Current time: ${LocalTimes.now(now, zone)} (the person's local time; every time you see and give is on this clock)" +
         "\n\nTask from the lead agent:\n$task"
 
+/** Appended once when a helper finished with no result text (its plain final text IS its result). */
+const val HELPER_RESULT_NUDGE: String =
+    "You finished without a result. Write your result now as plain text: what you found or did, short and specific."
+
+/** Pure: a helper that finished on its own but left no final text gets one more turn to write it. */
+fun helperOwesResult(event: HarnessEvent.Terminal?): Boolean =
+    event is HarnessEvent.Finished && event.reason == FinishReason.END_TURN && event.result.finalText.isBlank()
+
 /** Pure: what a finished helper reports back to the lead. */
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
     is HarnessEvent.Finished -> when (event.reason) {
@@ -158,8 +166,16 @@ class HelperManager(
                 maxTurns = config.maxTurns,
                 sink = large.sink,
             )
-            runtime.harness(journal, bound).resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
+            val harness = runtime.harness(journal, bound)
+            harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
                 if (event is HarnessEvent.Terminal) terminal = event
+            }
+            // Open models sometimes end on a tool round with no text: one bounded nudge, never more.
+            if (helperOwesResult(terminal)) {
+                journal.append(run.id, Message.user(HELPER_RESULT_NUDGE))
+                harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
+                    if (event is HarnessEvent.Terminal) terminal = event
+                }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
