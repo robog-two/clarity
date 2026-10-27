@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -93,11 +94,15 @@ fun ChatTranscript(
     }
 }
 
-/** A small centred tonal pill, like a date chip in a messaging app. */
+/** A small centred outlined pill, like a date chip in a messaging app. */
 @Composable
 fun ChatPill(label: String, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
-        Surface(shape = CircleShape, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+        Surface(
+            shape = CircleShape,
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        ) {
             Text(
                 label,
                 Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
