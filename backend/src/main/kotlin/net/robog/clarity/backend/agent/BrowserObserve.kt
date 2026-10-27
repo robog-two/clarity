@@ -428,6 +428,28 @@ fun renameCandidate(items: List<SeenElement>, intent: String): SeenElement? {
     return scored.filter { it.second == best }.singleOrNull()?.first
 }
 
+/**
+ * Pure: the element a box hit fits [intent] at least as well as the page's best candidate for it
+ * ([renameCandidate]); true when there is no candidate to compare with.
+ */
+fun groundingAgrees(hit: SeenElement, items: List<SeenElement>, intent: String): Boolean {
+    val candidate = renameCandidate(items, intent) ?: return true
+    if (sameElement(hit, candidate)) return true
+    val want = words(intent).toSet()
+    return words(hit.name).count { it in want } >= words(candidate.name).count { it in want }
+}
+
+/**
+ * Pure: Jev's [box] (fractions of a [vw] x [vh] viewport) covers at least [share] of [element]'s area,
+ * so the named element is really inside what Jev pointed at.
+ */
+fun boxCovers(box: DecisionAnswer.Box, vw: Double, vh: Double, element: SeenElement, share: Double = 0.25): Boolean {
+    if (element.w <= 0 || element.h <= 0) return false
+    val w = minOf(box.right * vw, element.x + element.w) - maxOf(box.left * vw, element.x)
+    val h = minOf(box.bottom * vh, element.y + element.h) - maxOf(box.top * vh, element.y)
+    return w > 0 && h > 0 && (w * h) / (element.w * element.h) >= share
+}
+
 /** Pure: the second grounding question's target, by the element's own visible name. */
 fun namedIntent(element: SeenElement): String = "the control labelled \"${element.name}\""
 

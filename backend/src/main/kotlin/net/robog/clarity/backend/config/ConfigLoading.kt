@@ -257,7 +257,7 @@ private class Lookup(
                 ),
                 browser = BrowserPilotConfig(
                     jevModel = string("CLARITY_JEV_MODEL", "agent.browser.jevModel") ?: DEFAULT_JEV_MODEL,
-                    visibleThreshold = fraction("CLARITY_JEV_VISIBLE_THRESHOLD", "agent.browser.visibleThreshold", 0.5),
+                    visibleThreshold = fraction("CLARITY_JEV_VISIBLE_THRESHOLD", "agent.browser.visibleThreshold", 0.7),
                     approveThreshold = fraction("CLARITY_JEV_APPROVE_THRESHOLD", "agent.browser.approveThreshold", 0.9),
                     resendThreshold = fraction("CLARITY_JEV_RESEND_THRESHOLD", "agent.browser.resendThreshold", 0.3),
                     jevMayApprove = bool("CLARITY_JEV_MAY_APPROVE", "agent.browser.jevMayApprove", false),

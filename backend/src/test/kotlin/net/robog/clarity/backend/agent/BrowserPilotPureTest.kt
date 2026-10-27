@@ -160,6 +160,25 @@ class BrowserPilotPureTest : FunSpec({
         ObserveScript.source shouldNotContain "\n//"
         parseScriptResult("Script ran on page and returned:\n```json\n{\"a\": 1}\n```") shouldBe JsonObject(mapOf("a" to JsonPrimitive(1)))
     }
+
+    test("second-step grounding: the candidate to ask by name, whether a hit fits, whether a box covers the named control") {
+        val accept = SeenElement("c1", "button", "Accept all", x = 410.0, y = 397.0, w = 120.0, h = 41.0)
+        val reject = SeenElement("c2", "button", "Reject all", x = 545.0, y = 397.0, w = 116.0, h = 41.0)
+        val signIn = SeenElement("c3", "link", "Sign in")
+        val items = listOf(accept, reject, signIn, SeenElement("c4", "button", "Sign in with Clarity ID"))
+        renameCandidate(items, "the Reject all button") shouldBe reject
+        renameCandidate(items, "the Sign in link") shouldBe signIn
+        renameCandidate(items, "the Checkout button").shouldBeNull()
+        renameCandidate(items, "all of it").shouldBeNull() // a tie: no guess
+        groundingAgrees(accept, items, "the Reject all button") shouldBe false
+        groundingAgrees(reject, items, "the Reject all button") shouldBe true
+        groundingAgrees(accept, items, "the SMS option") shouldBe true // nothing to compare with
+        namedIntent(reject) shouldBe "the control labelled \"Reject all\""
+        // Jev's two boxes from the live cookie dialog (1280 x 714): the first covers 38% of "Reject all", the second 15%.
+        boxCovers(DecisionAnswer.Box(0.55, 0.62, 0.36, 0.46, null), 1280.0, 714.0, reject) shouldBe true
+        boxCovers(DecisionAnswer.Box(0.55, 0.62, 0.35, 0.44, null), 1280.0, 714.0, reject) shouldBe false
+        boxCovers(DecisionAnswer.Box(0.1, 0.2, 0.1, 0.2, null), 1280.0, 714.0, reject) shouldBe false
+    }
 })
 
 private fun Int.hours() = kotlin.time.Duration.parse("${this}h")

@@ -78,6 +78,8 @@ class FakeSite(val popup: Boolean = false) {
             El("c3", "button", "Sign in with Clarity ID", x = 240.0, y = 100.0, w = 220.0) { tabs += signin(true); /* window.open: a new tab, not selected */ },
             El("c4", "button", "Details", y = 200.0),
             El("c5", "button", "Send money", x = 240.0, y = 200.0),
+            El("c6", "button", "Accept all", y = 300.0),
+            El("c7", "button", "Reject all", x = 240.0, y = 300.0),
         ),
     )
 

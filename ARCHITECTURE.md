@@ -294,9 +294,15 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
   state of each site in the run (phase, codes sent and when). It never returns password values or
   the values of fields Clarity typed a secret into.
 - **act** takes one screenshot and makes one Jev call: a `noul` "is <intent> visible?" and a `box`.
-  A box always comes back, so the noul decides. Below `CLARITY_JEV_VISIBLE_THRESHOLD` (0.5) the
-  answer is "not found" plus the text view, and nothing is clicked. The target is the element under
-  the box centre (`elementFromPoint`, through shadow roots). With `CLARITY_BROWSER_TEXT_GROUNDING`,
+  A box always comes back, so the noul decides. The target is the element under the box centre
+  (`elementFromPoint`, through shadow roots). In live runs, targets that were on the page scored
+  0.84–1.0, absent ones 0.03–0.04, and a link drawn as a button 0.51–0.59, so
+  `CLARITY_JEV_VISIBLE_THRESHOLD` is 0.7, with a second step. When p is below it, or the box hit
+  something that fits the words worse than a control the text view names (a box between "Accept
+  all" and "Reject all"), Jev is asked once more about "the control labelled "<name>"". The step
+  goes ahead only if that box lands on the named element, or covers at least a quarter of it while
+  the element is on top at its own centre, so a field behind a dialog is never typed into.
+  Otherwise the answer is "not found" plus the text view, and nothing is clicked. With `CLARITY_BROWSER_TEXT_GROUNDING`,
   the text decision model can confirm an exact name match from the text view instead (a Decision-1
   `choice` over up to 20 refs); the screenshot path stays the default. The target is clicked or
   filled with trusted input: by the snapshot uid of a one-time `data-clarity-ref` token, or, in a
@@ -327,8 +333,10 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
 - **sign_in** fills the fields it finds by autocomplete and type with the credential's
   placeholders, submits, and asks Jev where the sign-in stands (`signed_in | needs_code |
   choose_method | needs_login | error | other`). On a code page it asks the person through
-  `ask_code`, types the code placeholder (the fill waits for the person) and verifies. Its own
-  steps go through the rules and the triage without a Jev step check.
+  `ask_code`, types the code placeholder (the fill waits for the person) and verifies. If the code
+  page is still there afterwards, the site did not take the code. The next `sign_in` asks the person
+  to type it again and never asks the site for a new code; after three rejected codes it hands back.
+  Its own steps go through the rules and the triage without a Jev step check.
 - **Secrets on screen.** For 8 actions on a site after a secret was typed (the screenshot quiet
   period), `screenshot` is still refused to the model. Jev gets those frames with the
   secret-filled fields painted black, and they are never stored.
@@ -338,7 +346,9 @@ Jev acts on is what a person sees: hidden text, aria labels, off-screen and tiny
   screenshot and the change report. Frames from the quiet period are not stored (`*_withheld`). The
   app can read it, read-only and device-authenticated: `GET /api/v1/browser/steps?run=<id>`,
   `GET …/{id}/before.png`, `…/{id}/after.png`. Each Jev and Decision call is also a `model_call`
-  row (role `decision`).
+  row (role `decision`). The `browser-frame-retention` job (every 6 hours) clears the two
+  screenshot columns of steps older than `CLARITY_BROWSER_FRAME_RETENTION` (30 days) and sets
+  `frames_dropped_at` (V21). The rows stay, and nothing else is deleted.
 - **Fails closed.** With no decision model, an error or a refusal, the step is not taken ("I never
   click blind") or it goes to the person.
 

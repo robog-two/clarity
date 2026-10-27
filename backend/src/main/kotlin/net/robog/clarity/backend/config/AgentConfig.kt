@@ -79,7 +79,9 @@ const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
 /**
  * The helper's browser ([net.robog.clarity.backend.agent.BrowserPilot]). Jev ([jevModel], a pinned
  * dated id) finds the element an action names on a screenshot, double-checks the step and verifies
- * the outcome. An element counts as found at [visibleThreshold]; a step is ordinary browsing for Jev
+ * the outcome. An element counts as found at [visibleThreshold] (0.7: in live runs
+ * present targets scored 0.84-1.0, absent ones 0.03-0.04, and a link drawn as a button 0.53-0.59;
+ * below it the pilot asks once more by the element's own name before giving up); a step is ordinary browsing for Jev
  * at [approveThreshold], and with [jevMayApprove] off (the default) Jev can only make a step stricter.
  * Once a sign-in code was sent, a step Jev rates at [resendThreshold] or more as sending another is
  * refused. [textGrounding] lets an exact name match in the text view be confirmed by the text decision
@@ -87,7 +89,7 @@ const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
  */
 data class BrowserPilotConfig(
     val jevModel: String = DEFAULT_JEV_MODEL,
-    val visibleThreshold: Double = 0.5,
+    val visibleThreshold: Double = 0.7,
     val approveThreshold: Double = 0.9,
     val resendThreshold: Double = 0.3,
     val jevMayApprove: Boolean = false,

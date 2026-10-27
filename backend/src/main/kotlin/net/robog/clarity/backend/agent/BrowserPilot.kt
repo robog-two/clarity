@@ -479,9 +479,16 @@ class BrowserPilot(
                 is Either.Left -> return r.value
                 is Either.Right -> r.value
             }
-            if (g.pVisible >= settings.visibleThreshold) return locate(g, intent, before, frame, trail, expected = null)
-            // Second step: Jev may not share the helper's words ("link" for a link styled as a button). Ask again by the
-            // name the page gives the likeliest element, and act only if Jev sees it and its box lands on that element.
+            if (g.pVisible >= settings.visibleThreshold) {
+                val found = locate(g, intent, before, frame, trail, expected = null)
+                // A box between two controls ("Accept all" | "Reject all") can land on the wrong one: when the page has a
+                // control that fits the words better than what was hit, ask again for that one by name.
+                if (found !is Ground.Hit || groundingAgrees(found.element, before.items, intent)) return found
+                trail.box = null
+            }
+            // Second step: Jev may not share the helper's words ("link" for a link styled as a button), or its box sat
+            // between two controls. Ask again by the name the page gives the likeliest element, and act only if Jev sees
+            // it and its box lands on that element.
             val candidate = renameCandidate(before.items, intent)
                 ?: return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f)".format(g.pVisible))
             val named = namedIntent(candidate)
@@ -492,7 +499,7 @@ class BrowserPilot(
             if (second.pVisible < settings.visibleThreshold) {
                 return Ground.NotFound("\"$intent\" is not visible on the screen (Jev p=%.2f; as $named p=%.2f)".format(g.pVisible, second.pVisible))
             }
-            return locate(second, intent, before, frame, trail, expected = candidate)
+            return locate(second, intent, before, frame, trail, expected = candidate, earlier = g.box.takeIf { g.pVisible >= settings.visibleThreshold })
         }
 
         private suspend fun askGrounding(label: String, intent: String, png: ByteArray, jev: DecisionClient, trail: Trail): Either<Ground, Grounding> {
@@ -502,7 +509,7 @@ class BrowserPilot(
         }
 
         /** The element under the box centre; with [expected] (the second step) it must be that element. */
-        private suspend fun locate(g: Grounding, intent: String, before: PageObservation, frame: Frame, trail: Trail, expected: SeenElement?): Ground {
+        private suspend fun locate(g: Grounding, intent: String, before: PageObservation, frame: Frame, trail: Trail, expected: SeenElement?, earlier: DecisionAnswer.Box? = null): Ground {
             val box = g.box ?: return Ground.Failed("Jev gave no box")
             val vw = before.vw.takeIf { it > 0 } ?: frame.width.toDouble()
             val vh = before.vh.takeIf { it > 0 } ?: frame.height.toDouble()
@@ -510,7 +517,17 @@ class BrowserPilot(
             val y = (box.top + box.bottom) / 2 * vh
             val hit = page("point", mapOf("x" to x, "y" to y))?.hit ?: return Ground.NotFound("nothing to act on where \"$intent\" is on the screen")
             if (expected != null && !sameElement(hit, expected)) {
-                return Ground.NotFound("\"$intent\" is not clearly on the screen: Jev's box for \"${expected.name}\" landed on ${hit.role} \"${hit.name}\"")
+                // The box sits across two controls: take the named one when Jev's box covers a fair part of it. Jev's
+                // step check then sees that element outlined, not the box. It must also be on top at its own centre:
+                // a field behind a dialog is not acted on.
+                val onTop = page("point", mapOf("x" to expected.centerX, "y" to expected.centerY))?.hit?.let { sameElement(it, expected) } == true
+                if (onTop && (boxCovers(box, vw, vh, expected) || (earlier != null && boxCovers(earlier, vw, vh, expected)))) {
+                    val fresh = page("target", mapOf("ref" to expected.ref))?.hit ?: expected
+                    trail.box = box
+                    val s = frame.width / vw
+                    return Ground.Hit(fresh, PixelRect((fresh.x * s).toInt(), (fresh.y * s).toInt(), (fresh.w * s).toInt(), (fresh.h * s).toInt()), "screen box + name")
+                }
+                return Ground.NotFound("\"$intent\" is not clearly on the screen: Jev's box for \"${expected.name}\" landed on ${hit.role} \"${hit.name}\"" + (before.dialog?.let { " (a dialog is open: \"$it\"; deal with it first)" } ?: ""))
             }
             trail.box = box
             return Ground.Hit(hit, boxPixels(box, frame.width, frame.height), if (expected == null) "screen" else "screen, by name")

@@ -19,7 +19,7 @@ import fs from "node:fs";
 const dir = process.env.PILOT_DIR || "/srv/pilot";
 const secure = tls.createSecureContext({ cert: fs.readFileSync(`${dir}/site.pem`), key: fs.readFileSync(`${dir}/site.key`) });
 
-const fresh = () => ({ codesSent: 0, codes: [], method: null, signedIn: false, verifyAttempts: 0, log: [] });
+const fresh = (variant = null) => ({ variant, codesSent: 0, codes: [], method: null, signedIn: false, verifyAttempts: 0, log: [] });
 let state = fresh();
 const CODE = "246810";
 
@@ -52,9 +52,28 @@ const shop = () => page("Garden Shop", `
   <a class="button" href="https://login.clarity.test/signin?return=https://shop.clarity.test/account">Sign in</a>
   <button class="secondary" id="popup" onclick="window.open('https://login.clarity.test/signin?popup=1&return=https://shop.clarity.test/account','clarityid','width=600,height=700')">Sign in with Clarity ID</button>`);
 
-const signin = (q) => page("Clarity ID", deep(16, `
+// Variants (set with /__reset?variant=…): "cookie" puts a cookie dialog over the sign-in form, "iframe"
+// serves the form inside a same-origin frame, "overlay" floats a visible "Resend code" promo over the
+// code page. ("wrong" needs nothing here: the test's person types a wrong code first.)
+const cookieDialog = `
+  <div role="dialog" aria-modal="true" aria-label="Cookies" id="cookies"
+       style="position:fixed;inset:0;background:rgba(20,20,40,.55);display:flex;align-items:center;justify-content:center;z-index:10">
+    <div style="background:white;max-width:460px;padding:24px 28px;border-radius:10px">
+      <h2 style="margin-top:0">We value your privacy</h2>
+      <p>We use cookies to keep you signed in and to measure our site.</p>
+      <button onclick="document.getElementById('cookies').remove()">Accept all</button>
+      <button class="secondary" onclick="document.getElementById('cookies').remove()">Reject all</button>
+    </div>
+  </div>`;
+
+const signinFrame = (q) => page("Clarity ID", `
+  <h1>Sign in to Garden Shop</h1>
+  <p>Use your Clarity ID.</p>
+  <iframe src="/signin-inner${q}" title="Clarity ID sign-in" style="width:100%;height:430px;border:1px solid #ccd;border-radius:8px"></iframe>`);
+
+const signin = (q, inner = false) => (inner ? (t, b) => page(t, b).replace("<header>Clarity ID</header>", "") : page)("Clarity ID", deep(16, `
   <h1>Sign in</h1>
-  <form method="post" action="/signin${q}">
+  <form method="post" action="/signin${q}"${inner ? ' target="_top"' : ""}>
     ${deep(3, `<label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username">`)}
     ${deep(3, `<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password">`)}
     <button type="submit">Continue</button>
@@ -89,6 +108,13 @@ const code = (q, note) => page("Clarity ID", deep(12, `
     });
   </script>`));
 
+// A visible promo box that floats over the code page and also sends a new code.
+const withPromo = (q, html) => state.variant !== "overlay" ? html : html.replace("</body>", `
+  <div style="position:fixed;top:90px;right:24px;width:250px;background:#fff3cd;border:2px solid #e0a800;border-radius:10px;padding:14px 16px;z-index:5;box-shadow:0 4px 14px #0003">
+    <b>Code not arriving?</b><p style="margin:6px 0">Most codes arrive in seconds. Tap below and we'll send a fresh one.</p>
+    <form method="post" action="/send${q}"><input type="hidden" name="method" value="again"><button type="submit">Resend code</button></form>
+  </div></body>`);
+
 const account = () => page("Garden Shop", `<h1>Your account</h1><p>Signed in as Dana. You have 2 orders.</p><a class="button" href="/">Shop</a>`);
 
 const done = (ret) => page("Clarity ID", `<h1>Signed in</h1><p>Returning you to the shop…</p>
@@ -115,14 +141,19 @@ async function handle(req, res, host) {
 
   if (host === "local") {
     if (path === "/__state") return send(200, JSON.stringify({ ...state, log: state.log.slice(-60) }), { "Content-Type": "application/json" });
-    if (path === "/__reset") { state = fresh(); return send(200, "{}", { "Content-Type": "application/json" }); }
+    if (path === "/__reset") { state = fresh(url.searchParams.get("variant")); return send(200, "{}", { "Content-Type": "application/json" }); }
     return send(404, "not found");
   }
   if (host.startsWith("shop.")) {
     if (path === "/account") return send(200, state.signedIn ? account() : shop());
     return send(200, shop());
   }
-  if (path === "/signin" && req.method === "GET") return send(200, signin(q));
+  if (path === "/signin" && req.method === "GET") {
+    if (state.variant === "iframe") return send(200, signinFrame(q));
+    if (state.variant === "cookie") return send(200, signin(q).replace("</body>", cookieDialog + "</body>"));
+    return send(200, signin(q));
+  }
+  if (path === "/signin-inner") return send(200, signin(q, true));
   if (path === "/signin") {
     const form = await readBody(req);
     if (form.get("email") !== "dana@example.com" || form.get("password") !== "correct horse battery") {
@@ -140,11 +171,11 @@ async function handle(req, res, host) {
     state.codes.push({ at: new Date().toISOString(), method: state.method });
     return go(`/code${q}`);
   }
-  if (path === "/code") return send(200, code(q, `We sent a 6-digit code by ${state.method === "email" ? "email" : "SMS"}. It expires in 10 minutes.`));
+  if (path === "/code") return send(200, withPromo(q, code(q, `We sent a 6-digit code by ${state.method === "email" ? "email" : "SMS"}. It expires in 10 minutes.`)));
   if (path === "/verify") {
     const form = await readBody(req);
     state.verifyAttempts++;
-    if (form.get("code") !== CODE) return send(200, code(q, "<span style=\"color:#b00020\">That code is not right. Try again.</span>"));
+    if (form.get("code") !== CODE) return send(200, withPromo(q, code(q, "<span style=\"color:#b00020\">That code is not right. Try again.</span>")));
     state.signedIn = true;
     return popup ? send(200, done(ret)) : go(ret);
   }

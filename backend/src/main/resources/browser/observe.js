@@ -204,7 +204,12 @@
     if (!el) return { ok: false };
     if (a.clear && "value" in el && el.tagName !== "SELECT") el.value = "";
     el.focus();
-    let act = doc.activeElement; while (act && act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+    let act = doc.activeElement;
+    for (let i = 0; act && i < 8; i++) {
+      if (act.shadowRoot && act.shadowRoot.activeElement) act = act.shadowRoot.activeElement;
+      else if (act.tagName === "IFRAME") { try { act = act.contentDocument.activeElement; } catch (e) { break; } }
+      else break;
+    }
     return { ok: act === el };
   }
   if (op === "arm") {

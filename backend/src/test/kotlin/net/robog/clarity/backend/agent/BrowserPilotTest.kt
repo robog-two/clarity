@@ -306,6 +306,23 @@ class BrowserPilotTest : FunSpec({
         none.audit.rows.last().jev!!.keys shouldBe setOf("ground")
     }
 
+    test("a box that lands on the neighbouring control is not clicked: Jev is asked again by the right control's name") {
+        val rig = PilotRig()
+        // Live, Jev's box for "Reject all" straddled both buttons and its centre sat on "Accept all".
+        rig.jev.visible = { intent ->
+            if ("labelled" in intent) rig.site.find(intent) else rig.site.page.els.first { it.name == "Accept all" }
+        }
+        rig.act("the Reject all button", "the banner closes")
+        rig.site.clicked shouldBe listOf("Reject all")
+        rig.audit.rows.last().jev!!.keys shouldBe setOf("ground", "ground_named", "approve", "verify")
+
+        // When the second box lands on the wrong control too, nothing is clicked.
+        val stuck = PilotRig()
+        stuck.jev.visible = { stuck.site.page.els.first { it.name == "Accept all" } }
+        stuck.act("the Reject all button", "the banner closes") shouldContain "Not found"
+        stuck.site.clicked.shouldBeEmpty()
+    }
+
     test("a wrong code leads back to ask_code without a new code from the site; three rejections hand back") {
         val rig = PilotRig()
         rig.site.open(rig.site.method(false))

@@ -117,14 +117,15 @@ private class Measuring(private val inner: DecisionClient, private val model: St
 }
 
 /** The person, simulated: approves held steps at once and types the code the site sent. */
-private class SimulatedPerson(private val grants: GrantStore, private val code: String) : VaultGovernance {
+private class SimulatedPerson(private val grants: GrantStore, private val codes: List<String>) : VaultGovernance {
     val steps = CopyOnWriteArrayList<String>()
     val codeAsks = CopyOnWriteArrayList<String>()
     override suspend fun useCredential(credential: CredentialMeta, domain: String, pageUrl: String, provenance: Provenance, reason: String): Hold = error("the login is released up front")
     override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait {
         val id = "code${codeAsks.size + 1}"
         codeAsks += site
-        grants.put("code", Sites.registrableDomain(site)!!, mapOf(id to code), 5.minutes)
+        // The person types the codes in turn (a wrong one first, when the test says so), then the last one again.
+        grants.put("code", Sites.registrableDomain(site)!!, mapOf(id to codes[minOf(codeAsks.size - 1, codes.lastIndex)]), 5.minutes)
         return Hold.Wait("asked", HeldActionId(id))
     }
     override suspend fun browserStep(action: ProposedAction.ExternalTool, provenance: Provenance, reason: String, context: List<ContextItem>): Hold {
@@ -155,9 +156,11 @@ private fun siteJson(path: String = ""): JsonObject {
     return Json.parseToJsonElement(http.send(HttpRequest.newBuilder(URI.create(url)).build(), HttpResponse.BodyHandlers.ofString()).body()).jsonObject
 }
 
-@EnabledIf(LivePilotEnabled::class)
-class LiveBrowserPilotTest : FunSpec({
+/** The live run's shared parts: real decision clients (measured), the test browser's tools, the scripted helper. */
+private class LiveRig {
     val calls = CopyOnWriteArrayList<Measured>()
+    /** Every grounding question asked: the intent, Jev's p(visible), and what the box hit. */
+    val groundings = CopyOnWriteArrayList<String>()
     val key = pilotKey()!!
     fun client(model: String, timeout: Duration) = Measuring(
         OpenRouterDecisionClient(key, DEFAULT_OPENROUTER_BASE_URL, proxy = null, model = model, zdr = true, timeout = timeout, retryDelays = emptyList()), model, calls,
@@ -174,12 +177,20 @@ class LiveBrowserPilotTest : FunSpec({
         listOf(FieldSpec("email", "Email", FieldType.EMAIL), FieldSpec("password", "Password", FieldType.PASSWORD)), emptyMap(), kotlin.time.Instant.parse("2026-10-27T00:00:00Z"),
     )
 
-    suspend fun runScript(name: String, settings: BrowserPilotConfig, script: List<Pair<String, JsonObject>>): Pair<List<String>, MemoryBrowserAudit> {
-        siteJson("/__reset")
+    suspend fun runScript(
+        name: String,
+        settings: BrowserPilotConfig,
+        script: List<Pair<String, JsonObject>>,
+        variant: String? = null,
+        codes: List<String> = listOf("246810"),
+        codeGrants: Map<String, String> = emptyMap(),
+    ): Pair<List<String>, MemoryBrowserAudit> {
+        siteJson("/__reset" + (variant?.let { "?variant=$it" } ?: ""))
         val clock = Clock.System
         val grants = GrantStore(clock)
         grants.put("clarity_id", "login.clarity.test", mapOf("email" to "dana@example.com", "password" to "correct horse battery"), 20.minutes)
-        val person = SimulatedPerson(grants, "246810")
+        val person = SimulatedPerson(grants, codes)
+        codeGrants.forEach { (id, code) -> grants.put("code", "login.clarity.test", mapOf(id to code), 20.minutes) }
         val vault = MemoryVault(listOf(login))
         val gate = BrowserGate(vault, grants, person, { TriageVerdict(true, "scripted triage: ok") }, clock, HeldWaiters(clock))
         val audit = MemoryBrowserAudit()
@@ -208,6 +219,13 @@ class LiveBrowserPilotTest : FunSpec({
             }
             row.afterPng?.let { File(outDir, "$name-${row.seq}-after.png").writeBytes(it) }
         }
+        audit.rows.forEach { r ->
+            val jev = r.jev ?: return@forEach
+            listOf("ground", "ground_named").forEach { k ->
+                val p = (jev[k] as? JsonObject)?.get("answers")?.jsonObject?.get("visible")?.jsonPrimitive?.content
+                if (p != null) groundings += "$name #${r.seq} $k p=$p intent=\"${r.intent}\" hit=${r.hitRole} \"${r.hitName}\" gate=${r.gate}"
+            }
+        }
         File(outDir, "$name-audit.txt").writeText(
             audit.rows.joinToString("\n\n") { r ->
                 "#${r.seq} ${r.tool} intent=${r.intent} expect=${r.expect}\n  tab=${r.tabUrl} \"${r.tabTitle}\"\n  hit=${r.hitRole} \"${r.hitName}\" box=${r.box}\n" +
@@ -218,16 +236,29 @@ class LiveBrowserPilotTest : FunSpec({
         return transcript to audit
     }
 
-    afterSpec {
+    /** Writes per-call cost and latency to [file] under the run directory, and every grounding p next to it. */
+    fun summary(file: String) {
+        File(outDir.also { it.mkdirs() }, file.replace(".txt", "-groundings.txt")).writeText(groundings.joinToString("\n"))
         val total = calls.sumOf { it.costMicros ?: 0 }
         val lines = calls.mapIndexed { i, c -> "${i + 1}. ${c.model} ${c.questions} image=${c.image} ${c.millis} ms cost=${c.costMicros}µ\$ ${c.error ?: ""}" }
         val images = calls.filter { it.image && it.error == null }.map { it.millis }.sorted()
         val summary = lines.joinToString("\n") + "\n\ncalls=${calls.size} total=${total}µ\$ (\$${"%.6f".format(total / 1e6)})" +
             (if (images.isNotEmpty()) "\nJev image latency ms: min=${images.first()} median=${images[images.size / 2]} max=${images.last()}" else "")
         outDir.mkdirs()
-        File(outDir, "decision-calls.txt").writeText(summary)
+        File(outDir, file).writeText(summary)
         println(summary)
     }
+}
+
+@EnabledIf(LivePilotEnabled::class)
+class LiveBrowserPilotTest : FunSpec({
+    val rig = LiveRig()
+    val models = rig.models
+    val mcp = rig.mcp
+    val login = rig.login
+    suspend fun runScript(name: String, settings: BrowserPilotConfig, script: List<Pair<String, JsonObject>>) = rig.runScript(name, settings, script)
+
+    afterSpec { rig.summary("decision-calls.txt") }
 
     test("the raw snapshot misses the deep login fields; look lists them (no model calls)") {
         siteJson("/__reset")
@@ -236,7 +267,7 @@ class LiveBrowserPilotTest : FunSpec({
         val snapshot = (raw.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap())) as net.robog.clarity.harness.ToolResult.Ok).content
         val clock = Clock.System
         val grants = GrantStore(clock)
-        val person = SimulatedPerson(grants, "246810")
+        val person = SimulatedPerson(grants, listOf("246810"))
         val gate = BrowserGate(MemoryVault(listOf(login)), grants, person, { TriageVerdict(true, "ok") }, clock, HeldWaiters(clock))
         val pilot = BrowserPilot(gate, models, MemoryBrowserAudit(), MemoryVault(listOf(login)), person, AgentConfig(reviewInterval = Duration.parse("2h")), clock, { TimeZone.UTC })
         val look = pilot.wrap(RunScope("live-look", isLead = false), raw.values.toList()).first { it.name == "browser__look" }.invoke(JsonObject(emptyMap()))
@@ -298,6 +329,125 @@ class LiveBrowserPilotTest : FunSpec({
         all shouldContain "Signed in as Dana"
         val state = siteJson()
         state["codesSent"]!!.jsonPrimitive.content shouldBe "1"
+        state["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+    }
+})
+
+/**
+ * The second live eval: four harder pages on the same site (a cookie dialog over the form, the form
+ * in a same-origin frame, a visible "Resend code" promo over the code page, a wrong code typed
+ * first), plus intents for things that are not on the page, to see where Jev's p(visible) falls.
+ * About 60 decision calls.
+ *
+ *     ./gradlew :backend:test --tests net.robog.clarity.backend.evals.live.LiveBrowserVariantsTest -Pclarity.livePilot
+ */
+@EnabledIf(LivePilotEnabled::class)
+class LiveBrowserVariantsTest : FunSpec({
+    val rig = LiveRig()
+    afterSpec { rig.summary("variants-decision-calls.txt") }
+    val email = "[secret:clarity_id_email]"
+    val password = "[secret:clarity_id_password]"
+    /** `PILOT_ONLY=cookie,wrong` runs only those variants (a re-check after a fix, at a quarter of the calls). */
+    fun on(variant: String) = System.getenv("PILOT_ONLY")?.split(',')?.contains(variant) ?: true
+
+    test("cookie dialog over the form: absent intents are not found, the covered field is not typed into, Reject clears it, then sign-in").config(enabled = on("cookie")) {
+        val (transcript, audit) = rig.runScript(
+            "cookie", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://shop.clarity.test/"),
+                call("act", "intent" to "the Delete account button", "expect" to "the account is deleted"),
+                call("act", "intent" to "the Checkout button", "expect" to "the cart"),
+                call("act", "intent" to "the Sign in link", "expect" to "a sign-in form"),
+                call("act", "intent" to "the Email address field", "expect" to "the email is typed in", "value" to email),
+                call("act", "intent" to "the Reject all button", "expect" to "the cookie banner is gone and the sign-in form is visible"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("sign_in", "credential" to "clarity_id"),
+            ),
+            variant = "cookie",
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "Not found"
+        all shouldContain "The dialog closed."
+        audit.rows.first { it.intent == "the Reject all button" }.hitName shouldBe "Reject all"
+        audit.rows.first { it.intent == "the Sign in link" }.hitName shouldBe "Sign in"
+        audit.rows.first { it.intent == "the Email address field" }.gate shouldBe "not_found" // behind the dialog
+        all shouldContain "Signed in to login.clarity.test"
+        siteJson()["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+        siteJson()["codesSent"]!!.jsonPrimitive.content shouldBe "1"
+    }
+
+    test("the login inside a same-origin frame: look lists it, act finds and fills the framed fields").config(enabled = on("iframe")) {
+        val (transcript, _) = rig.runScript(
+            "iframe", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://login.clarity.test/signin"),
+                call("look"),
+                call("act", "intent" to "the Email address field", "expect" to "the email address is filled in", "value" to email),
+                call("act", "intent" to "the Password field", "expect" to "the password is filled in (shown as dots)", "value" to password),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking how to send a sign-in code"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("sign_in", "credential" to "clarity_id"),
+            ),
+            variant = "iframe",
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "textbox \"Email address\" type=email autocomplete=username"
+        all shouldContain "Signed in to login.clarity.test"
+        all shouldNotContain "correct horse battery"
+        siteJson()["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+    }
+
+    test("a visible Resend promo over the code page: it is refused, the code is typed with act and Verify is found").config(enabled = on("overlay")) {
+        val (transcript, _) = rig.runScript(
+            "overlay", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://shop.clarity.test/"),
+                call("act", "intent" to "the Sign in link", "expect" to "a sign-in form"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("act", "intent" to "the Resend code button", "expect" to "a new code is sent"),
+                call("act", "intent" to "the 6-digit code field", "expect" to "the code is typed in", "value" to "[secret:code_manual1]"),
+                call("act", "intent" to "the Verify button", "expect" to "the person is signed in to the shop"),
+                call("look"),
+            ),
+            variant = "overlay",
+            codeGrants = mapOf("manual1" to "246810"),
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "a code was sent at"
+        all shouldContain "Signed in as Dana"
+        all shouldNotContain "246810"
+        siteJson()["codesSent"]!!.jsonPrimitive.content shouldBe "1"
+        siteJson()["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+    }
+
+    test("a wrong code: ask_code again, never a new code from the site, then signed in").config(enabled = on("wrong")) {
+        val (transcript, _) = rig.runScript(
+            "wrong", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://shop.clarity.test/"),
+                call("act", "intent" to "the Sign in link", "expect" to "a sign-in form"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the Resend button", "expect" to "a new code is sent"),
+                call("sign_in", "credential" to "clarity_id"),
+            ),
+            variant = "wrong",
+            codes = listOf("111111", "246810"),
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "did not accept the code"
+        all shouldContain "a code was sent at"
+        all shouldContain "Signed in to login.clarity.test"
+        val state = siteJson()
+        state["codesSent"]!!.jsonPrimitive.content shouldBe "1"
+        state["verifyAttempts"]!!.jsonPrimitive.content shouldBe "2"
         state["signedIn"]!!.jsonPrimitive.content shouldBe "true"
     }
 })
