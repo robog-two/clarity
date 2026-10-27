@@ -40,16 +40,26 @@ http_access deny all
 cache deny all
 cache_mem 8 MB
 forwarded_for delete
-via off
+# No Via either way. `via off` does the same but Squid 6+ warns "HTTP requires the use of Via" at
+# every start; stripping the header keeps the proxy just as invisible without the warning. (Via is
+# for loop detection between proxies; this is the only one, and it never reaches itself: its
+# listeners are on private addresses, which private_dst refuses.)
+via on
+request_header_access Via deny all
+reply_header_access Via deny all
 httpd_suppress_version_string on
 visible_hostname egress
 
-# Everything lives on tmpfs; logs go to the container's stdout/stderr.
+# Everything lives on tmpfs; logs go to the container's stdout/stderr. The healthcheck only opens
+# and closes a TCP connection to the health listener (`error:transaction-end-before-headers`), so
+# loopback is left out of the access log; real clients only ever come from the client networks.
 pid_filename none
 cache_log stdio:/dev/stderr
-access_log stdio:/dev/stdout
+acl from_loopback src 127.0.0.0/8
+access_log stdio:/dev/stdout !from_loopback
 coredump_dir /tmp
 logfile_rotate 0
 max_filedescriptors 4096
 shutdown_lifetime 2 seconds
-dns_v4_first on
+# (No `dns_v4_first`: removed in Squid 5, ignored since. Squid connects to IPv4 and IPv6 addresses
+# Happy Eyeballs style, so a host whose IPv6 route is broken still works over IPv4.)
