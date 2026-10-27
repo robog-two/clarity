@@ -6,6 +6,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,9 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.Month
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import net.robog.clarity.app.call.CallService
+import net.robog.clarity.app.call.CallTracker
+import net.robog.clarity.app.call.liveCall
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
@@ -31,6 +35,7 @@ import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
+import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.Today
 import kotlinx.datetime.isoDayNumber
 import kotlin.time.Duration
@@ -122,7 +127,14 @@ data class TodayUiState(
     val unavailable: Boolean = false,
     val error: String? = null,
     val kicker: String = "",
+    /** Today's morning call is still going on with its screen gone: offer to ring again. */
+    val callAgain: Boolean = false,
+    /** Why "call me again" could not ring. */
+    val callAgainProblem: String? = null,
 )
+
+/** Offer "call me again" while a call from today is unfinished ([liveCall]), whether it was left or swiped away. */
+fun offerCallAgain(session: Session?, now: Instant, zone: TimeZone): Boolean = liveCall(session, now, zone) != null
 
 /** Today: the plan, what the agent is doing, held items and the parked list. */
 @Inject
@@ -132,6 +144,8 @@ class TodayViewModel(
     private val repository: TodayRepository,
     private val feed: FeedRepository,
     private val clock: AppClock,
+    private val calls: CallTracker,
+    private val callService: CallService,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TodayUiState())
     val state: StateFlow<TodayUiState> = _state.asStateFlow()
@@ -156,6 +170,21 @@ class TodayViewModel(
                 .collect { fetch(quiet = true) }
         }
         viewModelScope.launch { fetch(quiet = false) }
+        viewModelScope.launch {
+            calls.session.collect { session ->
+                val offer = offerCallAgain(session, clock.now(), clock.zone())
+                _state.update { it.copy(callAgain = offer, callAgainProblem = if (offer) it.callAgainProblem else null) }
+            }
+        }
+    }
+
+    /** "Call me again": the phone rings for the call still going on, like the morning call. */
+    fun callAgain() {
+        // Posting the call is a binder call to the system: off the main thread.
+        viewModelScope.launch(Dispatchers.Default) {
+            val rang = callService.ringAgain()
+            _state.update { it.copy(callAgainProblem = if (rang) null else "Turn on notifications for Clarity so I can call.") }
+        }
     }
 
     /** Pull to refresh. */
@@ -175,6 +204,8 @@ class TodayViewModel(
         if (!quiet) _state.update { it.copy(refreshing = pulled, loading = it.today == null && !pulled) }
         when (val r = repository.today()) {
             is ApiResult.Success -> {
+                // Whether a call is still going on comes with the day.
+                calls.refresh()
                 fetched = r.value
                 val now = clock.now().toLocalDateTime(clock.zone())
                 _state.update {

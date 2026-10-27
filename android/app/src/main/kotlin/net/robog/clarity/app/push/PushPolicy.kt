@@ -143,6 +143,8 @@ sealed interface Place {
     data class Tab(val tab: MainTab) : Place
     /** Reviewing or amending one held action. */
     data class HeldItem(val id: HeldActionId) : Place
+    /** The call screen, showing the call [sessionId] (null before one is answered). */
+    data class Call(val sessionId: SessionId?) : Place
     data object Other : Place
 }
 
@@ -173,12 +175,28 @@ data class NotificationPlan(
 val MAX_PUSH_AGE: Duration = 2.hours
 
 /**
+ * Whether [where] shows [item] right now: the feed on Today or Ask shows what belongs to no session
+ * (a session has its own screen), and the call screen shows the items of its call.
+ */
+fun showsItem(where: Place, item: FeedItem): Boolean = when (where) {
+    is Place.Tab -> (where.tab == MainTab.Today || where.tab == MainTab.Ask) && item.sessionId == null
+    is Place.Call -> where.sessionId != null && item.sessionId == where.sessionId
+    else -> false
+}
+
+/**
  * Whether [arrival] earns a notification, and which. Push-now agent items, released holds, the
  * evening summary and urgent held actions always do; any other agent message does while the app is
  * not on screen ("hold until" waits for its release, whose age counts from the release). Never when
  * notifications are off, when the item is stale, or when the person is looking at the very place
- * it shows up (the feed on Today or Ask, the Held list, or that held action). Messages become one
- * conversation with a reply box; something to approve or a login to enter only offers to open the app.
+ * it shows up (the feed on Today or Ask, the call screen, the Held list, or that held action).
+ * Messages become one conversation with a reply box; something to approve or a login to enter only
+ * offers to open the app.
+ *
+ * [call] is the morning call still running, if any. Its messages are a conversation the person is
+ * in the middle of: unless the call screen is in front (where they read it instead), each one
+ * notifies even while another screen of the app is open, and the notification leads back to the call.
+ * So every message of the call reaches the person exactly once, on the call screen or as a notification.
  */
 fun decideNotification(
     arrival: Arrival,
@@ -186,29 +204,29 @@ fun decideNotification(
     canPost: Boolean,
     now: Instant,
     maxAge: Duration = MAX_PUSH_AGE,
+    call: SessionId? = null,
 ): NotificationPlan? {
     if (!canPost) return null
     return when (arrival) {
-        is Arrival.Item -> itemPlan(arrival.item, front, now, maxAge)
+        is Arrival.Item -> itemPlan(arrival.item, front, now, maxAge, call)
         is Arrival.Held -> heldPlan(arrival.action, front, now, maxAge)
     }
 }
 
-private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duration): NotificationPlan? {
+private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duration, call: SessionId?): NotificationPlan? {
     if (item.author != FeedItem.Author.AGENT || item.streaming) return null
     val kind = parseNotify(item.notify)
     val since = (kind as? NotifyKind.Released)?.at ?: item.at
     if (now - since > maxAge) return null
+    val onScreen = front is Front.Showing && showsItem(front.where, item)
+    // The feed (or the call) shows it right now.
+    if (onScreen) return null
+    val ofCall = call != null && item.sessionId == call
     val channel = when (kind) {
         NotifyKind.PushNow, is NotifyKind.Released -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
-        NotifyKind.InApp -> if (front == Front.Background) PushChannel.Agent else return null
+        NotifyKind.InApp -> if (front == Front.Background || ofCall) PushChannel.Agent else return null
         NotifyKind.Hold -> return null
-    }
-    // The feed shows it right now.
-    if (front is Front.Showing) {
-        val where = front.where
-        if (where is Place.Tab && (where.tab == MainTab.Today || where.tab == MainTab.Ask)) return null
     }
     if (channel == PushChannel.Evening) {
         return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.Today)
@@ -231,7 +249,11 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
         channel = channel,
         title = "Clarity",
         text = itemText(item),
-        link = if (item.sessionId != null) DeepLink.Ask else DeepLink.Today,
+        link = when {
+            ofCall -> DeepLink.Call()
+            item.sessionId != null -> DeepLink.Ask
+            else -> DeepLink.Today
+        },
         style = PlanStyle.Message,
         sessionId = item.sessionId,
     )
@@ -294,11 +316,12 @@ fun decideMissed(
     since: Instant?,
     maxAge: Duration = MISSED_MAX_AGE,
     separately: Int = MISSED_SEPARATELY,
+    call: SessionId? = null,
 ): List<NotificationPlan> {
     val plans = fresh
         .filter { since == null || occurredAt(it) >= since }
         .sortedBy { occurredAt(it) }
-        .mapNotNull { decideNotification(it, front, canPost, now, maxAge) }
+        .mapNotNull { decideNotification(it, front, canPost, now, maxAge, call) }
     return if (plans.size <= separately) plans else listOf(summaryPlan(plans))
 }
 
@@ -325,14 +348,15 @@ const val SUMMARY_ID = 9_001
 /**
  * What the person has in front of them in the app, as arrivals to claim, so none of it notifies
  * afterwards (a catch-up would otherwise find it unclaimed). The feed on Today or Ask shows the
- * finished items; the held list its waiting actions; one held item itself.
+ * finished items outside any session; the call screen those of its call; the held list its waiting
+ * actions; one held item itself.
  */
 fun seenArrivals(front: Front, items: List<FeedItem>, held: List<HeldAction>, limit: Int = SEEN_LIMIT): List<Arrival> {
     val where = (front as? Front.Showing)?.where ?: return emptyList()
     return when {
-        where is Place.Tab && (where.tab == MainTab.Today || where.tab == MainTab.Ask) ->
-            items.filter { !it.streaming }.takeLast(limit).map { Arrival.Item(it) }
         where == Place.Tab(MainTab.Held) -> held.filter { it.status == HeldAction.Status.HELD }.map { Arrival.Held(it) }
+        where is Place.Tab || where is Place.Call ->
+            items.filter { !it.streaming && showsItem(where, it) }.takeLast(limit).map { Arrival.Item(it) }
         where is Place.HeldItem -> held.filter { it.id == where.id }.map { Arrival.Held(it) }
         else -> emptyList()
     }

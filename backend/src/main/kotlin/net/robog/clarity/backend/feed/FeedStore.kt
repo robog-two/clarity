@@ -46,6 +46,8 @@ data class FeedDraft(
     val batchPending: Boolean = false,
     /** The people the item is about (send_to_user's `about`), kept so a later "gets through" change can release a hold. */
     val about: List<Handle> = emptyList(),
+    /** A topic marker's title ([FeedItem.topic]). */
+    val topic: String? = null,
 )
 
 data class Appended(val item: FeedItem, val created: Boolean)
@@ -104,6 +106,7 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
             it[notify] = draft.notify
             it[batchState] = if (draft.batchPending) PENDING else null
             it[notifyAbout] = draft.about.ifEmpty { null }
+            it[topic] = draft.topic
         }.insertedCount > 0
         if (inserted) {
             Appended(FeedItems.selectAll().where { FeedItems.id eq id }.single().toItem(), created = true)
@@ -197,4 +200,5 @@ private fun ResultRow.toItem() = FeedItem(
     cards = this[FeedItems.cards],
     streaming = this[FeedItems.streaming],
     notify = this[FeedItems.notify] ?: NOTIFY_IN_APP,
+    topic = this[FeedItems.topic],
 )

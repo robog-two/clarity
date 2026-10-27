@@ -143,6 +143,10 @@ private val todayFull = TodayUiState(
 // The quieter tasks unfolded: compact, still rows with nothing to press.
 @PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, quietOpen = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, quietOpen = true)
+// This morning's call left unfinished: "call me again" above the day.
+@Composable private fun TodayCallAgain(dark: Boolean) = Screen(dark) { TodayContent(todayFull.copy(callAgain = true), {}, {}, {}) }
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainLight() = TodayCallAgain(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainDark() = TodayCallAgain(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyLight() = TodayEmpty(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyDark() = TodayEmpty(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorLight() = TodayError(false)

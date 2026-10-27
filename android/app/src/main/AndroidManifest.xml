@@ -22,6 +22,11 @@
          long-lived connection (Android 14 asks for the matching permission below). -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <!-- The morning call keeps showing as a call (status-bar chip, hang up) when its screen is left or
+         swiped away: a phoneCall foreground service. Android 14 asks for MANAGE_OWN_CALLS with that type
+         (a normal permission, granted at install: the app manages its own call). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <!-- Reconnect as soon as the network changes. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Asked once, with an explanation: without it the system may delay pushes while the screen is off. -->
@@ -86,6 +91,13 @@
             android:name=".app.push.FeedService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+
+        <!-- The call going on, after its screen is gone; it outlives the task being swiped away. -->
+        <service
+            android:name=".app.call.OngoingCallService"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="phoneCall" />
 
         <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
         <receiver android:name=".app.call.CallActionReceiver" android:exported="false" />

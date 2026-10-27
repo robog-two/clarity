@@ -228,12 +228,14 @@ class CallAlarmHandlerTest {
     private val caps = FakeCapabilities()
     private val feed = InMemoryFeedStore()
     private val scheduler = CallScheduler(ScreenSettings(ApiResult.Success(settings())), cache, alarms, clock)
-    private val handler = CallAlarmHandler(cache, feed, notifier, caps, scheduler, clock)
+    val tracker = net.robog.clarity.app.call.CallTracker(net.robog.clarity.app.testutil.ScriptedSessions(), clock)
+    private val handler = CallAlarmHandler(cache, feed, notifier, caps, scheduler, clock, tracker)
 
     @Test fun callAlarmPostsTheFullScreenCallAndArmsTomorrow() = runBlocking {
         handler.onAlarm(AlarmSlot.Call)
         assertEquals(listOf("incoming:FullScreenCall@9:00 am", "cancelHeadsUp"), notifier.log)
         assertEquals(at("2026-10-27T09:00:00Z"), alarms.set[AlarmSlot.Call])
+        assertTrue(tracker.ringing.value, "opened from the ring, the call screen asks to answer first")
     }
 
     @Test fun withoutFullScreenPermissionItIsAHeadsUpCall() = runBlocking {

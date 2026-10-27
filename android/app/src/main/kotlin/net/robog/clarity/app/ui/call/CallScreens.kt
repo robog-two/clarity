@@ -11,20 +11,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.MicOff
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalIconToggleButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,8 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import net.robog.clarity.app.ui.components.FollowNewest
-import net.robog.clarity.app.ui.components.arrivingItem
+import androidx.compose.runtime.remember
+import net.robog.clarity.app.ui.components.ChatComposer
+import net.robog.clarity.app.ui.components.ChatTranscript
+import net.robog.clarity.app.ui.components.ComposerMic
+import net.robog.clarity.app.ui.components.chatEntries
 import net.robog.clarity.app.ui.components.groupShape
 import net.robog.clarity.app.ui.components.springIn
 import net.robog.clarity.app.ui.today.DoingRow
@@ -61,8 +55,6 @@ import androidx.compose.ui.unit.sp
 import kotlin.time.Clock
 import kotlinx.coroutines.delay
 import net.robog.clarity.app.ui.cards.CardEnv
-import net.robog.clarity.app.ui.cards.FeedItemView
-import net.robog.clarity.app.ui.cards.LiveBubble
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
@@ -89,13 +81,15 @@ fun CallContent(
     onCloseReplay: () -> Unit,
     onOpenApp: () -> Unit,
     modifier: Modifier = Modifier,
+    onDraft: (String) -> Unit = {},
+    onSend: () -> Unit = {},
 ) {
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         when (state.screen) {
             CallScreen.Loading -> Unit
             CallScreen.Incoming -> IncomingScreen(state, onAnswer, onDecline)
             CallScreen.Snoozed -> SnoozedScreen(state, onAnswer)
-            CallScreen.InCall -> InCallScreen(state, mic, onAdvance, onToggleMute)
+            CallScreen.InCall -> InCallScreen(state, mic, onAdvance, onToggleMute, onDraft, onSend)
             CallScreen.Ended -> EndedScreen(state, onOpenApp, onReplay)
             CallScreen.Replay -> ReplayScreen(state, onCloseReplay)
         }
@@ -172,7 +166,14 @@ private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
 }
 
 @Composable
-private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Unit, onToggleMute: () -> Unit) {
+private fun InCallScreen(
+    state: CallUiState,
+    mic: MicAccess,
+    onAdvance: () -> Unit,
+    onToggleMute: () -> Unit,
+    onDraft: (String) -> Unit,
+    onSend: () -> Unit,
+) {
     // The screen stays on while the person talks to the agent.
     val view = LocalView.current
     DisposableEffect(view) {
@@ -186,7 +187,7 @@ private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Un
     }
     val elapsed = if (inspection) "4:12" else state.startedAt?.let { formatElapsed(now - it) } ?: "0:00"
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
         Row(
             Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 20.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -203,42 +204,32 @@ private fun InCallScreen(state: CallUiState, mic: MicAccess, onAdvance: () -> Un
         }
         state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp)) }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 14.dp, bottom = 24.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MicButton(state, onToggleMute)
-            PrimaryButton(primaryLabel(state.stage), onAdvance, Modifier.weight(1f).heightIn(min = 56.dp), enabled = state.canAdvance)
-        }
-    }
-}
-
-/**
- * The mic as an icon-only toggle. It's "on" while the mic is live, and its shape changes from
- * round to squarer when it is. Muted shows the crossed-out mic.
- */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
-@Composable
-private fun MicButton(state: CallUiState, onToggle: () -> Unit) {
-    val live = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
-    FilledTonalIconToggleButton(
-        checked = live,
-        onCheckedChange = { onToggle() },
-        shapes = IconButtonDefaults.toggleableShapes(),
-        modifier = Modifier.size(IconButtonDefaults.mediumContainerSize(IconButtonDefaults.IconButtonWidthOption.Wide)),
-    ) {
-        Icon(
-            if (state.muted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-            contentDescription = when {
-                state.pushToTalk -> "Talk"
-                state.muted -> "Unmute"
-                else -> "Mute"
-            },
-            modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
+        ChatComposer(
+            draft = state.draft,
+            onDraft = onDraft,
+            onSend = onSend,
+            mic = callMic(state),
+            onMic = onToggleMute,
+        )
+        PrimaryButton(
+            primaryLabel(state.stage),
+            onAdvance,
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = 24.dp).heightIn(min = 56.dp),
+            enabled = state.canAdvance,
         )
     }
 }
+
+/** The composer's mic in a call: live while listening, crossed out when muted, "Talk" when push to talk. */
+private fun callMic(state: CallUiState) = ComposerMic(
+    live = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn,
+    muted = state.muted,
+    description = when {
+        state.pushToTalk -> "Talk"
+        state.muted -> "Unmute"
+        else -> "Mute"
+    },
+)
 
 /** The four stage segments: done and current filled, the rest muted, each with its label. */
 @Composable
@@ -275,20 +266,8 @@ private fun RowScope.Segment(label: String, state: SegmentState) {
 /** This call's feed items with the live bubble last (at the bottom); follows the newest line. */
 @Composable
 private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
-    val listState = rememberLazyListState()
-    val env = CardEnv(held = state.held, tasks = state.tasks)
-    FollowNewest(listState, state.items.size)
-    // Bottom-up like Ask: opens at the newest line and stays pinned while a line streams in.
-    LazyColumn(
-        modifier.fillMaxWidth(),
-        state = listState,
-        reverseLayout = true,
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
-    ) {
-        state.live?.let { live -> item(key = "live") { LiveBubble(live, arrivingItem()) } }
-        items(state.items.asReversed(), key = { it.seq }) { FeedItemView(it, arrivingItem(), env = env) }
-    }
+    val entries = remember(state.items) { chatEntries(state.items) }
+    ChatTranscript(entries, state.live, CardEnv(held = state.held, tasks = state.tasks), modifier)
 }
 
 /**

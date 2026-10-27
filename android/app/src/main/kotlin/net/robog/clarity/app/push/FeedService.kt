@@ -40,6 +40,8 @@ import net.robog.clarity.app.MainActivity
 import net.robog.clarity.app.data.SessionStore
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.di.AppGraph
+import net.robog.clarity.app.call.CallActivity
+import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.toUri
 
 /**
@@ -98,7 +100,7 @@ class FeedService : Service() {
             coroutineScope {
                 launch { graph.connection.holdFeed() }
                 launch { graph.connection.holdActions() }
-                launch { graph.pushListener.run() }
+                launch { graph.connection.holdNotifications() }
                 val reconnector = NetworkReconnector({ graph.feedSync.state.value }, graph.feedSync::reconnectNow)
                 launch { networkEvents(this@FeedService).collect(reconnector::onEvent) }
                 launch { keepStatusCurrent(graph.feedSync.state, graph.sessionStore) }
@@ -276,13 +278,16 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         manager.notify(MESSAGE_ID, builder.build())
     }
 
-    private fun openIntent(plan: NotificationPlan): PendingIntent =
-        PendingIntent.getActivity(
+    /** Opens the plan's link; a message of the call goes straight back to the call screen (its own task). */
+    private fun openIntent(plan: NotificationPlan): PendingIntent {
+        val target = if (plan.link is DeepLink.Call) CallActivity::class.java else MainActivity::class.java
+        return PendingIntent.getActivity(
             context, plan.id,
-            Intent(Intent.ACTION_VIEW, plan.link.toUri().toUri(), context, MainActivity::class.java)
+            Intent(Intent.ACTION_VIEW, plan.link.toUri().toUri(), context, target)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+    }
 
     private companion object {
         const val MAX_LINES = 8

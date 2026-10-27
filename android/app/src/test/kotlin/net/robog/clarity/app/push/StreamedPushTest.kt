@@ -80,6 +80,16 @@ class StreamedPushTest {
         assertEquals(listOf("Your flight moved to 9:40."), rig.notifier.posted.map { it.text })
     }
 
+    @Test fun aTopicMarkerIsNeverANotification() = runTest {
+        val rig = Rig()
+        val marker = agentItem(8, "").copy(cards = emptyList(), topic = "Ulta Hair Appt")
+        val live = launch(Dispatchers.Unconfined) { rig.service.run() }
+        rig.sync.apply(FeedEvent.ItemAppended(marker))
+        live.cancel()
+        assertTrue(rig.notifier.posted.isEmpty())
+        assertTrue(rig.store.notifiable().isEmpty(), "nor a missed one")
+    }
+
     @Test fun aReplyThatArrivesFinalNotifiesOnce() = runTest {
         val rig = Rig()
         val live = launch(Dispatchers.Unconfined) { rig.service.run() }

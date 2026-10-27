@@ -12,7 +12,10 @@ import kotlinx.coroutines.test.setMain
 import net.robog.clarity.app.call.CallAlarms
 import net.robog.clarity.app.call.AlarmSlot
 import net.robog.clarity.app.call.CallNotifier
+import net.robog.clarity.app.call.CallScheduler
+import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.call.CallSettingsCache
+import net.robog.clarity.app.call.CallTracker
 import net.robog.clarity.app.call.IncomingPresentation
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
@@ -117,6 +120,8 @@ class ScriptedSessions(var active: Session? = null) : SessionsRepository {
     val controls = mutableListOf<SessionControl>()
     var startResult: ApiResult<Session>? = null
     var controlFailure: ApiError? = null
+    /** When set, asking for the active session fails (the server is unreachable). */
+    var activeFailure: ApiError? = null
     /** After `Next` the session is BUSY until [finishStage] (the agent is producing the stage). */
     var busyAfterNext = false
     var current: Session? = active
@@ -149,7 +154,8 @@ class ScriptedSessions(var active: Session? = null) : SessionsRepository {
     }
 
     override suspend fun active(kind: SessionKind): ApiResult<Session?> =
-        ApiResult.Success(current?.takeIf { it.kind == kind && it.state != Session.State.ENDED })
+        activeFailure?.let { ApiResult.Failure(it) }
+            ?: ApiResult.Success(current?.takeIf { it.kind == kind && it.state != Session.State.ENDED })
 
     fun finishStage() { current = current?.copy(state = Session.State.ACTIVE) }
 }
@@ -179,11 +185,27 @@ class RecordingNotifier : CallNotifier {
     val log = mutableListOf<String>()
     override fun headsUp(title: String, body: String) { log += "headsUp:$title|$body" }
     override fun incoming(presentation: IncomingPresentation, callTime: String) { log += "incoming:$presentation@$callTime" }
-    override fun ongoing(sessionId: String) { log += "ongoing:$sessionId" }
     override fun cancelHeadsUp() { log += "cancelHeadsUp" }
     override fun cancelIncoming() { log += "cancelIncoming" }
-    override fun cancelOngoing() { log += "cancelOngoing" }
 }
+
+/** A ledger that records which items were claimed. */
+class RecordingLedger : net.robog.clarity.app.push.NotifiedLedger {
+    private val claimed = mutableListOf<net.robog.clarity.app.data.feed.Arrival>()
+    val claimedSeqs: List<Long> get() = claimed.filterIsInstance<net.robog.clarity.app.data.feed.Arrival.Item>().map { it.item.seq }
+    override suspend fun claim(arrival: net.robog.clarity.app.data.feed.Arrival): Boolean =
+        if (arrival in claimed) false else { claimed += arrival; true }
+}
+
+/** The call actions over fakes, with the tracker they report to. */
+fun callService(
+    sessions: SessionsRepository,
+    clock: AppClock = FixedClock(T0),
+    tracker: CallTracker = CallTracker(sessions, clock),
+    notifier: CallNotifier = RecordingNotifier(),
+    alarms: FakeAlarms = FakeAlarms(),
+    capabilities: DeviceCapabilities = FakeCapabilities(),
+): CallService = CallService(sessions, CallScheduler(ScreenSettings(), MemorySettingsCache(), alarms, clock), notifier, tracker, capabilities)
 
 class FakeCapabilities(
     var notifications: Boolean = true,

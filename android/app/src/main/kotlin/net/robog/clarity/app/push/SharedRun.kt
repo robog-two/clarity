@@ -47,15 +47,20 @@ class ConnectionHolder(
     scope: CoroutineScope,
     feed: suspend () -> Unit,
     actions: suspend () -> Unit,
+    notifications: suspend () -> Unit = {},
 ) {
     private val feedRun = SharedRun(scope, feed)
     private val actionRun = SharedRun(scope, actions)
+    private val notifyRun = SharedRun(scope, notifications)
 
     /** Keeps the feed connection open until cancelled. */
     suspend fun holdFeed() = feedRun.hold()
 
     /** Keeps the phone connector's action long-poll running until cancelled. */
     suspend fun holdActions() = actionRun.hold()
+
+    /** Keeps turning arrivals into notifications ([PushListener.run]) until cancelled. */
+    suspend fun holdNotifications() = notifyRun.hold()
 
     val feedRunning: Boolean get() = feedRun.running
     val actionsRunning: Boolean get() = actionRun.running

@@ -37,6 +37,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
@@ -59,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.graphics.shapes.RoundedPolygon
 import net.robog.clarity.app.ui.components.CompactTaskRow
@@ -107,7 +109,7 @@ fun TodayScreen(
     viewModel: TodayViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier)
+    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain)
 }
 
 /**
@@ -125,6 +127,8 @@ fun TodayContent(
     modifier: Modifier = Modifier,
     /** Whether the quieter tasks start unfolded (previews and screenshots). */
     quietExpanded: Boolean = false,
+    /** "Call me again", while today's call is unfinished. */
+    onCallAgain: () -> Unit = {},
 ) {
     val pull = rememberPullToRefreshState()
     PullToRefreshBox(
@@ -142,6 +146,7 @@ fun TodayContent(
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
             Text("Today", style = MaterialTheme.clarityText.heroTitle)
+            AnimatedVisibility(state.callAgain) { CallAgainCard(state.callAgainProblem, onCallAgain) }
             state.error?.let {
                 ErrorBox(it)
                 TextButton(onClick = onRefresh) { Text("Try again") }
@@ -197,6 +202,27 @@ private fun DayBody(today: Today, state: TodayUiState, onReview: (HeldActionId) 
         if (today.parked.isNotEmpty()) {
             TodayLabel("Parked", Modifier.padding(top = 10.dp).springIn(order++))
             ParkedChips(today.parked, Modifier.springIn(order++))
+        }
+    }
+}
+
+// ---------- The call, still going on ----------
+
+/** Today's call was left unfinished (swiped away, or left to look something up): ring again to pick it up. */
+@Composable
+private fun CallAgainCard(problem: String?, onCallAgain: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(modifier.fillMaxWidth(), color = colors.surfaceContainerHigh, shape = RoundedCornerShape(24.dp)) {
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.Call, contentDescription = null)
+                Column(Modifier.weight(1f)) {
+                    Text("Our meeting isn’t finished", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text("I’ll call you back and we pick up where we left off.", style = MaterialTheme.clarityText.chatSmall)
+                }
+            }
+            problem?.let { Text(it, style = MaterialTheme.clarityText.chatSmall, color = colors.error) }
+            FilledTonalButton(onClick = onCallAgain, Modifier.align(Alignment.End)) { Text("Call me again") }
         }
     }
 }
@@ -523,6 +549,10 @@ private fun TodayLoadingPreview() = PreviewFrame(TodayUiState(kicker = PREVIEW_K
 private fun TodayBeforeCallPreview() = PreviewFrame(
     TodayUiState(loading = false, kicker = "monday, October 26 · 7:12 am", today = Today(date = previewDate)),
 )
+
+@Preview(name = "call unfinished", widthDp = 390, heightDp = 1000)
+@Composable
+private fun TodayCallAgainPreview() = PreviewFrame(previewState.copy(callAgain = true))
 
 @Preview(name = "quiet day", widthDp = 390, heightDp = 780)
 @Composable

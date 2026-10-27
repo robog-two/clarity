@@ -40,6 +40,9 @@ private fun text(m: Message) = m.content.filterIsInstance<Block.Text>().joinToSt
 /** A summarizing call (client-side compaction), told apart from a turn by its last message. */
 private fun ModelRequest.isSummaryCall() = messages.lastOrNull()?.let(::text) == CLIENT_COMPACTION_REQUEST
 
+/** The tiny call that titles a compacted stretch. */
+private fun ModelRequest.isTopicCall() = systemText == TOPIC_SYSTEM
+
 private fun orMessages(request: ModelRequest) = OpenRouterModelGateway.buildBody(request)["messages"]!!.jsonArray.map { it.jsonObject }
 
 private fun orEffort(request: ModelRequest) = OpenRouterModelGateway.buildBody(request)["reasoning"]!!.jsonObject["effort"]!!.jsonPrimitive.content
@@ -76,6 +79,7 @@ class LeadOnOpenRouterTest : FunSpec({
                     beforeSummary = r.journal.load(threadId)
                     end("They like tea. Nothing is open.")
                 }
+                request.isTopicCall() -> end("“Tea Preferences.”")
                 // Mid-turn the prompt is over the threshold already: no compaction until the turn is done.
                 request.messages.last().content.none { it is Block.Result } && request.messages.any { text(it).contains("a long one") } ->
                     ModelResponse(listOf(Block.ToolUse("call_1", "no_such_tool", JsonObject(emptyMap()))), StopReason.TOOL_USE, Usage(promptTokens, 10))
@@ -93,8 +97,18 @@ class LeadOnOpenRouterTest : FunSpec({
         promptTokens = 61_000
         r.inbox.enqueue(user("a long one"))
         r.lead.step() shouldBe true
-        r.model.requests.map { it.isSummaryCall() } shouldContainExactly listOf(false, false, false, false, false, false, true)
-        val summaryCall = r.model.requests.last()
+        r.model.requests.map { it.isSummaryCall() } shouldContainExactly listOf(false, false, false, false, false, false, true, false)
+        val summaryCall = r.model.requests[6]
+        // Then the topic call on the triage model, tiny, from the summary; its title becomes a marker in the feed.
+        val topicCall = r.model.requests.last()
+        topicCall.isTopicCall() shouldBe true
+        topicCall.model shouldBe onOpenRouter.triage.model
+        topicCall.maxTokens shouldBe TOPIC_MAX_TOKENS
+        topicCall.tools.isEmpty() shouldBe true
+        text(topicCall.messages.single()) shouldContain "They like tea."
+        val marker = r.feedStore.page(0, 100).items.single { it.topic != null }
+        marker.topic shouldBe "Tea Preferences"
+        marker.cards.isEmpty() shouldBe true
         summaryCall.model shouldBe OR_LEAD
         // Same system blocks, tools and cache policy as the thread, so on Claude it reads the cached prefix.
         summaryCall.cache shouldBe CachePolicy(ttl = "1h")
@@ -123,6 +137,24 @@ class LeadOnOpenRouterTest : FunSpec({
         next.messages.joinToString { text(it) } shouldNotContain "first"
         orMessages(next)[1]["content"]!!.jsonPrimitive.content shouldContain SUMMARY_MARKER
         r.model.requests.count { it.isSummaryCall() } shouldBe 1
+    }
+
+    test("a failed topic call leaves no marker and the compaction stands") {
+        val r = rig()
+        val threadId = r.threads.ensure().id
+        r.model.handler = { request ->
+            when {
+                request.isSummaryCall() -> end("They like tea.")
+                request.isTopicCall() -> error("model down")
+                else -> ModelResponse(listOf(Block.Text("ok")), StopReason.END_TURN, Usage(61_000, 10))
+            }
+        }
+        r.lead.start()
+        r.inbox.enqueue(user("hello"))
+        r.lead.step() shouldBe true
+        r.model.requests.count { it.isTopicCall() } shouldBe 1
+        r.journal.load(threadId).last() shouldBe Message.summary("They like tea.")
+        r.feedStore.page(0, 100).items.none { it.topic != null } shouldBe true
     }
 
     test("a journal from the Anthropic API: its stored compaction block is the cut, and its summary reaches the model") {

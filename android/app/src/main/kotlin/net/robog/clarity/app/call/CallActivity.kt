@@ -2,18 +2,23 @@ package net.robog.clarity.app.call
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.HapticFeedbackConstants
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalView
 import androidx.core.net.toUri
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.launch
 import dev.zacsweers.metrox.viewmodel.LocalMetroViewModelFactory
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ClarityApp
@@ -22,6 +27,7 @@ import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.parseDeepLink
 import net.robog.clarity.app.nav.toUri
 import net.robog.clarity.app.ui.call.CallContent
+import net.robog.clarity.app.ui.call.CallScreen
 import net.robog.clarity.app.ui.call.CallViewModel
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.voice.rememberMicAccess
@@ -57,15 +63,23 @@ class CallActivity : ComponentActivity() {
                             try { awaitCancellation() } finally { viewModel.setForeground(false) }
                         }
                     }
-                    // Answer from the notification once the screen knows where the call stands.
+                    // A light tick for each answer from the agent while the call is in front (no notification then).
+                    val view = LocalView.current
+                    LaunchedEffect(lifecycle) {
+                        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            viewModel.blips.collect { view.performHapticFeedback(HapticFeedbackConstants.CONFIRM) }
+                        }
+                    }
+                    // Answer from the notification once the screen knows where the call stands (the
+                    // ongoing call answers too: it picks the call back up from the incoming or snoozed screen).
                     LaunchedEffect(state.screen, answerRequested) {
-                        if (answerRequested && state.screen == net.robog.clarity.app.ui.call.CallScreen.Incoming) {
+                        if (answerRequested && (state.screen == CallScreen.Incoming || state.screen == CallScreen.Snoozed)) {
                             answerRequested = false
                             viewModel.answer()
                         }
                     }
                     LaunchedEffect(state.screen) {
-                        if (state.screen == net.robog.clarity.app.ui.call.CallScreen.InCall && !mic.granted) mic.request()
+                        if (state.screen == CallScreen.InCall && !mic.granted) mic.request()
                     }
                     CallContent(
                         state = state,
@@ -77,10 +91,21 @@ class CallActivity : ComponentActivity() {
                         onReplay = viewModel::replay,
                         onCloseReplay = viewModel::closeReplay,
                         onOpenApp = ::openApp,
+                        onDraft = viewModel::onDraft,
+                        onSend = viewModel::sendTyped,
                     )
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val graph = (application as ClarityApp).graph
+        // The conversation is read here now: its notification goes.
+        graph.pushNotifier.clearConversation()
+        // In front is when the system lets the ongoing call's foreground service start.
+        lifecycleScope.launch(Dispatchers.Default) { graph.ongoingCallStarter.ensure() }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -90,6 +115,9 @@ class CallActivity : ComponentActivity() {
     }
 
     private fun openApp() {
+        // Chosen on purpose: opening the app later does not bounce back into this call.
+        val tracker = (application as ClarityApp).graph.callTracker
+        tracker.live()?.let { tracker.choseApp(it.id) }
         startActivity(
             Intent(Intent.ACTION_VIEW, DeepLink.Today.toUri().toUri(), this, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
