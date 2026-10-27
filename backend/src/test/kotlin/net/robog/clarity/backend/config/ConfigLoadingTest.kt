@@ -34,6 +34,14 @@ class ConfigLoadingTest : FunSpec({
         c.agent.mcpServers shouldBe emptyList()
     }
 
+    test("helpers have their own step limit, 60 by default") {
+        val c = load().getOrNull()!!.agent
+        c.maxTurns shouldBe 30
+        c.helperMaxTurns shouldBe 60
+        load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "80")).getOrNull()!!.agent.helperMaxTurns shouldBe 80
+        load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+    }
+
     test("agent roles default to opus lead, sonnet helper, haiku guard and triage") {
         val roles = load().getOrNull()!!.agent.roles
         roles[AgentRole.LEAD].model shouldBe "claude-opus-5-5"

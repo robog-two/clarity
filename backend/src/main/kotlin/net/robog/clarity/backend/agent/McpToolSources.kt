@@ -14,7 +14,13 @@ import io.ktor.client.plugins.sse.SSE
 import io.ktor.client.request.header
 import io.ktor.http.HttpHeaders
 import kotlin.io.path.Path
+import java.nio.file.Path
+import kotlin.io.path.createDirectories
+import kotlin.io.path.deleteIfExists
 import kotlin.io.path.readText
+import kotlin.io.path.writeText
+import net.robog.clarity.backend.config.AppConfig
+import net.robog.clarity.harness.McpSessionMemory
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -32,11 +38,16 @@ private val log = KotlinLogging.logger {}
 /**
  * The agent's external tool servers (`clarity.agent.mcpServers`, e.g. the browser and sandbox
  * containers). One lazily-connecting [McpToolProvider] per server, shared by all runs. A server
- * that is down at run time is skipped with a warning rather than failing the run.
+ * that is down at run time is skipped with a warning rather than failing the run. Each server's
+ * session id is kept in [stateDir] (`mcp-session-<name>`), so a session this process could not end
+ * (it was killed) is ended by the next one; without the browser holds two Firefoxes and refuses
+ * the new one ("Maximum number of active sessions").
  */
-@Inject
 @SingleIn(AppScope::class)
-class McpToolSources(config: AgentConfig) {
+class McpToolSources(config: AgentConfig, private val stateDir: Path?) {
+    @Inject
+    constructor(config: AgentConfig, app: AppConfig) : this(config, app.dataDir)
+
     private fun newClient(bearer: String?): HttpClient =
         HttpClient(CIO) {
             install(SSE)
@@ -58,7 +69,8 @@ class McpToolSources(config: AgentConfig) {
             val bearer = server.keyFile?.let { readKey(server.name, it) }
             val client = newClient(bearer).also { clients += it }
             // Name-prefixed so two servers exposing `navigate` cannot collide.
-            server.name to McpToolProvider(server.url, client, namePrefix = "${server.name}__")
+            val memory = stateDir?.let { FileSessionMemory(it.resolve("mcp-session-${server.name.replace(Regex("[^A-Za-z0-9_-]"), "_")}")) }
+            server.name to McpToolProvider(server.url, client, namePrefix = "${server.name}__", sessions = memory)
         }
     }
 
@@ -105,6 +117,20 @@ class McpToolSources(config: AgentConfig) {
     suspend fun close() {
         providers.forEach { (_, provider) -> provider.close() }
         clients.forEach { it.close() }
+    }
+}
+
+/** A session id in a small file (not a secret: useless without the server's bearer key). */
+class FileSessionMemory(private val file: Path) : McpSessionMemory {
+    override fun load(): String? = runCatching { file.readText().trim().ifEmpty { null } }.getOrNull()
+
+    override fun save(id: String?) {
+        runCatching {
+            if (id == null) file.deleteIfExists() else {
+                file.parent?.createDirectories()
+                file.writeText(id)
+            }
+        }.onFailure { log.warn { "cannot keep the MCP session id in $file: ${it.message}" } }
     }
 }
 

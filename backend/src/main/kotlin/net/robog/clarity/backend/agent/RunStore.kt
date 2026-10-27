@@ -9,6 +9,7 @@ import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import net.robog.clarity.backend.persistence.AgentRuns
 import net.robog.clarity.backend.persistence.tx
@@ -52,6 +53,9 @@ interface RunStore {
     suspend fun finish(id: String, status: String, result: String?, usage: Usage?, error: String?, finishedAt: Instant)
     suspend fun get(id: String): HelperRun?
 
+    /** Stores a copy of the run's transcript (already scrubbed of secret values) for diagnosis. */
+    suspend fun saveTranscript(id: String, transcript: JsonElement) {}
+
     /** Runs that were queued or running when the process stopped. */
     suspend fun open(): List<HelperRun>
     suspend fun list(openOnly: Boolean, limit: Int = 50): List<HelperRun>
@@ -90,6 +94,10 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
                 it[AgentRuns.finishedAt] = finishedAt
             }
         }
+    }
+
+    override suspend fun saveTranscript(id: String, transcript: JsonElement) {
+        database.tx { AgentRuns.update({ AgentRuns.id eq Uuid.parse(id) }) { it[AgentRuns.transcript] = transcript } }
     }
 
     override suspend fun get(id: String): HelperRun? {

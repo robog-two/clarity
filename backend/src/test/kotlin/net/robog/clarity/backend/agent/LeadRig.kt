@@ -122,7 +122,7 @@ class LeadRig(
         ConnectorRouter(database, NoConnectorPreferences()), events, UtcPersonZone(), clock,
     )
 
-    val mcp = McpToolSources(config)
+    val mcp = McpToolSources(config, null)
     val large = LargeResults(database, mcp, clock)
     val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock)
     val collections = ExposedCollectionStore(database, clock)

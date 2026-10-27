@@ -150,6 +150,14 @@ class VaultPureTest : FunSpec({
             scrubText("cvc 123 and order 91234 and 1234", repl) shouldBe "cvc [secret:card_cvc] and order 91234 and 1234"
         }
 
+        test("long runs of a long secret are hidden wherever they appear; digit strings and short runs are not") {
+            val pw = listOf("B86yxc4qM7KXmG##" to "[secret:x_password]", "4111111111111111" to "[secret:card_number]")
+            scrubText("""value="B86yxc4qdana" and "3"""", pw) shouldBe """value="[part of secret:x_password]dana" and "3""""
+            scrubText("a M7KXmG# b", pw) shouldBe "a [part of secret:x_password] b"
+            scrubText("B86yx is short; order 111111 stays", pw) shouldBe "B86yx is short; order 111111 stays"
+            scrubText("whole B86yxc4qM7KXmG## here", pw) shouldBe "whole [secret:x_password] here"
+        }
+
         test("longest value first, so overlapping values are fully replaced") {
             val out = scrubText("secretpass1 secretpass", listOf("secretpass" to "A", "secretpass1" to "B"))
             out shouldBe "B A"
