@@ -22,8 +22,15 @@ enum class ToolEffect {
 }
 
 /** Outcome of a tool call. Failures are values, never exceptions, so the model can react to them. */
+/** A base64 image a tool returned, with its media type (`image/png`). */
+data class ToolImage(val mimeType: String, val base64: String)
+
 sealed interface ToolResult {
-    data class Ok(val content: String) : ToolResult
+    /**
+     * [images] are base64 images the tool returned (an MCP screenshot), for code that wraps the tool;
+     * the model only ever reads [content].
+     */
+    data class Ok(val content: String, val images: List<ToolImage> = emptyList()) : ToolResult
     data class Error(val message: String) : ToolResult
 }
 

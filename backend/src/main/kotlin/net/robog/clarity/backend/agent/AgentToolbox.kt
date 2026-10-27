@@ -106,7 +106,7 @@ class AgentToolbox(
     private val mcp: McpToolSources,
     private val session: SessionTools,
     private val vault: VaultTools,
-    private val browser: BrowserGate,
+    private val browser: BrowserPilot,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }

@@ -28,6 +28,8 @@ object ApiPaths {
     const val CONSTITUTION = "$APP/constitution"
     const val HELD = "$APP/held"
     const val ACTIVITY = "$APP/activity"
+    /** `GET ?run=<id>` lists a helper run's browser steps (the audit trail); `GET {id}/before.png` and `{id}/after.png` are its screenshots. */
+    const val BROWSER_STEPS = "$APP/browser/steps"
 
     // Vault (under APP)
     const val VAULT = "$APP/vault"

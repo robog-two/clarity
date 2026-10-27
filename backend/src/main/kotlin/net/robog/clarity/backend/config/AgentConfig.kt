@@ -24,6 +24,8 @@ data class AgentConfig(
     val openRouterRouting: net.robog.clarity.harness.OpenRouterRouting = net.robog.clarity.harness.OpenRouterRouting(),
     /** The decision model and the periodic review's gate (`CLARITY_DECISION*`, `CLARITY_REVIEW_GATE*`). */
     val decisions: DecisionConfig = DecisionConfig(),
+    /** The helper's browser: Jev grounding, gate and thresholds (`CLARITY_JEV_*`, `CLARITY_BROWSER_*`). */
+    val browser: BrowserPilotConfig = BrowserPilotConfig(),
 ) {
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
@@ -73,6 +75,28 @@ data class DecisionConfig(
 )
 
 const val DEFAULT_DECISION_MODEL = "microsoft/microsoft-decision-1"
+
+/**
+ * The helper's browser ([net.robog.clarity.backend.agent.BrowserPilot]). Jev ([jevModel], a pinned
+ * dated id) finds the element an action names on a screenshot, double-checks the step and verifies
+ * the outcome. An element counts as found at [visibleThreshold]; a step is ordinary browsing for Jev
+ * at [approveThreshold], and with [jevMayApprove] off (the default) Jev can only make a step stricter.
+ * Once a sign-in code was sent, a step Jev rates at [resendThreshold] or more as sending another is
+ * refused. [textGrounding] lets an exact name match in the text view be confirmed by the text decision
+ * model instead of a screenshot. A browser task stops after [maxActions] actions.
+ */
+data class BrowserPilotConfig(
+    val jevModel: String = DEFAULT_JEV_MODEL,
+    val visibleThreshold: Double = 0.5,
+    val approveThreshold: Double = 0.9,
+    val resendThreshold: Double = 0.3,
+    val jevMayApprove: Boolean = false,
+    val textGrounding: Boolean = false,
+    val maxActions: Int = 25,
+)
+
+/** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */
+const val DEFAULT_JEV_MODEL = "typesafe/jev-1.14-20261014"
 
 
 /**
