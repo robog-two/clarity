@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.ask
 
+import androidx.compose.ui.unit.sp
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -93,7 +94,7 @@ fun AskContent(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Ask", style = MaterialTheme.typography.headlineSmall)
+            Text("Ask", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 24.sp, lineHeight = 30.sp))
             if (state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn) MicStateChip(state.mic)
             else Kicker(if (state.busy) "working…" else "replies in text")
         }

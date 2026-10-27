@@ -22,6 +22,7 @@ import net.robog.clarity.app.nav.MainTab
 import net.robog.clarity.app.ui.amend.AmendContent
 import net.robog.clarity.app.ui.amend.AmendUiState
 import net.robog.clarity.app.ui.call.CallContent
+import net.robog.clarity.app.ui.call.SlideToAnswer
 import net.robog.clarity.app.ui.call.CallScreen
 import net.robog.clarity.app.ui.call.CallUiState
 import net.robog.clarity.app.ui.components.SlideToConfirm
@@ -319,6 +320,13 @@ private fun call(screen: CallScreen, stage: CallStage? = CallStage.CHOOSE, ended
 }
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallIncomingLight() = Call(false, CallScreen.Incoming)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallIncomingDark() = Call(true, CallScreen.Incoming)
+
+// The incoming-call slider part way through each gesture.
+@Composable private fun Slide(dark: Boolean, progress: Float) = Screen(dark) {
+    Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, initialProgress = progress) }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
+@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedLight() = Call(false, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedDark() = Call(true, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallInCallLight() = Call(false, CallScreen.InCall)
