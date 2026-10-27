@@ -41,7 +41,7 @@ class OpenRouterLeadSupportTest : FunSpec({
         // The latest marker wins, whichever kind.
         contextSince(listOf(old, compaction, summary)) shouldContainExactly listOf(summary)
         contextSince(listOf(old, summary, compaction)) shouldContainExactly listOf(compaction)
-        // sinceSummary (what every provider is sent) ignores Anthropic's block: Anthropic drops before it itself.
+        // sinceSummary (what the harness hands the gateway) ignores a stored Anthropic block: the gateway cuts there itself.
         sinceSummary(listOf(old, compaction, Message.user("next"))) shouldContainExactly listOf(old, compaction, Message.user("next"))
         sinceSummary(listOf(old, summary)) shouldContainExactly listOf(summary)
     }
@@ -57,7 +57,7 @@ class OpenRouterLeadSupportTest : FunSpec({
         journal.load("t").take(4) shouldContainExactly history
     }
 
-    test("Anthropic to OpenRouter: the server compaction block's summary reaches the model, what came before does not") {
+    test("stored Anthropic history: the server compaction block's summary reaches the model, what came before does not") {
         val thinking = Block.Raw(buildJsonObject { put("type", "thinking"); put("thinking", ""); put("signature", "sig") })
         val compaction = Block.Raw(buildJsonObject { put("type", "compaction"); put("content", "they like tea"); put("signature", "c-sig") })
         val messages = wire(
@@ -84,7 +84,7 @@ class OpenRouterLeadSupportTest : FunSpec({
         content(cut[1]) shouldBe "$SUMMARY_MARKER\n${OpenRouterModelGateway.UNREADABLE_SUMMARY}"
     }
 
-    test("OpenRouter to Anthropic: OpenRouter turns replay without thinking or reasoning, and the cache breakpoint still lands") {
+    test("switching to Claude: another model's reasoning is not replayed, and the cache breakpoint still lands") {
         val reasoning = OpenRouterModelGateway.reasoningBlock("a/b", listOf(buildJsonObject { put("type", "reasoning.text"); put("text", "hmm") }))
         val history = listOf(
             Message.summary("the gist"),
@@ -94,15 +94,17 @@ class OpenRouterLeadSupportTest : FunSpec({
             Message(Role.ASSISTANT, listOf(reasoning, Block.ToolUse("call_1", "t", JsonObject(emptyMap())))),
             Message(Role.USER, listOf(Block.Result("call_1", "ok"))),
         )
-        val request = ModelRequest("claude-opus-5-5", listOf(SystemBlock("sys", cacheBreakpoint = true)), wireOrder(sinceSummary(history)), emptyList(), 1_000, "medium")
-        // On the last user message before the last assistant turn (q2), as on any Anthropic thread.
+        val request = ModelRequest("anthropic/claude-opus-5.5", listOf(SystemBlock("sys", cacheBreakpoint = true)), wireOrder(sinceSummary(history)), emptyList(), 1_000, "medium")
+        // On the last user message before the last assistant turn (q2).
         request.messageBreakpoint shouldBe (3 to 0)
-        val body = AnthropicModelGateway.bodyJson(AnthropicModelGateway.buildParams(request))
-        body.toString() shouldNotContain "openrouter_reasoning"
+        val body = OpenRouterModelGateway.buildBody(request)
+        body.toString() shouldNotContain "reasoning_details"
         body.toString() shouldNotContain "hmm"
-        val assistant = body["messages"]!!.jsonArray[2].jsonObject["content"]!!.jsonArray
-        assistant.map { it.jsonObject["type"]!!.jsonPrimitive.content } shouldContainExactly listOf("text")
-        body["messages"]!!.jsonArray[3].jsonObject["content"]!!.jsonArray.single().jsonObject.containsKey("cache_control") shouldBe true
+        val messages = body["messages"]!!.jsonArray.map { it.jsonObject }
+        roles(messages) shouldContainExactly listOf("system", "user", "user", "assistant", "user", "assistant", "tool")
+        val q2 = messages[4]["content"]!!.jsonArray.single().jsonObject
+        q2["text"] shouldBe JsonPrimitive("q2")
+        q2.containsKey("cache_control") shouldBe true
     }
 
     test("effort is applied per request: the last effort message, else the request's") {
@@ -135,9 +137,9 @@ class OpenRouterLeadSupportTest : FunSpec({
         val other = wire(request("openai/gpt-5", Message.user("q"), turn, Message.user("more")))
         other[2].containsKey("reasoning_details") shouldBe false
 
-        // Never to Anthropic.
-        val anthropic = AnthropicModelGateway.bodyJson(AnthropicModelGateway.buildParams(request("claude-opus-5-5", Message.user("q"), turn, Message.user("more"))))
-        anthropic.toString() shouldNotContain "reasoning"
+        // Nor to Claude.
+        val claude = wire(request("anthropic/claude-opus-5.5", Message.user("q"), turn, Message.user("more")))
+        claude[2].containsKey("reasoning_details") shouldBe false
 
         // Reasoning alone (no answer) is not kept, so no assistant turn is reasoning only.
         val alone = OpenRouterModelGateway.StreamAccumulator("deepseek/r2")
@@ -145,7 +147,7 @@ class OpenRouterLeadSupportTest : FunSpec({
         alone.response().content.shouldBeEmpty()
     }
 
-    test("no cache-miss events without a cache (OpenRouter); still raised with one (Anthropic)") {
+    test("no cache-miss events without a cache policy; still raised with one (Claude)") {
         fun script() = ScriptedGateway(
             listOf(
                 response(StopReason.TOOL_USE, toolUse("c1", "t"), usage = Usage(1_000, 10)),

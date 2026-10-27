@@ -33,7 +33,6 @@ import net.robog.clarity.app.testutil.signedIn
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedPage
-import net.robog.clarity.shared.session.ModelKeyRequest
 import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionId
 
@@ -52,7 +51,6 @@ class KtorApiTest {
         val api = api { respond("", HttpStatusCode.NotFound) }
         assertIs<ApiError.NotFound>((api.settings() as ApiResult.Failure).error)
         assertIs<ApiError.NotFound>((api.today() as ApiResult.Failure).error)
-        assertIs<ApiError.NotFound>((api.putModelKey(ModelKeyRequest("k")) as ApiResult.Failure).error)
     }
 
     @Test fun errorsAreMapped() = runTest {

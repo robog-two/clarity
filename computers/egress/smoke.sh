@@ -5,7 +5,7 @@
 #   - one public HTTPS request through the browser and the sandbox listeners works
 #   - private/loopback/link-local/ULA/mapped destinations, a name resolving to a private address,
 #     the host gateway names and non-443 CONNECT are refused (403)
-#   - the backend listener allows only api.anthropic.com (+ CLARITY_BACKEND_EGRESS_ALLOW)
+#   - the backend listener allows only openrouter.ai (+ CLARITY_BACKEND_EGRESS_ALLOW)
 #   - clients on the internal networks have no direct route out
 #   - the same proxy listeners are not reachable across networks
 #
@@ -86,8 +86,8 @@ expect "sandbox network cannot use the backend listener name" 000 "$(client "$ne
 
 # --- backend listener: only the allowlist -------------------------------------------------------
 expect "backend: allowlisted host (example.com via CLARITY_BACKEND_EGRESS_ALLOW)" 200 "$(via_backend https://example.com/)"
-code="$(via_backend https://api.anthropic.com/)"
-case "$code" in 000|403|407|5*) fail "backend: api.anthropic.com should be allowed, got $code" ;; *) echo "ok   backend: api.anthropic.com reachable ($code)" ;; esac
+code="$(via_backend https://openrouter.ai/)"
+case "$code" in 000|403|407|5*) fail "backend: openrouter.ai should be allowed, got $code" ;; *) echo "ok   backend: openrouter.ai reachable ($code)" ;; esac
 expect "backend refuses other public host (www.iana.org)" 403 "$(via_backend https://www.iana.org/)"
 expect "backend refuses a private address" 403 "$(via_backend http://10.0.0.1/)"
 

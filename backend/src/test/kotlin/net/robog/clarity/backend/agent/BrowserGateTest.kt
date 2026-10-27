@@ -11,10 +11,13 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.awaitAll
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
@@ -54,7 +57,7 @@ class BrowserGateTest : FunSpec({
     val login = cred("bank_login", "bank.example.com", CredentialKind.LOGIN, fields("username" to FieldType.USERNAME, "password" to FieldType.PASSWORD))
     val card = cred("visa", "shop.example.com", CredentialKind.PAYMENT_CARD, fields("card_number" to FieldType.CARD_NUMBER, "card_cvc" to FieldType.CARD_CVC))
 
-    class Rig(purpose: String? = null, lead: Boolean = true) {
+    class Rig(purpose: String? = null, lead: Boolean = true, codeWait: Duration = 200.milliseconds) {
         val clock = StepClock()
         val browser = FakeBrowser()
         val vault = MemoryVault(listOf(login, card))
@@ -63,7 +66,7 @@ class BrowserGateTest : FunSpec({
         var triage = TriageVerdict(true, "ordinary")
         val triaged = CopyOnWriteArrayList<TriageStep>()
         val waiters = HeldWaiters(clock)
-        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters)
+        val gate = BrowserGate(vault, grants, governance, { step -> triaged += step; triage }, clock, waiters, codeWait)
         val scope = RunScope("run-1", isLead = lead, purpose = purpose)
         val tools: Map<String, Tool> = gate.wrap(scope, browser.tools).associateBy { it.name }
 
@@ -201,7 +204,8 @@ class BrowserGateTest : FunSpec({
     test("a code placeholder waits until the person has typed it, then works only on its site") {
         val rig = Rig()
         val waiting = rig.call("type_text", args("text" to "[secret:code_h-1]")) as ToolResult.Ok
-        waiting.content shouldContain "not entered"
+        waiting.content shouldContain "has not typed that code yet"
+        rig.browser.calls("type_text").shouldBeEmpty()
         rig.grants.put("code", "example.com", mapOf("h-1" to "424242"), 5.minutes)
         val ok = rig.call("type_text", args("text" to "[secret:code_h-1]")) as ToolResult.Ok
         ok.content shouldBe "typed [secret:code_h-1]"
@@ -443,5 +447,71 @@ class BrowserGateTest : FunSpec({
         // a new page has new elements
         rig.call("navigate_page", args("url" to "https://bank.example.com/home"))
         rig.snapshot().shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "hunXter2"
+    }
+
+    test("a fill whose code has not been typed yet waits for it server-side, then types it in the same call") {
+        val rig = Rig(lead = false, codeWait = 10.seconds)
+        val started = kotlin.time.TimeSource.Monotonic.markNow()
+        val result = kotlinx.coroutines.coroutineScope {
+            launch {
+                kotlinx.coroutines.delay(1_500)
+                rig.grants.put("code", "example.com", mapOf("h-9" to "424242"), 5.minutes)
+            }
+            rig.call("fill_by_uid", args("uid" to "1_1", "value" to "[secret:code_h-9]"))
+        }
+        result.shouldBeInstanceOf<ToolResult.Ok>().content shouldBe "filled 1_1 with [secret:code_h-9]"
+        rig.browser.calls("fill_by_uid").single()["value"] shouldBe kotlinx.serialization.json.JsonPrimitive("424242")
+        (started.elapsedNow() < 9.seconds) shouldBe true
+        rig.governance.awaited.shouldBeEmpty()
+    }
+
+    test("a click whose reply comes back cut off re-checks the page instead of reporting a JSON error") {
+        val rig = Rig()
+        val cutOff = object : Tool {
+            override val name = "browser__click_by_uid"
+            override val description = "navigating click"
+            override val inputSchema = buildJsonObject { put("type", "object") }
+            override val effect = ToolEffect.EXTERNAL
+            override suspend fun invoke(input: JsonObject): ToolResult {
+                rig.browser.url = "https://bank.example.com/verify"
+                return ToolResult.Error("The tool's reply was cut off or unreadable (click_by_uid): Cannot read Json element because of unexpected end of the input at path: \$")
+            }
+        }
+        val tools = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + cutOff).associateBy { it.name }
+        tools.getValue("browser__take_snapshot").invoke(JsonObject(emptyMap()))
+        val result = tools.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Ok>().content
+        result shouldContain "the selected tab is now https://bank.example.com/verify"
+        result shouldContain "Take a snapshot"
+        result shouldNotContain "Json"
+        // a thrown parse error is handled the same way
+        val throwing = object : Tool by cutOff {
+            override suspend fun invoke(input: JsonObject): ToolResult = throw kotlinx.serialization.SerializationException("Unexpected JSON token at offset 0")
+        }
+        val tools2 = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + throwing).associateBy { it.name }
+        tools2.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "still https://bank.example.com/verify"
+        // an ordinary refusal stays an error
+        val refused = object : Tool by cutOff {
+            override suspend fun invoke(input: JsonObject): ToolResult = ToolResult.Error("e9 stale/invalid. Call take_snapshot first.")
+        }
+        val tools3 = rig.gate.wrap(rig.scope, rig.browser.tools.filter { it.name != "browser__click_by_uid" } + refused).associateBy { it.name }
+        tools3.getValue("browser__click_by_uid").invoke(args("uid" to "1_3")).shouldBeInstanceOf<ToolResult.Error>()
+    }
+
+    test("a garbled fill never shows part of a secret, whatever field it landed in") {
+        val rig = Rig()
+        rig.snapshot()
+        rig.grants.put("bank_login", "example.com", mapOf("username" to "dana@example.com", "password" to "B86yxc4qM7KXmG##"), 5.minutes)
+        rig.call("fill_by_uid", args("uid" to "1_1", "value" to "[secret:bank_login_username]"))
+        // after a re-render the fields have new uids; one holds half the password and the email
+        rig.browser.snapshot = """
+            uid=2_1 textbox "Email" value="B86yxc4qdana@example"
+            uid=2_2 textbox "Password" value="3"
+            uid=2_3 link "Forgot password?"
+        """.trimIndent()
+        val text = rig.snapshot().shouldBeInstanceOf<ToolResult.Ok>().content
+        text shouldNotContain "B86yxc"
+        text shouldNotContain "dana@example"
+        text shouldContain "[part of secret:bank_login_password]"
+        text shouldContain "Forgot password?"
     }
 })

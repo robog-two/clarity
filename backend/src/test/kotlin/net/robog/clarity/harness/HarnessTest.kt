@@ -106,6 +106,37 @@ class HarnessTest : FunSpec({
         gateway.requests.size shouldBe 2
     }
 
+    test("out of steps: warned 3 steps before the end, then one last call reports and its tools never run") {
+        var ran = 0
+        val gateway = ScriptedGateway(
+            (1..5).map { response(StopReason.TOOL_USE, toolUse("$it", "a")) } +
+                response(StopReason.TOOL_USE, Block.Text("Got to the store search."), toolUse("6", "a")),
+        )
+        val steps = OutOfSteps()
+        val events = Harness(gateway).run(request(fakeTool("a") { ran++; ToolResult.Ok("ok") }, maxTurns = 5).copy(outOfSteps = steps)).toList()
+        val finished = events.last().shouldBeInstanceOf<HarnessEvent.Finished>()
+        finished.reason shouldBe FinishReason.MAX_TURNS
+        finished.result.finalText shouldBe "Got to the store search."
+        ran shouldBe 4
+        gateway.requests.size shouldBe 6
+        // the results of call 2 (3 calls left) carry the warning; no other request does
+        val warned = gateway.requests.map { r -> r.messages.last().content.filterIsInstance<Block.Text>().any { "3 steps left" in it.text } }
+        warned shouldBe listOf(false, false, true, false, false, false)
+        // the last request answers the unrun calls and asks for the report
+        val last = gateway.requests.last().messages.last().content
+        last.filterIsInstance<Block.Result>().single().let { it.toolUseId shouldBe "5"; it.isError shouldBe true }
+        last.filterIsInstance<Block.Text>().single().text shouldBe steps.report
+        // the journal never ends on unanswered calls
+        finished.transcript.last().content.filterIsInstance<Block.Result>().single().toolUseId shouldBe "6"
+    }
+
+    test("out of steps without the option: just stops") {
+        val gateway = ScriptedGateway(listOf(response(StopReason.TOOL_USE, toolUse("1", "a")), response(StopReason.TOOL_USE, toolUse("2", "a"))))
+        val finished = Harness(gateway).run(request(fakeTool("a"), maxTurns = 2)).toList().last().shouldBeInstanceOf<HarnessEvent.Finished>()
+        finished.result.finalText shouldBe ""
+        gateway.requests.forEach { r -> r.messages.flatMap { it.content }.filterIsInstance<Block.Text>().none { "steps left" in it.text } shouldBe true }
+    }
+
     test("refusal ends the run without running tools") {
         var ran = false
         val gateway = ScriptedGateway(listOf(response(StopReason.REFUSAL, toolUse("1", "a"))))

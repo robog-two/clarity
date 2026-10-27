@@ -82,7 +82,6 @@ class ForgetServerTest {
 
     private class Setup(val status: SetupStatus?) : SetupRepository {
         override suspend fun status() = status
-        override suspend fun submitModelKey(apiKey: String) = ModelKeyOutcome.Works
     }
 
     /** Every store on one DataStore file, as in the app. */

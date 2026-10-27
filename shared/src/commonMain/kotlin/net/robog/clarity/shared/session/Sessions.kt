@@ -151,7 +151,7 @@ data class Settings(
     }
 }
 
-/** `PUT /api/v1/setup/model-key`. */
+/** `PUT /api/v1/setup/model-key`: kept for older apps; the server always answers that its key is managed by its configuration. */
 @Serializable
 data class ModelKeyRequest(val apiKey: String)
 
@@ -162,8 +162,8 @@ data class SetupStatus(
     val constitutionVersion: Int?,
     val settings: Settings,
     /**
-     * Providers some role uses that have no key yet (`anthropic`, `openrouter`). [modelKey] is valid
-     * only when this is empty; an OpenRouter key is set on the server, not in the app.
+     * Model providers without a key: `openrouter` (the only provider) or nothing. [modelKey] is valid
+     * only when this is empty; the OpenRouter key is set on the server, not in the app.
      */
     val missingKeys: List<String> = emptyList(),
 ) {

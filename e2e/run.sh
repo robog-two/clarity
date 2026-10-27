@@ -4,13 +4,14 @@
 #   e2e/run.sh
 #
 # Brings up postgres, backend, egress, the example connector and (unless skipped) the computers
-# (sandbox + Firefox) under their own compose project with throwaway secrets and no Anthropic key,
-# then drives it like the app would (e2e/DeviceCli.java signs ES256 device JWTs):
+# (sandbox + Firefox) under their own compose project with throwaway secrets and a throwaway
+# OpenRouter key pointed at a closed loopback port (OPENROUTER_BASE_URL), so no model call leaves
+# the machine, then drives it like the app would (e2e/DeviceCli.java signs ES256 device JWTs):
 #
-#   /readyz, device enrollment (token mode), setup status ("model key missing"), connector manifest
+#   /readyz, device enrollment (token mode), setup status ("model key valid"), connector manifest
 #   + config + grant, a record ingested through the example connector (checked in Postgres), the
-#   feed SSE stream delivering the "no API key" note, the backend logging the sandbox and browser
-#   MCP tool listings at boot, and the egress proxy refusing LAN addresses from the browser's network.
+#   feed SSE stream opening, the backend logging the sandbox and browser MCP tool listings at boot,
+#   and the egress proxy refusing LAN addresses from the browser's network.
 #
 # Everything is torn down at the end (also on failure or Ctrl-C). A real `clarity` stack on the same
 # machine is not touched: the project name, volumes, networks, secrets (e2e_*) and port all differ.
@@ -40,7 +41,7 @@ TAG="e2e"
 BASE="http://127.0.0.1:$PORT"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/clarity-e2e.XXXXXX")"
 DEVICE="$WORK/device"
-SECRETS=(postgres_password anthropic_api_key connector_example_key connector_mail_key connector_dav_key sandbox_key browser_key)
+SECRETS=(postgres_password openrouter_api_key connector_example_key connector_mail_key connector_dav_key sandbox_key browser_key)
 COMPOSE_FILE="deploy/compose.e2e.generated.yaml"   # next to compose.yaml: relative paths in it keep working
 
 if [ "${E2E_SKIP_COMPUTERS:-}" = 1 ]; then SKIP_SANDBOX=1; SKIP_BROWSER=1; else SKIP_SANDBOX=0; SKIP_BROWSER="${E2E_SKIP_BROWSER:-0}"; fi
@@ -92,8 +93,7 @@ log "secrets and settings"
 rand() { head -c 36 /dev/urandom | base64 | tr -d '\n=' | tr '+/' '-_'; }
 for s in "${SECRETS[@]}"; do
     podman secret rm "e2e_$s" >/dev/null 2>&1 || true
-    if [ "$s" = anthropic_api_key ]; then printf '\n' | podman secret create "e2e_$s" - >/dev/null   # a lone newline = no key
-    else rand | podman secret create "e2e_$s" - >/dev/null; fi
+    rand | podman secret create "e2e_$s" - >/dev/null
 done
 mcp=""
 [ "$SKIP_SANDBOX" = 1 ] || mcp="sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key"
@@ -105,6 +105,7 @@ CLARITY_ENROLLMENT_MODE=token
 CLARITY_CONNECTORS_AUTO_GRANT=false
 CLARITY_EXAMPLE_SYNC_INTERVAL=5s
 CLARITY_MCP_SERVERS=$mcp
+OPENROUTER_BASE_URL=http://127.0.0.1:9/api/v1
 EOF
 
 # The compose file the stack is started from: deploy/compose.yaml with (1) every external secret
@@ -183,8 +184,8 @@ ok "enrolled device $(cat "$DEVICE/device-id")"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/v1/setup")" = 401 ] || fail "the app API should refuse unauthenticated requests"
 ok "the app API refuses unauthenticated requests"
 
-cli request "$DEVICE" GET "$BASE/api/v1/setup" | jq -e '.modelKey == "missing"' >/dev/null || fail "setup status should say the model key is missing"
-ok "setup status: model key missing"
+cli request "$DEVICE" GET "$BASE/api/v1/setup" | jq -e '.modelKey == "valid" and .missingKeys == []' >/dev/null || fail "setup status should say the model key is set"
+ok "setup status: model key valid"
 
 # ---- 5. connector: manifest, config, grant, ingest ---------------------------------------------------
 log "example connector"
@@ -204,9 +205,12 @@ ok "sample record ingested through the connector"
 
 # ---- 6. feed SSE ---------------------------------------------------------------------------------------
 log "feed"
-events="$(cli sse "$DEVICE" "$BASE/api/v1/events" 6 || true)"
-grep -qi 'no Anthropic API key' <<<"$events" || { echo "$events" >&2; fail "the feed did not deliver the 'no API key' note"; }
-ok "SSE connected and delivered the 'no API key' note"
+# Exit 22 means the stream was refused; 0 or 1 (an event arrived or not) means it opened.
+sse_rc=0
+cli sse "$DEVICE" "$BASE/api/v1/events" 6 >/dev/null || sse_rc=$?
+[ "$sse_rc" != 22 ] || fail "the feed SSE stream was refused"
+ok "SSE connected"
+
 
 # ---- 7. computers ----------------------------------------------------------------------------------------
 if [ "$SKIP_SANDBOX" = 1 ]; then
