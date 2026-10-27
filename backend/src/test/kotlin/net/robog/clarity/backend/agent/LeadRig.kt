@@ -145,7 +145,7 @@ class LeadRig(
     val vaultService = VaultService(vaultStore, grants, heldStore, events, inbox)
     var triageVerdict = TriageVerdict(true, "ordinary")
     val heldWaiters = HeldWaiters(clock)
-    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters)
+    val browserGate = BrowserGate(vaultStore, grants, vaultHolds, { triageVerdict }, clock, heldWaiters, codeWait = kotlin.time.Duration.parse("1s"))
 
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
