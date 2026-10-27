@@ -200,6 +200,7 @@ fun PathContent(
                         onOpenFrame = { open = it },
                         initialFramePage = initialFramePage,
                         live = path.live && i == lastIndex,
+                        helperRun = path.subject.kind == PathSubject.Kind.RUN,
                         modifier = Modifier.animateItem(),
                     )
                 }
@@ -307,6 +308,8 @@ private fun TimelineRow(
     onOpenFrame: (OpenFrame) -> Unit,
     initialFramePage: Int,
     live: Boolean,
+    /** The whole path is one helper's run: everything said on it is the helper's. */
+    helperRun: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -338,7 +341,7 @@ private fun TimelineRow(
         Box(Modifier.weight(1f).padding(top = 4.dp, bottom = 16.dp)) {
             when (row) {
                 is PathRow.Tab -> TabLine(row.label)
-                is PathRow.Node -> ItemContent(row.item, zone, frameBase, onOpenRun, onOpenFrame, initialFramePage)
+                is PathRow.Node -> ItemContent(row.item, zone, frameBase, onOpenRun, onOpenFrame, initialFramePage, helperRun)
             }
         }
     }
@@ -372,6 +375,7 @@ private fun ItemContent(
     onOpenRun: (String) -> Unit,
     onOpenFrame: (OpenFrame) -> Unit,
     initialFramePage: Int,
+    helperRun: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     val time = formatClock(item.at, zone)
@@ -387,7 +391,7 @@ private fun ItemContent(
             Text(item.text, style = MaterialTheme.clarityText.chat)
         }
         is PathItem.Said -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Kicker("${if (item.depth > 0) "helper" else "clarity"} · $time")
+            Kicker("${if (item.depth > 0 || helperRun) "helper" else "clarity"} · $time")
             Surface(color = colors.surfaceContainerLow, shape = RoundedCornerShape(topStart = 6.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp)) {
                 Text(item.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.clarityText.chatSmall)
             }

@@ -134,11 +134,10 @@ class AgentPathService(
     private suspend fun runPath(id: String, depth: Int): RunPath? {
         val run = helperRun(id) ?: return null
         val steps = audit.steps(id)
-        val items = runItems(id, journal(id, since = null), steps, emptyMap(), redact, lead = false, depth = depth).toMutableList()
-        val result = run.result
-        if (result != null && run.status in setOf(RunStatus.DONE, RunStatus.FAILED)) {
-            items += PathItem.Finished(run.finishedAt ?: items.lastOrNull()?.at ?: run.startedAt, id, depth, run.status == RunStatus.DONE, redact.text(result))
-        }
+        val journaled = runItems(id, journal(id, since = null), steps, emptyMap(), redact, lead = false, depth = depth)
+        val items = if (run.status in setOf(RunStatus.DONE, RunStatus.FAILED)) {
+            withFinish(journaled, id, depth, run.status == RunStatus.DONE, run.result, run.finishedAt ?: journaled.lastOrNull()?.at ?: run.startedAt, redact)
+        } else journaled
         val recorded = costs(id, null, null)
         val fallback = run.usage?.let { runCatching { HarnessJson.decodeFromJsonElement(Usage.serializer(), it) }.getOrNull()?.reportedCostMicros }
         val stepCost = steps.mapNotNull { it.costMicros }.takeIf { it.isNotEmpty() }?.sum()

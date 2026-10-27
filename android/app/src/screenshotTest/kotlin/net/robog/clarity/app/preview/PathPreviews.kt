@@ -130,13 +130,11 @@ private val browserHelperItems: List<PathItem> = buildList {
     addAll(browserSteps.take(5))
     add(action(120.seconds, BROWSER, 1, "ask_code", "Asked you for a code"))
     addAll(browserSteps.drop(5))
-    add(PathItem.Said(t0 + 185.seconds, BROWSER, 1, "Signed in. The account shows two orders; the seed order is marked shipped."))
     add(PathItem.Finished(t0 + 190.seconds, BROWSER, 1, true, "Signed in to the Garden Shop as Dana. Two orders; the seed order (Oct 24) shipped Monday."))
 }
 
 private val mailHelperItems: List<PathItem> = listOf(
     action(35.seconds, MAIL, 1, "list_messages", "Read 3 messages", "orders@shop.clarity.test"),
-    PathItem.Said(t0 + 44.seconds, MAIL, 1, "The shipping mail is from Monday: parcel post, arriving Thursday."),
     PathItem.Finished(t0 + 46.seconds, MAIL, 1, true, "Shipped Monday by parcel post; it should arrive Thursday."),
 )
 
@@ -147,9 +145,9 @@ private val finishedItems: List<PathItem> = buildList {
     add(PathItem.Heard(t0, LEAD, 0, PathItem.Heard.Source.PERSON, "Can you sign in to the Garden Shop and see if my seed order shipped?"))
     add(PathItem.Said(t0 + 8.seconds, LEAD, 0, "I’ll check the shop and your mail at the same time."))
     add(action(10.seconds, LEAD, 0, "update_task", "Added a task", "Check the Garden Shop seed order"))
-    add(helper(14.seconds, MAIL, "Find the shipping confirmation for the Garden Shop seed order in the mail", "done", 2, 0))
+    add(helper(14.seconds, MAIL, "Find the shipping confirmation for the Garden Shop seed order in the mail", "done", 1, 0))
     addAll(mailHelperItems)
-    add(helper(20.seconds, BROWSER, "Sign in to shop.clarity.test with the saved Garden Shop login and read the order status", "done", 10, 7))
+    add(helper(20.seconds, BROWSER, "Sign in to shop.clarity.test with the saved Garden Shop login and read the order status", "done", 9, 7))
     addAll(browserHelperItems)
     add(PathItem.Heard(t0 + 192.seconds, LEAD, 0, PathItem.Heard.Source.HELPER, "A helper finished: Sign in to shop.clarity.test with the saved Garden Shop login"))
     add(action(200.seconds, LEAD, 0, "send_to_user", "Sent you a message", "Your seeds shipped Monday and should arrive Thursday."))
@@ -180,7 +178,7 @@ private val running = AgentPath(
 // The browser helper's own path, stepped into from the task.
 private val child = AgentPath(
     subject(PathSubject.Kind.RUN, BROWSER, "Sign in to shop.clarity.test with the saved Garden Shop login and read the order status", "done", null),
-    PathTotals(steps = 10, durationMillis = 150_000, modelCostMicros = 22_800, decisionCostMicros = 1_916),
+    PathTotals(steps = 9, durationMillis = 150_000, modelCostMicros = 22_800, decisionCostMicros = 1_916),
     browserHelperItems.map { it.atDepth0() },
 )
 
@@ -214,6 +212,6 @@ private fun PathFrame(dark: Boolean, path: AgentPath, backLabel: String = "Today
 @PreviewTest @Preview(widthDp = 412, heightDp = 2300) @Composable fun TaskPathRunningLight() = PathFrame(false, running)
 @PreviewTest @Preview(widthDp = 412, heightDp = 2300) @Composable fun TaskPathRunningDark() = PathFrame(true, running)
 // Stepped into the browser helper; its frames on the "after" side.
-@PreviewTest @Preview(widthDp = 412, heightDp = 3400) @Composable fun RunPathLight() = PathFrame(false, child, backLabel = "Back")
-@PreviewTest @Preview(widthDp = 412, heightDp = 3400) @Composable fun RunPathDark() = PathFrame(true, child, backLabel = "Back")
-@PreviewTest @Preview(widthDp = 412, heightDp = 3400) @Composable fun RunPathAfterFramesLight() = PathFrame(false, child, backLabel = "Back", framePage = 1)
+@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathLight() = PathFrame(false, child, backLabel = "Back")
+@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathDark() = PathFrame(true, child, backLabel = "Back")
+@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathAfterFramesLight() = PathFrame(false, child, backLabel = "Back", framePage = 1)

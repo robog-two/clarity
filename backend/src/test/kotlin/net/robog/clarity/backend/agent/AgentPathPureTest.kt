@@ -140,6 +140,38 @@ class AgentPathPureTest : FunSpec({
         }
     }
 
+    context("a finished helper") {
+        val action = PathItem.Action(t0, "h1", 1, "list_messages", "Read 3 messages", null, Outcome.OK)
+        val final = PathItem.Said(t0 + 5.seconds, "h1", 1, "Shipped Monday.")
+
+        test("its final turn folds into one finished node carrying the run's result; no separate bubble") {
+            val items = withFinish(listOf(action, final), "h1", 1, ok = true, result = "Shipped Monday; arrives Thursday.", finishedAt = t0 + 6.seconds, redact)
+            items.map { it::class.simpleName } shouldBe listOf("Action", "Finished")
+            items.last().shouldBeInstanceOf<PathItem.Finished>().let {
+                it.text shouldBe "Shipped Monday; arrives Thursday."
+                it.at shouldBe t0 + 6.seconds
+                it.depth shouldBe 1
+            }
+        }
+
+        test("without a result the final text is the finished node's; a result is redacted") {
+            withFinish(listOf(action, final), "h1", 0, ok = true, result = null, finishedAt = null, redact)
+                .last().shouldBeInstanceOf<PathItem.Finished>().let { it.text shouldBe "Shipped Monday."; it.at shouldBe final.at }
+            withFinish(listOf(action), "h1", 0, ok = false, result = "Stopped; the password is Tr0ub4dor&3", finishedAt = t0, redact)
+                .let { items ->
+                    items.map { it::class.simpleName } shouldBe listOf("Action", "Finished")
+                    items.last().shouldBeInstanceOf<PathItem.Finished>().text shouldNotContain "Tr0ub4dor"
+                }
+        }
+
+        test("text before a last tool call stays a bubble; nothing to say leaves the items as they are") {
+            val said = PathItem.Said(t0, "h1", 1, "Looking.")
+            withFinish(listOf(said, action), "h1", 1, ok = true, result = "Done.", finishedAt = t0, redact)
+                .map { it::class.simpleName } shouldBe listOf("Said", "Action", "Finished")
+            withFinish(listOf(action), "h1", 1, ok = true, result = null, finishedAt = t0, redact) shouldBe listOf(action)
+        }
+    }
+
     context("linking helpers to the turn's task") {
         test("a helper started while the turn has touched one task belongs to it") {
             val turn = TurnTasks()

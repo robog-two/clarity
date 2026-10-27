@@ -227,15 +227,15 @@ class TaskPathTest : FunSpec({
         val kinds = path.items.map { "${it::class.simpleName}@${it.depth}" }
         kinds shouldBe listOf(
             "Heard@0", "Action@0", "Helper@0",
-            "Action@1", "Action@1", "Action@1", "Browser@1", "Browser@1", "Browser@1", "Said@1", "Finished@1",
-            "Helper@0", "Action@1", "Said@1", "Finished@1",
+            "Action@1", "Action@1", "Action@1", "Browser@1", "Browser@1", "Browser@1", "Finished@1",
+            "Helper@0", "Action@1", "Finished@1",
             "Said@0",
         )
         path.items.filterIsInstance<PathItem.Action>().map { it.line } shouldBe
             listOf("Added a task", "Checked saved logins", "Did a step on the page", "Asked you for a code", "Read 2 messages")
         path.items.filterIsInstance<PathItem.Browser>().map { it.step.gate } shouldBe listOf("passed", "code_guard", "passed")
         path.items.filterIsInstance<PathItem.Browser>().first().step.let { it.beforeShot shouldBe true; it.tabUrl shouldBe "https://login.clarity.test/code"; it.action shouldBe "fill_by_uid" }
-        path.items.filterIsInstance<PathItem.Helper>().first().let { it.browserSteps shouldBe 3; it.steps shouldBe 7; it.status shouldBe "done" }
+        path.items.filterIsInstance<PathItem.Helper>().first().let { it.browserSteps shouldBe 3; it.steps shouldBe 6; it.status shouldBe "done" }
         path.items.filterIsInstance<PathItem.Action>().all { it.outcome == Outcome.OK } shouldBe true
         // costs: the lead's turn and the helpers' calls (recorded per run, or from the run's usage), and Jev's
         path.totals.modelCostMicros shouldBe 4000L + 2500L + 700L
@@ -261,7 +261,7 @@ class TaskPathTest : FunSpec({
         val first = paths.task(task.id, 0, 5).shouldNotBeNull()
         first.items shouldHaveSize 5
         first.next shouldBe 5
-        paths.task(task.id, 15, 5)!!.let { it.items shouldHaveSize 1; it.next shouldBe null }
+        paths.task(task.id, 10, 5)!!.let { it.items shouldHaveSize 4; it.next shouldBe null }
 
         // over HTTP, device-authenticated
         testApplication {

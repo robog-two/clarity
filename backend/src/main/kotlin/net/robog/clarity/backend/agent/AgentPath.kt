@@ -72,6 +72,19 @@ data class ChildRun(
     val browserSteps: Int,
 )
 
+/**
+ * Pure: a finished helper's [items] closed by one [PathItem.Finished] node. The helper's final turn
+ * is its result to the lead, so a closing [PathItem.Said] folds into that node instead of showing
+ * twice: the node says the run's [result] (redacted and clipped), else that final text. Unchanged
+ * when there is neither.
+ */
+fun withFinish(items: List<PathItem>, runId: String, depth: Int, ok: Boolean, result: String?, finishedAt: Instant?, redact: PathRedactor): List<PathItem> {
+    val last = items.lastOrNull() as? PathItem.Said
+    val text = result?.takeIf { it.isNotBlank() }?.let { redact.text(it) } ?: last?.text ?: return items
+    val at = finishedAt ?: last?.at ?: items.lastOrNull()?.at ?: return items
+    return (if (last != null) items.dropLast(1) else items) + PathItem.Finished(at, runId, depth, ok, text)
+}
+
 /** Pure: the steps that count towards a path's total (not what woke the agent, not a helper's own result). */
 fun countsAsStep(item: PathItem): Boolean = item is PathItem.Said || item is PathItem.Action || item is PathItem.Browser || item is PathItem.Helper
 
