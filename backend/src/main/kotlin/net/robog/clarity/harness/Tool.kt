@@ -67,7 +67,7 @@ fun <I : Any> typedTool(
 
     override suspend fun invoke(input: JsonObject): ToolResult {
         val decoded = try {
-            json.decodeFromJsonElement(serializer, input)
+            json.decodeFromJsonElement(serializer, unstringifyContainers(serializer.descriptor, input))
         } catch (e: SerializationException) {
             return ToolResult.Error("Invalid input for $name: ${e.message}")
         } catch (e: IllegalArgumentException) {

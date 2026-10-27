@@ -281,6 +281,15 @@ class SessionScenarioTest : FunSpec({
         r.sessionService.recent().count { it.state == Session.State.ENDED } shouldBe 1
     }
 
+    test("set_priorities decodes an object parameter the model sent as a JSON string (seen in production)") {
+        val r = rig()
+        val production = """{"important": "{\"text\": \"Finish ML midterm (data mining report)\", \"note\": \"needs to be done\"}"}"""
+        val tool = r.sessionTools.all().first { it.name == "set_priorities" }
+        val out = tool.invoke(ClarityJson.parseToJsonElement(production) as JsonObject).shouldBeInstanceOf<ToolResult.Error>()
+        // past decoding: it reaches the session check instead of failing as invalid input
+        out.message shouldContain "active"
+    }
+
     test("a values interview: seven kept lines become constitution v1 with tiers, people and protected times") {
         val r = rig()
         val script = Script(r)
