@@ -1,7 +1,11 @@
 package net.robog.clarity.backend.agent
 
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.datetime.TimeZone
+import net.robog.clarity.shared.time.LocalTimes
+import net.robog.clarity.shared.time.ScheduleClock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import net.robog.clarity.harness.Block
@@ -148,6 +152,17 @@ fun planNextTurn(pending: List<PendingItem>, now: Instant, idle: Boolean): TurnP
     return if (batch.isEmpty()) TurnPlan.Wait else TurnPlan.Turn(batch, userTurn = false)
 }
 
+/** How long a stated current time stays good enough before a turn of the person's words states it again. */
+val CLOCK_RESTATE_AFTER = 10.minutes
+
+/**
+ * Pure: whether the lead should be told the time again: never told yet ([lastStated] null, e.g.
+ * after a restart), told more than [CLOCK_RESTATE_AFTER] ago, or told on another local day.
+ */
+fun clockDue(lastStated: Instant?, now: Instant, zone: TimeZone): Boolean =
+    lastStated == null || now - lastStated >= CLOCK_RESTATE_AFTER ||
+        ScheduleClock.homeDate(lastStated, zone) != ScheduleClock.homeDate(now, zone)
+
 /** One message handed to the lead and the inbox rows it carries (consumed once it is journaled). */
 data class Delivery(val seqs: List<Long>, val message: Message)
 
@@ -155,16 +170,23 @@ data class Delivery(val seqs: List<Long>, val message: Message)
  * Pure: renders a planned turn. Each user input becomes its own user message (the harness folds
  * them into one); everything else becomes ONE mid-conversation system message, with untrusted
  * parts quoted so the model can tell data from instructions.
+ *
+ * The system message opens with the current time on the person's clock ([zone]). A turn of only the
+ * person's words carries no such header, so with [statesClock] it gets a short `[now …]` system
+ * message instead. The time lives here, in the conversation, and never in the cached system prompt.
  */
-fun renderDeliveries(items: List<PendingItem>, now: Instant): List<Delivery> {
+fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, statesClock: Boolean = false): List<Delivery> {
     val users = items.filter { it.item is InboxItem.UserInput }
     val others = items.filter { it.item !is InboxItem.UserInput }
     // The person's words never pass for a client-side summary (which would cut the context there).
     fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
     val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user(spoken((it.item as InboxItem.UserInput).text))) }
-    if (others.isEmpty()) return userDeliveries
+    if (others.isEmpty()) {
+        val clock = Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[now ${LocalTimes.now(now, zone)}]"))))
+        return if (statesClock && userDeliveries.isNotEmpty()) userDeliveries + clock else userDeliveries
+    }
     val text = buildString {
-        append("[inbox, ").append(now).append(']')
+        append("[inbox, now ").append(LocalTimes.now(now, zone)).append(']')
         others.forEach { pending ->
             append("\n- ").append(pending.item.summary)
             pending.item.untrusted.forEach { part -> append('\n').append(quoteUntrusted(part)) }

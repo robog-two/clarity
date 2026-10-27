@@ -28,6 +28,8 @@ import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.session.Settings
+import net.robog.clarity.shared.time.LocalTimes
+import net.robog.clarity.shared.time.zoneOrUtc
 
 private val log = KotlinLogging.logger {}
 
@@ -41,10 +43,11 @@ class PeriodicReviewJob(private val config: AgentConfig, private val inbox: Inbo
 
     override suspend fun fire(context: FireContext) {
         val since = context.lastRunAt ?: (context.now - config.reviewInterval)
+        val sinceLocal = LocalTimes.format(since, zoneOrUtc(context.settings.homeZone))
         inbox.enqueue(
             InboxItem.JobDue(
                 job = name,
-                instruction = "Review what changed since $since: look at new messages and calendar events in that window, " +
+                instruction = "Review what changed since $sinceLocal: look at new messages and calendar events in that window, " +
                     "tell the person only what matters, and revisit anything that was waiting on information. Nothing to do is a fine outcome.",
                 priority = Priority.LOW,
             ),

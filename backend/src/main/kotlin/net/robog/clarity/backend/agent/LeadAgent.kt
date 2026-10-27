@@ -117,6 +117,9 @@ class LeadAgent(
     private val awaiting = ConcurrentLinkedQueue<Delivery>()
     private var lastMemoryContext: String? = null
     private var lastUserActivity: Instant? = null
+
+    /** When the thread was last told the current time (an inbox header or a `[now …]` line); null after a restart. */
+    private var lastClockStated: Instant? = null
     private var failures = 0
 
     /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
@@ -201,7 +204,10 @@ class LeadAgent(
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
-        val deliveries = memoryDelivery(now) + renderDeliveries(items, now)
+        val zone = settings.homeZone()
+        val rendered = renderDeliveries(items, now, zone, statesClock = clockDue(lastClockStated, now, zone))
+        if (rendered.any { it.message.role == Role.SYSTEM }) lastClockStated = now
+        val deliveries = memoryDelivery(now) + rendered
         if (userTurn) {
             lastUserActivity = now
             threads.touchUserInput(now)
@@ -345,7 +351,7 @@ class LeadAgent(
         while (true) {
             val users = inbox.pending().filter { it.item.priority == Priority.USER && it.seq !in delivered }
             if (users.isNotEmpty()) {
-                val deliveries = renderDeliveries(users, clock.now())
+                val deliveries = renderDeliveries(users, clock.now(), settings.homeZone())
                 scope.userAsked()
                 lastUserActivity = clock.now()
                 awaiting.addAll(deliveries)

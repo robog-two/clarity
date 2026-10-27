@@ -16,6 +16,7 @@ import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.ClientInputId
 
 private val t0 = Instant.parse("2026-10-25T09:00:00Z")
+private val newYork = kotlinx.datetime.TimeZone.of("America/New_York")
 
 private fun user(seq: Long, text: String) = PendingItem(seq, InboxItem.UserInput(ClientInputId("c$seq"), text), t0)
 private fun trigger(seq: Long, record: String = "{}") =
@@ -59,7 +60,7 @@ class InboxPlanningTest : FunSpec({
     }
 
     test("user input is a user message, everything else ONE system message") {
-        val deliveries = renderDeliveries(listOf(user(1, "move lunch"), trigger(2), system(3)), t0)
+        val deliveries = renderDeliveries(listOf(user(1, "move lunch"), trigger(2), system(3)), t0, newYork, statesClock = true)
         deliveries.size shouldBe 2
         deliveries[0].message.role shouldBe Role.USER
         deliveries[0].message.content shouldBe listOf(Block.Text("move lunch"))
@@ -67,13 +68,34 @@ class InboxPlanningTest : FunSpec({
         deliveries[1].message.role shouldBe Role.SYSTEM
         deliveries[1].seqs shouldBe listOf(2L, 3L)
         val text = (deliveries[1].message.content.single() as Block.Text).text
-        text shouldContain "[inbox, 2026-10-25T09:00:00Z]"
+        // The time on the person's clock, not UTC: 09:00Z is 05:00 in New York.
+        text shouldContain "[inbox, now 2026-10-25T05:00-04:00 (Sun), America/New_York]"
         text shouldContain "Trigger \"Dana\" (t2) matched a new record"
         text shouldContain "note 3"
     }
 
+    test("a turn of only the person's words states the local time when asked to, as a system line after them") {
+        val late = Instant.parse("2026-10-27T01:30:00Z") // Monday 21:30 in New York, already Tuesday in UTC
+        val stated = renderDeliveries(listOf(user(1, "what's left today?")), late, newYork, statesClock = true)
+        stated.map { it.message.role } shouldContainExactly listOf(Role.USER, Role.SYSTEM)
+        stated[1].seqs.shouldBeEmpty()
+        (stated[1].message.content.single() as Block.Text).text shouldBe "[now 2026-10-26T21:30-04:00 (Mon), America/New_York]"
+        renderDeliveries(listOf(user(1, "hi")), late, newYork).map { it.message.role } shouldContainExactly listOf(Role.USER)
+    }
+
+    test("the clock is restated after a while, on a new local day, and after a restart") {
+        val evening = Instant.parse("2026-10-27T03:55:00Z") // 23:55 Monday in New York
+        clockDue(null, evening, newYork) shouldBe true
+        clockDue(evening - 2.minutes, evening, newYork) shouldBe false
+        clockDue(evening - CLOCK_RESTATE_AFTER, evening, newYork) shouldBe true
+        // 23:55 -> 00:01: a new day in New York, though only six minutes passed.
+        clockDue(evening, evening + 6.minutes, newYork) shouldBe true
+        // The UTC date changed at 00:00Z (20:00 there) but the local day did not.
+        clockDue(Instant.parse("2026-10-26T23:58:00Z"), Instant.parse("2026-10-27T00:03:00Z"), newYork) shouldBe false
+    }
+
     test("untrusted content is quoted with its source") {
-        val text = (renderDeliveries(listOf(trigger(1, record = """{"subject":"hello"}""")), t0).single().message.content.single() as Block.Text).text
+        val text = (renderDeliveries(listOf(trigger(1, record = """{"subject":"hello"}""")), t0, newYork).single().message.content.single() as Block.Text).text
         text shouldContain """<untrusted source="message from connector mail">{"subject":"hello"}</untrusted>"""
     }
 

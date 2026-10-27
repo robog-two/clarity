@@ -43,12 +43,12 @@ fun NotifyDecision.wire(): String = when (this) {
     is NotifyDecision.EveningBatch -> "evening_batch:$at"
 }
 
-/** Pure: what `send_to_user` tells the model happened. */
-fun NotifyDecision.describe(): String = when (this) {
+/** Pure: what `send_to_user` tells the model happened, with times on the person's clock ([zone]). */
+fun NotifyDecision.describe(zone: kotlinx.datetime.TimeZone): String = when (this) {
     NotifyDecision.PushNow -> "Delivered. The person is being notified now."
     NotifyDecision.ShowInApp -> "Delivered. It shows in the app without a notification."
-    is NotifyDecision.HoldUntil -> "Delivered in the app. The notification waits until $at because the person is in protected time."
-    is NotifyDecision.EveningBatch -> "Saved for the evening summary at $at; it is not shown before then."
+    is NotifyDecision.HoldUntil -> "Delivered in the app. The notification waits until ${agentTime(at, zone)} because the person is in protected time."
+    is NotifyDecision.EveningBatch -> "Saved for the evening summary at ${agentTime(at, zone)}; it is not shown before then."
 }
 
 /**
@@ -102,7 +102,7 @@ class OwnStateTools(
                         batchPending = decision is NotifyDecision.EveningBatch,
                     ),
                 )
-                ToolResult.Ok(decision.describe())
+                ToolResult.Ok(decision.describe(settings.homeZone()))
             }
         }
     }
