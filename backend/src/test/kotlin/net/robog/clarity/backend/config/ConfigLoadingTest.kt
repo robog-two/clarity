@@ -95,6 +95,24 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_TRIAGE_PROVIDER" to "openai")).leftOrNull().shouldBeInstanceOf<ConfigError.Invalid>()
     }
 
+    test("memory embeddings: on with qwen3-embedding-8b at 1024 values by default; env can switch them off or change them") {
+        load().getOrNull()!!.agent.memory shouldBe MemoryConfig(true, "qwen/qwen3-embedding-8b", 1024, listOf("deepinfra", "nebius"))
+        val m = load(
+            mapOf("CLARITY_MEMORY_EMBEDDINGS" to "false", "CLARITY_MEMORY_EMBEDDINGS_MODEL" to "x/y", "CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS" to "0"),
+        ).getOrNull()!!.agent.memory
+        m.embeddings shouldBe false
+        m.embeddingsModel shouldBe "x/y"
+        m.embeddingDimensions shouldBe 0
+        load(mapOf("CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS" to "-1")).shouldBeInstanceOf<Either.Left<*>>()
+        // no client without an OpenRouter key, or when switched off
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(load().getOrNull()!!.agent).create() shouldBe null
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(load(mapOf("OPENROUTER_API_KEY" to "sk-or")).getOrNull()!!.agent).create()
+            .shouldBeInstanceOf<net.robog.clarity.backend.agent.OpenRouterEmbeddingClient>()
+        net.robog.clarity.backend.agent.OpenRouterEmbeddingClientFactory(
+            load(mapOf("OPENROUTER_API_KEY" to "sk-or", "CLARITY_MEMORY_EMBEDDINGS" to "false")).getOrNull()!!.agent,
+        ).create() shouldBe null
+    }
+
     test("environment overrides yaml") {
         val c = load(mapOf(
             "CLARITY_HTTP_PORT" to "9090", "CLARITY_DB_URL" to "jdbc:postgresql://env/db",

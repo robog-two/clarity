@@ -82,6 +82,9 @@ services:
       CLARITY_AGENT_GUARD_MODEL: ${CLARITY_AGENT_GUARD_MODEL:-}
       CLARITY_AGENT_TRIAGE_PROVIDER: ${CLARITY_AGENT_TRIAGE_PROVIDER:-}
       CLARITY_AGENT_TRIAGE_MODEL: ${CLARITY_AGENT_TRIAGE_MODEL:-}
+      # Semantic memory search: embeddings through OpenRouter (on whenever it has a key; false = full-text only).
+      CLARITY_MEMORY_EMBEDDINGS: ${CLARITY_MEMORY_EMBEDDINGS:-}
+      CLARITY_MEMORY_EMBEDDINGS_MODEL: ${CLARITY_MEMORY_EMBEDDINGS_MODEL:-}
       CLARITY_REVIEW_INTERVAL: ${CLARITY_REVIEW_INTERVAL:-2h}
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key

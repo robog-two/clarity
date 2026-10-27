@@ -300,11 +300,11 @@ class LeadScenarioTest : FunSpec({
 
         val read = r.own.readJournal().invoke(buildJsonObject { }) as net.robog.clarity.harness.ToolResult.Ok
         read.content shouldContain "postpone the budget review"
-        val hits = r.own.searchMemory().invoke(args("query" to "budget")) as net.robog.clarity.harness.ToolResult.Ok
+        val hits = r.memoryTools.searchMemory().invoke(args("query" to "budget")) as net.robog.clarity.harness.ToolResult.Ok
         hits.content shouldContain "[journal "
-        val feedHit = r.own.searchMemory().invoke(args("query" to "inspection")) as net.robog.clarity.harness.ToolResult.Ok
+        val feedHit = r.memoryTools.searchMemory().invoke(args("query" to "inspection")) as net.robog.clarity.harness.ToolResult.Ok
         feedHit.content shouldContain "[feed "
-        (r.own.searchMemory().invoke(args("query" to "zebra")) as net.robog.clarity.harness.ToolResult.Ok).content shouldBe "(no matches)"
+        (r.memoryTools.searchMemory().invoke(args("query" to "zebra")) as net.robog.clarity.harness.ToolResult.Ok).content shouldBe "(no matches)"
 
         r.inbox.enqueue(user("morning"))
         r.lead.start()

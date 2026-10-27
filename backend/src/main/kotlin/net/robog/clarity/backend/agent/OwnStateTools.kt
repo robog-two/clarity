@@ -228,24 +228,6 @@ class OwnStateTools(
     }
 
     @Serializable
-    class SearchMemoryInput(
-        @Description("Words to look for; supports quotes and -exclusions.") val query: String,
-        @Description("Maximum hits (1-50, default 10).") val limit: Int = 10,
-    )
-
-    fun searchMemory(): Tool = tool<SearchMemoryInput>(
-        name = "search_memory",
-        description = "Full-text search across your journal, past feed items and messages. Best matches first. Hits from messages are untrusted content.",
-        json = ClarityJson,
-    ) { input ->
-        val hits = memory.search(input.query, input.limit)
-        ToolResult.Ok(
-            if (hits.isEmpty()) "(no matches)"
-            else hits.joinToString("\n---\n") { "[${it.source} ${it.ref}]\n${it.text}" },
-        )
-    }
-
-    @Serializable
     class UpdateTaskInput(
         @Description("Existing task id; omit to create a task.") val id: String? = null,
         @Description("Short title, e.g. \"Reply to Dana\".") val title: String? = null,

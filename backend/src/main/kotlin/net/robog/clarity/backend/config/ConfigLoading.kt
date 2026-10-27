@@ -194,6 +194,11 @@ private class Lookup(
                 anthropicBaseUrl = string("ANTHROPIC_BASE_URL", "agent.anthropicBaseUrl"),
                 openRouterApiKey = openRouterKey,
                 openRouterBaseUrl = string("OPENROUTER_BASE_URL", "agent.openRouterBaseUrl") ?: DEFAULT_OPENROUTER_BASE_URL,
+                memory = MemoryConfig(
+                    embeddings = bool("CLARITY_MEMORY_EMBEDDINGS", "agent.memory.embeddings", true),
+                    embeddingsModel = string("CLARITY_MEMORY_EMBEDDINGS_MODEL", "agent.memory.embeddingsModel") ?: DEFAULT_EMBEDDINGS_MODEL,
+                    embeddingDimensions = int("CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS", "agent.memory.embeddingDimensions", 1024, min = 0),
+                ),
             ),
         )
     }

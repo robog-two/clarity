@@ -293,24 +293,58 @@ for what our loop already has: an append-only transcript. So:
 
 ### Memory
 
-Four tiers, all in Postgres (backed up with everything else), all reachable through tools:
+All in Postgres (backed up with everything else), all reachable through tools. The prompt holds
+only small, stable pieces; everything else is recalled on demand (the skills pattern: an index in
+the prompt, contents loaded when needed), which matters more the sooner the lead compacts.
 
 | Tier | What | In the prompt? |
 |---|---|---|
 | **Constitution + profile** | Lines with reasons, hard lines, autonomy tiers, people who get through, protected times, plus short profile facts | Always (system block) |
+| **Collections** | Named topics of notes (`memory_collection`, `memory_note`): people, places, projects, detailed preferences, how-tos | Only the index (name + one-line description, capped at 40), as a system message when it changes; `open_collection` reads one, `save_note` adds/edits/removes, `manage_collection` re-describes, renames, merges |
 | **Journal** | Dated entries the agent writes about what happened and was decided (the morning call writes one) | Today's and yesterday's; older via search |
 | **Scratch** | Short-lived notes with a TTL (hours) | Live ones, as a system message when changed |
-| **Everything else** | Ingested records, documents, past transcripts, files in the sandbox | Search tools only (`search_memory`, domain tools, shell in sandbox) |
+| **Conversation archive** | The lead thread from before its latest compaction point (server-side compaction block or client-side summary), as readable chunks (`conversation_chunk`) | Search only |
+| **Everything else** | Ingested records, documents, files in the sandbox | Search tools only (`search_memory`, domain tools, shell in sandbox) |
 
-Profile facts are proposed by the agent (`remember_fact`) and garbage-collected by a periodic
-helper that merges, expires and drops stale facts. The constitution itself changes only through
-an amendment the person approves.
+The memory context and the collection index are each re-sent only when they differ from the last
+copy the model can still see (the thread since its latest compaction point), so they never churn
+the cache, survive restarts without repeating, and come back after a compaction.
+
+- **Search** (`search_memory`, `read_memory`): journal, collection notes, archived conversation,
+  feed items, messages, calendar events and helper results. Hybrid: Postgres full-text plus,
+  when available, vector similarity, fused by reciprocal rank. Each hit has a time and a ref
+  (`conversation:12`); `read_memory(ref)` reads it in full (bounded) and names the neighbouring
+  conversation chunks. Text from outside (messages, events, helper results, tool output in the
+  archive) is quoted as `<untrusted>`, and both tools taint the run like other readers of outside data.
+- **Archive**: the `memory-index` job (every 10 minutes; the first run backfills) renders the span
+  between the last archived message and the latest compaction point: the person's words, the
+  agent's text, what it sent the person, tool names with short arguments, truncated tool results.
+  Thinking and other raw blocks, summaries, the memory context and every vault/credential/code tool
+  (`request_credential`, `list_credentials`, `ask_code`) are left out. Idempotent by `(run_id, from_seq)`.
+- **Embeddings**: OpenRouter `POST /embeddings`, `qwen/qwen3-embedding-8b` (open weights, $0.01/M
+  tokens), only on ZDR endpoints that do not collect data, from DeepInfra then Nebius with no other
+  fallback. Vectors are cut to 1024 values and renormalized (Matryoshka; the endpoints take no
+  `dimensions` parameter) and stored as float32 `bytea` in `memory_embedding` (no pgvector); the
+  backend keeps them int8-quantized in memory (~1 KB per record) and ranks by brute-force cosine.
+  The same job embeds new and edited rows in batches and drops vectors of deleted ones; every
+  request is a `model_call` row with role `embedding`. On only with an OpenRouter key
+  (`CLARITY_MEMORY_EMBEDDINGS=false` turns it off, `CLARITY_MEMORY_EMBEDDINGS_MODEL`,
+  `CLARITY_MEMORY_EMBEDDINGS_DIMENSIONS`); any error or rate limit pauses it (5 min, doubling to
+  1 h) and search falls back to full-text, so a turn never fails over it.
+- **Secrets**: a simple detector (`SecretDetector`: passwords, API keys and tokens, private keys,
+  one-time codes, random-looking keys) rejects such notes and redacts such text from the archive
+  and from anything sent for embedding. Never-store topics from the constitution are refused too.
+
+Profile facts are proposed by the agent (`remember_fact`). A daily helper (`memory-gc`) tidies
+memory: merges and expires profile facts, merges duplicate collections, keeps descriptions
+accurate, and files durable facts from the week's journal into collections. The constitution
+itself changes only through an amendment the person approves.
 
 ### Domain tools (backend, also served at `/mcp`)
 
 Reads: `list_messages`, `list_calendar_events`, `search_contacts`,
-`search_documents`, `read_document`, `search_memory`, `read_journal`, `today`.
-Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`,
+`search_documents`, `read_document`, `search_memory`, `read_memory`, `open_collection`, `read_journal`, `today`.
+Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`, `save_note`, `manage_collection`,
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls. External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
