@@ -105,6 +105,17 @@ fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: 
 /** "3 quieter tasks" / "1 quieter task". */
 fun quietLine(count: Int): String = if (count == 1) "1 quieter task" else "$count quieter tasks"
 
+/**
+ * The bottom fold's line, counting both: "Quieter and parked · 5", or "2 quieter tasks" /
+ * "Parked · 3" when only one has anything; null (no fold) when both are empty.
+ */
+fun quietAndParkedLine(quiet: Int, parked: Int): String? = when {
+    quiet > 0 && parked > 0 -> "Quieter and parked · ${quiet + parked}"
+    quiet > 0 -> quietLine(quiet).replaceFirstChar { it.uppercase() }
+    parked > 0 -> "Parked · $parked"
+    else -> null
+}
+
 /** "Finished today · 3". */
 fun finishedLine(count: Int): String = "Finished today · $count"
 

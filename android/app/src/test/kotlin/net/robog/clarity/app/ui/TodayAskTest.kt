@@ -52,6 +52,7 @@ import kotlin.time.Duration.Companion.hours
 import net.robog.clarity.app.ui.today.heldLine
 import net.robog.clarity.app.ui.today.mergeTasks
 import net.robog.clarity.app.ui.today.finishedLine
+import net.robog.clarity.app.ui.today.quietAndParkedLine
 import net.robog.clarity.app.ui.today.startOfLocalDay
 import net.robog.clarity.app.ui.today.parkedLine
 import net.robog.clarity.app.voice.MicChipState
@@ -220,6 +221,10 @@ class DoingGroupsTest {
         assertEquals("1 quieter task", quietLine(1))
         assertEquals("3 quieter tasks", quietLine(3))
         assertEquals("Finished today · 3", finishedLine(3))
+        assertEquals("Quieter and parked · 5", quietAndParkedLine(2, 3))
+        assertEquals("2 quieter tasks", quietAndParkedLine(2, 0))
+        assertEquals("Parked · 3", quietAndParkedLine(0, 3))
+        assertNull(quietAndParkedLine(0, 0))
     }
 }
 

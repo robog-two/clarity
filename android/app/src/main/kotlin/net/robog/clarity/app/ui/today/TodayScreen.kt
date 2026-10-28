@@ -127,7 +127,7 @@ fun TodayContent(
     onReview: (HeldActionId) -> Unit,
     onOpenHeld: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Whether the quieter tasks start unfolded (previews and screenshots). */
+    /** Whether the bottom fold (quieter tasks and parked items) starts unfolded (previews and screenshots). */
     quietExpanded: Boolean = false,
     /** Whether "Finished today" starts unfolded (previews and screenshots). */
     finishedExpanded: Boolean = false,
@@ -201,26 +201,28 @@ private fun DayBody(
             !today.called -> NoPlanYet(Modifier.springIn(order++))
         }
         val doing = state.doing
-        if (!doing.isEmpty) {
+        if (doing.main.isNotEmpty()) {
             TodayLabel("I’m doing", Modifier.padding(top = 10.dp).springIn(order++))
-            if (doing.main.isNotEmpty()) {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    doing.main.forEachIndexed { i, row ->
-                        DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
-                    }
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                doing.main.forEachIndexed { i, row ->
+                    DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
                 }
             }
-            if (doing.quiet.isNotEmpty()) {
-                FoldedTasks(sentenceCase(quietLine(doing.quiet.size)), "quieter tasks", doing.quiet, quietExpanded, Modifier.springIn(order++), onOpenTask)
-            }
-            if (doing.finished.isNotEmpty()) {
-                FoldedTasks(finishedLine(doing.finished.size), "tasks finished today", doing.finished, finishedExpanded, Modifier.springIn(order++), onOpenTask)
+        }
+        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.main.isEmpty()) 10.dp else 4.dp).springIn(order++))
+        if (doing.finished.isNotEmpty()) {
+            Folded(finishedLine(doing.finished.size), "tasks finished today", finishedExpanded, Modifier.springIn(order++)) {
+                CompactRows(doing.finished, onOpenTask)
             }
         }
-        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.isEmpty) 10.dp else 4.dp).springIn(order++))
-        if (today.parked.isNotEmpty()) {
-            TodayLabel("Parked", Modifier.padding(top = 10.dp).springIn(order++))
-            ParkedChips(today.parked, Modifier.springIn(order++))
+        // Last: what can wait, the quieter tasks and the parked items under one fold.
+        quietAndParkedLine(doing.quiet.size, today.parked.size)?.let { line ->
+            Folded(line, "quieter tasks and parked items", quietExpanded, Modifier.springIn(order++)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (doing.quiet.isNotEmpty()) CompactRows(doing.quiet, onOpenTask)
+                    if (today.parked.isNotEmpty()) ParkedChips(today.parked, Modifier.padding(top = 4.dp))
+                }
+            }
         }
     }
 }
@@ -347,19 +349,17 @@ internal fun DoingRowView(
 }
 
 /**
- * Tasks folded under one small [line]: the quieter ones (waiting with nothing to review, or
- * untouched for a long while) and, below them, those finished today. Unfolded they are compact,
- * still rows; tapping one opens its Agent's Path. [what] names them for the fold's click label.
+ * A section folded under one small [line] with a turning chevron: today's finished tasks, and at the
+ * bottom the quieter tasks with the parked items. [what] names the contents for the click label.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun FoldedTasks(
+private fun Folded(
     line: String,
     what: String,
-    rows: List<DoingRow>,
     expandedInitially: Boolean,
     modifier: Modifier = Modifier,
-    onOpenTask: (TaskId) -> Unit = {},
+    content: @Composable () -> Unit,
 ) {
     var expanded by rememberSaveable { mutableStateOf(expandedInitially) }
     val colors = MaterialTheme.colorScheme
@@ -383,16 +383,20 @@ private fun FoldedTasks(
                 modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
             )
         }
-        AnimatedVisibility(expanded) {
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                rows.forEachIndexed { i, row ->
-                    val (mark, fill) = quietMark(row.task.status)
-                    CompactTaskRow(
-                        row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill,
-                        onClick = { onOpenTask(row.task.id) },
-                    )
-                }
-            }
+        AnimatedVisibility(expanded) { content() }
+    }
+}
+
+/** Compact, still task rows (quieter or finished); tapping one opens its Agent's Path. */
+@Composable
+private fun CompactRows(rows: List<DoingRow>, onOpenTask: (TaskId) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        rows.forEachIndexed { i, row ->
+            val (mark, fill) = quietMark(row.task.status)
+            CompactTaskRow(
+                row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill,
+                onClick = { onOpenTask(row.task.id) },
+            )
         }
     }
 }
@@ -571,7 +575,7 @@ private fun PreviewFrame(state: TodayUiState, quietOpen: Boolean = false) = Clar
 @Composable
 private fun TodayPreview() = PreviewFrame(previewState)
 
-@Preview(name = "quieter and finished tasks open", widthDp = 390, heightDp = 1300)
+@Preview(name = "finished, quieter and parked open", widthDp = 390, heightDp = 1300)
 @Composable
 private fun TodayQuietOpenPreview() = PreviewFrame(previewState, quietOpen = true)
 
