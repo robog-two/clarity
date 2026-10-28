@@ -32,11 +32,22 @@ fi
 /opt/firefox/firefox -headless --profile "$profile" about:blank >/tmp/prewarm.log 2>&1 &
 pid=$!
 
-# Privacy Badger sets firstRunTimerFinished 60 s after install; give it time to write that out.
-for _ in $(seq 1 80); do
+# Privacy Badger sets firstRunTimerFinished 60 s after install; give it at least 80 s to write that
+# out. Then wait for uBlock Origin's lists, which can take minutes under emulation (arm64 images on
+# an amd64 builder); give up after 10 min.
+lists_served() {
+  [ -z "$srv" ] && return 0
+  for list in annoyances-cookies.txt easylist-cookies.txt adguard-18.txt; do
+    grep -q "^200 $list " /tmp/prewarm-lists.log 2>/dev/null || return 1
+  done
+}
+waited=0
+while [ "$waited" -lt 80 ] || { ! lists_served && [ "$waited" -lt 600 ]; }; do
   kill -0 "$pid" 2>/dev/null || { echo "prewarm: Firefox exited early" >&2; tail -20 /tmp/prewarm.log >&2; exit 1; }
   sleep 1
+  waited=$((waited + 1))
 done
+echo "prewarm: Firefox ran ${waited} s"
 sleep 3
 kill -TERM "$pid"
 for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
