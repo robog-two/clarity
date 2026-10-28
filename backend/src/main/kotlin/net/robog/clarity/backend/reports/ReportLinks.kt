@@ -43,6 +43,7 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -55,6 +56,7 @@ object ReportLinks : Table("report_link") {
     val reportId = uuid("report_id")
     val secret = binary("secret")
     val createdAt = timestamp("created_at")
+    val downloads = long("downloads").default(0)
     val revokedAt = timestamp("revoked_at").nullable()
     override val primaryKey = PrimaryKey(lookup)
 }
@@ -86,18 +88,24 @@ fun linkPath(token: String): String = "${ApiPaths.GOODS_PUBLIC}/$token"
  * [SecureRandom]; the secret part is compared in constant time.
  */
 interface ReportLinkStore {
-    /** The live link's token, null when there is none. */
-    suspend fun live(reportId: String): String?
+    /** The live link, null when there is none. */
+    suspend fun live(reportId: String): LiveLink?
 
-    /** The live link's token, made now when there is none; null when there is no such report. */
-    suspend fun ensure(reportId: String): String?
+    /** The live link, made now when there is none; null when there is no such report. */
+    suspend fun ensure(reportId: String): LiveLink?
 
     /** Turns the live link off; false when there was none. */
     suspend fun revoke(reportId: String): Boolean
 
     /** The report a live [token] opens, or null. */
     suspend fun resolve(token: String): String?
+
+    /** Counts one file downloaded through [token] (only while it is live). */
+    suspend fun countDownload(token: String)
 }
+
+/** A live link: its token and how many files were downloaded through it. */
+data class LiveLink(val token: String, val downloads: Long)
 
 @Inject
 @SingleIn(AppScope::class)
@@ -105,12 +113,12 @@ interface ReportLinkStore {
 class ExposedReportLinkStore(private val database: Database, private val clock: Clock) : ReportLinkStore {
     private val random = SecureRandom()
 
-    override suspend fun live(reportId: String): String? {
+    override suspend fun live(reportId: String): LiveLink? {
         val uuid = reportId.uuidOrNull() ?: return null
         return database.tx { liveRow(uuid) }
     }
 
-    override suspend fun ensure(reportId: String): String? {
+    override suspend fun ensure(reportId: String): LiveLink? {
         val uuid = reportId.uuidOrNull() ?: return null
         return database.tx {
             // The report row is the lock: two first shares at once make one link.
@@ -124,7 +132,7 @@ class ExposedReportLinkStore(private val database: Database, private val clock: 
                     it[ReportLinks.secret] = secret
                     it[createdAt] = clock.now()
                 }
-                linkToken(lookup, secret)
+                LiveLink(linkToken(lookup, secret), 0)
             }
         }
     }
@@ -144,9 +152,22 @@ class ExposedReportLinkStore(private val database: Database, private val clock: 
         return if (MessageDigest.isEqual(row[ReportLinks.secret], secret)) row[ReportLinks.reportId].toString() else null
     }
 
-    private fun liveRow(uuid: Uuid): String? =
+    override suspend fun countDownload(token: String) {
+        val (lookup, secret) = splitLinkToken(token) ?: return
+        database.tx {
+            // One atomic increment; the secret is checked first, in constant time, like resolve.
+            val row = ReportLinks.selectAll().where { (ReportLinks.lookup eq lookup) and ReportLinks.revokedAt.isNull() }.singleOrNull()
+            if (row != null && MessageDigest.isEqual(row[ReportLinks.secret], secret)) {
+                ReportLinks.update({ (ReportLinks.lookup eq lookup) and ReportLinks.revokedAt.isNull() }) {
+                    it[downloads] = downloads + 1L
+                }
+            }
+        }
+    }
+
+    private fun liveRow(uuid: Uuid): LiveLink? =
         ReportLinks.selectAll().where { (ReportLinks.reportId eq uuid) and ReportLinks.revokedAt.isNull() }.singleOrNull()
-            ?.let { linkToken(it[ReportLinks.lookup], it[ReportLinks.secret]) }
+            ?.let { LiveLink(linkToken(it[ReportLinks.lookup], it[ReportLinks.secret]), it[ReportLinks.downloads]) }
 }
 
 private fun String.uuidOrNull(): Uuid? = runCatching { Uuid.parse(this) }.getOrNull()
@@ -187,8 +208,9 @@ class ReportLinkRoutes(
         application.routing {
             authenticate(AuthProviders.DEVICE) {
                 post("${ApiPaths.REPORTS}/{id}/link") {
-                    val token = links.ensure(call.parameters["id"].orEmpty())
-                    if (token == null) call.respondProblem(EdgeProblem.NotFound("No such report.")) else call.respond(ReportLink(linkPath(token)))
+                    val link = links.ensure(call.parameters["id"].orEmpty())
+                    if (link == null) call.respondProblem(EdgeProblem.NotFound("No such report."))
+                    else call.respond(ReportLink(linkPath(link.token), link.downloads))
                 }
                 delete("${ApiPaths.REPORTS}/{id}/link") {
                     links.revoke(call.parameters["id"].orEmpty())
@@ -210,13 +232,16 @@ class ReportLinkRoutes(
                 call.respondText(goodsPage(report.title, updatedLine(latest.createdAt, settings.homeZone()), formats), ContentType.Text.Html.withParameter("charset", "utf-8"))
             }
             get("${ApiPaths.GOODS_PUBLIC}/{token}/{format}") {
-                val id = links.resolve(call.parameters["token"].orEmpty()) ?: return@get call.notFoundPage()
+                val token = call.parameters["token"].orEmpty()
+                val id = links.resolve(token) ?: return@get call.notFoundPage()
                 val format = ReportFormat.fromWire(call.parameters["format"].orEmpty()) ?: return@get call.notFoundPage()
                 reports.download(id, null, format).fold(
                     { error ->
                         if (error is DownloadError.Render) call.respondProblem(error.toProblem()) else call.notFoundPage()
                     },
                     { file ->
+                        // Counted once the file is in hand: a failed render or an unknown format is not a download.
+                        links.countDownload(token)
                         call.publicHeaders()
                         call.response.header(HttpHeaders.ContentDisposition, contentDisposition(file.filename))
                         call.respondBytes(file.bytes, ContentType.parse(file.format.mimeType))

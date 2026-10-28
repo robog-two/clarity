@@ -94,14 +94,14 @@ class ReportLinkTest : FunSpec({
         val (store, links) = fresh()
         val (report, _) = store.create(ReportKind.DOCUMENT, "The Devils", "# Background", ReportStyle(), null)
         links.live(report.id).shouldBeNull()
-        val first = links.ensure(report.id).shouldNotBeNull()
-        links.ensure(report.id) shouldBe first
-        links.live(report.id) shouldBe first
+        val first = links.ensure(report.id).shouldNotBeNull().token
+        links.ensure(report.id)!!.token shouldBe first
+        links.live(report.id)!!.token shouldBe first
         links.resolve(first) shouldBe report.id
         links.revoke(report.id) shouldBe true
         links.revoke(report.id) shouldBe false
         links.resolve(first).shouldBeNull()
-        val second = links.ensure(report.id).shouldNotBeNull()
+        val second = links.ensure(report.id).shouldNotBeNull().token
         second shouldNotBe first
         links.resolve(first).shouldBeNull()
         links.resolve(second) shouldBe report.id
@@ -140,7 +140,10 @@ class ReportLinkTest : FunSpec({
             val path = ClarityJson.decodeFromString(ReportLink.serializer(), made.bodyAsText()).path
             path shouldStartWith "/g/"
             ClarityJson.decodeFromString(ReportLink.serializer(), client.post("/api/v1/reports/$id/link", auth).bodyAsText()).path shouldBe path
-            ClarityJson.decodeFromString(ReportDetail.serializer(), client.get("/api/v1/reports/$id", auth).bodyAsText()).link shouldBe path
+            ClarityJson.decodeFromString(ReportDetail.serializer(), client.get("/api/v1/reports/$id", auth).bodyAsText()).let {
+                it.link shouldBe path
+                it.linkDownloads shouldBe 0
+            }
             ClarityJson.decodeFromString(ReportDetail.serializer(), client.get("/api/v1/reports/${flu.id}", auth).bodyAsText()).link.shouldBeNull()
             client.post("/api/v1/reports/00000000-0000-0000-0000-000000000000/link", auth).status shouldBe HttpStatusCode.NotFound
 
@@ -167,6 +170,18 @@ class ReportLinkTest : FunSpec({
             client.get("$path/pages").status shouldBe HttpStatusCode.NotFound
             client.get(GOODS_FONT_PATH).status shouldBe HttpStatusCode.OK
 
+            // The count: the pdf and md above, not page views, the font, unknown formats or failed renders.
+            client.get(path).status shouldBe HttpStatusCode.OK
+            renderer.failure = RenderError.Failed("pandoc: bad")
+            client.get("$path/odt").status shouldBe HttpStatusCode.UnprocessableEntity
+            renderer.failure = null
+            fun count() = ClarityJson.decodeFromString(ReportDetail.serializer(), kotlinx.coroutines.runBlocking { client.get("/api/v1/reports/$id", auth).bodyAsText() }).linkDownloads
+            count() shouldBe 2
+            ClarityJson.decodeFromString(ReportLink.serializer(), client.post("/api/v1/reports/$id/link", auth).bodyAsText()).downloads shouldBe 2
+            client.get("$path/docx").status shouldBe HttpStatusCode.OK
+            count() shouldBe 3
+            links.live(flu.id).shouldBeNull()
+
             // Unknown, malformed and turned-off tokens: a plain 404 page.
             val token = path.removePrefix("/g/")
             client.get("/g/" + token.take(12) + "B".repeat(24)).status shouldBe HttpStatusCode.NotFound
@@ -177,10 +192,14 @@ class ReportLinkTest : FunSpec({
             gone.status shouldBe HttpStatusCode.NotFound
             gone.bodyAsText() shouldContain "isn’t available"
             client.get("$path/pdf").status shouldBe HttpStatusCode.NotFound
+            count() shouldBe 0 // the turned-off link's count went with it
             File("build/goods-404.html").writeText(gone.bodyAsText())
 
-            // The next share makes a new link.
-            ClarityJson.decodeFromString(ReportLink.serializer(), client.post("/api/v1/reports/$id/link", auth).bodyAsText()).path shouldNotBe path
+            // The next share makes a new link, counting from 0.
+            val again = ClarityJson.decodeFromString(ReportLink.serializer(), client.post("/api/v1/reports/$id/link", auth).bodyAsText())
+            again.path shouldNotBe path
+            again.downloads shouldBe 0
+            ClarityJson.decodeFromString(ReportDetail.serializer(), client.get("/api/v1/reports/$id", auth).bodyAsText()).linkDownloads shouldBe 0
         }
     }
 })

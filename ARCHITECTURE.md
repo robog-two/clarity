@@ -145,7 +145,7 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/reports` · `GET /api/v1/reports/{id}` | device | reports the agent wrote; one with its revisions, sources and formats ("Word / Pages" for docx) |
 | `GET /api/v1/reports/{id}/source?rev=` | device | a revision's Markdown (latest without `rev`) |
 | `GET /api/v1/reports/{id}/download/{format}?rev=` | device | the rendered file (pdf, docx, odt, txt, md), named after the title; rendered on demand and cached |
-| `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link (made on first use, the same one while live); turn it off |
+| `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link and its download count (made on first use, the same one while live); turn it off |
 | `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
 | `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
@@ -523,6 +523,9 @@ throughout. There are no templates or palettes yet.
   footer part with a `PAGE` field to the patched reference document (pandoc keeps the reference
   document's footers), and for OpenDocument a `text:page-number` footer on every master page; all
   centred at the bottom. pandoc runs with `--sandbox` on top of `sanitize.lua`.
+- **Quotes** are indented with a thin rule on the left in every format (Typst `quote` show rule,
+  Word `Block Text` paragraph border, ODF `Quotations` border), like the app's. The PDF title block
+  drops pandoc's blank affiliation/e-mail lines, so the date sits under the author.
 - **Heading font**: the render image has Libre Caslon Text (OFL; static Regular, Bold, Italic and Bold
   Italic cut from the app's variable fonts at image build). The PDF uses it directly; PDFs draw the
   title through Clarity's copy of pandoc's Typst template (`computers/render/clarity.typst`), which
@@ -538,7 +541,12 @@ throughout. There are no templates or palettes yet.
   the lookup and the secret compared with `MessageDigest.isEqual`. The secret is kept, not hashed, so
   asking again returns the same live link (the database already holds the documents themselves). It
   is made on the first `POST …/link`, stays until `DELETE …/link` (the viewer's "Turn off link"), and a
-  revoked token never works again; the next share makes a new one. Every `/g/` response sends
+  revoked token never works again; the next share makes a new one. Each file downloaded through a
+  live link (`/g/{token}/{format}` that serves a file; not the page, the font, unknown formats or
+  failed renders) adds one to `report_link.downloads` in a single `UPDATE … SET downloads = downloads
+  + 1`; nothing else about a download is kept (no addresses, agents or per-download rows). The count
+  is in the link answer and `GET /api/v1/reports/{id}` (`linkDownloads`), includes the person's own
+  downloads through Download, and goes with the link when it is turned off. Every `/g/` response sends
   `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, a
   `default-src 'none'` CSP and `X-Frame-Options: DENY`; request logging skips `/g/` so tokens never
   reach the logs (Caddy keeps no access log). There is no rate limiting (the backend has no such
@@ -547,9 +555,10 @@ throughout. There are no templates or palettes yet.
 - **App**: a **Goods** tab (`GET /api/v1/reports`, newest change first; refetched when a report card
   arrives), a feed card for `Card.Report` ("In your Goods", title, kind; tapping opens the viewer), and
   a viewer (`…/{id}` and `…/source`, the Markdown drawn by the app's own small renderer, sources).
-  Its top bar has Download (opens the secret link in the browser) and Share (the link on the share
-  sheet); while a link is live a quiet line says so with "Turn off link". The app never downloads the
-  files itself. The lead is told that "put it in my goods" needs
+  One M3 expressive FAB menu (`FloatingActionButtonMenu`, bottom right) has Download (opens the
+  secret link in the browser), Share (the link on the share sheet) and "Share settings (N downloads)",
+  a bottom sheet that shows whether the link is on and its count, and turns it off or on. The app
+  never downloads the files itself. The lead is told that "put it in my goods" needs
   nothing beyond `create_report` (every report is in the tab) and `present_report`.
 - **Forward compatibility**: `ClarityJson` decodes a card of an unknown `type` to `Card.Unknown`
   (keeping a `fallbackText` string when the card has one; new card types carry it, as `Card.Report`

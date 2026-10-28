@@ -1,5 +1,6 @@
 // Clarity's copy of pandoc 3.12.1's Typst template (pandoc -D typst, with templates/template.typst
-// inlined). One change: the title is drawn with `title-style` (font, size, weight, style), which
+// inlined). Two changes: the author block skips empty affiliation and email lines and the date sits just
+// under it (pandoc leaves blank lines and 1em of padding), and the title is drawn with `title-style` (font, size, weight, style), which
 // renderd sets from the report's style spec as the `clarity-title-style` variable. When bumping
 // pandoc, regenerate it the same way.
 #set terms(hanging-indent: 1.5em)
@@ -140,15 +141,15 @@ $else$
           columns: (1fr,) * ncols,
           row-gutter: 1.5em,
           ..authors.map(author => align(center)[
-            #author.name \
-            #author.affiliation \
-            #author.email
+            #author.name#for part in (author.affiliation, author.email) {
+              if part != "" and part != [] { linebreak(); part }
+            }
           ])
         )
       }
 
       #if date != none {
-        align(center)[#block(inset: 1em)[
+        align(center)[#block(above: 0.65em)[
             #date
           ]]
       }

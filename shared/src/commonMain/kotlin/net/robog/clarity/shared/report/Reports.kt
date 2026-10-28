@@ -173,6 +173,8 @@ data class ReportDetail(
     val formats: List<ReportFormatOption>,
     /** The live secret link's path (`/g/<token>`, on the instance's address), null when there is none. */
     val link: String? = null,
+    /** Files downloaded through the live link (0 without one). */
+    val linkDownloads: Long = 0,
 )
 
 /**
@@ -180,4 +182,4 @@ data class ReportDetail(
  * same live link each time until it is turned off (`DELETE …/link`); then the next one is new.
  */
 @Serializable
-data class ReportLink(val path: String)
+data class ReportLink(val path: String, val downloads: Long = 0)

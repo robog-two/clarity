@@ -59,7 +59,10 @@ class ReportRoutes(private val reports: ReportService, private val store: Report
                 get("${ApiPaths.REPORTS}/{id}") {
                     val detail = reports.detail(call.parameters["id"].orEmpty())
                     if (detail == null) call.respondProblem(EdgeProblem.NotFound("No such report."))
-                    else call.respond(detail.copy(link = links.live(detail.id)?.let(::linkPath)))
+                    else {
+                        val link = links.live(detail.id)
+                        call.respond(detail.copy(link = link?.let { linkPath(it.token) }, linkDownloads = link?.downloads ?: 0))
+                    }
                 }
                 get("${ApiPaths.REPORTS}/{id}/source") {
                     val rev = call.revParameter() ?: return@get

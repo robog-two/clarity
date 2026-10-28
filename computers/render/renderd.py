@@ -256,6 +256,13 @@ def patch_docx_styles(xml, style):
                 f'<w:pPr><w:spacing w:before="0" w:after="{after}" w:line="{line}" w:lineRule="auto" />'
                 f'<w:ind w:firstLine="{indent}" />{justify}</w:pPr>',
             )
+        elif sid == "BlockText":
+            # Quotes as the app shows them: indented, with a thin rule on the left.
+            block = set_ppr(
+                block,
+                '<w:pPr><w:pBdr><w:left w:val="single" w:sz="6" w:space="10" w:color="A6A6A6" /></w:pBdr>'
+                '<w:spacing w:before="120" w:after="120" /><w:ind w:firstLine="0" w:left="480" w:right="480" /></w:pPr>',
+            )
         elif sid == "Compact":
             block = set_ppr(block, '<w:pPr><w:spacing w:before="36" w:after="36" /><w:ind w:firstLine="0" /></w:pPr>')
         return block
@@ -491,6 +498,18 @@ def odf_text_attr(block, name, value):
     return block.replace("</style:style>", f'<style:text-properties {name}="{value}" /></style:style>', 1)
 
 
+def odf_paragraph_attr(block, name, value):
+    """Sets [name] on the style's paragraph properties, adding them when it has none."""
+    if f'{name}="' in block:
+        return odf_attr(block, name, value)
+    if "<style:paragraph-properties" in block:
+        return block.replace("<style:paragraph-properties", f'<style:paragraph-properties {name}="{value}"', 1)
+    if block.endswith("/>"):
+        return block[:-2].rstrip() + f'><style:paragraph-properties {name}="{value}" /></style:style>'
+    opening = block.index(">") + 1
+    return block[:opening] + f'<style:paragraph-properties {name}="{value}" />' + block[opening:]
+
+
 def odf_face(block, bold, italic):
     for attr in ("fo:font-weight", "style:font-weight-asian", "style:font-weight-complex"):
         block = odf_text_attr(block, attr, "bold" if bold else "normal")
@@ -560,6 +579,11 @@ def patch_odt_styles(xml, style):
             else:
                 opening = block.index(">") + 1
                 block = block[:opening] + props + block[opening:]
+        elif name == "Quotations":
+            # Quotes as the app shows them: indented, with a thin rule on the left.
+            for attr, value in (("fo:margin-left", "0.33in"), ("fo:padding-left", "0.14in"), ("fo:border-left", "0.5pt solid #a6a6a6"),
+                                ("fo:border-right", "none"), ("fo:border-top", "none"), ("fo:border-bottom", "none")):
+                block = odf_paragraph_attr(block, attr, value)
         elif parent and parent.group(1) == "Text_20_body" and name != "First_20_paragraph":
             # Lists, tables and quotes hang off the body style: they keep no first-line indent.
             block = odf_no_indent(block)
@@ -725,6 +749,11 @@ def typst_style(style):
         f"style: \"{'italic' if italic else 'normal'}\")"
     )
     lines.append("#show heading: set block(above: 1.6em, below: 0.9em)")
+    # Quotes as the app shows them: indented, with a thin rule on the left.
+    lines.append(
+        "#show quote.where(block: true): it => block(inset: (left: 12pt, y: 2pt), outset: (y: 2pt), "
+        "stroke: (left: 0.75pt + luma(166)), above: 1.1em, below: 1.1em, it.body)"
+    )
     for level in range(1, 7):
         lines.append(f"#show heading.where(level: {level}): set text(size: {fmt(heading_size(style, level))}pt)")
     return "\n".join(lines) + "\n"
