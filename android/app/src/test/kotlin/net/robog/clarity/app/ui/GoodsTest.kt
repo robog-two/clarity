@@ -166,8 +166,8 @@ class GoodsPresentationTest {
     @Test fun theMenuSaysHowOftenTheLinkWasUsed() {
         assertEquals("Share settings", shareSettingsLabel(linkOn = false, downloads = 0))
         assertEquals("Share settings", shareSettingsLabel(linkOn = true, downloads = 0))
-        assertEquals("Share settings (1 download)", shareSettingsLabel(linkOn = true, downloads = 1))
-        assertEquals("Share settings (3 downloads)", shareSettingsLabel(linkOn = true, downloads = 3))
+        assertEquals("Share settings (1)", shareSettingsLabel(linkOn = true, downloads = 1))
+        assertEquals("Share settings (3)", shareSettingsLabel(linkOn = true, downloads = 3))
         assertEquals("Share settings", shareSettingsLabel(linkOn = false, downloads = 3))
     }
 

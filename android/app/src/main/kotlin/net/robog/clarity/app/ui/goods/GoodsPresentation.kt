@@ -54,9 +54,9 @@ fun revisionLine(detail: ReportDetail, now: Instant, zone: TimeZone): String {
 /** Pure: "1 download", "3 downloads". */
 fun downloadsText(count: Long): String = if (count == 1L) "1 download" else "$count downloads"
 
-/** Pure: the FAB menu's settings item: "Share settings (3 downloads)", or "Share settings" with no link or none yet. */
+/** Pure: the FAB menu's settings item: "Share settings (3)", or "Share settings" with no link or no downloads yet. */
 fun shareSettingsLabel(linkOn: Boolean, downloads: Long): String =
-    if (linkOn && downloads > 0) "Share settings (${downloadsText(downloads)})" else "Share settings"
+    if (linkOn && downloads > 0) "Share settings ($downloads)" else "Share settings"
 
 /** Pure: a source's site, for the line under its title ("cdc.gov"); the URL itself when it has none. */
 fun sourceSite(url: String): String {

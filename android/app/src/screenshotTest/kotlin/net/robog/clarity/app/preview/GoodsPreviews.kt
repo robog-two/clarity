@@ -12,6 +12,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import net.robog.clarity.app.ui.goods.fabMenuItemColor
 import net.robog.clarity.app.ui.goods.shareSettingsLabel
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -141,7 +142,7 @@ private fun MenuOpen(dark: Boolean) = Goods(dark) {
                 Icons.Outlined.Share to "Share",
                 Icons.Outlined.Settings to shareSettingsLabel(shared.linkOn, shared.linkDownloads),
             ).forEach { (icon, label) ->
-                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                Surface(shape = CircleShape, color = fabMenuItemColor(), contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
                     Row(Modifier.height(56.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(icon, contentDescription = null)
                         Text(label, style = MaterialTheme.typography.titleMedium)

@@ -56,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
@@ -217,19 +218,29 @@ private fun BoxScope.GoodsFabMenu(
             onClick = { onOpen(false); onLink(LinkAction.Download) },
             text = { Text("Download") },
             icon = { Icon(Icons.Outlined.FileDownload, contentDescription = null) },
+            containerColor = fabMenuItemColor(),
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         FloatingActionButtonMenuItem(
             onClick = { onOpen(false); onLink(LinkAction.Share) },
             text = { Text("Share") },
             icon = { Icon(Icons.Outlined.Share, contentDescription = null) },
+            containerColor = fabMenuItemColor(),
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         FloatingActionButtonMenuItem(
             onClick = { onOpen(false); onShareSettings() },
             text = { Text(shareSettingsLabel(state.linkOn, state.linkDownloads)) },
             icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+            containerColor = fabMenuItemColor(),
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }
 }
+
+/** The FAB menu items' fill: the FAB's peach, lightened halfway toward the page so the pills sit softer than the button. */
+@Composable
+fun fabMenuItemColor(): Color = lerp(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.surfaceContainerLowest, 0.5f)
 
 /**
  * The share settings sheet's content: whether the link is on, how many downloads it has had, and the
