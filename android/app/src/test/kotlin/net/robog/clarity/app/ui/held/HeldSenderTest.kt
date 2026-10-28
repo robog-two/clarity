@@ -12,7 +12,7 @@ class HeldSenderTest {
     @Test
     fun theSenderShowsItsAccountNameAndAddress() {
         val email = emailDraft().copy(from = Handle.email("samuel.elliot.knight@gmail.com"), fromLabel = "Gmail")
-        assertEquals("Gmail · samuel.elliot.knight@gmail.com", senderLine(email))
+        assertEquals("Gmail <samuel.elliot.knight@gmail.com>", senderLine(email))
         // a label that is just the address is not repeated
         assertEquals("me@x.com", senderLine(email.copy(from = Handle.email("me@x.com"), fromLabel = "me@x.com")))
         assertEquals("me@x.com", senderLine(email.copy(from = Handle.email("me@x.com"), fromLabel = null)))

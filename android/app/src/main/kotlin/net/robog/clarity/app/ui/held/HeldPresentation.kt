@@ -35,13 +35,13 @@ fun recipientName(email: EmailDraft): String? {
 }
 
 /**
- * The account an email goes from: "Gmail · sam@gmail.com". An email held before the sender was
+ * The account an email goes from: "Gmail <sam@gmail.com>". An email held before the sender was
  * chosen has none and goes from the mail connector's default account.
  */
 fun senderLine(email: EmailDraft): String {
     val address = email.from?.value ?: return "Default account"
     val label = email.fromLabel?.takeIf { it.isNotBlank() && !it.equals(address, ignoreCase = true) }
-    return if (label != null) "$label · $address" else address
+    return if (label != null) "$label <$address>" else address
 }
 
 /** Whether the email answers a thread ("Reply in “Lunch?”") or starts a new one. */
