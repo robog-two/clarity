@@ -310,7 +310,8 @@ class LeadAgent(
     /**
      * One lead turn: the harness run, and, when the person wrote and got no reply, ONE more run after
      * [REPLY_NUDGE]. The nudge goes through the operator channel (a system message, after a
-     * placeholder user message since the thread ends with the assistant), appended at the end.
+     * placeholder user message since the thread ends with the assistant; on the wire it is that user
+     * message's text), appended at the end.
      */
     private suspend fun runTurn(bound: BoundRole) {
         val first = runHarness(bound)

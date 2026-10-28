@@ -233,7 +233,7 @@ class LeadOnOpenRouterTest : FunSpec({
         efforts shouldContainExactly listOf("low", "medium")
     }
 
-    test("an open model that saves a fact but never answers is nudged once on the wire as a trailing system message, then replies") {
+    test("an open model that saves a fact but never answers is nudged once, on the wire as a trailing operator update in a user message, then replies") {
         val mimo = "xiaomi/mimo-v2.6-pro"
         val r = rig(roles = onOpenRouter.copy(lead = onOpenRouter.lead.copy(model = mimo)))
         fun last(request: ModelRequest) = request.messages.last()
@@ -256,8 +256,8 @@ class LeadOnOpenRouterTest : FunSpec({
         r.model.requests.map { it.model }.toSet() shouldBe setOf(mimo)
         r.model.requests.size shouldBe 4
         val wire = orMessages(r.model.requests[2])
-        wire.takeLast(2).map { it["role"]!!.jsonPrimitive.content } shouldContainExactly listOf("user", "system")
-        wire.last()["content"]!!.jsonPrimitive.content shouldBe REPLY_NUDGE
+        wire.takeLast(2).map { it["role"]!!.jsonPrimitive.content } shouldContainExactly listOf("assistant", "user")
+        wire.last()["content"]!!.jsonPrimitive.content shouldBe "${OpenRouterModelGateway.OPERATOR_UPDATE_HEADING}\n$REPLY_NUDGE"
         r.feed.page(0, 10).items.single().cards shouldBe listOf(net.robog.clarity.shared.feed.Card.Text("Noted."))
     }
 
