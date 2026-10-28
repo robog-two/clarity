@@ -107,6 +107,7 @@ class DomainToolsTest : FunSpec({
         reader.lastRange shouldBe TimeRange(Instant.parse("2026-10-24T00:00:00Z"), Instant.parse("2026-10-25T00:00:00Z"))
         val first = Json.parseToJsonElement(result.content).let { it as kotlinx.serialization.json.JsonArray }.first().jsonObject
         first["from"].toString() shouldBe "\"Bob <bob@x.org>\""
+        first["account"].toString() shouldBe "\"me@x.org\"" // the person's own address it arrived at
         first["body"].toString().length shouldBe (1_500 + 2 + "…[truncated 3500 chars]".length)
         result.content.contains("\n") shouldBe false
     }

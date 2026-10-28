@@ -57,7 +57,7 @@ class TodayFinishedTasksTest : FunSpec({
         val cancelled = tasks.upsert(null, "Nudge for pickup", "not needed", AgentTask.Status.CANCELLED)!!
 
         val settings = Settings(homeZone = "America/New_York")
-        val service = TodayService(DayPlanStore(database, clock), tasks, HeldActionStore(database, clock), ExposedNudgeStore(database, clock), SettingsProvider { settings }, clock)
+        val service = TodayService(DayPlanStore(database, clock), tasks, HeldActionStore(database, clock), ExposedNudgeStore(database, clock), SessionStore(database), SettingsProvider { settings }, clock)
         val today = service.today()
 
         today.date shouldBe LocalDate(2026, 10, 25)

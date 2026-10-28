@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.backend.governance.MailAccounts
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
@@ -145,6 +146,7 @@ class LeadAgent(
     private val settings: SettingsProvider,
     private val clock: Clock,
     private val effortOverride: EffortOverride,
+    private val mailAccounts: MailAccounts,
 ) : BackgroundService {
     override val name = "lead-agent"
 
@@ -310,7 +312,8 @@ class LeadAgent(
     /**
      * One lead turn: the harness run, and, when the person wrote and got no reply, ONE more run after
      * [REPLY_NUDGE]. The nudge goes through the operator channel (a system message, after a
-     * placeholder user message since the thread ends with the assistant), appended at the end.
+     * placeholder user message since the thread ends with the assistant; on the wire it is that user
+     * message's text), appended at the end.
      */
     private suspend fun runTurn(bound: BoundRole) {
         val first = runHarness(bound)
@@ -362,7 +365,7 @@ class LeadAgent(
     }
 
     private suspend fun systemBlocks() =
-        leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()))
+        leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()), mailAccounts.list())
 
     /**
      * After a turn: once the last call's prompt reached

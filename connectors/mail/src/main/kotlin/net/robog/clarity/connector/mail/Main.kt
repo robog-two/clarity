@@ -87,6 +87,7 @@ suspend fun main() {
         actions = actions,
         runtime = runtime,
         test = { config -> testMailAccounts(runtime, config) },
+        accounts = ::mailAccountList,
     ) { config ->
         val entries = parseMailAccounts(config, runtime)
         if (entries.isEmpty()) {

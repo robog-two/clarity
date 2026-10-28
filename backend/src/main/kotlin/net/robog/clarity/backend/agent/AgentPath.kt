@@ -90,7 +90,6 @@ fun countsAsStep(item: PathItem): Boolean = item is PathItem.Said || item is Pat
 
 private val HELPER_STARTED = Regex("""Helper ([0-9a-fA-F-]{36}) started""")
 private val INBOX_HELPER = Regex("""^Helper (\S+) (finished|failed) its task: (.*)$""")
-private const val OPERATOR_PLACEHOLDER = "(operator update follows)"
 
 /** Pure: whether [message] opens a lead turn: the person's words, or an inbox delivery. */
 fun opensLeadTurn(message: Message): Boolean = when (message.role) {
@@ -101,7 +100,7 @@ fun opensLeadTurn(message: Message): Boolean = when (message.role) {
 
 private fun personText(text: String): Boolean {
     val t = text.trim()
-    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != OPERATOR_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE
+    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE
 }
 
 /** Pure: the lead journal split into turns ([opensLeadTurn]); rows before the first opening form a turn of their own. */

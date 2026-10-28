@@ -23,6 +23,7 @@ import net.robog.clarity.shared.connector.ConnectorManifest
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.JsonObject
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestResponse
@@ -149,6 +150,30 @@ class ClarityClientTest : FunSpec({
             job.cancelAndJoin()
             manifestCalls.get() shouldBe 2 // 503 retried inside the client, then 204
             engine.requestHistory.first().method shouldBe HttpMethod.Put
+        }
+    }
+
+    test("the accounts of a config are announced with the manifest once, not on every poll") {
+        runBlocking {
+            val manifests = java.util.concurrent.CopyOnWriteArrayList<ConnectorManifest>()
+            val syncs = AtomicInteger()
+            val (client, _) = testClient { req ->
+                when (req.method) {
+                    HttpMethod.Put -> {
+                        manifests += ClarityJson.decodeFromString(ConnectorManifest.serializer(), req.body.toByteArray().decodeToString())
+                        respond("", HttpStatusCode.NoContent)
+                    }
+                    else -> respond("""{"version":1,"values":{"address":"me@example.com"}}""", HttpStatusCode.OK, jsonHeaders)
+                }
+            }
+            val manifest = ConnectorManifest("t", "T", "1", emptySet())
+            val accounts = { config: ConnectorConfig ->
+                listOf(ConnectorAccount("Home", (config.values["address"] as kotlinx.serialization.json.JsonPrimitive).content))
+            }
+            val job = launch { runLoop(client, InMemoryStateStore(), manifest, 20.milliseconds, accounts = accounts) { syncs.incrementAndGet() } }
+            withTimeout(10.seconds) { while (syncs.get() < 3) delay(10) }
+            job.cancelAndJoin()
+            manifests.map { it.accounts } shouldBe listOf(emptyList(), listOf(ConnectorAccount("Home", "me@example.com")))
         }
     }
 })

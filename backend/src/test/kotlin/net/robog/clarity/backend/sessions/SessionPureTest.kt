@@ -233,6 +233,8 @@ class SessionPureTest : FunSpec({
         test("today is empty before the first call of the day") {
             val t = todayOf(date, null, emptyList(), heldCount = 2)
             t.called shouldBe false
+            t.callStarted shouldBe false
+            todayOf(date, null, emptyList(), 0, callStarted = true).let { it.callStarted shouldBe true; it.called shouldBe false }
             t.priorities shouldBe emptyList()
             t.heldCount shouldBe 2
         }
@@ -242,6 +244,7 @@ class SessionPureTest : FunSpec({
             val plan = DayPlan(date, listOf(Chip("spec", "important")), listOf(IfThen("it's 9:30", "spec")), listOf("expenses"), called = true)
             val t = todayOf(date, plan, listOf(task), 0)
             t.called shouldBe true
+            t.callStarted shouldBe true // a plan made in a call means a call started
             t.doing shouldBe listOf(task)
             t.parked shouldBe listOf("expenses")
             t.plan.single().sentence() shouldBe "If it's 9:30, then spec."

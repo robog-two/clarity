@@ -57,6 +57,16 @@ data class OpenRouterRouting(
 }
 
 /**
+ * Keeping a conversation on one upstream provider, so its prompt cache stays warm. [session] (the
+ * run: the lead's thread or a helper) goes as `session_id`, OpenRouter's sticky routing key;
+ * [preferred] is the provider that served the conversation's last call, tried first
+ * ([OpenRouterModelGateway.providerOrder]). OpenRouter skips its own stickiness when an order is
+ * given, so the order carries it then; fallbacks stay allowed, so an outage only moves the
+ * conversation to another provider.
+ */
+data class Stickiness(val session: String? = null, val preferred: String? = null)
+
+/**
  * [ModelGateway] over OpenRouter's OpenAI-compatible Chat Completions API, with the JDK's own
  * `java.net.http` client (no extra dependency) and kotlinx.serialization. OpenRouter is Clarity's
  * only model provider; Claude models are reached through it (`anthropic/...`).
@@ -66,8 +76,11 @@ data class OpenRouterRouting(
  *    block from the Anthropic API (in journals from before OpenRouter was the only provider) becomes
  *    a user message with its summary text ([UNREADABLE_SUMMARY] when it has none), so what it
  *    summarized is kept;
- *  - the system blocks become one leading `system` message; mid-conversation system messages with
- *    text stay `system` messages in place, effort-only ones are dropped (effort is per request here);
+ *  - the system blocks become one leading `system` message; a mid-conversation system message with
+ *    text (an operator notice) becomes a text part of the user message it follows, under
+ *    [OPERATOR_UPDATE_HEADING] (it takes the place of an [OPERATOR_UPDATE_PLACEHOLDER] text, and
+ *    opens a user message after tool results), since some upstreams drop or hoist non-leading
+ *    `system` messages; effort-only ones are dropped (effort is per request here);
  *  - tool uses become assistant `tool_calls` (arguments as a JSON string), tool results `tool`
  *    messages; other [Block.Raw] is dropped (old Anthropic thinking, tool search and server tool
  *    blocks), except this provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the
@@ -78,13 +91,17 @@ data class OpenRouterRouting(
  *    `response_format: json_schema` from [ModelRequest.structuredOutput], and always `provider.data_collection: deny` (no provider that
  *    keeps or trains on prompts), the rest of `provider` from [OpenRouterRouting] (zero data retention,
  *    quantizations, sort) and `usage.include` (the response carries its cost);
+ *  - the run as `session_id` and the provider that served its last call first in `provider.order`
+ *    ([Stickiness]), so a conversation stays on one provider and its cache; the provider that served
+ *    each call is in its [Usage.provider];
  *  - prompt caching, for models that cache only at explicit breakpoints ([usesCacheBreakpoints]:
  *    Claude) and only when [ModelRequest.cache] is set: the system message becomes text parts, the
  *    parts of system blocks with [SystemBlock.cacheBreakpoint] get `cache_control`, as does the user
  *    text at [ModelRequest.messageBreakpoint], and [CachePolicy.automatic] adds the top-level
  *    `cache_control` (automatic caching). Each is `{"type": "ephemeral"}`, plus `"ttl": "1h"` for a
- *    one hour cache (OpenRouter's prompt caching guide). A breakpoint that falls on a tool result is
- *    not sent (the guide documents breakpoints on system and user content only); the automatic one
+ *    one hour cache (OpenRouter's prompt caching guide). The message breakpoint moves to the last
+ *    operator notice that follows its message, and one that falls on a tool result with no notice
+ *    after it is not sent (the guide documents breakpoints on system and user content only); the automatic one
  *    covers the tail. Other models cache on their own and get no `cache_control`.
  * A long thread (the lead) compacts client-side (`LeadAgent`, a [Message.summary] in its journal).
  *
@@ -109,8 +126,23 @@ class OpenRouterModelGateway(
         .apply { if (proxy != null) proxy(FixedProxy(proxy)) }
         .build()
 
+    /** The provider that last served each conversation ([currentRunId]) and model, most recent last. */
+    private val lastServed = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > STICKY_CONVERSATIONS
+    }
+
     override suspend fun generate(request: ModelRequest, onTextDelta: (String) -> Unit): ModelResponse {
-        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing))
+        val session = currentRunId()
+        val key = session?.let { "$it ${request.model}" }
+        val preferred = key?.let { synchronized(lastServed) { lastServed[it] } }
+        val response = generate(request, Stickiness(session, preferred), onTextDelta)
+        val served = response.usage.provider
+        if (key != null && served != null) synchronized(lastServed) { lastServed[key] = served }
+        return response
+    }
+
+    private suspend fun generate(request: ModelRequest, sticky: Stickiness, onTextDelta: (String) -> Unit): ModelResponse {
+        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing, sticky))
         val call = HttpRequest.newBuilder(endpoint)
             .timeout(RESPONSE_TIMEOUT.toJavaDuration())
             .header("Authorization", "Bearer $apiKey")
@@ -200,11 +232,26 @@ class OpenRouterModelGateway(
         /** What a stored Anthropic `compaction` block becomes when its summary is encrypted only. */
         const val UNREADABLE_SUMMARY = "(The earlier conversation was summarized, but the summary can't be read here.)"
 
+        /** Conversations whose last provider is remembered ([Stickiness.preferred]). */
+        private const val STICKY_CONVERSATIONS = 256
+
+        /**
+         * Pure: the provider order sent: the one that served this conversation last ([preferred]) in
+         * front of the configured [OpenRouterRouting.order]. With fallbacks turned off and no order
+         * configured, nothing is preferred, so one provider never becomes the only one allowed.
+         */
+        internal fun providerOrder(routing: OpenRouterRouting, preferred: String?): List<String> {
+            val usable = preferred?.takeIf { routing.allowFallbacks != false || it in routing.order }
+            return (listOfNotNull(usable) + routing.order).distinct()
+        }
+
         /** The request body exactly as it goes over the wire; for tests and debugging. */
-        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting()): JsonObject {
+        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting(), sticky: Stickiness = Stickiness()): JsonObject {
             val cache = request.cache?.takeIf { usesCacheBreakpoints(request.model) }
+            val order = providerOrder(routing, sticky.preferred)
             return buildJsonObject {
                 put("model", request.model)
+                sticky.session?.let { put("session_id", it) }
                 put("messages", wireMessages(request, cache))
                 if (cache?.automatic == true) put("cache_control", cacheControl(cache))
                 put("max_tokens", request.maxTokens)
@@ -216,7 +263,7 @@ class OpenRouterModelGateway(
                     if (routing.zdr) put("zdr", true)
                     if (routing.quantizations.isNotEmpty()) put("quantizations", JsonArray(routing.quantizations.map(::JsonPrimitive)))
                     routing.sort?.let { put("sort", it) }
-                    if (routing.order.isNotEmpty()) put("order", JsonArray(routing.order.map(::JsonPrimitive)))
+                    if (order.isNotEmpty()) put("order", JsonArray(order.map(::JsonPrimitive)))
                     routing.allowFallbacks?.let { put("allow_fallbacks", it) }
                 }
                 effortIn(contextSince(request.messages), request.effort)?.let { putJsonObject("reasoning") { put("effort", reasoningEffort(it, request.model)) } }
@@ -295,11 +342,29 @@ class OpenRouterModelGateway(
             }
             val context = contextSince(request.messages)
             val offset = request.messages.size - context.size
-            // (message index in context, block index); only a user text block carries it on this wire.
+            // (message index in context, block index): the last block of a user message. Only user text
+            // carries it on this wire: that text, or the last operator notice that follows the message.
             val breakpoint = request.messageBreakpoint?.takeIf { cache != null }
                 ?.let { (m, b) -> (m - offset) to b }
-                ?.takeIf { (m, b) -> m >= 0 && context[m].role == Role.USER && context[m].content.getOrNull(b) is Block.Text }
+                ?.takeIf { (m, b) -> m >= 0 && context[m].role == Role.USER && context[m].content.getOrNull(b) != null }
+            // The text parts of the user message being built, kept back so operator notices can join it,
+            // and whether its last part carries the message breakpoint.
+            val userParts = mutableListOf<String>()
+            var userMarked = false
+            fun flushUser() {
+                if (userParts.isNotEmpty()) {
+                    val content = if (userParts.size == 1 && !userMarked) {
+                        JsonPrimitive(userParts.single())
+                    } else {
+                        JsonArray(userParts.mapIndexed { i, text -> textPart(text, cache.takeIf { userMarked && i == userParts.lastIndex }) })
+                    }
+                    add(chat("user", content))
+                    userParts.clear()
+                }
+                userMarked = false
+            }
             for ((index, original) in context.withIndex()) {
+                if (original.role != Role.SYSTEM) flushUser()
                 // Anthropic drops everything before its compaction block; here the block becomes its summary text.
                 val compaction = original.content.indexOfLast { it is Block.Raw && it.isCompaction }
                 val message = if (compaction < 0) {
@@ -316,8 +381,14 @@ class OpenRouterModelGateway(
                 // Other Raw blocks are old Anthropic ones (thinking signatures, tool search, server tools) or another model's reasoning.
                 val texts = message.content.filterIsInstance<Block.Text>().map { it.text }
                 when (message.role) {
-                    // An effort-only system message is dropped: effort is set per request here.
-                    Role.SYSTEM -> if (texts.isNotEmpty()) add(chat("system", JsonPrimitive(texts.joinToString("\n\n"))))
+                    // An effort-only system message is dropped: effort is set per request here. One with
+                    // text is an operator notice, carried in the user message ([operatorUpdate]).
+                    Role.SYSTEM -> if (texts.isNotEmpty()) {
+                        val notice = operatorUpdate(texts.joinToString("\n\n"))
+                        // The placeholder only stood in for the notice; the notice takes its place.
+                        if (userParts.singleOrNull() == OPERATOR_UPDATE_PLACEHOLDER) userParts.clear()
+                        userParts += notice
+                    }
                     Role.USER -> {
                         // Tool results must follow the assistant's tool calls directly, so they go first.
                         message.content.filterIsInstance<Block.Result>().forEach { result ->
@@ -327,13 +398,10 @@ class OpenRouterModelGateway(
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
                         }
-                        val textBlocks = message.content.filterIsInstance<Block.Text>()
-                        when {
-                            textBlocks.isEmpty() -> Unit
-                            marked != null -> add(chat("user", JsonArray(textBlocks.map { block -> textPart(block.text, cache.takeIf { block === marked }) })))
-                            textBlocks.size == 1 -> add(chat("user", JsonPrimitive(textBlocks.single().text)))
-                            else -> add(chat("user", JsonArray(textBlocks.map { textPart(it.text, null) })))
-                        }
+                        message.content.filterIsInstance<Block.Text>().forEach { userParts += it.text }
+                        // The breakpoint sits on the message's last block, so it goes on the last text part:
+                        // the message's own, or a notice after it (a tool result carries none here).
+                        userMarked = marked != null
                     }
                     Role.ASSISTANT -> {
                         val calls = message.content.filterIsInstance<Block.ToolUse>()
@@ -359,6 +427,7 @@ class OpenRouterModelGateway(
                     }
                 }
             }
+            flushUser()
         }
 
         /** The `reasoning_details` of [block] when this provider wrote it for [model], else null. */
@@ -375,6 +444,16 @@ class OpenRouterModelGateway(
             put(REASONING_MODEL, model)
             put("details", JsonArray(details))
         })
+
+        /** Heads an operator notice carried in a user message ([operatorUpdate]). */
+        const val OPERATOR_UPDATE_HEADING = "[Operator update from Clarity's server, not from the person]"
+
+        /**
+         * Pure: an operator notice (inbox items, scheduled jobs, memory) as user text, marked as coming
+         * from Clarity's server. Some upstreams drop or hoist `system` messages that are not leading,
+         * so notices never go as mid-conversation `system` messages on this wire.
+         */
+        internal fun operatorUpdate(text: String): String = "$OPERATOR_UPDATE_HEADING\n$text"
 
         private fun chat(role: String, content: JsonElement) = buildJsonObject {
             put("role", role)
@@ -528,7 +607,7 @@ class OpenRouterModelGateway(
             val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
             // Citations likewise, after the answer; the request builder never sends them back.
             val cited = if (answer.isEmpty() || citations.isEmpty()) emptyList() else listOf(citationsBlock(citations.values.toList()))
-            return ModelResponse(kept + answer + cited, stopReason(finish, uses.isNotEmpty()), usage)
+            return ModelResponse(kept + answer + cited, stopReason(finish, uses.isNotEmpty()), usage.copy(provider = provider))
         }
 
         private companion object {

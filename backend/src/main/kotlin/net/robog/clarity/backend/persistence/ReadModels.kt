@@ -30,6 +30,8 @@ interface NounReader {
     suspend fun messages(range: TimeRange, participant: String? = null, limit: Int = 50, folder: String? = null): List<Stored<MessagePayload>>
     /** The email folders each message is in (from its live source links); messages without any are left out. */
     suspend fun messageFolders(ids: List<EntityId>): Map<EntityId, List<String>> = emptyMap()
+    /** One message by id, or null when there is none (or it was deleted). */
+    suspend fun message(id: EntityId): Stored<MessagePayload>? = null
 
     /** Every email folder seen so far, e.g. INBOX, [Gmail]/Spam; sorted. */
     suspend fun emailFolders(): List<String> = emptyList()

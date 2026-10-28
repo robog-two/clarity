@@ -7,6 +7,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldStartWith
 import io.kotest.matchers.types.shouldBeInstanceOf
 import jakarta.mail.Message
@@ -28,6 +29,7 @@ import net.robog.clarity.connector.sdk.SealingKeys
 import net.robog.clarity.connector.sdk.getAs
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.action.ActionOutcome
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.Sealing
 import net.robog.clarity.shared.governance.EmailDraft
@@ -137,11 +139,26 @@ class MailAccountsTest : FunSpec({
 
         test("else the account of the message being answered; else the first") {
             selectAccount(all, null, SourceId("a2/INBOX/1/5")) shouldBe b
-            selectAccount(all, Handle.email("unknown@example.com"), SourceId("a2/INBOX/1/5")) shouldBe b
             selectAccount(all, Handle.email("work@example.com"), SourceId("a2/INBOX/1/5")) shouldBe a
             selectAccount(all, null, SourceId("gone/INBOX/1/5")) shouldBe a
             selectAccount(all, null, null) shouldBe a
             selectAccount(emptyList(), null, null) shouldBe null
+        }
+
+        test("a sender no account has is never sent from another account") {
+            selectAccount(all, Handle.email("unknown@example.com"), SourceId("a2/INBOX/1/5")) shouldBe null
+            selectAccount(all, Handle.email("unknown@example.com"), null) shouldBe null
+        }
+
+        test("the account list the backend learns has labels and addresses, never a password") {
+            val listed = mailAccountList(
+                accountsConfig(
+                    account(keys, "a1", "Work", "work@example.com", "pw", 1, 2),
+                    account(keys, "a2", "Home", "login", "pw", 1, 2, extra = mapOf("fromAddress" to JsonPrimitive("home@example.com"))),
+                    account(keys, "a3", "No address", "login", "pw", 1, 2),
+                ),
+            )
+            listed shouldContainExactly listOf(ConnectorAccount("Work", "work@example.com"), ConnectorAccount("Home", "home@example.com"))
         }
     }
 
@@ -230,6 +247,37 @@ class MailAccountsTest : FunSpec({
             val done = actions.saveDraft(draft, null).shouldBeInstanceOf<ActionOutcome.Done>()
             done.ref!!.value shouldStartWith "a2/Drafts/"
             bobMail("draft only") shouldHaveSize 0
+        }
+
+        test("the chosen account is the From header, and a sender no account has fails without sending") {
+            val actions = MailActions { usableMailAccounts(config, runtime).map(::MailAccess) }
+            val email = EmailDraft(from = Handle.email(home), to = listOf(Handle.email(bob)), subject = "header check", body = "hi")
+            actions.sendEmail(ProposedAction.SendEmail("k5", "send", email), null).shouldBeInstanceOf<ActionOutcome.Done>()
+            val from = bobMail("header check").single().from.single() as InternetAddress
+            from.address shouldBe home
+            from.personal shouldBe "Home Me"
+
+            val stranger = email.copy(from = Handle.email("stranger@example.com"), subject = "never sent")
+            val failed = actions.sendEmail(ProposedAction.SendEmail("k6", "send", stranger), null).shouldBeInstanceOf<ActionOutcome.Failed>()
+            failed.retryable shouldBe false
+            failed.message shouldContain "Home <home@example.com>"
+            bobMail("never sent") shouldHaveSize 0
+        }
+
+        test("a reply from one account to a message another account holds still carries its threading headers") {
+            deliver(work, "Thread at work")
+            val (target, originalId) = MailAccess(usableMailAccounts(config, runtime).first { it.id == "a1" }).imap().use { store ->
+                store.folder("INBOX").openedUse(READ_ONLY) { f ->
+                    val m = f.messages.first { it.subject == "Thread at work" } as MimeMessage
+                    SourceId(MailRef("INBOX", f.uidValidity, f.getUID(m), "a1").sourceId) to m.messageID
+                }
+            }
+            val actions = MailActions { usableMailAccounts(config, runtime).map(::MailAccess) }
+            val reply = EmailDraft(from = Handle.email(home), to = listOf(Handle.email(bob)), subject = "Re: Thread at work", body = "hi")
+            actions.sendEmail(ProposedAction.SendEmail("k7", "send", reply), target).shouldBeInstanceOf<ActionOutcome.Done>()
+            val sent = bobMail("Re: Thread at work").single()
+            (sent.from.single() as InternetAddress).address shouldBe home
+            sent.getHeader("In-Reply-To", null) shouldBe originalId
         }
     }
 })

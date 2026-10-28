@@ -22,7 +22,9 @@ import net.robog.clarity.shared.session.SessionId
 import net.robog.clarity.shared.session.SessionKind
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -51,6 +53,11 @@ class SessionStore(private val database: Database) {
 
     suspend fun recent(limit: Int = 20): List<SessionRecord> = database.tx {
         AgentSessions.selectAll().orderBy(AgentSessions.startedAt, SortOrder.DESC).limit(limit).map { it.toRecord() }
+    }
+
+    /** Whether a session of [kind] started at or after [since]. */
+    suspend fun startedSince(kind: SessionKind, since: Instant): Boolean = database.tx {
+        AgentSessions.selectAll().where { (AgentSessions.kind eq kind.wire()) and (AgentSessions.startedAt greaterEq since) }.limit(1).any()
     }
 
     /** Snoozed calls whose time has come. */

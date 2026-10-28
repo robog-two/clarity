@@ -245,6 +245,8 @@ data class Usage(
     val reportedCostMicros: Long? = null,
     /** Web searches the server ran for this call (`usage.server_tool_use.web_search_requests`). */
     val webSearchRequests: Long = 0,
+    /** The upstream provider that served the call (OpenRouter's `provider`); in a sum, the latest known. */
+    val provider: String? = null,
 ) {
     /** The whole prompt of one call: uncached input plus cache reads and writes. */
     val promptTokens: Long get() = inputTokens + cacheReadInputTokens + cacheCreationInputTokens
@@ -258,6 +260,7 @@ data class Usage(
         cacheCreation1hTokens + other.cacheCreation1hTokens,
         if (reportedCostMicros == null && other.reportedCostMicros == null) null else (reportedCostMicros ?: 0) + (other.reportedCostMicros ?: 0),
         webSearchRequests + other.webSearchRequests,
+        other.provider ?: provider,
     )
 
     companion object {

@@ -7,7 +7,8 @@ package net.robog.clarity.harness
  * separate system messages, which keeps them valid under [systemPlacementViolations].
  */
 
-private const val OPERATOR_UPDATE_PLACEHOLDER = "(operator update follows)"
+/** The user message that carries operator updates when nobody said anything. */
+const val OPERATOR_UPDATE_PLACEHOLDER = "(operator update follows)"
 
 private fun userBlocks(interrupts: List<Message>): List<Block> =
     interrupts.filter { it.role != Role.SYSTEM }.flatMap { it.content }

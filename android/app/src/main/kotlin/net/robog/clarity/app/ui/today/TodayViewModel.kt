@@ -24,6 +24,7 @@ import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.call.CallTracker
 import net.robog.clarity.app.call.liveCall
+import net.robog.clarity.app.call.resumable
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
@@ -159,14 +160,36 @@ data class TodayUiState(
     val unavailable: Boolean = false,
     val error: String? = null,
     val kicker: String = "",
-    /** Today's morning call is still going on with its screen gone: offer to ring again. */
-    val callAgain: Boolean = false,
-    /** Why "call me again" could not ring. */
+    /** Which call Today offers to ring for ([callOffer]). */
+    val callOffer: CallOffer = CallOffer.NONE,
+    /** Why the call could not ring. */
     val callAgainProblem: String? = null,
 )
 
-/** Offer "call me again" while a call from today is unfinished ([liveCall]), whether it was left or swiped away. */
-fun offerCallAgain(session: Session?, now: Instant, zone: TimeZone): Boolean = liveCall(session, now, zone) != null
+/** The call Today offers to ring for, if any. */
+enum class CallOffer {
+    NONE,
+    /** No morning call today yet: "Start our morning meeting". */
+    START,
+    /** Today's call ended before the hand-off (or was missed): "We didn't finish this morning". */
+    RESTART,
+    /** Today's call is still going on with its screen gone: "Our meeting isn't finished". */
+    REJOIN,
+}
+
+/**
+ * Pure: the call Today offers at [now]. While today's call goes on ([liveCall]), ringing again picks
+ * it up. Otherwise, until a call reached the hand-off ([Today.called]), ringing starts a new one:
+ * [CallOffer.RESTART] when one already started today ([Today.callStarted]), else [CallOffer.START].
+ * A snoozed call rings again by itself, and before the day is known nothing is offered.
+ */
+fun callOffer(today: Today?, session: Session?, now: Instant, zone: TimeZone): CallOffer = when {
+    liveCall(session, now, zone) != null -> CallOffer.REJOIN
+    session?.state == Session.State.SNOOZED && resumable(session, now, zone) -> CallOffer.NONE
+    today == null || today.called -> CallOffer.NONE
+    today.callStarted -> CallOffer.RESTART
+    else -> CallOffer.START
+}
 
 /** Today: the plan, what the agent is doing, held items and the parked list. */
 @Inject
@@ -202,15 +225,19 @@ class TodayViewModel(
                 .collect { fetch(quiet = true) }
         }
         viewModelScope.launch { fetch(quiet = false) }
-        viewModelScope.launch {
-            calls.session.collect { session ->
-                val offer = offerCallAgain(session, clock.now(), clock.zone())
-                _state.update { it.copy(callAgain = offer, callAgainProblem = if (offer) it.callAgainProblem else null) }
-            }
-        }
+        viewModelScope.launch { calls.session.collect { offerCall() } }
     }
 
-    /** "Call me again": the phone rings for the call still going on, like the morning call. */
+    /** Works out [TodayUiState.callOffer] from the day and the call as now known. */
+    private fun offerCall() = _state.update { s ->
+        val offer = callOffer(s.today, calls.session.value, clock.now(), clock.zone())
+        s.copy(callOffer = offer, callAgainProblem = if (offer != CallOffer.NONE) s.callAgainProblem else null)
+    }
+
+    /**
+     * "Call me now" / "Call me again": the phone rings like the morning call. Answering picks up the
+     * call still going on, or starts a new one ([net.robog.clarity.app.call.callEntry]).
+     */
     fun callAgain() {
         // Posting the call is a binder call to the system: off the main thread.
         viewModelScope.launch(Dispatchers.Default) {
@@ -246,6 +273,7 @@ class TodayViewModel(
                 _state.update {
                     it.copy(loading = false, refreshing = false, today = r.value, unavailable = false, error = null, kicker = dateKicker(now.date, now.time))
                 }
+                offerCall()
                 publish()
             }
             is ApiResult.Failure -> _state.update {

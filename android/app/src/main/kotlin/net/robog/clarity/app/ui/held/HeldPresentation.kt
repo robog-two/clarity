@@ -34,6 +34,23 @@ fun recipientName(email: EmailDraft): String? {
     return first.displayName?.takeIf { it.isNotBlank() }?.substringBefore(' ') ?: first.value.substringBefore('@')
 }
 
+/**
+ * The account an email goes from: "Gmail <sam@gmail.com>". An email held before the sender was
+ * chosen has none and goes from the mail connector's default account.
+ */
+fun senderLine(email: EmailDraft): String {
+    val address = email.from?.value ?: return "Default account"
+    val label = email.fromLabel?.takeIf { it.isNotBlank() && !it.equals(address, ignoreCase = true) }
+    return if (label != null) "$label <$address>" else address
+}
+
+/** Whether the email answers a thread ("Reply in “Lunch?”") or starts a new one. */
+fun threadLine(email: EmailDraft): String = when {
+    email.inReplyTo == null -> "New email"
+    email.replySubject.isNullOrBlank() -> "Reply in an existing thread"
+    else -> "Reply in “${email.replySubject}”"
+}
+
 /** The line shown once an approved action ran: "Sent to Dana." */
 fun executedToast(held: HeldAction): String {
     val email = emailOf(held.action)
