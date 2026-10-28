@@ -97,6 +97,29 @@ sealed interface Card {
     /** A form asking the person to enter a credential; the client fetches the request via `GET /api/v1/vault/requests/{id}`. */
     @Serializable @SerialName("credential_request")
     data class CredentialRequest(val requestId: net.robog.clarity.shared.vault.CredentialRequestId) : Card
+
+    /**
+     * A finished document the agent made (`present_report`). The client fetches it with
+     * `GET /api/v1/reports/{reportId}` and downloads a format with `…/download/{format}`. [formats]
+     * are wire names (`pdf`, `docx`, `odt`, `txt`, `md`), kept as strings so a newer format never
+     * breaks an older app. [fallbackText] is on the wire for apps that do not know this card.
+     */
+    @Serializable @SerialName("report")
+    data class Report(
+        val reportId: String,
+        val title: String,
+        val formats: List<String>,
+        val fallbackText: String = "$title. In your Goods, to open or download.",
+    ) : Card
+
+    /**
+     * A card of a type this build does not know (a newer server's): [ClarityJson] decodes any
+     * unknown `type` to this instead of failing the whole feed. Card types added from now on carry
+     * a `fallbackText` string on the wire for it; without one the card is not shown. (Apps built
+     * before this existed still fail on unknown types; they cannot be fixed from here.)
+     */
+    @Serializable @SerialName("unknown")
+    data class Unknown(val fallbackText: String? = null) : Card
 }
 
 @Serializable

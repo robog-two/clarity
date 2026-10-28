@@ -83,6 +83,7 @@ The product, as designed (see the design canvas "Personal Agent Prototype"):
 | `connectors/dav/` | CalDAV + CardDAV + WebDAV (dav4jvm, ical4j, ez-vcard) |
 | `computers/sandbox/` | `sandboxd`: the agent's Linux workspace, served as an MCP server |
 | `computers/browser/` | Firefox ESR + uBlock Origin + Privacy Badger, driven by Mozilla's Firefox DevTools MCP |
+| `computers/render/` | `renderd`: report revisions (Markdown + style) to PDF, Word, OpenDocument, text with pandoc + Typst |
 | `android/` | Separate Gradle build (includes the root build for `:shared`) |
 | `deploy/` | Podman compose, container build files, secrets bootstrap |
 | `docs/workstreams/` | Implementation specs, one per workstream (the build plan) |
@@ -141,6 +142,12 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/held` · `POST /api/v1/held/{id}/decision` | device | held actions; approve (optionally edited), decline, talk |
 | `GET /api/v1/activity` | device | actions taken alone ("see allowed actions") |
 | `GET /api/v1/nudges?since={iso}` | device | pending nudges and the timeline of fired/skipped/missed/cancelled ones |
+| `GET /api/v1/reports` · `GET /api/v1/reports/{id}` | device | reports the agent wrote; one with its revisions, sources and formats ("Word / Pages" for docx) |
+| `GET /api/v1/reports/{id}/source?rev=` | device | a revision's Markdown (latest without `rev`) |
+| `GET /api/v1/reports/{id}/download/{format}?rev=` | device | the rendered file (pdf, docx, odt, txt, md), named after the title; rendered on demand and cached |
+| `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link and its download count (made on first use, the same one while live); turn it off |
+| `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
+| `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |
@@ -148,7 +155,11 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `POST /ingest/v1/actions/{id}/result` | connector | report an action's outcome (idempotent) |
 | `/mcp` | device | MCP (streamable HTTP) exposing the same domain tools the agent uses |
 
-The path constants live in `shared/api/Api.kt` (`ApiPaths`).
+The path constants live in `shared/api/Api.kt` (`ApiPaths`). The only routes that answer without a
+device, connector or enrollment credential are `/healthz`, `/readyz` and the Goods links under `/g/`
+(see "Secret links" under Reports). Caddy passes every path to the backend unchanged
+(`deploy/caddy/Caddyfile` has a single `reverse_proxy`), so the backend's own authentication decides
+and nothing else opens up.
 
 ### Authentication
 
@@ -472,6 +483,118 @@ Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
 
+### Reports (documents the agent writes)
+
+In the product these are the person's **Goods** (the app's Goods tab, card copy and the agent's
+words to the person); code, tables and routes keep the name `report`.
+
+When the person wants something written to keep (an essay, a report, a letter), the agent makes a
+**report**: Markdown with optional YAML front matter (title, author, date) plus a typed **style
+spec** (`shared/report/ReportStyle`: font family and size, line spacing, margins, first-line indent,
+paragraph spacing, the title's and headings' family, sizes, bold and italic, alignment, page size,
+page numbers, title page, citation style). The agent picks the style from what the person asked for
+(`preset: mla`, "12 pt Arial, double spaced"); otherwise the body is Times New Roman 12 pt, single
+spaced, 1 inch margins, and the title and headings are the app's serif, **Libre Caslon Text** (title
+bold italic 20 pt, like the app's titles; headings bold 16/14/12 pt). MLA uses Times New Roman
+throughout. There are no templates or palettes yet.
+
+- **Data** (V25, BCNF): `report` (id, kind `document`; `deck`, `sheet`, `site` reserved, title,
+  created_at, created_by_run), `report_revision` (report, n, source, style jsonb, created_at,
+  created_by_run; unique (report, n); append-only), `report_rendition` (a pure cache keyed by
+  (revision, format, renderer version) → blob path, size, sha-256, created/last accessed) and
+  `report_source` (url, title, cited text, fetched_at per report, from web search citations, for a
+  works-cited list later). The name avoids `document` (V5, files ingested from WebDAV).
+- **Tools** (effect `WRITE`, own state): `create_report(title, source, style?)`, `edit_report(id, old,
+  new)` (a text editor's `str_replace` on the latest revision; the match must be unique, else the
+  error says how many places it found), `set_report_style(id, style)` (only the fields given change),
+  `read_report(id, fromLine?, revision?)` (a page of lines with the line count; taints like other
+  readers of outside text), `list_reports()`. Helpers get them by default. The lead also has
+  `present_report(id, message?, urgency?)`, which posts `Card.Report(reportId, title, formats)` through
+  the same path as `send_to_user` (notify policy, idempotent by tool call) and counts as answering
+  the person; `send_to_user` refuses report cards. Search helpers have `cite_sources(id, urls?)`.
+  The prompt has the lead delegate research and long drafts and hold only ids and a line or two.
+- **Rendering**: `GET …/download/{format}` renders through the `render` service on first use, writes
+  the file under `<dataDir>/reports/renditions/<revision>/` and records the row; later downloads read
+  the file and touch `last_accessed_at`. Markdown is the source itself. When the renderer cannot be
+  reached, the newest cached file of any renderer version is served. The `report-rendition-sweep` job
+  (hourly) drops files of an old renderer version, then the least recently downloaded until the cache
+  is under `CLARITY_REPORTS_CACHE_MAX_MB` (500); it never touches revisions.
+- **Page numbers**: with `pageNumbers` the PDF numbers pages through Typst; for Word, renderd adds a
+  footer part with a `PAGE` field to the patched reference document (pandoc keeps the reference
+  document's footers), and for OpenDocument a `text:page-number` footer on every master page; all
+  centred at the bottom. pandoc runs with `--sandbox` on top of `sanitize.lua`.
+- **Quotes** are indented with a thin rule on the left in every format (Typst `quote` show rule,
+  Word `Block Text` paragraph border, ODF `Quotations` border), like the app's. The PDF title block
+  drops pandoc's blank affiliation/e-mail lines, so the date sits under the author.
+- **Heading font**: the render image has Libre Caslon Text (OFL; static Regular, Bold, Italic and Bold
+  Italic cut from the app's variable fonts at image build). The PDF uses it directly; PDFs draw the
+  title through Clarity's copy of pandoc's Typst template (`computers/render/clarity.typst`), which
+  takes the title's font, size, weight and style from the spec. Word files embed the four faces as
+  obfuscated fonts in the font table (with Times New Roman as the named stand-in) and OpenDocument
+  files carry them under `Fonts/`, so Word and LibreOffice show them without the font installed. Pages
+  ignores embedded fonts and shows its own substitute. Bold and italic are set explicitly on every
+  heading and title style, so the three formats agree.
+- **Secret links** (V26 `report_link`): Download and Share in the app both use one link per Good,
+  `/g/<token>`, a small server-rendered page (title, date, a download link per format, nothing else;
+  no script, its one font served from the backend) whose files are the latest revision's. The token is
+  a 9-byte lookup plus an 18-byte (144-bit) secret from `SecureRandom`, base64url; the row is found by
+  the lookup and the secret compared with `MessageDigest.isEqual`. The secret is kept, not hashed, so
+  asking again returns the same live link (the database already holds the documents themselves). It
+  is made on the first `POST …/link`, stays until `DELETE …/link` (the viewer's "Turn off link"), and a
+  revoked token never works again; the next share makes a new one. Each file downloaded through a
+  live link (`/g/{token}/{format}` that serves a file; not the page, the font, unknown formats or
+  failed renders) adds one to `report_link.downloads` in a single `UPDATE … SET downloads = downloads
+  + 1`; nothing else about a download is kept (no addresses, agents or per-download rows). The count
+  is in the link answer and `GET /api/v1/reports/{id}` (`linkDownloads`), includes the person's own
+  downloads through Download, and goes with the link when it is turned off. Every `/g/` response sends
+  `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, a
+  `default-src 'none'` CSP and `X-Frame-Options: DENY`; request logging skips `/g/` so tokens never
+  reach the logs (Caddy keeps no access log). There is no rate limiting (the backend has no such
+  mechanism); guessing 144 bits is not practical. Anyone the person sends the link to can download the
+  files until it is turned off.
+- **App**: a **Goods** tab (`GET /api/v1/reports`, newest change first; refetched when a report card
+  arrives), a feed card for `Card.Report` ("In your Goods", title, kind; tapping opens the viewer), and
+  a viewer (`…/{id}` and `…/source`, the Markdown drawn by the app's own small renderer, sources).
+  One M3 expressive FAB menu (`FloatingActionButtonMenu`, bottom right) has Download (opens the
+  secret link in the browser), Share (the link on the share sheet) and "Share settings (N downloads)",
+  a bottom sheet that shows whether the link is on and its count, and turns it off or on. The app
+  never downloads the files itself. The lead is told that "put it in my goods" needs
+  nothing beyond `create_report` (every report is in the tab) and `present_report`.
+- **Forward compatibility**: `ClarityJson` decodes a card of an unknown `type` to `Card.Unknown`
+  (keeping a `fallbackText` string when the card has one; new card types carry it, as `Card.Report`
+  does), so a newer server never breaks the feed. Apps built before this cannot be fixed: they fail to
+  decode a feed item with a card they do not know. `ReportFormatOption.format` is a wire string for
+  the same reason.
+
+### Web search (helpers only)
+
+Web search is OpenRouter's server tool `{"type": "openrouter:web_search"}` (engine `parallel`, mode
+`fast`, about $0.001 a search; `CLARITY_WEB_SEARCH_*`). The search runs on OpenRouter's side and its
+results go straight into the model's context; zero data retention stays on, so Firecrawl (refused
+under ZDR) is not offered.
+
+- **The lead never searches.** Only `roleRequest(..., webSearch = …)` adds the tool, and only
+  `HelperManager` passes it, for a helper whose `delegate` call names `web_search` in `tools`. It is
+  never in the helper defaults.
+- **A search helper has no personal data.** Granting `web_search` keeps only the sandbox (`sandbox__*`)
+  and the report tools (`researchTools`); mail, contacts, calendar, memory, journal, profile, drafts,
+  every guarded action, the browser, the vault and credentials and saved results are dropped (and
+  named in the `delegate` answer), so a query can only carry what the task says. The stored tool list
+  keeps `web_search`, so a resumed run gets it back.
+- **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
+  as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
+  per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),
+  `HelperManager` subtracts the searches already recorded for it in `model_call`
+  (`RunStore.webSearchesUsed`).
+  `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` is sent as the engine's `excluded_domains`.
+- **Taint and cost**: a call whose usage has `server_tool_use.web_search_requests` > 0 marks the run
+  as having read outside content, like the readers in `UNTRUSTED_SOURCE_TOOLS`; the count is in
+  `Usage.webSearchRequests` (so in `agent_run.usage`) and `model_call.web_search_requests`, and its
+  price is in OpenRouter's reported cost.
+- **Citations**: `url_citation` annotations (streamed in deltas or on the message) are kept as an
+  `openrouter_citations` raw block after the answer in the journal, never sent back to the model;
+  `cite_sources` copies them into `report_source`.
+
 ### Durability (journal instead of a workflow engine)
 
 Temporal is the textbook answer, but for one person on one box it adds a server and a schema
@@ -537,7 +660,7 @@ for what our loop already has: an append-only transcript. So:
   capped at `high`. OpenRouter's `reasoning_details` are kept (tagged with provider and model) and
   replayed only to the model that wrote them.
 - **Cost**: each `model_call` row's cost is what OpenRouter reports (`usage.cost`); there are no
-  price tables.
+  price tables. Web searches a call ran are counted in `model_call.web_search_requests`.
 - Refusals (`finish_reason: content_filter`) are surfaced as a card, never retried silently.
 
 ### Memory
@@ -595,7 +718,8 @@ Reads: `list_messages`, `list_calendar_events`, `search_contacts`,
 `search_documents`, `read_document`, `search_memory`, `read_memory`, `open_collection`, `read_journal`, `today`.
 Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`, `save_note`, `manage_collection`,
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
-controls. External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
+controls, the report tools (`create_report`, `edit_report`, `set_report_style`, `present_report`,
+`cite_sources`; `read_report` and `list_reports` read). External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
 plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
 Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
@@ -747,8 +871,23 @@ Two containers on the internal `tools` network, each an MCP server the backend c
   browses. `computers/browser/pilot-e2e/` starts a throwaway copy with a test login site for the
   pilot's live test.
 
+A third container, **render** (`computers/render`, `renderd`), is not an MCP server and not a tool
+of the agent's: the backend calls it to turn report revisions into files. It is a Python
+standard-library HTTP server (`POST /render {source, style, format}` → bytes, `GET /healthz` → its
+version) with pinned, sha-256-verified pandoc 3.12.1 and Typst 0.15.1 on Alpine, plus the Liberation
+fonts and Libre Caslon Text. It sits only on the internal `render` network (no route to the internet, the database or other
+containers) and needs a bearer key (`render_key`). Word and OpenDocument files are styled from
+pandoc's own reference documents, patched per style at render time (font family named as is, so Word
+and Pages use Times New Roman for the body; the heading font is embedded; sizes, line spacing, indents, margins, page size; deterministic zip);
+PDFs go through Typst with Liberation Serif/Sans/Mono standing in for Times New Roman, Arial and
+Courier New (metric-compatible). A Lua filter drops raw format code, images (which would read files)
+and metadata beyond the title block; each render runs in its own process group with a timeout
+(`RENDER_TIMEOUT`, 60 s). Pandoc stays out of the sandbox because the sandbox has internet access
+and the agent's files; the renderer has neither.
+
 The cheapest-first ladder in the system prompt: what the agent already knows → domain tools →
-web search/fetch (server tools) → browser → sandbox → ask the person.
+a helper with web search → a helper with the browser or the sandbox → ask the person. The lead
+itself never searches.
 
 ## Connectors
 
@@ -805,7 +944,7 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - `deploy/compose.yaml` (Podman compose) for dev and simple installs; Quadlet units are the planned
   production path for systemd hosts.
 - Networks: `db` (internal: postgres + backend), `ingest` (internal: backend + connectors),
-  `tools` (internal: backend + sandbox + browser), `proxy` (internal: caddy + backend), and one
+  `tools` (internal: backend + sandbox + browser), `render` (internal: backend + render), `proxy` (internal: caddy + backend), and one
   non-internal **egress network per service** that needs the internet (each connector for its
   upstream, caddy; the browser and backend go through the egress proxy instead). The sandbox has no egress network.
 - **Egress proxy** (`egress`, Squid): the browser and the backend have no direct route out; they
@@ -817,7 +956,7 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - Containers: non-root, read-only rootfs, `cap_drop: ALL`, `no-new-privileges`, memory/CPU/pids
   limits.
 - Optional services via compose profiles: `example`, `mail`, `dav`, `computers` (sandbox +
-  browser). (Push needs no container: it rides the SSE feed.)
+  browser). (Push needs no container: it rides the SSE feed.) `render` is part of the base stack.
 
 ## Observability and evals
 

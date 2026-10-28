@@ -24,10 +24,15 @@ import net.robog.clarity.shared.governance.HeldActionId
 /** The screen of one server connector (accounts, passwords), opened from settings. */
 @Serializable data class ConnectorView(val connectorId: String) : NavKey
 
-/** The four bottom tabs. */
+/** One Good (a report the agent made), opened from the Goods tab or a card in the thread. */
+@Serializable data class ReportView(val reportId: String, val backLabel: String = "Goods") : NavKey
+
+/** The bottom tabs. */
 enum class MainTab(val label: String) {
     Today("today"),
     Ask("ask"),
+    /** The documents the agent made for the person. */
+    Goods("Goods"),
     Held("held"),
     Settings("settings"),
 }

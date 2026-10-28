@@ -43,7 +43,12 @@ import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
 
 @Composable
-fun AskScreen(modifier: Modifier = Modifier, onReview: (HeldActionId) -> Unit = {}, viewModel: AskViewModel = metroViewModel()) {
+fun AskScreen(
+    modifier: Modifier = Modifier,
+    onReview: (HeldActionId) -> Unit = {},
+    onOpenReport: ((String) -> Unit)? = null,
+    viewModel: AskViewModel = metroViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val mic = rememberMicAccess(viewModel::onMicPermission)
     AskContent(
@@ -57,6 +62,7 @@ fun AskScreen(modifier: Modifier = Modifier, onReview: (HeldActionId) -> Unit = 
         onReview = onReview,
         onAlways = viewModel::approveAlways,
         modifier = modifier,
+        onOpenReport = onOpenReport,
     )
 }
 
@@ -73,8 +79,9 @@ fun AskContent(
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = {},
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
+    onOpenReport: ((String) -> Unit)? = null,
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message)
+    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     Column(modifier.fillMaxSize().imePadding()) {
         Row(

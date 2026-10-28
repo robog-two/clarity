@@ -25,6 +25,7 @@ import net.robog.clarity.app.ui.main.MainScaffold
 import net.robog.clarity.app.ui.onboarding.OnboardingFlow
 import net.robog.clarity.app.ui.path.RunPathScreen
 import net.robog.clarity.app.ui.path.TaskThreadScreen
+import net.robog.clarity.app.ui.goods.ReportScreen
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
 
@@ -95,7 +96,11 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onOpenHeldItem = { push(DraftReview(it.value)) },
                     onOpenConstitution = { push(ConstitutionView) },
                     onOpenConnector = { push(ConnectorView(it)) },
+                    onOpenReport = { id, back -> push(ReportView(id, back)) },
                 )
+            }
+            entry<ReportView> { key ->
+                ReportScreen(key.reportId, onBack = { backStack.removeLastOrNull() }, backLabel = key.backLabel)
             }
             entry<DraftReview> { key ->
                 DraftReviewScreen(

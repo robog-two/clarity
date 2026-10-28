@@ -8,6 +8,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material.icons.outlined.PauseCircleOutline
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Today
@@ -40,6 +41,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.nav.MainTab
 import net.robog.clarity.app.ui.ask.AskScreen
+import net.robog.clarity.app.ui.goods.GoodsScreen
 import net.robog.clarity.app.ui.held.HeldScreen
 import net.robog.clarity.app.ui.settings.SettingsTab
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -49,11 +51,12 @@ import net.robog.clarity.shared.governance.HeldActionId
 private fun MainTab.icon(): ImageVector = when (this) {
     MainTab.Today -> Icons.Outlined.Today
     MainTab.Ask -> Icons.Outlined.ChatBubbleOutline
+    MainTab.Goods -> Icons.Outlined.Inventory2
     MainTab.Held -> Icons.Outlined.PauseCircleOutline
     MainTab.Settings -> Icons.Outlined.Settings
 }
 
-/** The signed-in app: four bottom tabs from the prototype, with "held · N" and confirmation toasts. */
+/** The signed-in app: the bottom tabs (the prototype's four and Goods), with "held · N" and confirmation toasts. */
 @Composable
 fun MainScaffold(
     tab: MainTab,
@@ -64,6 +67,8 @@ fun MainScaffold(
     onOpenHeldItem: (HeldActionId) -> Unit,
     onOpenConstitution: () -> Unit,
     onOpenConnector: (String) -> Unit,
+    /** A Good opened, from the Goods tab or a card in the thread; the label is where back goes. */
+    onOpenReport: (reportId: String, backLabel: String) -> Unit = { _, _ -> },
     viewModel: MainViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -111,7 +116,8 @@ fun MainScaffold(
         val content = Modifier.padding(padding)
         when (tab) {
             MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content, onOpenTask = onOpenTask)
-            MainTab.Ask -> AskScreen(content, onReview = onReview)
+            MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") })
+            MainTab.Goods -> GoodsScreen(onOpen = { onOpenReport(it, "Goods") }, modifier = content)
             MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
             MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content)
         }

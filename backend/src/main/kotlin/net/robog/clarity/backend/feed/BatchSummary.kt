@@ -14,6 +14,8 @@ fun headline(item: FeedItem): String {
             is Card.Context -> card.label
             is Card.Said -> card.text
             is Card.Plan -> card.items.firstOrNull()?.sentence()
+            is Card.Report -> card.title
+            is Card.Unknown -> card.fallbackText
             is Card.Proposal, is Card.Tasks, is Card.CredentialRequest -> null
         }
     } ?: "Something to look at"

@@ -41,7 +41,7 @@ TAG="e2e"
 BASE="http://127.0.0.1:$PORT"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/clarity-e2e.XXXXXX")"
 DEVICE="$WORK/device"
-SECRETS=(postgres_password openrouter_api_key connector_example_key connector_mail_key connector_dav_key sandbox_key browser_key)
+SECRETS=(postgres_password openrouter_api_key connector_example_key connector_mail_key connector_dav_key sandbox_key browser_key render_key)
 COMPOSE_FILE="deploy/compose.e2e.generated.yaml"   # next to compose.yaml: relative paths in it keep working
 
 if [ "${E2E_SKIP_COMPUTERS:-}" = 1 ]; then SKIP_SANDBOX=1; SKIP_BROWSER=1; else SKIP_SANDBOX=0; SKIP_BROWSER="${E2E_SKIP_BROWSER:-0}"; fi

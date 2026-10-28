@@ -67,6 +67,7 @@ jobs:
           sandbox|deploy/container/sandbox.Containerfile|||
           browser|deploy/container/browser.Containerfile|||
           egress|deploy/container/egress.Containerfile|||
+          render|deploy/container/render.Containerfile|||
           LIST
           cat "$RUNNER_TEMP/subjects.txt"
       # One attestation covering all images, stored with GitHub; verify with

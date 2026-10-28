@@ -49,6 +49,7 @@ load_into_podman() { # load_into_podman <name>: create or refresh the Podman sec
 ensure_file postgres_password
 ensure_file sandbox_key   # bearer keys for the agent computers (sandbox, browser)
 ensure_file browser_key
+ensure_file render_key    # bearer key for the render service (reports)
 for id in example mail dav "$@"; do ensure_file "connector_${id}_key"; done
 
 # Provided by you: OpenRouter runs every model, and the backend does not start until this holds a key

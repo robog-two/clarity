@@ -33,6 +33,8 @@ import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.harness.WebSearchTool
+import net.robog.clarity.harness.searchFor
 import net.robog.clarity.shared.time.LocalTimes
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
@@ -115,19 +117,35 @@ class HelperManager(
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
         val probe = RunScope("probe", isLead = false)
-        val chosen = if (tools == null) null else {
+        // Web search only when the lead names it, and then without any personal-data or outbound tool.
+        val search = tools != null && WEB_SEARCH in tools
+        if (search && config.webSearch.tool() == null) return "Web search is turned off on this server (CLARITY_WEB_SEARCH=false).".left()
+        val (requested, dropped) = when {
+            tools == null -> null to emptyList()
+            search -> researchTools(tools)
+            else -> tools to emptyList()
+        }
+        val chosen = if (requested == null) null else {
             val defaults = toolbox.value.helperTools(probe, null).tools
-            completeHelperTools(tools, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
+            if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
         val granted = toolbox.value.helperTools(probe, chosen)
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
         val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
-        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, chosen, clock.now())
+        // The stored list keeps `web_search`, so a resumed run gets its search back.
+        val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
+        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, stored, clock.now())
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
-        return Delegated(id, delegatedText(id, roleName, chosen, granted.tools.tools.map { it.name })).right()
+        val names = granted.tools.tools.map { it.name }
+        val text = if (search) {
+            delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped)
+        } else {
+            delegatedText(id, roleName, chosen, names)
+        }
+        return Delegated(id, text).right()
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
@@ -176,7 +194,8 @@ class HelperManager(
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
             val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task)
-            val set = toolbox.value.helperTools(runScope, run.tools).tools
+            val plan = helperRunPlan(run.tools, config.webSearch.tool())
+            val set = toolbox.value.helperTools(runScope, plan.tools).tools
             val request = roleRequest(
                 role = bound.config,
                 runId = run.id,
@@ -185,17 +204,21 @@ class HelperManager(
                 tools = set.tools,
                 maxTurns = config.helperMaxTurns,
                 sink = large.sink,
+                // The cap is per run, not per resume: searches already recorded for it count.
+                webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
             ).copy(outOfSteps = OutOfSteps())
             val harness = runtime.harness(journal, bound)
-            harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
+            // Search results are outside content: a run that searched is tainted like one that read mail.
+            val onEvent: (HarnessEvent) -> Unit = { event ->
+                if (searchedIn(event)) runScope.taint()
                 if (event is HarnessEvent.Terminal) terminal = event
             }
+            harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { onEvent(it) }
             // Open models sometimes end on a tool round with no text: one bounded nudge, never more.
             if (helperOwesResult(terminal)) {
                 journal.append(run.id, Message.user(HELPER_RESULT_NUDGE))
-                harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { event ->
-                    if (event is HarnessEvent.Terminal) terminal = event
-                }
+                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)))
+                harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
@@ -216,6 +239,27 @@ class HelperManager(
         }
     }
 }
+
+/** What a helper run gets from its stored tool list: the tools to build, and web search when it was granted. */
+data class HelperRunPlan(val tools: List<String>?, val webSearch: WebSearchTool?)
+
+/**
+ * Pure: the plan of a helper run whose stored tool list is [stored] ([WEB_SEARCH] in it means the lead
+ * granted search). A search run gets [search] (null when search is off on the server) and only
+ * [researchTools]; any other run gets its list as it is and never search.
+ */
+fun helperRunPlan(stored: List<String>?, search: WebSearchTool?): HelperRunPlan =
+    if (stored != null && WEB_SEARCH in stored) HelperRunPlan(researchTools(stored).first, search)
+    else HelperRunPlan(stored, null)
+
+/** Pure: whether [event] is a model call that ran web searches (the run has then read outside content). */
+fun searchedIn(event: HarnessEvent): Boolean = event is HarnessEvent.Called && event.usage.webSearchRequests > 0
+
+/** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost. */
+fun searchGrantText(dropped: List<String>): String =
+    " It can search the web (only it; you cannot), and has no personal data or outbound tools" +
+        (if (dropped.isEmpty()) "" else " (left out: ${dropped.sorted().joinToString()})") +
+        ", so its task must say everything it needs."
 
 /** A helper that started: its run id and what `delegate` tells the lead. */
 data class Delegated(val id: String, val text: String)

@@ -68,8 +68,8 @@ private val MaxBubble = 340.dp
 private val AgentShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 4.dp)
 private val YouShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 4.dp, bottomStart = 20.dp)
 
-/** Cards that read as words in the thread; everything else is an attachment or an action row. */
-private fun Card.isMessage() = this is Card.Text || this is Card.Said || this is Card.Note
+/** Cards that read as words in the thread (and Goods, shown as their own cards); everything else is an attachment or an action row. */
+private fun Card.isMessage() = this is Card.Text || this is Card.Said || this is Card.Note || this is Card.Report || this is Card.Unknown
 
 /**
  * One feed item as messages: its words as bubbles, then a row for each approval or login it asks
@@ -87,6 +87,9 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
                 is Card.Text -> AgentBubble(card.text, streaming = item.streaming && i == lastText)
                 is Card.Said -> SaidBubble(card.text)
                 is Card.Note -> NoteBubble(card.text)
+                is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport)
+                // A newer server's card: its own words when it sent some, else nothing.
+                is Card.Unknown -> card.fallbackText?.let { NoteBubble(it) }
                 else -> Unit
             }
         }
@@ -225,6 +228,7 @@ internal fun attachmentTitle(card: Card): String = when (card) {
     is Card.Plan -> "Your plan"
     is Card.Tasks -> card.label
     is Card.CredentialRequest -> "A login to save"
+    is Card.Report -> card.title
     else -> ""
 }.replaceFirstChar { it.uppercase() }
 
@@ -244,6 +248,7 @@ internal fun attachmentSummary(cards: List<Card>): String = when {
         is Card.Chips -> c.items.joinToString(" · ") { it.text }
         is Card.Plan -> c.items.joinToString(" · ") { it.action }
         is Card.Tasks -> "${c.taskIds.size} tasks"
+        is Card.Report -> c.formats.joinToString(" · ")
         else -> ""
     }
 }

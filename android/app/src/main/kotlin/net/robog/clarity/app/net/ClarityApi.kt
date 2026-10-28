@@ -19,6 +19,10 @@ import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.HttpResponse
+import io.ktor.http.encodeURLPathPart
+import net.robog.clarity.shared.report.ReportDetail
+import net.robog.clarity.shared.report.ReportLink
+import net.robog.clarity.shared.report.ReportList
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -33,6 +37,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.data.GoodsLink
 import net.robog.clarity.app.data.SessionStore
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.encodeToString
@@ -174,6 +179,24 @@ interface PathApi {
     suspend fun baseUrl(): String?
 }
 
+/** The person's Goods: the documents the agent made (`/api/v1/reports`). */
+interface ReportsApi {
+    suspend fun reports(): ApiResult<ReportList>
+    suspend fun report(id: String): ApiResult<ReportDetail>
+
+    /** The latest revision's Markdown. */
+    suspend fun reportSource(id: String): ApiResult<String>
+
+    /**
+     * The Good's secret download page (made on first use, the same one after), as a full URL on the
+     * instance's address. Download opens it; Share sends it.
+     */
+    suspend fun reportLink(id: String): ApiResult<GoodsLink>
+
+    /** Turns the secret link off; the next [reportLink] makes a new one. */
+    suspend fun revokeReportLink(id: String): ApiResult<Unit>
+}
+
 /** The credential vault's routes and phone-signed decisions. */
 interface VaultApi {
     /** Registers this phone's vault key and approval key (replacing earlier ones). */
@@ -227,7 +250,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -426,6 +449,26 @@ class KtorClarityApi(
                 setBody(decision)
             }
         }
+
+    // --- goods (reports) ---
+
+    override suspend fun reports(): ApiResult<ReportList> = get(ApiPaths.REPORTS)
+
+    override suspend fun report(id: String): ApiResult<ReportDetail> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}")
+
+    override suspend fun reportSource(id: String): ApiResult<String> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/source")
+
+    override suspend fun reportLink(id: String): ApiResult<GoodsLink> {
+        val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
+        val path = "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link"
+        return when (val r = authed<ReportLink> { base -> client.post { url(base + path) } }) {
+            is ApiResult.Success -> ApiResult.Success(GoodsLink(session.instanceUrl.trimEnd('/') + r.value.path, r.value.downloads))
+            is ApiResult.Failure -> r
+        }
+    }
+
+    override suspend fun revokeReportLink(id: String): ApiResult<Unit> =
+        authedUnit { base -> client.delete { url(base + "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link") } }
 
     // --- ingest (phone connector) ---
 

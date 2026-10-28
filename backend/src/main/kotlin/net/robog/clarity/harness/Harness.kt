@@ -40,6 +40,11 @@ data class RunRequest(
     val resultSink: ToolResultSink? = null,
     /** Warn near [maxTurns] and, when the steps run out, ask for a report in one last call that runs no tools. Null: just stop. */
     val outOfSteps: OutOfSteps? = null,
+    /**
+     * OpenRouter's web search for this run; null (the default) sends none. [WebSearchTool.maxSearches]
+     * caps the whole run: each request gets what is left, and none once it is spent ([searchFor]).
+     */
+    val webSearch: WebSearchTool? = null,
 ) {
     constructor(
         model: String,
@@ -103,6 +108,18 @@ sealed interface HarnessEvent {
         override val usage: Usage,
         override val transcript: List<Message>,
     ) : Terminal
+}
+
+/**
+ * Pure: the web search a run's next request gets after [used] searches: what is left of the run's
+ * [WebSearchTool.maxSearches], or null when there is no search or it is spent. The harness counts
+ * from the start of this resume; a caller resuming a run passes a tool already reduced by what the
+ * run used before (HelperManager does, from `model_call`).
+ */
+fun searchFor(search: WebSearchTool?, used: Long): WebSearchTool? {
+    if (search == null) return null
+    val left = search.maxSearches - used
+    return if (left <= 0) null else search.copy(maxSearches = left.toInt(), maxTotalResults = (left * search.maxResults).toInt())
 }
 
 /** Collects a run to its terminal event. */
@@ -215,7 +232,7 @@ class Harness(
             if (calls == null) {
                 turn++
                 send(HarnessEvent.TurnStarted(turn))
-                when (val outcome = callModel(modelRequest(request, plan, history), pending)) {
+                when (val outcome = callModel(modelRequest(request, plan, history, searchFor(request.webSearch, usage.webSearchRequests)), pending)) {
                     is CallOutcome.Interrupted -> {
                         turn--
                         val messages = foldInterrupts(history.lastOrNull()?.role, listOf(outcome.first) + drain())
@@ -254,7 +271,7 @@ class Harness(
                                     turn++
                                     send(HarnessEvent.TurnStarted(turn))
                                     var report = ""
-                                    val last = callModel(modelRequest(request, plan, history), Channel())
+                                    val last = callModel(modelRequest(request, plan, history, search = null), Channel())
                                     if (last is CallOutcome.Done) {
                                         usage += last.response.usage
                                         send(HarnessEvent.Called(turn, last.response.usage))
@@ -285,7 +302,7 @@ class Harness(
         }
     }
 
-    private fun modelRequest(request: RunRequest, plan: ToolPlan, history: List<Message>) = ModelRequest(
+    private fun modelRequest(request: RunRequest, plan: ToolPlan, history: List<Message>, search: WebSearchTool?) = ModelRequest(
         model = request.model,
         system = request.system,
         messages = wireOrder(sinceSummary(history)),
@@ -293,6 +310,7 @@ class Harness(
         maxTokens = request.maxTokens,
         effort = request.effort,
         cache = request.cache,
+        webSearch = search,
     )
 
     private sealed interface CallOutcome {

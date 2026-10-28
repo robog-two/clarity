@@ -243,6 +243,8 @@ data class Usage(
     val cacheCreation1hTokens: Long = 0,
     /** What the provider says the call cost, in millionths of a dollar (OpenRouter); null when it does not say. */
     val reportedCostMicros: Long? = null,
+    /** Web searches the server ran for this call (`usage.server_tool_use.web_search_requests`). */
+    val webSearchRequests: Long = 0,
 ) {
     /** The whole prompt of one call: uncached input plus cache reads and writes. */
     val promptTokens: Long get() = inputTokens + cacheReadInputTokens + cacheCreationInputTokens
@@ -255,6 +257,7 @@ data class Usage(
         cacheCreation5mTokens + other.cacheCreation5mTokens,
         cacheCreation1hTokens + other.cacheCreation1hTokens,
         if (reportedCostMicros == null && other.reportedCostMicros == null) null else (reportedCostMicros ?: 0) + (other.reportedCostMicros ?: 0),
+        webSearchRequests + other.webSearchRequests,
     )
 
     companion object {
@@ -298,6 +301,55 @@ const val MIN_COMPACT_AT_TOKENS = 50_000L
  */
 fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").startsWith("anthropic/")
 
+/**
+ * OpenRouter's web search server tool (`{"type": "openrouter:web_search"}`): the search runs on
+ * OpenRouter's side, its results go straight into the model's context, and the answer carries
+ * `url_citation` annotations ([UrlCitation]). Only helpers the lead granted `web_search` get it,
+ * never the lead. [maxSearches] caps the searches of one request (`max_tool_calls`, which also bounds
+ * any other server tool) and [maxResults] the results of each; [maxTotalResults] the results of the
+ * whole request. [excludedDomains] is the engine's block list (Parallel, Exa and others honour it).
+ */
+data class WebSearchTool(
+    val engine: String = "parallel",
+    val mode: String? = "fast",
+    val maxResults: Int = 5,
+    val maxSearches: Int = 10,
+    val maxTotalResults: Int? = null,
+    val excludedDomains: List<String> = emptyList(),
+) {
+    init {
+        require(maxSearches >= 1) { "maxSearches must be at least 1" }
+        require(maxResults in 1..25) { "maxResults must be from 1 to 25" }
+    }
+}
+
+/** A `url_citation` annotation of an answer that used web search: where a claim came from. */
+@kotlinx.serialization.Serializable
+data class UrlCitation(val url: String, val title: String? = null, val content: String? = null)
+
+/** [Block.Raw.type] of the citations kept beside an answer; never sent back to the model. */
+const val CITATIONS_TYPE = "openrouter_citations"
+
+/** Pure: the [Block.Raw] that keeps [citations] in the journal, where `cite_sources` finds them. */
+fun citationsBlock(citations: List<UrlCitation>): Block.Raw = Block.Raw(
+    kotlinx.serialization.json.buildJsonObject {
+        put("type", JsonPrimitive(CITATIONS_TYPE))
+        put("citations", HarnessJson.encodeToJsonElement(kotlinx.serialization.builtins.ListSerializer(UrlCitation.serializer()), citations))
+    },
+)
+
+/** Pure: every citation kept in [messages] ([citationsBlock]), first occurrence of each URL, in order. */
+fun citationsIn(messages: List<Message>): List<UrlCitation> = messages.asSequence()
+    .flatMap { it.content.asSequence() }
+    .filterIsInstance<Block.Raw>()
+    .filter { it.type == CITATIONS_TYPE }
+    .flatMap { block ->
+        val list = block.json["citations"] as? JsonArray ?: return@flatMap emptySequence<UrlCitation>()
+        list.asSequence().mapNotNull { runCatching { HarnessJson.decodeFromJsonElement(UrlCitation.serializer(), it) }.getOrNull() }
+    }
+    .distinctBy { it.url }
+    .toList()
+
 /** A single model call: the full (append-only) history plus the stable request prefix. */
 data class ModelRequest(
     val model: String,
@@ -312,6 +364,8 @@ data class ModelRequest(
     val cache: CachePolicy? = CachePolicy(),
     /** JSON schema the final text must conform to (single calls: guard, triage, summaries). */
     val structuredOutput: JsonObject? = null,
+    /** OpenRouter's web search server tool; null (the default, and always for the lead) sends none. */
+    val webSearch: WebSearchTool? = null,
 ) {
     constructor(
         model: String,

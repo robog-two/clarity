@@ -47,6 +47,8 @@ object ModelCalls : Table("model_call") {
     val role = text("role").nullable()
     /** The run (lead thread or helper) that made the call (V21); null outside a run and for older calls. */
     val runId = text("run_id").nullable()
+    /** Web searches the call ran (V25); its cost is part of [costMicros], which OpenRouter reports in full. */
+    val webSearchRequests = integer("web_search_requests").default(0)
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -74,6 +76,7 @@ class DbUsageRecorder(private val database: Database, private val clock: Clock) 
                 it[costMicros] = costMicros(usage)
                 it[ModelCalls.role] = role?.wireName
                 it[ModelCalls.runId] = run
+                it[ModelCalls.webSearchRequests] = usage.webSearchRequests.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
             }
         }
     }

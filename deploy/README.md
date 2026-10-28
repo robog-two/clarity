@@ -42,13 +42,14 @@ source of truth for backups) and loads each into Podman's secret store under the
 | `openrouter_api_key` | backend | yours; required (an empty file falls back to `OPENROUTER_API_KEY`). Every model call goes to OpenRouter, zero data retention |
 | `connector_<id>_key` | backend and that connector | generated; the backend registers every one it finds. `example`, `mail`, `dav` always |
 | `sandbox_key`, `browser_key` | backend and the matching computer | bearer keys for the `computers` profile |
+| `render_key` | backend and `render` | generated; bearer key for the report renderer |
 
 The script is idempotent and only replaces a Podman secret when its file changed; containers pick the new value up
 the next time they start.
 
 | Profile | Adds | Enable |
 |---|---|---|
-| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS) | |
+| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS), `render` (reports: pandoc + Typst) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
 | `mail` | `connector-mail` (IMAP sync, SMTP send, drafts) | `--profile mail` |
 | `dav` | `connector-dav` (CalDAV events and reminders, CardDAV contacts, WebDAV files) | `--profile dav` |
@@ -114,6 +115,57 @@ Things worth knowing:
 - Images are built from `deploy/container/sandbox.Containerfile` and `deploy/container/browser.Containerfile`
   (`up -d --build`). The browser build runs Firefox once for about 80 s to pre-warm the profile.
   Smoke tests: `computers/sandbox/smoke.sh` and `computers/browser/smoke.sh` (they need podman and curl).
+
+## Reports (`render`)
+
+The agent writes documents ("reports", the app's Goods) as Markdown plus a style; they download as PDF, Word / Pages,
+OpenDocument, plain text or Markdown from each Good's secret link (below). The backend renders each format on first download through `render` and keeps
+the file under `/data/reports` (the `backend-data` volume).
+
+| Service | What it is | Reaches | Persists |
+|---|---|---|---|
+| `render` | `renderd` (Python standard library) with pinned pandoc 3.12.1 and Typst 0.15.1 (sha-256 verified) and the Liberation fonts, on Alpine; `POST /render` with the bearer key, `GET /healthz` | nothing: only the internal `render` network, which only the backend shares | nothing (each render works in `/tmp`, a tmpfs) |
+
+- **Fonts**: Word and OpenDocument files name the family the agent chose (Times New Roman by default), so Word and
+  Pages use the real font. Containers cannot ship Times New Roman, so PDFs use Liberation Serif (metric-compatible:
+  same line breaks and page count), Liberation Sans for Arial/Helvetica and Liberation Mono for Courier New.
+- **Safety**: no network at all; a Lua filter drops raw Word/ODF/Typst/HTML code, images (pandoc would read the file
+  they name) and front-matter keys other than title, subtitle, author, date, abstract, lang and keywords. Each render
+  runs in its own process group and is killed after `RENDER_TIMEOUT` (60 s); at most 2 run at once; 768 MB RAM,
+  128 pids, read-only root.
+- **Cache**: `CLARITY_REPORTS_CACHE_MAX_MB` (500) caps the rendered files; an hourly job drops files of an older
+  renderer version, then the least recently downloaded. Only rendered files go, never the reports; deleting
+  `/data/reports` is always safe.
+- **Settings**: `CLARITY_RENDER_URL` (`http://render:8950`), `CLARITY_RENDER_KEY_FILE` (`/run/secrets/render_key`),
+  `CLARITY_RENDER_TIMEOUT` (60s; the backend waits 10 s longer than that).
+- **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates `render_key`, which the backend
+  now mounts, so the backend does not start without it.
+- **Fonts**: the image bundles Libre Caslon Text (OFL, `computers/render/fonts/`; static faces are cut at build with
+  fonttools) for the default title and headings. Word and OpenDocument downloads embed it (about 200 KB per file).
+- **Secret links**: each Good can have one public download page, `https://<your domain>/g/<token>`, made when the
+  person first taps Download or Share in the app and kept until they turn it off. It is the only report route that
+  needs no device: Caddy forwards everything to the backend, which serves the page and its files for a live token
+  and a plain 404 for anything else. Turning a link off (in the app) makes it stop working at once. Request logs
+  never include `/g/` paths.
+- Image: `deploy/container/render.Containerfile`. Smoke test: `computers/render/smoke.sh [image]` (podman and curl):
+  checks the key is required and renders every format from a sample that also tries to embed the key file.
+
+### Web search
+
+Helpers can search the web through OpenRouter's `openrouter:web_search` server tool, but only when the lead names
+`web_search` in `delegate`'s tools; the lead itself never searches. Such a helper loses every personal-data and
+outbound tool (mail, contacts, calendar, memory, journal, profile, drafts, guarded actions, browser, vault), keeping
+only the sandbox and the report tools. The search runs at OpenRouter (zero data retention stays on) and needs no
+egress rule. Settings in `deploy/.env`:
+
+| Variable | Default | |
+|---|---|---|
+| `CLARITY_WEB_SEARCH` | `true` | `false` grants no search at all |
+| `CLARITY_WEB_SEARCH_ENGINE` | `parallel` | `parallel`, `exa`, `perplexity`, `native`, `auto`; `firecrawl` is refused (OpenRouter rejects it under zero data retention) |
+| `CLARITY_WEB_SEARCH_MODE` | `fast` | the engine's mode (Parallel `fast` is about $0.001 a search); blank = the engine's default |
+| `CLARITY_WEB_SEARCH_MAX_SEARCHES` | `10` | per helper run |
+| `CLARITY_WEB_SEARCH_MAX_RESULTS` | `5` | per search (1-25) |
+| `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` | (none) | comma list, sent as the engine's block list |
 
 ## Outbound traffic (`egress`)
 
@@ -222,8 +274,8 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 
 ## Security model
 
-- Networks: `db`, `ingest`, `tools`, `proxy`, `browser-proxy`, `backend-proxy` are `internal` (no route off the
-  host). The browser and the backend reach the internet only through the `egress` proxy; the other services that
+- Networks: `db`, `ingest`, `tools`, `render`, `proxy`, `browser-proxy`, `backend-proxy` are `internal` (no route off the
+  host). `render` joins only the backend and the report renderer, which has no other network. The browser and the backend reach the internet only through the `egress` proxy; the other services that
   need it (caddy, connectors) get their own egress network. Postgres is only on `db`; connectors only on `ingest` plus
   their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` and `sandbox-proxy` (its door to `egress`).
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and
