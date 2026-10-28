@@ -97,6 +97,8 @@ class LeadRig(
     effortOverride: EffortOverride? = null,
     /** The embeddings API (a fake); null runs memory search full-text only. */
     embeddingClient: EmbeddingClient? = null,
+    /** The failure gate on memory writes and briefs; by default off (no decision model). */
+    val failureGate: FailureGate = FailureGate(null),
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -130,14 +132,14 @@ class LeadRig(
 
     val mcp = McpToolSources(config, null)
     val large = LargeResults(database, mcp, clock)
-    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock)
+    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate)
     val collections = ExposedCollectionStore(database, clock)
     val embeddings = Embeddings(config, { embeddingClient }, database, clock)
     val vectors = VectorIndex(database, embeddings)
     val memorySearch = MemorySearch(database, embeddings, vectors, settingsProvider)
     val embeddingIndexer = EmbeddingIndexer(database, embeddings, vectors)
     val archive = ConversationArchive(database)
-    val memoryTools = MemoryTools(memorySearch, collections, archive, constitutions, settingsProvider)
+    val memoryTools = MemoryTools(memorySearch, collections, archive, constitutions, settingsProvider, failureGate)
     val external = ExternalTools(gate)
     private val reader = ExposedNounReader(database)
     val domain = DomainTools(reader, ExposedTriggerStore(database, clock), DocumentTools(reader) { DocumentFetch.Unavailable("none") })
@@ -166,7 +168,7 @@ class LeadRig(
     val lead: LeadAgent
 
     init {
-        val helperTools = HelperTools(lazy { helpers }, tasks)
+        val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
         toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(

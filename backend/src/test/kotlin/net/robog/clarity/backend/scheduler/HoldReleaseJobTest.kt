@@ -136,7 +136,7 @@ class HoldReleaseJobTest : FunSpec({
         val constitutions = ConstitutionStore(database, clock, HeldActionStore(database, clock), events)
         val job = HoldReleaseJob(store, feed, constitutions)
         var settings = Settings()
-        val own = OwnStateTools(feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock)
+        val own = OwnStateTools(feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, net.robog.clarity.backend.agent.FailureGate(null))
         val published = CopyOnWriteArrayList<FeedEvent>()
 
         suspend fun held(text: String = "Dana called twice", notify: String): FeedItem =

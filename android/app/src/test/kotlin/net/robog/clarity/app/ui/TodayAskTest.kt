@@ -7,6 +7,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import net.robog.clarity.app.data.ApiError
@@ -50,6 +51,9 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import net.robog.clarity.app.ui.today.heldLine
 import net.robog.clarity.app.ui.today.mergeTasks
+import net.robog.clarity.app.ui.today.finishedLine
+import net.robog.clarity.app.ui.today.quietAndParkedLine
+import net.robog.clarity.app.ui.today.startOfLocalDay
 import net.robog.clarity.app.ui.today.parkedLine
 import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.SpeechEvent
@@ -99,6 +103,31 @@ class TodayRulesTest {
         assertEquals(AgentTask.Status.WORKING, merged[1].status, "an older live copy never wins")
     }
 
+    @Test fun liveTasksTheServerDidNotListJoinWhenFromToday() {
+        val since = T0 - 2.hours
+        val server = listOf(task("t1", AgentTask.Status.WORKING, at = T0))
+        val live = listOf(
+            task("t1", AgentTask.Status.DONE, at = T0 + 1.minutes),
+            task("quick", AgentTask.Status.DONE, at = T0 + 80.seconds),
+            task("new", AgentTask.Status.WORKING, at = T0 + 2.minutes),
+            task("yesterday", AgentTask.Status.FAILED, at = since - 1.minutes),
+        )
+        val merged = mergeTasks(server, live, since)
+        assertEquals(listOf("t1", "quick", "new"), merged.map { it.id.value })
+        assertEquals(AgentTask.Status.DONE, merged[0].status)
+        assertEquals(listOf("t1"), mergeTasks(server, live).map { it.id.value }, "without a day start nothing is added")
+
+        val doing = doingRows(merged, emptyMap(), T0 + 3.minutes)
+        assertEquals(listOf("new"), doing.main.map { it.task.id.value })
+        assertEquals(listOf("quick", "t1"), doing.finished.map { it.task.id.value })
+    }
+
+    @Test fun localDayStartsAtMidnightInTheZone() {
+        val ny = kotlinx.datetime.TimeZone.of("America/New_York")
+        assertEquals(kotlin.time.Instant.parse("2026-10-26T04:00:00Z"), startOfLocalDay(T0, ny))
+        assertEquals(kotlin.time.Instant.parse("2026-10-25T04:00:00Z"), startOfLocalDay(kotlin.time.Instant.parse("2026-10-26T03:00:00Z"), ny))
+    }
+
     @Test fun textsMatchThePrototype() {
         assertEquals("monday, October 26 · 10:04 am", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
         assertEquals("nothing held today", heldLine(0))
@@ -108,7 +137,7 @@ class TodayRulesTest {
     }
 }
 
-private val Doing.rows: List<DoingRow> get() = main + quiet
+private val Doing.rows: List<DoingRow> get() = main + quiet + finished
 
 class DoingGroupsTest {
     private fun groups(vararg tasks: AgentTask, held: Map<HeldActionId, HeldAction> = emptyMap(), now: kotlin.time.Instant = T0) =
@@ -167,15 +196,35 @@ class DoingGroupsTest {
         assertEquals(listOf("stuck"), quiet)
     }
 
-    @Test fun settledTasksFromTheLiveFeedAreQuiet() {
-        val (main, quiet) = groups(task("done", AgentTask.Status.DONE, at = T0), task("failed", AgentTask.Status.FAILED, at = T0 - 1.minutes))
-        assertEquals(emptyList(), main)
-        assertEquals(listOf("done", "failed"), quiet)
+    @Test fun settledTasksGoToFinishedTodayNotQuiet() {
+        val doing = doingRows(
+            listOf(
+                task("failed", AgentTask.Status.FAILED, at = T0 - 1.minutes),
+                task("stale", AgentTask.Status.WORKING, at = T0 - QUIET_STALE_AFTER),
+                task("done", AgentTask.Status.DONE, at = T0),
+                task("cancelled", AgentTask.Status.CANCELLED, at = T0 - 2.minutes),
+                // A settled task keeps no Review button, even with a held action still waiting.
+                task("done-held", AgentTask.Status.DONE, "h1", at = T0 - 3.minutes),
+                task("run", AgentTask.Status.WORKING, at = T0),
+            ),
+            mapOf(HeldActionId("h1") to heldAction("h1")),
+            T0,
+        )
+        assertEquals(listOf("run"), doing.main.map { it.task.id.value })
+        assertEquals(listOf("stale"), doing.quiet.map { it.task.id.value })
+        assertEquals(listOf("done", "failed", "cancelled", "done-held"), doing.finished.map { it.task.id.value })
+        assertTrue(doing.finished.all { it.group == DoingGroup.FINISHED && it.review == null })
+        assertFalse(Doing(finished = doing.finished).isEmpty, "finished rows alone still show the section")
     }
 
     @Test fun quietLineCountsTasks() {
         assertEquals("1 quieter task", quietLine(1))
         assertEquals("3 quieter tasks", quietLine(3))
+        assertEquals("Finished today · 3", finishedLine(3))
+        assertEquals("Quieter and parked · 5", quietAndParkedLine(2, 3))
+        assertEquals("2 quieter tasks", quietAndParkedLine(2, 0))
+        assertEquals("Parked · 3", quietAndParkedLine(0, 3))
+        assertNull(quietAndParkedLine(0, 0))
     }
 }
 
@@ -236,6 +285,24 @@ class TodayViewModelTest {
         feed.tasksFlow.value = listOf(task("t1", AgentTask.Status.DRAFTED, at = T0 + 1.minutes))
         assertEquals(AgentTask.Status.DRAFTED, vm.state.value.doing.main.single().task.status)
         assertEquals(2, repo.calls, "a task event refreshes Today")
+    }
+
+    @Test fun aTaskThatFinishesOrStartsLiveShowsWithoutARefresh() = withMain {
+        val today = Today(LocalDate(2026, 10, 26), doing = listOf(task("t1", AgentTask.Status.WORKING, at = T0 - 1.hours)))
+        val repo = FakeToday(ApiResult.Success(today))
+        val feed = ScreenFeed()
+        val vm = todayVm(repo, feed, clock)
+        // The refetch returns the same old list; the live rows must stay anyway.
+        feed.tasksFlow.value = listOf(
+            task("t1", AgentTask.Status.DONE, at = T0 - 1.minutes),
+            task("helper", AgentTask.Status.FAILED, at = T0 - 30.seconds),
+            task("fresh", AgentTask.Status.WORKING, at = T0),
+            task("last-week", AgentTask.Status.DONE, at = T0 - 7.days),
+        )
+        val doing = vm.state.value.doing
+        assertEquals(listOf("fresh"), doing.main.map { it.task.id.value })
+        assertEquals(listOf("helper", "t1"), doing.finished.map { it.task.id.value })
+        assertEquals(emptyList(), doing.quiet)
     }
 
     @Test fun heldBadgeFollowsTheLiveFeed() = withMain {

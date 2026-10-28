@@ -221,7 +221,10 @@ class LeadAgent(
                     threads.touchTurn(clock.now())
                     compactClientSide(bound)
                 } finally {
-                    withContext(NonCancellable) { feed.publish(FeedEvent.Busy(false)) }
+                    withContext(NonCancellable) {
+                        endTurn()
+                        feed.publish(FeedEvent.Busy(false))
+                    }
                 }
             }
         }
@@ -277,7 +280,10 @@ class LeadAgent(
             compactClientSide(bound)
         } finally {
             awaiting.clear()
-            withContext(NonCancellable) { feed.publish(FeedEvent.Busy(false)) }
+            withContext(NonCancellable) {
+                endTurn()
+                feed.publish(FeedEvent.Busy(false))
+            }
         }
         if (failures > 0) delay(minOf(60.seconds, 5.seconds * (1 shl (failures - 1).coerceAtMost(4))))
     }
@@ -407,6 +413,15 @@ class LeadAgent(
                 if (failures == 1) note("I couldn't reach the model just now (${terminal.message.take(120)}). I'll try again shortly.")
             }
             null -> Unit
+        }
+    }
+
+    /** However the turn ended: the helpers it started without a task get one ([HelperTools.endTurn]). */
+    private suspend fun endTurn() {
+        try {
+            toolbox.endTurn(scope)
+        } catch (e: Exception) {
+            log.warn(e) { "tasks for the turn's unlinked helpers were not created" }
         }
     }
 

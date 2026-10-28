@@ -52,7 +52,22 @@ class FakeSite(val popup: Boolean = false) {
         val action: (FakeSite.() -> Unit)? = null,
     )
 
-    data class Page(val url: String, val title: String, val els: List<El>, val otp: Boolean = false, val password: Boolean = false, val signals: List<String> = emptyList())
+    data class Page(
+        val url: String, val title: String, val els: List<El>, val otp: Boolean = false, val password: Boolean = false, val signals: List<String> = emptyList(),
+        /** A sign-out control or greeting on screen, and the page's cookie names (count:hash). */
+        val account: String? = null, val ckn: String = "0:empty",
+        /** A scroll area (ref c50, "Available times") over [rows], showing [AREA_ROWS] at a time. */
+        val rows: List<String> = emptyList(),
+    )
+
+    /** Settle probes still to answer "loading" (a spinner), or forever. */
+    var loadingProbes = 0
+    var loadingForever = false
+    var settleProbes = 0
+    /** The first row of the scroll area in view; rows load 10 more (up to [lazyTotal]) when its end is reached. */
+    var areaTop = 0
+    var lazyTotal = 30
+    var pageScrolls = 0
 
     val tabs: MutableList<Page> = mutableListOf(shop())
     var selected = 0
@@ -127,7 +142,36 @@ class FakeSite(val popup: Boolean = false) {
         signals = listOf("We sent a 6-digit code by SMS"),
     )
 
-    fun account(): Page = Page("https://shop.example.com/account", "Garden Shop", listOf(El("c40", "heading", "Your account", y = 40.0), El("c41", "text", "Signed in as Dana", y = 100.0)))
+    fun account(): Page = Page(
+        "https://shop.example.com/account", "Garden Shop",
+        listOf(El("c40", "heading", "Your account", y = 40.0), El("c41", "text", "Signed in as Dana", y = 100.0), El("c42", "link", "Book a time", y = 160.0) { open(booking()) }),
+        account = "Hi, Dana", ckn = "1:session",
+    )
+
+    /** After sign-in, the site asks to verify again: a dialog with a code field. */
+    fun verifyAgain(): Page = Page(
+        "https://shop.example.com/account", "Garden Shop",
+        listOf(
+            El("c60", "heading", "Verify it's you", y = 40.0),
+            El("c61", "textbox", "Verification code", ac = "one-time-code", y = 120.0, w = 200.0),
+            El("c62", "button", "Verify", y = 200.0) { if (values["c61"] == STEP_UP_CODE) open(account()) else open(verifyAgain()) },
+        ),
+        otp = true, account = "Hi, Dana", ckn = "1:session",
+    )
+
+    /** A fixed layout with a scroll area of times that loads more at its end, and one row off screen. */
+    fun booking(): Page = Page(
+        "https://shop.example.com/booking", "Book",
+        listOf(
+            El("c49", "heading", "Available times", y = 40.0),
+            El("c51", "button", "Book 9:00 AM", y = 100.0),
+            El("c52", "button", "Times after 6:30 PM", y = 900.0),
+        ),
+        account = "Hi, Dana", ckn = "1:session",
+        rows = (0 until 10).map(::timeRow),
+    )
+
+    fun timeRow(i: Int): String = "%d:%02d %s".format(9 + i / 4 - (if (9 + i / 4 > 12) 12 else 0), (i % 4) * 15, if (9 + i / 4 >= 12) "PM" else "AM")
 
     fun open(p: Page) {
         tabs[selected] = p
@@ -141,8 +185,8 @@ class FakeSite(val popup: Boolean = false) {
     }
 
     fun signInKind(): String = when {
-        signedIn && page.url.contains("account") -> "signed_in"
         page.otp -> "needs_code"
+        signedIn && (page.url.contains("account") || page.url.contains("booking")) -> "signed_in"
         page.url.contains("method") -> "choose_method"
         page.password -> "needs_login"
         else -> "other"
@@ -153,7 +197,7 @@ class FakeSite(val popup: Boolean = false) {
         put("states", buildJsonArray { if ((e.role == "radio") && method != null && e.name.lowercase().startsWith(method!!)) add(JsonPrimitive("checked")) })
         values[e.ref]?.let { put("value", if (e.type == "password") "•••" else it) }
         e.type?.let { put("type", it) }; e.ac?.let { put("ac", it) }
-        put("x", e.x); put("y", e.y); put("w", e.w); put("h", e.h); put("inView", true)
+        put("x", e.x); put("y", e.y); put("w", e.w); put("h", e.h); put("inView", e.y + e.h > 0 && e.y < VH)
         e.paint?.let { put("paint", observationJson.encodeToJsonElement(HitFacts.serializer(), it)) }
     }
 
@@ -161,14 +205,52 @@ class FakeSite(val popup: Boolean = false) {
         "url" to JsonPrimitive(page.url), "title" to JsonPrimitive(page.title), "vw" to JsonPrimitive(VW), "vh" to JsonPrimitive(VH),
         "otp" to JsonPrimitive(page.otp), "password" to JsonPrimitive(page.password),
         "signals" to JsonArray(page.signals.map(::JsonPrimitive)),
+        "account" to (page.account?.let(::JsonPrimitive) ?: kotlinx.serialization.json.JsonNull), "ckn" to JsonPrimitive(page.ckn),
     )
+
+    /** The scroll area as the script reports it: rows in view of all, pixels (40 per row) above and below. */
+    private fun areaJson(moved: Int? = null): JsonObject = buildJsonObject {
+        val rows = page.rows
+        put("ref", "c50"); put("name", "Available times"); put("x", 40); put("y", 120); put("w", 400); put("h", AREA_ROWS * 40)
+        put("rows", minOf(AREA_ROWS, rows.size - areaTop)); put("total", rows.size); put("top", areaTop * 40)
+        put("below", maxOf(0, rows.size - areaTop - AREA_ROWS) * 40)
+        moved?.let { put("moved", it) }
+    }
+
+    /** Scrolls the area by [dy] screens; reaching its end loads 10 more rows (until [lazyTotal]). */
+    private fun scrollArea(dy: Int, toTop: Boolean): Int {
+        val before = areaTop
+        val rows = page.rows
+        areaTop = if (toTop) 0 else (areaTop + dy * (AREA_ROWS - 2)).coerceIn(0, maxOf(0, rows.size - AREA_ROWS))
+        if (areaTop + AREA_ROWS >= rows.size && rows.size < lazyTotal) {
+            tabs[selected] = page.copy(rows = (0 until minOf(lazyTotal, rows.size + 10)).map(::timeRow))
+        }
+        return (areaTop - before) * 40
+    }
 
     /** The observation script's reply for [op]. */
     fun observe(op: String, args: JsonObject): JsonElement {
         val base = pageJson()
         fun ref(key: String = "ref") = (args[key] as? JsonPrimitive)?.contentOrNull
         val out: Map<String, JsonElement> = when (op) {
-            "look" -> base + mapOf("items" to JsonArray(page.els.map(::item)), "total" to JsonPrimitive(page.els.size))
+            "look" -> base + mapOf(
+                "items" to JsonArray(page.els.map(::item)), "total" to JsonPrimitive(page.els.size),
+                "areas" to JsonArray(if (page.rows.isEmpty()) emptyList() else listOf(areaJson())),
+            )
+            "settle" -> {
+                settleProbes++
+                val busy = loadingForever || loadingProbes-- > 0
+                mapOf("url" to JsonPrimitive(page.url), "ready" to JsonPrimitive("complete"), "mutAgo" to JsonPrimitive(900), "netAgo" to JsonPrimitive(900), "busy" to (if (busy) JsonPrimitive("Loading") else kotlinx.serialization.json.JsonNull))
+            }
+            "reveal" -> mapOf("ok" to JsonPrimitive(page.els.any { it.ref == ref() }))
+            "scroll" -> when {
+                ref() == "c50" || (ref() == null && args["page"] == null && page.rows.isNotEmpty()) -> {
+                    val top = (args["top"] as? JsonPrimitive)?.contentOrNull?.toDouble()
+                    val moved = if (top != null) { areaTop = (top / 40).toInt(); 0 } else scrollArea((args["dy"] as? JsonPrimitive)?.contentOrNull?.toDouble()?.toInt() ?: 0, (args["to"] as? JsonPrimitive)?.contentOrNull == "top")
+                    areaJson(moved)
+                }
+                else -> { pageScrolls++; mapOf("scrollY" to JsonPrimitive(600), "moved" to JsonPrimitive(0), "below" to JsonPrimitive(0)) }
+            }
             "point" -> {
                 val x = (args["x"] as JsonPrimitive).doubleOrNull!!
                 val y = (args["y"] as JsonPrimitive).doubleOrNull!!
@@ -194,8 +276,11 @@ class FakeSite(val popup: Boolean = false) {
                 page.els.firstOrNull { it.role == "button" && it.name in setOf("Continue", "Verify", "Sign in") }?.let { put("submit", item(it)) }
             }
             "rects" -> mapOf("rects" to JsonArray(((args["refs"] as? JsonArray) ?: JsonArray(emptyList())).mapNotNull { r -> page.els.firstOrNull { it.ref == (r as JsonPrimitive).content } }.map { buildJsonObject { put("x", it.x); put("y", it.y); put("w", it.w); put("h", it.h) } }))
-            "read" -> mapOf("text" to JsonPrimitive(page.els.joinToString(" ") { it.name }))
-            "scroll" -> mapOf("scrollY" to JsonPrimitive(600))
+            "read" -> {
+                // The area shows only the rows in view (a list that renders what shows); the page leaves the area out when asked to.
+                val lines = if (ref("scope") == "c50") page.rows.drop(areaTop).take(AREA_ROWS) else page.els.map { it.name }
+                mapOf("text" to JsonPrimitive(lines.joinToString(" ")), "lines" to JsonArray(lines.map(::JsonPrimitive)))
+            }
             else -> mapOf("error" to JsonPrimitive("unknown op"))
         }
         return JsonObject(out)
@@ -251,6 +336,8 @@ class FakeSite(val popup: Boolean = false) {
 
     companion object {
         const val CODE = "246810"
+        const val STEP_UP_CODE = "135790"
+        const val AREA_ROWS = 8
         const val VW = 800.0
         const val VH = 600.0
 
@@ -340,6 +427,7 @@ class PilotRig(
     val audit = MemoryBrowserAudit()
     val pilot = BrowserPilot(
         gate, FakeBrowserModels(jev), audit, vault, governance, AgentConfig(reviewInterval = 2.hours, browser = settings), clock, { TimeZone.UTC }, leases, settle = 1.milliseconds, leasePoll = 5.milliseconds,
+        settleCap = 60.milliseconds, settlePoll = 1.milliseconds,
     )
     val scope = RunScope("run-p", isLead = lead, purpose = "Check my orders at the garden shop")
     val tools: Map<String, Tool> = pilot.wrap(scope, site.tools).associateBy { it.name }

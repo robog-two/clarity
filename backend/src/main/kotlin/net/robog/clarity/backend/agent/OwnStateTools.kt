@@ -63,6 +63,7 @@ class OwnStateTools(
     private val tasks: TaskStore,
     private val settings: SettingsProvider,
     private val clock: Clock,
+    private val gate: FailureGate,
 ) {
     @Serializable
     class SendToUserInput(
@@ -130,6 +131,7 @@ class OwnStateTools(
         val current = constitutions.current()
         when {
             fact.isEmpty() || fact.length > MAX_FACT_CHARS -> ToolResult.Error("A fact is one short sentence (1-$MAX_FACT_CHARS characters).")
+            gate.check(GateKind.MEMORY, "remember_fact", fact) != null -> ToolResult.Error(FailureGate.MEMORY_REFUSAL)
             current == null -> {
                 memory.writeJournal(today(), "Profile fact (no constitution yet): $fact")
                 ToolResult.Ok("There is no constitution yet, so I noted it in the journal instead.")
@@ -170,6 +172,9 @@ class OwnStateTools(
         val cleaned = input.facts.map { it.trim() }
             .filter { it.isNotEmpty() && it.length <= MAX_FACT_CHARS && neverStoreTopic(it, current.neverStore) == null }
             .distinctBy { it.lowercase() }
+        // Only the facts that are new are judged; ones already in the profile were judged when added.
+        val added = cleaned.filter { fact -> current.profile.none { it.equals(fact, ignoreCase = true) } }
+        if (added.isNotEmpty()) gate.check(GateKind.MEMORY, "replace_profile", added.joinToString("\n"))?.let { return@tool ToolResult.Error(it) }
         if (cleaned == current.profile) {
             ToolResult.Ok("No change.")
         } else {
@@ -194,6 +199,7 @@ class OwnStateTools(
     ) { input ->
         val date = input.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() ?: return@tool ToolResult.Error("`date` must be YYYY-MM-DD") } ?: today()
         if (input.text.isBlank()) ToolResult.Error("`text` must not be empty") else {
+            gate.check(GateKind.MEMORY, "write_journal", input.text)?.let { return@tool ToolResult.Error(it) }
             memory.writeJournal(date, input.text.trim())
             ToolResult.Ok("Journal entry saved for $date.")
         }
@@ -231,6 +237,7 @@ class OwnStateTools(
         json = ClarityJson,
     ) { input ->
         if (input.text.isBlank()) ToolResult.Error("`text` must not be empty") else {
+            gate.check(GateKind.MEMORY, "set_scratch", input.text)?.let { return@tool ToolResult.Error(it) }
             memory.setScratch(input.text.trim(), input.ttlHours.coerceIn(1, 48).hours)
             ToolResult.Ok("Noted for ${input.ttlHours.coerceIn(1, 48)} h.")
         }

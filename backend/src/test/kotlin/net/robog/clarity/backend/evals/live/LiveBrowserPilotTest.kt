@@ -98,6 +98,12 @@ class LivePilotEnabled : Condition {
         System.getProperty("clarity.livePilot") == "true" && pilotKey() != null && System.getenv("CI").isNullOrBlank()
 }
 
+/** The browser side only (no decision models, no key): `-Pclarity.livePilot`, the test browser up, no `CI`. */
+class LiveBrowserEnabled : Condition {
+    override fun evaluate(kclass: KClass<out Spec>): Boolean =
+        System.getProperty("clarity.livePilot") == "true" && System.getenv("CI").isNullOrBlank()
+}
+
 private fun pilotKey(): String? = System.getenv("OPENROUTER_API_KEY")?.takeIf(String::isNotBlank)
     ?: System.getenv("OPENROUTER_API_KEY_FILE")?.let { runCatching { File(it).readText().trim() }.getOrNull() }?.takeIf(String::isNotBlank)
 
@@ -162,15 +168,25 @@ private class LiveRig {
     val calls = CopyOnWriteArrayList<Measured>()
     /** Every grounding question asked: the intent, Jev's p(visible), and what the box hit. */
     val groundings = CopyOnWriteArrayList<String>()
-    val key = pilotKey()!!
     fun client(model: String, timeout: Duration) = Measuring(
-        OpenRouterDecisionClient(key, DEFAULT_OPENROUTER_BASE_URL, proxy = null, model = model, zdr = true, timeout = timeout, retryDelays = emptyList()), model, calls,
+        OpenRouterDecisionClient(pilotKey()!!, DEFAULT_OPENROUTER_BASE_URL, proxy = null, model = model, zdr = true, timeout = timeout, retryDelays = emptyList()), model, calls,
     )
-    val models = object : BrowserModels {
+    /** Real Jev and Decision-1 (needs the key); made on first use, so a run without models needs no key. */
+    val models: BrowserModels by lazy {
+        object : BrowserModels {
+            override val jevModel = DEFAULT_JEV_MODEL
+            override val textModel = DEFAULT_DECISION_MODEL
+            override val jev = client(DEFAULT_JEV_MODEL, 60.seconds)
+            override val text = client(DEFAULT_DECISION_MODEL, 30.seconds)
+        }
+    }
+
+    /** No decision models: the pilot never acts on the screen, but go, look, read, wait, scroll by name and sign_in work. */
+    val noModels = object : BrowserModels {
         override val jevModel = DEFAULT_JEV_MODEL
         override val textModel = DEFAULT_DECISION_MODEL
-        override val jev = client(DEFAULT_JEV_MODEL, 60.seconds)
-        override val text = client(DEFAULT_DECISION_MODEL, 30.seconds)
+        override val jev: DecisionClient? = null
+        override val text: DecisionClient? = null
     }
     val mcp = McpToolSources(AgentConfig(reviewInterval = Duration.parse("2h"), mcpServers = listOf(McpServerConfig("browser", mcpUrl))), null)
     val login = CredentialMeta(
@@ -185,6 +201,8 @@ private class LiveRig {
         variant: String? = null,
         codes: List<String> = listOf("246810"),
         codeGrants: Map<String, String> = emptyMap(),
+        purpose: String = "Sign in to the Garden Shop and check the orders.",
+        models: BrowserModels = this.models,
     ): Pair<List<String>, MemoryBrowserAudit> {
         siteJson("/__reset" + (variant?.let { "?variant=$it" } ?: ""))
         val clock = Clock.System
@@ -196,7 +214,7 @@ private class LiveRig {
         val gate = BrowserGate(vault, grants, person, { TriageVerdict(true, "scripted triage: ok") }, clock, HeldWaiters(clock))
         val audit = MemoryBrowserAudit()
         val pilot = BrowserPilot(gate, models, audit, vault, person, AgentConfig(reviewInterval = Duration.parse("2h"), browser = settings), clock, { TimeZone.UTC })
-        val scope = RunScope("live-$name", isLead = false, purpose = "Sign in to the Garden Shop and check the orders.")
+        val scope = RunScope("live-$name", isLead = false, purpose = purpose)
         val tools = pilot.wrap(scope, mcp.tools())
         val transcript = mutableListOf<String>()
         val harness = Harness(ScriptedHelper(script, transcript))
@@ -292,7 +310,7 @@ class LiveBrowserPilotTest : FunSpec({
         all shouldContain "textbox \"Email address\" type=email autocomplete=username"
         all shouldContain "a code was sent at"
         all shouldContain "Signed in to login.clarity.test"
-        all shouldContain "Sign-in on login.clarity.test: signed in; 1 code sent"
+        all shouldContain Regex("Signed in to login.clarity.test \\(since \\d\\d:\\d\\d\\); 1 code sent")
         all shouldNotContain "correct horse battery"
         all shouldNotContain "246810"
         val state = siteJson()
@@ -499,5 +517,141 @@ class LiveBrowserVariantsTest : FunSpec({
         state["codesSent"]!!.jsonPrimitive.content shouldBe "1"
         state["verifyAttempts"]!!.jsonPrimitive.content shouldBe "2"
         state["signedIn"]!!.jsonPrimitive.content shouldBe "true"
+    }
+})
+
+/**
+ * The third live eval, modelled on the Ulta run 4c935101: the salon's welcome page starts the
+ * sign-in, the sign-in lands on a single-page app that renders after 2 s behind a spinner and then
+ * asks to verify again with a second code, and the booking page has a fixed layout with an inner list
+ * of times that loads more on scroll and a virtualized list of dates. The helper must wait for the
+ * app, know it is signed in, handle the second code with a fresh ask_code, never restart the sign-in
+ * (going back to the welcome page, pressing its Continue, or calling sign_in there), scroll the times
+ * and read every row. About 15 decision calls.
+ *
+ *     ./gradlew :backend:test --tests net.robog.clarity.backend.evals.live.LiveBrowserSalonTest -Pclarity.livePilot
+ */
+@EnabledIf(LivePilotEnabled::class)
+class LiveBrowserSalonTest : FunSpec({
+    val rig = LiveRig()
+    afterSpec { rig.summary("salon-decision-calls.txt") }
+
+    test("salon: waits for the app, stays signed in, a fresh code for the second verification, scrolls and reads every time") {
+        val (transcript, audit) = rig.runScript(
+            "salon", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://salon.clarity.test/welcome"),
+                call("act", "intent" to "the Continue button", "expect" to "a sign-in form asking for an email address and a password"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("act", "intent" to "the SMS option", "expect" to "the SMS option is selected"),
+                call("act", "intent" to "the Continue button", "expect" to "a page asking for a 6-digit code"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("wait", "seconds" to 3),
+                call("look"),
+                call("sign_in", "credential" to "clarity_id"),
+                // What the helper did in run 4c935101: back to the welcome page, Continue again.
+                call("go", "url" to "https://salon.clarity.test/welcome"),
+                call("act", "intent" to "the Continue button", "expect" to "a sign-in form"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("go", "url" to "https://salon.clarity.test/booking"),
+                call("look"),
+                call("act", "intent" to "scroll the available times down", "expect" to "more times"),
+                call("read"),
+            ),
+            codes = listOf("246810", "135790"),
+            purpose = "Book a haircut at Clarity Salon: sign in, then find the available times for Tuesday and the later dates with openings.",
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "Signed in to login.clarity.test and salon.clarity.test"
+        all shouldContain Regex("Signed in to salon.clarity.test \\(since \\d\\d:\\d\\d\\)")
+        all shouldContain "asks to verify again: asked the person for the new code"
+        all shouldContain "the verification is done"
+        all shouldContain "this page starts the sign-in"
+        all shouldContain "Refused: You are already signed in to salon.clarity.test"
+        all shouldContain "so I did not sign in again"
+        all shouldContain "scroll area \"Available times\""
+        all shouldContain "scroll area \"Later dates\""
+        all shouldContain "Scrolled scroll area \"Available times\""
+        val read = transcript.last { it.startsWith("<= Page:") }
+        read shouldContain "9:00 AM"
+        read shouldContain "6:40 PM" // the 30th time, loaded on scroll
+        read shouldContain "Nov 3 — "
+        read shouldContain "Jan 1 — " // the 60th date of the virtualized list
+        read shouldContain "--- scroll area \"Available times\": 30 rows, read to the end ---"
+        read shouldContain "--- scroll area \"Later dates\": 60 rows, read to the end ---"
+        all shouldNotContain "246810"
+        all shouldNotContain "135790"
+        all shouldNotContain "correct horse battery"
+        val state = siteJson()
+        println("site state: codesSent=${state["codesSent"]} loginPosts=${state["loginPosts"]} stepUpDone=${state["stepUpDone"]} timesServed=${state["timesServed"]}")
+        state["codesSent"]!!.jsonPrimitive.content shouldBe "2" // the sign-in code and the second verification's
+        state["loginPosts"]!!.jsonPrimitive.content shouldBe "1" // the sign-in was never restarted
+        state["stepUpDone"]!!.jsonPrimitive.content shouldBe "true"
+        state["timesServed"]!!.jsonPrimitive.content shouldBe "30"
+        audit.rows.count { it.gate == "signed_in_guard" } shouldBe 2
+    }
+})
+
+/**
+ * The salon in the real browser without any decision model (no key, no cost): what the page itself
+ * shows must carry the run. The sign-in lands on the app while its spinner shows; only waiting for it
+ * to settle lets the page's own signs (a sign-out link, a new session cookie) say "signed in". Then
+ * the second verification, a refused second sign_in, the scroll areas, a scroll by name and a read of
+ * every row of the lazy and the virtualized list.
+ *
+ *     ./gradlew :backend:test --tests net.robog.clarity.backend.evals.live.LiveBrowserSalonPageTest -Pclarity.livePilot
+ */
+@EnabledIf(LiveBrowserEnabled::class)
+class LiveBrowserSalonPageTest : FunSpec({
+    val rig = LiveRig()
+    val back = "?return=https://salon.clarity.test/appointment"
+
+    test("salon without models: settles before judging, signed in from the page's own signs, fresh second code, scroll areas read whole") {
+        val (transcript, audit) = rig.runScript(
+            "salon-page", BrowserPilotConfig(),
+            listOf(
+                call("go", "url" to "https://salon.clarity.test/welcome"),
+                call("go", "url" to "https://login.clarity.test/signin$back"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("go", "url" to "https://login.clarity.test/send-sms$back"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("wait", "seconds" to 3),
+                call("look"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("go", "url" to "https://salon.clarity.test/welcome"),
+                call("sign_in", "credential" to "clarity_id"),
+                call("go", "url" to "https://salon.clarity.test/booking"),
+                call("look"),
+                call("act", "intent" to "scroll the available times down", "expect" to "more times"),
+                call("read"),
+            ),
+            codes = listOf("246810", "135790"),
+            purpose = "Book a haircut at Clarity Salon: sign in, then find the available times.",
+            models = rig.noModels,
+        )
+        val all = transcript.joinToString("\n")
+        all shouldContain "Signed in to login.clarity.test and salon.clarity.test"
+        all shouldContain Regex("Signed in to salon.clarity.test \\(since \\d\\d:\\d\\d\\)")
+        all shouldContain "Dialog open: \"Verify it's you\""
+        all shouldContain "asks to verify again: asked the person for the new code"
+        all shouldContain "the verification is done"
+        all shouldContain "so I did not sign in again"
+        all shouldContain "scroll area \"Available times\""
+        all shouldContain "scroll area \"Later dates\""
+        all shouldContain "Scrolled scroll area \"Available times\""
+        val read = transcript.last { it.startsWith("<= Page:") }
+        listOf("9:00 AM", "6:40 PM", "Nov 3 — ", "Jan 1 — ").forEach { read shouldContain it }
+        read shouldContain "--- scroll area \"Available times\": 30 rows, read to the end ---"
+        read shouldContain "--- scroll area \"Later dates\": 60 rows, read to the end ---"
+        all shouldNotContain "246810"
+        all shouldNotContain "135790"
+        all shouldNotContain "correct horse battery"
+        val state = siteJson()
+        println("site state: codesSent=${state["codesSent"]} loginPosts=${state["loginPosts"]} stepUpDone=${state["stepUpDone"]} timesServed=${state["timesServed"]}")
+        state["codesSent"]!!.jsonPrimitive.content shouldBe "2"
+        state["loginPosts"]!!.jsonPrimitive.content shouldBe "1"
+        state["stepUpDone"]!!.jsonPrimitive.content shouldBe "true"
+        state["timesServed"]!!.jsonPrimitive.content shouldBe "30"
+        audit.rows.count { it.gate == "signed_in_guard" } shouldBe 1
     }
 })
