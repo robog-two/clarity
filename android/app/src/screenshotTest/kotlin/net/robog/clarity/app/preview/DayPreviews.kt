@@ -155,6 +155,13 @@ private val todayFinished = todayFull.copy(
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
 
+/** Only the bottom fold open: the quieter task, then the parked chips. */
+@Composable private fun TodayBottomOpen(dark: Boolean) = Screen(dark) {
+    TodayContent(todayFinished, {}, {}, {}, quietExpanded = true, finishedExpanded = false)
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenLight() = TodayBottomOpen(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenDark() = TodayBottomOpen(true)
+
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
     TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
 }
