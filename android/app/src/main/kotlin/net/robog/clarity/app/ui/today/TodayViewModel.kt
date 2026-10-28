@@ -19,6 +19,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.Month
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.app.call.CallService
 import net.robog.clarity.app.call.CallTracker
@@ -42,8 +43,11 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 
-/** Where a row of "I’m doing" sits, top to bottom. [QUIET] rows are folded away under a small line. */
-enum class DoingGroup { NEEDS_YOU, RUNNING, SCHEDULED, QUIET }
+/**
+ * Where a row of "I’m doing" sits, top to bottom. [QUIET] rows are folded away under a small line;
+ * [FINISHED] rows (done, failed or cancelled today) are folded under their own line below them.
+ */
+enum class DoingGroup { NEEDS_YOU, RUNNING, SCHEDULED, QUIET, FINISHED }
 
 /** A waiting or drafted task with nothing held to review goes quiet after this long without an update. */
 val QUIET_WAITING_AFTER: Duration = 12.hours
@@ -54,9 +58,9 @@ val QUIET_STALE_AFTER: Duration = 48.hours
 /** A row of "I’m doing": the task, the held action to review when it is waiting for the person, and its group. */
 data class DoingRow(val task: AgentTask, val review: HeldActionId?, val group: DoingGroup = groupOf(task, review, task.updatedAt))
 
-/** The rows of "I’m doing", split into the main group and the quiet ones. */
-data class Doing(val main: List<DoingRow> = emptyList(), val quiet: List<DoingRow> = emptyList()) {
-    val isEmpty: Boolean get() = main.isEmpty() && quiet.isEmpty()
+/** The rows of "I’m doing", split into the main group, the quiet ones and those finished today. */
+data class Doing(val main: List<DoingRow> = emptyList(), val quiet: List<DoingRow> = emptyList(), val finished: List<DoingRow> = emptyList()) {
+    val isEmpty: Boolean get() = main.isEmpty() && quiet.isEmpty() && finished.isEmpty()
 }
 
 /**
@@ -64,7 +68,7 @@ data class Doing(val main: List<DoingRow> = emptyList(), val quiet: List<DoingRo
  * them, however old (the Review button must stay reachable). A waiting or drafted task with nothing
  * to review (say the agent asked in chat) stays at the top while fresh, then goes quiet. Running work
  * goes quiet when nothing has touched it for a long while; scheduled work never does. Anything
- * already settled (done, failed, cancelled, from the live feed) is quiet.
+ * already settled (done, failed, cancelled) is finished: it stays openable for its Agent's Path.
  */
 fun groupOf(task: AgentTask, review: HeldActionId?, now: Instant): DoingGroup {
     if (review != null) return DoingGroup.NEEDS_YOU
@@ -73,7 +77,7 @@ fun groupOf(task: AgentTask, review: HeldActionId?, now: Instant): DoingGroup {
         AgentTask.Status.SCHEDULED -> DoingGroup.SCHEDULED
         AgentTask.Status.WORKING -> if (age >= QUIET_STALE_AFTER) DoingGroup.QUIET else DoingGroup.RUNNING
         AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU -> if (age >= QUIET_WAITING_AFTER) DoingGroup.QUIET else DoingGroup.NEEDS_YOU
-        else -> DoingGroup.QUIET
+        AgentTask.Status.DONE, AgentTask.Status.FAILED, AgentTask.Status.CANCELLED -> DoingGroup.FINISHED
     }
 }
 
@@ -81,7 +85,7 @@ fun groupOf(task: AgentTask, review: HeldActionId?, now: Instant): DoingGroup {
  * The rows of "I’m doing" at [now]. A task that is drafted or waiting and carries a held action that
  * still needs the person gets a review target; anything the server settled since (or that never was
  * held) is a plain status row. Rows come grouped (needs you, running, scheduled), newest first within
- * a group, with the quiet ones apart.
+ * a group, with the quiet and the finished ones apart.
  */
 fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: Instant): Doing {
     val rows = tasks.map { task ->
@@ -91,18 +95,35 @@ fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: 
         val review = if (needsReview) id else null
         DoingRow(task, review, groupOf(task, review, now))
     }.sortedWith(compareBy<DoingRow> { it.group }.thenByDescending { it.task.updatedAt })
-    val (quiet, main) = rows.partition { it.group == DoingGroup.QUIET }
-    return Doing(main, quiet)
+    return Doing(
+        main = rows.filter { it.group < DoingGroup.QUIET },
+        quiet = rows.filter { it.group == DoingGroup.QUIET },
+        finished = rows.filter { it.group == DoingGroup.FINISHED },
+    )
 }
 
 /** "3 quieter tasks" / "1 quieter task". */
 fun quietLine(count: Int): String = if (count == 1) "1 quieter task" else "$count quieter tasks"
 
-/** The server's tasks with anything fresher from the live feed laid over them (same id, newer `updatedAt`). */
-fun mergeTasks(fromToday: List<AgentTask>, live: List<AgentTask>): List<AgentTask> {
+/** "Finished today · 3". */
+fun finishedLine(count: Int): String = "Finished today · $count"
+
+/**
+ * The server's tasks with anything fresher from the live feed laid over them (same id, newer
+ * `updatedAt`), then the live tasks the server didn't list that changed at or after [since] (a task
+ * just started, or one that finished before the next fetch), so they show without a refresh. Older
+ * live tasks the server left out stay out: it lists every open task, so those are settled history.
+ */
+fun mergeTasks(fromToday: List<AgentTask>, live: List<AgentTask>, since: Instant? = null): List<AgentTask> {
     val liveById = live.associateBy { it.id }
-    return fromToday.map { t -> liveById[t.id]?.takeIf { it.updatedAt >= t.updatedAt } ?: t }
+    val merged = fromToday.map { t -> liveById[t.id]?.takeIf { it.updatedAt >= t.updatedAt } ?: t }
+    if (since == null) return merged
+    val listed = fromToday.mapTo(HashSet()) { it.id }
+    return merged + live.filter { it.id !in listed && it.updatedAt >= since }
 }
+
+/** The instant the local day of [now] began in [zone]. */
+fun startOfLocalDay(now: Instant, zone: TimeZone): Instant = now.toLocalDateTime(zone).date.atStartOfDayIn(zone)
 
 /** "monday, october 26 · 10:04" */
 fun dateKicker(date: LocalDate, time: LocalTime): String =
@@ -192,10 +213,13 @@ class TodayViewModel(
         viewModelScope.launch { fetch(quiet = false, pulled = true) }
     }
 
-    /** Server rows with the live feed laid over them. */
+    /** Server rows with the live feed laid over them, plus live tasks from today the server hasn't listed yet. */
     private fun publish() = _state.update { s ->
+        val now = clock.now()
+        // Before the first fetch there is nothing to lay the feed over.
+        val since = fetched?.let { startOfLocalDay(now, clock.zone()) }
         s.copy(
-            doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks), liveHeld.associateBy { it.id }, clock.now()),
+            doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks, since), liveHeld.associateBy { it.id }, now),
             heldWaiting = if (liveHeld.isEmpty()) fetched?.heldCount ?: 0 else liveHeld.count { it.status == HeldAction.Status.HELD },
         )
     }

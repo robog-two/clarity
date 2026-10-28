@@ -99,6 +99,7 @@ data class Today(
     val date: LocalDate,
     val priorities: List<Chip> = emptyList(),
     val plan: List<IfThen> = emptyList(),
+    /** Every open task, plus (from newer servers) those finished since the start of the person's local day. */
     val doing: List<AgentTask> = emptyList(),
     val heldCount: Int = 0,
     val parked: List<String> = emptyList(),
