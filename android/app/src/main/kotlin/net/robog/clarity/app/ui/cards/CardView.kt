@@ -64,6 +64,8 @@ data class CardEnv(
     val onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
     /** Changes when a decision failed, so an approve slider springs back. */
     val resetKey: Any? = null,
+    /** Opens a Good's viewer; null where there is nowhere to go (the call). */
+    val onOpenReport: ((String) -> Unit)? = null,
 )
 
 private const val AGENT_CURSOR = "▍"
@@ -81,8 +83,9 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Proposal -> ProposalBox(env.held[card.heldActionId], env.onDecision, modifier, env.onReview, env.onAlways, env.resetKey)
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
-        // No document viewer yet: say what is ready (downloads come with the viewer).
-        is Card.Report -> NoteBox(card.fallbackText, modifier)
+        is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport, modifier)
+        // A newer server's card: its own words when it sent some, else nothing.
+        is Card.Unknown -> card.fallbackText?.let { NoteBox(it, modifier) }
     }
 }
 

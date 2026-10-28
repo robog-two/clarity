@@ -13,12 +13,19 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsChannel
+import io.ktor.http.encodeURLPathPart
+import io.ktor.utils.io.jvm.javaio.toInputStream
+import java.io.File
+import net.robog.clarity.shared.report.ReportDetail
+import net.robog.clarity.shared.report.ReportList
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
@@ -174,6 +181,18 @@ interface PathApi {
     suspend fun baseUrl(): String?
 }
 
+/** The person's Goods: the documents the agent made (`/api/v1/reports`). */
+interface ReportsApi {
+    suspend fun reports(): ApiResult<ReportList>
+    suspend fun report(id: String): ApiResult<ReportDetail>
+
+    /** The latest revision's Markdown. */
+    suspend fun reportSource(id: String): ApiResult<String>
+
+    /** Streams the latest revision as [format] (a wire name) into [into]; nothing is left there on failure. */
+    suspend fun downloadReport(id: String, format: String, into: File): ApiResult<Unit>
+}
+
 /** The credential vault's routes and phone-signed decisions. */
 interface VaultApi {
     /** Registers this phone's vault key and approval key (replacing earlier ones). */
@@ -227,7 +246,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -427,6 +446,44 @@ class KtorClarityApi(
             }
         }
 
+    // --- goods (reports) ---
+
+    override suspend fun reports(): ApiResult<ReportList> = get(ApiPaths.REPORTS)
+
+    override suspend fun report(id: String): ApiResult<ReportDetail> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}")
+
+    override suspend fun reportSource(id: String): ApiResult<String> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/source")
+
+    override suspend fun downloadReport(id: String, format: String, into: File): ApiResult<Unit> {
+        val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
+        val path = "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/download/${format.encodeURLPathPart()}"
+        return withContext(io) {
+            val partial = File(into.parentFile, into.name + ".part")
+            try {
+                client.prepareGet {
+                    url(session.instanceUrl + path)
+                    // The server renders on demand (pandoc, Typst); a long document takes a while.
+                    timeout { requestTimeoutMillis = DOWNLOAD_TIMEOUT_MS }
+                }.execute { response ->
+                    if (!response.status.isSuccess()) return@execute ApiResult.Failure(response.toError())
+                    into.parentFile?.mkdirs()
+                    response.bodyAsChannel().toInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
+                    if (!partial.renameTo(into)) {
+                        into.delete()
+                        if (!partial.renameTo(into)) return@execute ApiResult.Failure(ApiError.Unreachable("could not save the file"))
+                    }
+                    ApiResult.Success(Unit)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ApiResult.Failure(ApiError.Unreachable(e.message))
+            } finally {
+                partial.delete()
+            }
+        }
+    }
+
     // --- ingest (phone connector) ---
 
     override suspend fun putManifest(manifest: ConnectorManifest): ApiResult<Unit> =
@@ -514,6 +571,9 @@ class KtorClarityApi(
         }
     }
 }
+
+/** How long a download may take: rendering a long document on the server, then the transfer. */
+private const val DOWNLOAD_TIMEOUT_MS = 120_000L
 
 internal suspend fun HttpResponse.toError(): ApiError {
     val problem = try {

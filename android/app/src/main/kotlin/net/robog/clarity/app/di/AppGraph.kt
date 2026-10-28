@@ -231,6 +231,9 @@ interface AppGraph : ViewModelGraph {
     @Provides fun todayRepository(api: ClarityApi): TodayRepository = DefaultTodayRepository(api)
     @Provides fun pathRepository(api: KtorClarityApi): net.robog.clarity.app.data.PathRepository = net.robog.clarity.app.data.DefaultPathRepository(api)
 
+    @Provides fun goodsRepository(api: KtorClarityApi, context: Context): net.robog.clarity.app.data.GoodsRepository =
+        net.robog.clarity.app.data.DefaultGoodsRepository(api) { context.cacheDir }
+
     /**
      * Loads the Agent's Path screenshots over the app's own client (so each request carries the
      * device's signed token), decoding off the main thread, with memory and disk caches.
@@ -440,6 +443,7 @@ interface AppGraph : ViewModelGraph {
     val pushNotifier: PushNotifier
     val pushFallback: PushFallback
     val feedRepository: net.robog.clarity.app.data.FeedRepository
+    val goodsRepository: net.robog.clarity.app.data.GoodsRepository
 
     @DependencyGraph.Factory
     fun interface Factory {

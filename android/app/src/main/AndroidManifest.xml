@@ -99,6 +99,17 @@
             android:stopWithTask="false"
             android:foregroundServiceType="phoneCall" />
 
+        <!-- Goods downloaded to the cache, lent to the app the person opens or shares one with. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
         <receiver android:name=".app.call.CallActionReceiver" android:exported="false" />
         <receiver android:name=".app.push.NotificationReplyReceiver" android:exported="false" />
