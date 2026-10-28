@@ -19,8 +19,10 @@ import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.neq
+import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
@@ -82,8 +84,12 @@ interface TaskStore {
         heldActionId: HeldActionId? = null,
     ): AgentTask?
 
-    /** Newest first (by last update), so fresh work leads and stale tasks sink. */
-    suspend fun list(includeFinished: Boolean = false): List<AgentTask>
+    /**
+     * Newest first (by last update), so fresh work leads and stale tasks sink. Open tasks always;
+     * finished ones all when [includeFinished], else only those last updated (finished) at or after
+     * [finishedSince], when given.
+     */
+    suspend fun list(includeFinished: Boolean = false, finishedSince: Instant? = null): List<AgentTask>
 
     suspend fun get(id: TaskId): AgentTask?
 
@@ -192,9 +198,15 @@ class ExposedTaskStore(
         return task
     }
 
-    override suspend fun list(includeFinished: Boolean): List<AgentTask> = database.tx {
+    override suspend fun list(includeFinished: Boolean, finishedSince: Instant?): List<AgentTask> = database.tx {
         val query = AgentTasks.selectAll()
-        if (!includeFinished) query.where { AgentTasks.status inList listOf("working", "drafted", "waiting_for_you", "scheduled") }
+        if (!includeFinished) {
+            val open = AgentTasks.status inList listOf("working", "drafted", "waiting_for_you", "scheduled")
+            query.where {
+                if (finishedSince == null) open
+                else open or ((AgentTasks.status inList FINISHED.map { it.wire() }) and (AgentTasks.updatedAt greaterEq finishedSince))
+            }
+        }
         val rows = query.orderBy(AgentTasks.updatedAt to SortOrder.DESC).toList()
         val runs = runsOf(rows.map { it[AgentTasks.id] })
         rows.map { it.toTask(runs[it[AgentTasks.id]].orEmpty()) }

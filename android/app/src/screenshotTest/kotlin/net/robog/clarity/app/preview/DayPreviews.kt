@@ -130,6 +130,31 @@ private val todayFull = TodayUiState(
 
 @Composable private fun TodayFull(dark: Boolean, quietOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, quietExpanded = quietOpen) }
 
+/** The full day with helpers that finished today: one done in 80 seconds, one failed, one cancelled. */
+private val todayFinished = todayFull.copy(
+    doing = doingRows(
+        listOf(
+            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
+            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            task("f1", "Check the dentist’s opening hours", "web · open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
+            task("f2", "Book the car service", "web · the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
+            task("f3", "Remind Sam about the permission slip", "no longer needed", AgentTask.Status.CANCELLED, ago = 3.hours),
+        ),
+        emptyMap(),
+        t0,
+    ),
+)
+
+@Composable private fun TodayFinished(dark: Boolean, open: Boolean) = Screen(dark) {
+    TodayContent(todayFinished, {}, {}, {}, quietExpanded = open, finishedExpanded = open)
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedLight() = TodayFinished(false, open = false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedDark() = TodayFinished(true, open = false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
+
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
     TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
 }

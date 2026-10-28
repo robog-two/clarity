@@ -246,7 +246,8 @@ class SessionScenarioTest : FunSpec({
         today.priorities.map { it.sub } shouldBe listOf("important", "due today")
         today.plan.map { it.sentence() } shouldBe listOf("If it's 9:30, then spec at my desk until 12.", "If Dana emails, then it waits until 12.")
         today.parked shouldBe listOf("feedback for Alex", "expense report")
-        today.doing shouldHaveSize 2 // three created, one finished
+        today.doing shouldHaveSize 3 // three created, one finished today and still listed
+        today.doing.count { it.status == AgentTask.Status.DONE } shouldBe 1
         // the reply to Dana waits for review; the hold has no connector in this rig, so it waits too
         today.heldCount shouldBe 2
         r.heldStore.list().map { it.status }.toSet() shouldBe setOf(HeldAction.Status.HELD)
