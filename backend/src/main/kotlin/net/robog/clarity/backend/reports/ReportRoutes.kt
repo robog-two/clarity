@@ -41,14 +41,15 @@ fun DownloadError.toProblem(): HttpProblem = when (this) {
 /**
  * Reports for the app, device-authenticated like the rest of `/api/v1` (there is no public route):
  *  - `GET /api/v1/reports`: the list, newest first;
- *  - `GET /api/v1/reports/{id}`: metadata, revisions, sources and the formats (labels included);
+ *  - `GET /api/v1/reports/{id}`: metadata, revisions, sources, the formats (labels included) and the live secret link's path;
  *  - `GET /api/v1/reports/{id}/source?rev=`: a revision's Markdown (the latest without `rev`);
  *  - `GET /api/v1/reports/{id}/download/{format}?rev=`: the rendered file, as an attachment named
  *    after the title. Rendered on demand and cached.
+ * The secret link (and the only public report routes) are in [ReportLinkRoutes].
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class ReportRoutes(private val reports: ReportService, private val store: ReportStore) : HttpModule {
+class ReportRoutes(private val reports: ReportService, private val store: ReportStore, private val links: ReportLinkStore) : HttpModule {
     override fun install(application: Application) {
         application.routing {
             authenticate(AuthProviders.DEVICE) {
@@ -57,7 +58,8 @@ class ReportRoutes(private val reports: ReportService, private val store: Report
                 }
                 get("${ApiPaths.REPORTS}/{id}") {
                     val detail = reports.detail(call.parameters["id"].orEmpty())
-                    if (detail == null) call.respondProblem(EdgeProblem.NotFound("No such report.")) else call.respond(detail)
+                    if (detail == null) call.respondProblem(EdgeProblem.NotFound("No such report."))
+                    else call.respond(detail.copy(link = links.live(detail.id)?.let(::linkPath)))
                 }
                 get("${ApiPaths.REPORTS}/{id}/source") {
                     val rev = call.revParameter() ?: return@get

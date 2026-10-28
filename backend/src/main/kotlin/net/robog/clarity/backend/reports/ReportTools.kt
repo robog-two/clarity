@@ -46,7 +46,7 @@ const val READ_REPORT_CHARS = 12_000
  */
 @Serializable
 class StyleInput(
-    @Description("Start from a preset: mla (Times New Roman 12, double spaced, 1 in margins, 0.5 in indents, page numbers) or default (Times New Roman 12, single spaced, 1 in margins). Fields given here override it.")
+    @Description("Start from a preset: mla (Times New Roman 12 throughout, double spaced, 1 in margins, 0.5 in indents, page numbers) or default (body Times New Roman 12, single spaced, 1 in margins; title and headings in Libre Caslon Text, title bold italic, headings bold). Fields given here override it.")
     val preset: String? = null,
     @Description("Body font, e.g. Times New Roman, Arial, Georgia. Named as is in Word files; PDFs use a free look-alike.") val fontFamily: String? = null,
     @Description("Body size in points, e.g. 12.") val fontSizePt: Double? = null,
@@ -54,9 +54,13 @@ class StyleInput(
     @Description("Every page margin, in inches.") val marginIn: Double? = null,
     @Description("First-line indent of paragraphs, in inches (MLA 0.5; 0 none).") val paragraphIndentIn: Double? = null,
     @Description("Space after each paragraph, in points (0 when paragraphs are indented and double spaced).") val paragraphSpacingPt: Double? = null,
-    @Description("Headings' font when different from the body's; empty string = same as the body.") val headingFontFamily: String? = null,
+    @Description("Title and headings' font (default Libre Caslon Text, the app's serif); empty string = the body's font.") val headingFontFamily: String? = null,
     @Description("Heading sizes in points by level: [#, ##, ###].") val headingSizesPt: List<Double>? = null,
-    @Description("Title size in points.") val titleSizePt: Double? = null,
+    @Description("Headings bold (default true).") val headingBold: Boolean? = null,
+    @Description("Headings italic (default false).") val headingItalic: Boolean? = null,
+    @Description("Title size in points (default 20).") val titleSizePt: Double? = null,
+    @Description("Title bold (default true).") val titleBold: Boolean? = null,
+    @Description("Title italic (default true).") val titleItalic: Boolean? = null,
     @Description("left or justify.") val align: String? = null,
     @Description("letter or a4.") val pageSize: String? = null,
     val pageNumbers: Boolean? = null,
@@ -78,9 +82,17 @@ class StyleInput(
             marginIn = marginIn ?: start.marginIn,
             paragraphIndentIn = paragraphIndentIn ?: start.paragraphIndentIn,
             paragraphSpacingPt = paragraphSpacingPt ?: start.paragraphSpacingPt,
-            headingFontFamily = if (headingFontFamily == null) start.headingFontFamily else headingFontFamily.trim().ifEmpty { null },
+            headingFontFamily = when {
+                headingFontFamily == null -> start.headingFontFamily
+                headingFontFamily.isBlank() -> fontFamily?.trim() ?: start.fontFamily
+                else -> headingFontFamily.trim()
+            },
             headingSizesPt = headingSizesPt ?: start.headingSizesPt,
+            headingBold = headingBold ?: start.headingBold,
+            headingItalic = headingItalic ?: start.headingItalic,
             titleSizePt = titleSizePt ?: start.titleSizePt,
+            titleBold = titleBold ?: start.titleBold,
+            titleItalic = titleItalic ?: start.titleItalic,
             align = align?.trim()?.lowercase() ?: start.align,
             pageSize = pageSize?.trim()?.lowercase() ?: start.pageSize,
             pageNumbers = pageNumbers ?: start.pageNumbers,
@@ -119,7 +131,7 @@ class ReportTools(
         @Description("Short title, e.g. \"The causes of the 1918 flu pandemic\".") val title: String,
         @Description("The whole document in Markdown: # headings, paragraphs, lists, tables, > quotes. Optional YAML front matter (title, author, date) at the top.")
         val source: String,
-        @Description("How it should look, from what the person asked for (font, size, spacing, margins, MLA...). Omit for the default: Times New Roman 12, single spaced, 1 in margins.")
+        @Description("How it should look, from what the person asked for (fonts, sizes, spacing, margins, heading font/bold/italic/size, MLA...). Omit for the default: body Times New Roman 12, single spaced, 1 in margins; title and headings in Libre Caslon Text.")
         val style: StyleInput? = null,
     )
 
@@ -195,7 +207,7 @@ class ReportTools(
 
     fun setReportStyle(scope: RunScope): Tool = tool<StyleChangeInput>(
         name = "set_report_style",
-        description = "Change how a report looks (font, size, spacing, margins, indent, headings, page size, MLA...). Makes a new revision with the same text.",
+        description = "Change how a report looks (body font and size, spacing, margins, indent, the title's and headings' font, size, bold and italic, page size, MLA...). Makes a new revision with the same text.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->

@@ -118,8 +118,8 @@ Things worth knowing:
 
 ## Reports (`render`)
 
-The agent writes documents ("reports") as Markdown plus a style; the app downloads them as PDF, Word / Pages,
-OpenDocument, plain text or Markdown. The backend renders each format on first download through `render` and keeps
+The agent writes documents ("reports", the app's Goods) as Markdown plus a style; they download as PDF, Word / Pages,
+OpenDocument, plain text or Markdown from each Good's secret link (below). The backend renders each format on first download through `render` and keeps
 the file under `/data/reports` (the `backend-data` volume).
 
 | Service | What it is | Reaches | Persists |
@@ -140,6 +140,13 @@ the file under `/data/reports` (the `backend-data` volume).
   `CLARITY_RENDER_TIMEOUT` (60s; the backend waits 10 s longer than that).
 - **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates `render_key`, which the backend
   now mounts, so the backend does not start without it.
+- **Fonts**: the image bundles Libre Caslon Text (OFL, `computers/render/fonts/`; static faces are cut at build with
+  fonttools) for the default title and headings. Word and OpenDocument downloads embed it (about 200 KB per file).
+- **Secret links**: each Good can have one public download page, `https://<your domain>/g/<token>`, made when the
+  person first taps Download or Share in the app and kept until they turn it off. It is the only report route that
+  needs no device: Caddy forwards everything to the backend, which serves the page and its files for a live token
+  and a plain 404 for anything else. Turning a link off (in the app) makes it stop working at once. Request logs
+  never include `/g/` paths.
 - Image: `deploy/container/render.Containerfile`. Smoke test: `computers/render/smoke.sh [image]` (podman and curl):
   checks the key is required and renders every format from a sample that also tries to embed the key file.
 

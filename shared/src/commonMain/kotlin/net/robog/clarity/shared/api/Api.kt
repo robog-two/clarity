@@ -42,6 +42,9 @@ object ApiPaths {
      */
     const val REPORTS = "$APP/reports"
 
+    /** A Good's public download page (`/g/{token}`, its files `/g/{token}/{format}`): the only unauthenticated report routes. */
+    const val GOODS_PUBLIC = "/g"
+
     // Vault (under APP)
     const val VAULT = "$APP/vault"
     /** `POST` registers the caller's vault public key; `GET` lists devices' vault keys. */

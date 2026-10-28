@@ -72,7 +72,7 @@ class ReportPureTest : FunSpec({
         resolveStyle(StyleInput(preset = "MLA", marginIn = 1.25), ReportStyle()).getOrNull()!!.marginIn shouldBe 1.25
         // Only the fields given change: the current double spacing stays.
         resolveStyle(StyleInput(fontSizePt = 14.0), ReportStyle.MLA).getOrNull()!!.lineSpacing shouldBe 2.0
-        resolveStyle(StyleInput(headingFontFamily = ""), ReportStyle(headingFontFamily = "Arial")).getOrNull()!!.headingFontFamily shouldBe null
+        resolveStyle(StyleInput(headingFontFamily = ""), ReportStyle(headingFontFamily = "Arial")).getOrNull()!!.headingFontFamily shouldBe "Times New Roman"
         resolveStyle(StyleInput(preset = "apa7"), ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "Unknown preset"
         resolveStyle(StyleInput(fontSizePt = 200.0), ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "fontSizePt"
         resolveStyle(StyleInput(fontFamily = "Evil\"/><x"), ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "fontFamily"

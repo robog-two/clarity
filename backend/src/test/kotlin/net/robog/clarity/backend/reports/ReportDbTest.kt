@@ -127,13 +127,13 @@ class ReportDbTest : FunSpec({
         return REPORT_ID.find(out).shouldNotBeNull().groupValues[1]
     }
 
-    test("V25 adds the report tables and a web search count on model_call") {
+    test("V25 and V26 add the report tables and a web search count on model_call") {
         val tables = database.tx {
             exec("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name LIKE 'report%'") { rs ->
                 buildList { while (rs.next()) add(rs.getString(1)) }
             }
         }.orEmpty()
-        tables.sorted() shouldContainExactly listOf("report", "report_rendition", "report_revision", "report_source")
+        tables.sorted() shouldContainExactly listOf("report", "report_link", "report_rendition", "report_revision", "report_source")
         val column = database.tx {
             exec("SELECT column_default FROM information_schema.columns WHERE table_name = 'model_call' AND column_name = 'web_search_requests'") { rs ->
                 if (rs.next()) rs.getString(1) else null
@@ -335,7 +335,7 @@ class ReportDbTest : FunSpec({
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                ReportRoutes(c.service, c.store).install(this)
+                ReportRoutes(c.service, c.store, ExposedReportLinkStore(database, Clock.System)).install(this)
             }
             val client = createClient { }
             suspend fun fetch(path: String, auth: Boolean = true) = client.get(path) { if (auth) header(HttpHeaders.Authorization, "Bearer device") }

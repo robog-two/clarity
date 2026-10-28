@@ -190,7 +190,7 @@ class GoodsFlowTest : FunSpec({
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                ReportRoutes(c, r.reportStore).install(this)
+                ReportRoutes(c, r.reportStore, ExposedReportLinkStore(database, Clock.System)).install(this)
             }
             val body = createClient { }.get("/api/v1/reports") { header(HttpHeaders.Authorization, "Bearer device") }.bodyAsText()
             ClarityJson.decodeFromString(ReportList.serializer(), body).reports.map { it.id } shouldBe listOf(report.id)

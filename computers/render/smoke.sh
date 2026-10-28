@@ -39,7 +39,11 @@ for format in pdf docx odt txt md; do
       # pageNumbers: a PAGE field in the Word footer, a page-number field in the ODF master page
       if [ "$format" = docx ]; then part=word/footer-clarity.xml; mark=PAGE; else part=styles.xml; mark='text:page-number'; fi
       python3 -c 'import sys,zipfile; sys.exit(0 if sys.argv[3] in zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode() else 1)' "$out" "$part" "$mark" \
-        || { echo "FAIL: $format has no page numbers"; exit 1; } ;;
+        || { echo "FAIL: $format has no page numbers"; exit 1; }
+      # the default heading family (Libre Caslon Text) travels inside the file
+      if [ "$format" = docx ]; then fontpart=word/fonts/font1.odttf; else fontpart=Fonts/LibreCaslonText-Regular.ttf; fi
+      python3 -c 'import sys,zipfile; sys.exit(0 if sys.argv[2] in zipfile.ZipFile(sys.argv[1]).namelist() else 1)' "$out" "$fontpart" \
+        || { echo "FAIL: $format does not embed the heading font"; exit 1; } ;;
     txt|md) grep -q 'paragraph' "$out" || { echo "FAIL: $format text"; exit 1; } ;;
   esac
   # the key file (named as an image above) must never be read into the file

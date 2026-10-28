@@ -48,6 +48,19 @@ RUN set -eu; \
     /out/bin/pandoc -o /out/reference.odt --print-default-data-file reference.odt; \
     rm -rf /dl
 
+# ---- fonts: Libre Caslon Text (OFL), the app's serif, for titles and headings -----------------
+# The repository has its variable fonts (the app's too); static Regular, Bold, Italic and Bold Italic
+# instances are cut here, since Typst and office suites handle those best.
+FROM ${ALPINE_IMAGE} AS fonts
+RUN apk add --no-cache py3-fonttools
+COPY computers/render/fonts/LibreCaslonText-VF.ttf computers/render/fonts/LibreCaslonText-Italic-VF.ttf /src/
+RUN set -eu; mkdir -p /out; \
+    for w in 400:Regular 700:Bold; do \
+      fonttools varLib.instancer --static --update-name-table -o "/out/LibreCaslonText-${w#*:}.ttf" /src/LibreCaslonText-VF.ttf "wght=${w%%:*}"; \
+    done; \
+    fonttools varLib.instancer --static --update-name-table -o /out/LibreCaslonText-Italic.ttf /src/LibreCaslonText-Italic-VF.ttf wght=400; \
+    fonttools varLib.instancer --static --update-name-table -o /out/LibreCaslonText-BoldItalic.ttf /src/LibreCaslonText-Italic-VF.ttf wght=700
+
 # ---- runtime ---------------------------------------------------------------------------------
 FROM ${ALPINE_IMAGE}
 
@@ -65,7 +78,9 @@ RUN apk add --no-cache python3 font-liberation
 
 COPY --from=fetch /out/bin/pandoc /out/bin/typst /usr/local/bin/
 COPY --from=fetch /out/reference.docx /out/reference.odt /opt/render/
-COPY --chmod=0644 computers/render/renderd.py computers/render/sanitize.lua computers/render/titlepage.lua /opt/render/
+COPY --chmod=0644 computers/render/renderd.py computers/render/sanitize.lua computers/render/titlepage.lua computers/render/clarity.typst /opt/render/
+COPY --from=fonts --chmod=0644 /out/ /usr/share/fonts/clarity/
+COPY --chmod=0644 computers/render/fonts/LibreCaslonText-OFL.txt /usr/share/fonts/clarity/
 
 ENV RENDER_PORT=8950 \
     RENDER_KEY_FILE=/run/secrets/render_key \

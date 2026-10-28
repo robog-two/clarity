@@ -66,12 +66,21 @@ data class ReportStyle(
     val paragraphIndentIn: Double = 0.0,
     /** Space after each body paragraph, in points (MLA: 0, the double spacing separates them). */
     val paragraphSpacingPt: Double = 8.0,
-    /** Headings' family; null is the body's (the default: title and headings in the same family). */
-    val headingFontFamily: String? = null,
+    /**
+     * The title's and headings' family. The default is the app's own serif, Libre Caslon Text (the
+     * render image has it; Word and OpenDocument files name it with Times New Roman as the fallback).
+     * The body's family here means headings look like body text.
+     */
+    val headingFontFamily: String = DEFAULT_HEADING_FONT,
     /** Heading sizes by level (`#`, `##`, `###`, ...); deeper levels take the last. */
     val headingSizesPt: List<Double> = listOf(16.0, 14.0, 12.0),
-    /** The title's size (front matter `title`). */
-    val titleSizePt: Double = 18.0,
+    val headingBold: Boolean = true,
+    val headingItalic: Boolean = false,
+    /** The title's size (front matter `title`), in the heading family. */
+    val titleSizePt: Double = 20.0,
+    /** By default the title is bold italic, like the app's titles. */
+    val titleBold: Boolean = true,
+    val titleItalic: Boolean = true,
     /** `left` (ragged right) or `justify`. */
     val align: String = "left",
     /** `letter` or `a4`. */
@@ -85,7 +94,7 @@ data class ReportStyle(
     /** Pure: what is wrong with this style, in plain words; empty when it is fine. */
     fun problems(): List<String> = buildList {
         if (!validFamily(fontFamily)) add("fontFamily must be a font name (letters, digits, spaces, hyphens; at most 64 characters)")
-        headingFontFamily?.let { if (!validFamily(it)) add("headingFontFamily must be a font name (letters, digits, spaces, hyphens; at most 64 characters)") }
+        if (!validFamily(headingFontFamily)) add("headingFontFamily must be a font name (letters, digits, spaces, hyphens; at most 64 characters)")
         if (fontSizePt !in 6.0..72.0) add("fontSizePt must be from 6 to 72")
         if (lineSpacing !in 0.8..3.0) add("lineSpacing must be from 0.8 to 3 (1 single, 2 double)")
         if (marginIn !in 0.25..3.0) add("marginIn must be from 0.25 to 3 inches")
@@ -103,14 +112,16 @@ data class ReportStyle(
 
     companion object {
         const val DEFAULT_FONT = "Times New Roman"
+        const val DEFAULT_HEADING_FONT = "Libre Caslon Text"
         val ALIGNS = listOf("left", "justify")
         val PAGE_SIZES = listOf("letter", "a4")
         val CITATION_STYLES = listOf("mla", "apa", "chicago")
 
-        /** An MLA paper: Times New Roman 12, double spaced, 1 inch margins, half-inch indents, headings as body text. */
+        /** An MLA paper: Times New Roman 12, double spaced, 1 inch margins, half-inch indents, title and headings as body text. */
         val MLA = ReportStyle(
             lineSpacing = 2.0, paragraphIndentIn = 0.5, paragraphSpacingPt = 0.0,
-            headingSizesPt = listOf(12.0), titleSizePt = 12.0, pageNumbers = true, citationStyle = "mla",
+            headingFontFamily = DEFAULT_FONT, headingSizesPt = listOf(12.0), headingBold = true,
+            titleSizePt = 12.0, titleBold = false, titleItalic = false, pageNumbers = true, citationStyle = "mla",
         )
 
         private val FAMILY = Regex("^[A-Za-z0-9][A-Za-z0-9 \\-]{0,63}$")
@@ -160,4 +171,13 @@ data class ReportDetail(
     val revisions: List<ReportRevisionInfo>,
     val sources: List<ReportCitation>,
     val formats: List<ReportFormatOption>,
+    /** The live secret link's path (`/g/<token>`, on the instance's address), null when there is none. */
+    val link: String? = null,
 )
+
+/**
+ * `POST /api/v1/reports/{id}/link`: the Good's secret download page, on the instance's address. The
+ * same live link each time until it is turned off (`DELETE …/link`); then the next one is new.
+ */
+@Serializable
+data class ReportLink(val path: String)

@@ -23,6 +23,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -70,9 +71,13 @@ DEFAULT_STYLE = {
     "marginIn": 1.0,
     "paragraphIndentIn": 0.0,
     "paragraphSpacingPt": 8.0,
-    "headingFontFamily": None,
+    "headingFontFamily": "Libre Caslon Text",
     "headingSizesPt": [16.0, 14.0, 12.0],
-    "titleSizePt": 18.0,
+    "headingBold": True,
+    "headingItalic": False,
+    "titleSizePt": 20.0,
+    "titleBold": True,
+    "titleItalic": True,
     "align": "left",
     "pageSize": "letter",
     "pageNumbers": False,
@@ -102,10 +107,10 @@ def normalize_style(raw):
         raise BadRequest("style must be an object")
     style = dict(DEFAULT_STYLE)
     style.update({k: v for k, v in raw.items() if k in DEFAULT_STYLE})
+    if style["headingFontFamily"] is None:  # older backends: null meant the body's family
+        style["headingFontFamily"] = style["fontFamily"]
     for key in ("fontFamily", "headingFontFamily"):
         value = style[key]
-        if value is None and key == "headingFontFamily":
-            continue
         if not isinstance(value, str) or not FAMILY.match(value):
             raise BadRequest(f"{key} must be a font name")
     style["fontSizePt"] = number(style, "fontSizePt", 6, 72)
@@ -124,7 +129,7 @@ def normalize_style(raw):
         raise BadRequest("align must be left or justify")
     if style["pageSize"] not in ("letter", "a4"):
         raise BadRequest("pageSize must be letter or a4")
-    for key in ("pageNumbers", "titlePage"):
+    for key in ("pageNumbers", "titlePage", "headingBold", "headingItalic", "titleBold", "titleItalic"):
         if not isinstance(style[key], bool):
             raise BadRequest(f"{key} must be true or false")
     return style
@@ -137,6 +142,11 @@ def heading_size(style, level):
 
 def heading_family(style):
     return style["headingFontFamily"] or style["fontFamily"]
+
+
+def heading_face(style, title=False):
+    """(bold, italic) of the title or the headings."""
+    return (style["titleBold"], style["titleItalic"]) if title else (style["headingBold"], style["headingItalic"])
 
 
 def fmt(value):
@@ -183,6 +193,22 @@ def add_rfonts(block, family):
     return block.replace("</w:style>", f"<w:rPr>{rfonts(family)}</w:rPr></w:style>", 1)
 
 
+FACE = re.compile(r"<w:(?:b|bCs|i|iCs)\b[^>]*/>")
+
+
+def set_face(block, bold, italic):
+    """Bold and italic set explicitly on a style (pandoc's defaults differ by heading level)."""
+    block = FACE.sub("", block)
+    face = ('<w:b /><w:bCs />' if bold else '<w:b w:val="0" /><w:bCs w:val="0" />') + \
+           ('<w:i /><w:iCs />' if italic else '<w:i w:val="0" /><w:iCs w:val="0" />')
+    match = RPR_OPEN.search(block)
+    if not match:
+        return block.replace("</w:style>", f"<w:rPr>{face}</w:rPr></w:style>", 1)
+    fonts = RFONTS.search(block, match.end())
+    at = fonts.end() if fonts and fonts.start() == match.end() else match.end()
+    return block[:at] + face + block[at:]
+
+
 def set_ppr(block, ppr):
     if PPR.search(block):
         return PPR.sub(lambda _: ppr, block, count=1)
@@ -213,14 +239,17 @@ def patch_docx_styles(xml, style):
             block = COLOR.sub("", set_size(block, heading_size(style, int(heading.group(1)))))
             if head_family != family:
                 block = add_rfonts(block, head_family)
+            block = set_face(block, *heading_face(style))
         elif sid in ("Title", "TitleChar"):
             block = COLOR.sub("", set_size(block, style["titleSizePt"]))
             if head_family != family:
                 block = add_rfonts(block, head_family)
+            block = set_face(block, *heading_face(style, title=True))
         elif sid in ("Subtitle", "SubtitleChar"):
             block = COLOR.sub("", block)
         elif sid in ("Author", "Date"):
-            block = set_size(block, style["fontSizePt"])
+            # Based on Title: back to the body's family and face.
+            block = set_face(add_rfonts(set_size(block, style["fontSizePt"]), family), False, False)
         elif sid == "BodyText":
             block = set_ppr(
                 block,
@@ -301,9 +330,65 @@ def docx_footer(style):
     )
 
 
+FONT_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/font"
+OBFUSCATED_FONT = "application/vnd.openxmlformats-officedocument.obfuscatedFont"
+# Where each byte of the key sits in "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}" (the GUID's bytes reversed).
+FONT_KEY_POSITIONS = (35, 33, 31, 29, 27, 25, 22, 20, 17, 15, 12, 10, 7, 5, 3, 1)
+DOCX_FACES = {("normal", "normal"): "embedRegular", ("normal", "bold"): "embedBold",
+              ("italic", "normal"): "embedItalic", ("italic", "bold"): "embedBoldItalic"}
+
+
+def font_key(name):
+    """A stable GUID per embedded file, in Word's braces form."""
+    return "{" + str(uuid.uuid5(uuid.NAMESPACE_URL, "clarity-render-font:" + name)).upper() + "}"
+
+
+def obfuscate_font(data, key):
+    """Word's font obfuscation (ECMA-376 part 2): the first 32 bytes XORed with the key's bytes."""
+    xor = bytes(int(key[p:p + 2], 16) for p in FONT_KEY_POSITIONS)
+    out = bytearray(data)
+    for i in range(min(32, len(out))):
+        out[i] ^= xor[i % 16]
+    return bytes(out)
+
+
+def docx_fonts(style):
+    """The heading family's faces this image can embed: (font-table entry, rels, parts by name)."""
+    family = heading_family(style)
+    files = embedded_files(family) if family != style["fontFamily"] else []
+    embeds, rels, parts = "", "", {}
+    for i, (name, path, font_style, weight) in enumerate(files, 1):
+        key = font_key(name)
+        part = f"fonts/font{i}.odttf"
+        with open(path, "rb") as f:
+            parts["word/" + part] = obfuscate_font(f.read(), key)
+        rels += f'<Relationship Id="rIdClarityFont{i}" Type="{FONT_REL}" Target="{part}" />'
+        embeds += f'<w:{DOCX_FACES[(font_style, weight)]} r:id="rIdClarityFont{i}" w:fontKey="{key}" />'
+    return embeds, rels, parts
+
+
+def patch_font_table(xml, style, embeds=""):
+    """Names the heading family in the font table, with the body's family (Times New Roman) as its
+    stand-in, and the faces embedded in the file: Word uses those where the font is not installed."""
+    family = heading_family(style)
+    if family == style["fontFamily"] or f'w:name="{family}"' in xml:
+        return xml
+    entry = (f'<w:font w:name="{family}"><w:altName w:val="{style["fontFamily"]}" /><w:charset w:val="00" />'
+             f'<w:family w:val="roman" /><w:pitch w:val="variable" />{embeds}</w:font>')
+    if "xmlns:r=" not in xml[: xml.find(">", xml.find("<w:fonts"))]:
+        xml = xml.replace("<w:fonts", f'<w:fonts xmlns:r="{R_NS}"', 1)
+    return xml.replace("</w:fonts>", entry + "</w:fonts>", 1)
+
+
 def add_footer_rel(xml):
     rel = f'<Relationship Id="{FOOTER_RID}" Type="{FOOTER_REL}" Target="{FOOTER_PART.split("/", 1)[1]}" />'
     return xml.replace("</Relationships>", rel + "</Relationships>", 1)
+
+
+def add_odttf_type(xml):
+    if 'Extension="odttf"' in xml:
+        return xml
+    return xml.replace("</Types>", f'<Default Extension="odttf" ContentType="{OBFUSCATED_FONT}" /></Types>', 1)
 
 
 def add_footer_type(xml):
@@ -324,8 +409,53 @@ def odf_attr(text, name, value):
     return re.sub(rf'{re.escape(name)}="[^"]*"', f'{name}="{value}"', text)
 
 
+# Fonts the image has that OpenDocument files carry inside them (the reader's computer rarely has
+# them): family (lower case) -> (file under FONT_DIR, the face's style, weight).
+FONT_DIR = os.environ.get("RENDER_FONT_DIR", "/usr/share/fonts/clarity")
+EMBEDDED = {
+    "libre caslon text": [
+        ("LibreCaslonText-Regular.ttf", "normal", "normal"),
+        ("LibreCaslonText-Bold.ttf", "normal", "bold"),
+        ("LibreCaslonText-Italic.ttf", "italic", "normal"),
+        ("LibreCaslonText-BoldItalic.ttf", "italic", "bold"),
+    ],
+}
+XLINK_NS = "http://www.w3.org/1999/xlink"
+LOEXT_NS = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"
+
+
+def embedded_files(family):
+    """(name in the package, path, style, weight) of the faces of [family] this image can embed."""
+    return [
+        (f"Fonts/{name}", os.path.join(FONT_DIR, name), font_style, weight)
+        for name, font_style, weight in EMBEDDED.get(family.lower(), [])
+        if os.path.isfile(os.path.join(FONT_DIR, name))
+    ]
+
+
 def odf_font_face(family, generic="roman"):
-    return f'<style:font-face style:name="{family}" svg:font-family="\'{family}\'" style:font-family-generic="{generic}" style:font-pitch="variable" />'
+    files = embedded_files(family)
+    head = f'<style:font-face style:name="{family}" svg:font-family="\'{family}\'" style:font-family-generic="{generic}" style:font-pitch="variable"'
+    if not files:
+        return head + " />"
+    uris = "".join(
+        f'<svg:font-face-uri xlink:href="{name}" xlink:type="simple" loext:font-style="{font_style}" loext:font-weight="{weight}">'
+        '<svg:font-face-format svg:string="truetype" /></svg:font-face-uri>'
+        for name, _, font_style, weight in files
+    )
+    return head + f"><svg:font-face-src>{uris}</svg:font-face-src></style:font-face>"
+
+
+def odf_namespaces(xml):
+    """Declares xlink and loext on the root when the embedded fonts need them."""
+    root_end = xml.find(">", xml.find("<office:document-styles"))
+    root = xml[:root_end]
+    extra = ""
+    if "xmlns:xlink=" not in root:
+        extra += f' xmlns:xlink="{XLINK_NS}"'
+    if "xmlns:loext=" not in root:
+        extra += f' xmlns:loext="{LOEXT_NS}"'
+    return xml[:root_end] + extra + xml[root_end:]
 
 
 def odf_sizes(block, points):
@@ -347,6 +477,25 @@ def odf_font(block, family):
         return odf_attr(block, "style:font-name", family)
     if "<style:text-properties" in block:
         return block.replace("<style:text-properties", f'<style:text-properties style:font-name="{family}"', 1)
+    return block
+
+
+def odf_text_attr(block, name, value):
+    """Sets [name] on the style's text properties, adding them when it has none."""
+    if f'{name}="' in block:
+        return odf_attr(block, name, value)
+    if "<style:text-properties" in block:
+        return block.replace("<style:text-properties", f'<style:text-properties {name}="{value}"', 1)
+    if block.endswith("/>"):
+        return block[:-2].rstrip() + f'><style:text-properties {name}="{value}" /></style:style>'
+    return block.replace("</style:style>", f'<style:text-properties {name}="{value}" /></style:style>', 1)
+
+
+def odf_face(block, bold, italic):
+    for attr in ("fo:font-weight", "style:font-weight-asian", "style:font-weight-complex"):
+        block = odf_text_attr(block, attr, "bold" if bold else "normal")
+    for attr in ("fo:font-style", "style:font-style-asian", "style:font-style-complex"):
+        block = odf_text_attr(block, attr, "italic" if italic else "normal")
     return block
 
 
@@ -374,6 +523,8 @@ def patch_odt_styles(xml, style):
 
     faces = "".join(odf_font_face(f) for f in dict.fromkeys([family, head_family]) if f'style:name="{f}"' not in xml)
     xml = xml.replace("<office:font-face-decls>", "<office:font-face-decls>" + faces, 1)
+    if embedded_files(head_family) or embedded_files(family):
+        xml = odf_namespaces(xml)
 
     def default_paragraph(match):
         block = match.group(0)
@@ -391,11 +542,11 @@ def patch_odt_styles(xml, style):
         parent = ODF_PARENT.search(block)
         heading = ODF_HEADING.match(name)
         if name == "Heading":
-            block = odf_sizes(odf_font(block, head_family), heading_size(style, 1))
+            block = odf_face(odf_sizes(odf_text_attr(odf_font(block, head_family), "style:font-name", head_family), heading_size(style, 1)), *heading_face(style))
         elif heading:
-            block = odf_sizes(block, heading_size(style, int(heading.group(1))))
+            block = odf_face(odf_sizes(odf_text_attr(block, "style:font-name", head_family), heading_size(style, int(heading.group(1)))), *heading_face(style))
         elif name == "Title":
-            block = odf_sizes(odf_font(block, head_family), style["titleSizePt"])
+            block = odf_face(odf_sizes(odf_text_attr(odf_font(block, head_family), "style:font-name", head_family), style["titleSizePt"]), *heading_face(style, title=True))
         elif name == "Text_20_body":
             props = (
                 f'<style:paragraph-properties fo:margin-top="0in" fo:margin-bottom="{after}" fo:line-height="{line}" '
@@ -490,8 +641,8 @@ def patched_zip(path, patches, extra=None):
             if info.filename in patches:
                 data = patches[info.filename](data.decode("utf-8")).encode("utf-8")
             write(target, info.filename, data)
-        for name, text in (extra or {}).items():
-            write(target, name, text.encode("utf-8"))
+        for name, data in (extra or {}).items():
+            write(target, name, data if isinstance(data, bytes) else data.encode("utf-8"))
     return out.getvalue()
 
 
@@ -500,17 +651,42 @@ def reference_docx(style):
         "word/styles.xml": lambda xml: patch_docx_styles(xml, style),
         "word/document.xml": lambda xml: patch_docx_document(xml, style),
     }
-    extra = None
+    embeds, font_rels, font_parts = docx_fonts(style)
+    patches["word/fontTable.xml"] = lambda xml: patch_font_table(xml, style, embeds)
+    extra = dict(font_parts)
+    if font_parts:
+        patches["[Content_Types].xml"] = lambda xml: add_odttf_type(xml)
+        extra["word/_rels/fontTable.xml.rels"] = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{font_rels}</Relationships>'
+        )
     if style["pageNumbers"]:
         # pandoc keeps the reference document's headers and footers (and the sectPr that names them).
         patches["word/_rels/document.xml.rels"] = add_footer_rel
-        patches["[Content_Types].xml"] = add_footer_type
-        extra = {FOOTER_PART: docx_footer(style)}
+        types = patches.get("[Content_Types].xml", lambda xml: xml)
+        patches["[Content_Types].xml"] = lambda xml: add_footer_type(types(xml))
+        extra[FOOTER_PART] = docx_footer(style)
     return patched_zip(os.path.join(DATA, "reference.docx"), patches, extra)
 
 
 def reference_odt(style):
-    return patched_zip(os.path.join(DATA, "reference.odt"), {"styles.xml": lambda xml: patch_odt_styles(xml, style)})
+    files = {}
+    for family in dict.fromkeys([style["fontFamily"], heading_family(style)]):
+        for name, path, _, _ in embedded_files(family):
+            files[name] = path
+    patches = {"styles.xml": lambda xml: patch_odt_styles(xml, style)}
+    if files:
+        patches["META-INF/manifest.xml"] = lambda xml: xml.replace(
+            "</manifest:manifest>",
+            "".join(f'<manifest:file-entry manifest:full-path="{n}" manifest:media-type="application/x-font-ttf" />' for n in files)
+            + "</manifest:manifest>",
+            1,
+        )
+    extra = {}
+    for name, path in files.items():
+        with open(path, "rb") as f:
+            extra[name] = f.read()
+    return patched_zip(os.path.join(DATA, "reference.odt"), patches, extra)
 
 
 # ---- PDF (Typst) ------------------------------------------------------------------------------------
@@ -543,8 +719,12 @@ def typst_style(style):
         f"#set par(justify: {'true' if style['align'] == 'justify' else 'false'}, leading: {fmt(leading)}em, "
         f"spacing: {gap}, first-line-indent: {first})",
     ]
-    if style["headingFontFamily"]:
-        lines.append(f"#show heading: set text(font: {typst_fonts(style['headingFontFamily'])})")
+    bold, italic = heading_face(style)
+    lines.append(
+        f"#show heading: set text(font: {typst_fonts(heading_family(style))}, weight: \"{'bold' if bold else 'regular'}\", "
+        f"style: \"{'italic' if italic else 'normal'}\")"
+    )
+    lines.append("#show heading: set block(above: 1.6em, below: 0.9em)")
     for level in range(1, 7):
         lines.append(f"#show heading.where(level: {level}): set text(size: {fmt(heading_size(style, level))}pt)")
     return "\n".join(lines) + "\n"
@@ -560,6 +740,12 @@ def typst_defaults(style):
     }
     if style["pageNumbers"]:
         variables["page-numbering"] = "1"
+    bold, italic = heading_face(style, title=True)
+    # Our template (clarity.typst) draws the title with these; template variables are not escaped.
+    variables["clarity-title-style"] = (
+        f"(font: {typst_fonts(heading_family(style))}, size: {fmt(style['titleSizePt'])}pt, "
+        f"weight: \"{'bold' if bold else 'regular'}\", style: \"{'italic' if italic else 'normal'}\")"
+    )
     return json.dumps({"variables": variables})
 
 
@@ -596,7 +782,8 @@ def pandoc_command(fmt_name, work, style):
             f.write(typst_defaults(style))
         with open(rules, "w", encoding="utf-8") as f:
             f.write(typst_style(style))
-        command += ["--to", "typst", "--pdf-engine", "typst", "--defaults", defaults, "--include-before-body", rules, "--standalone"]
+        command += ["--to", "typst", "--pdf-engine", "typst", "--template", os.path.join(DATA, "clarity.typst"),
+                    "--defaults", defaults, "--include-before-body", rules, "--standalone"]
     else:
         raise BadRequest(f"unknown format {fmt_name}")
     return command + ["--output", out], out

@@ -25,6 +25,7 @@ import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.ConnectorAuthenticator
 import net.robog.clarity.backend.auth.DeviceAuthenticator
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.api.ApiPaths
 
 private val log = KotlinLogging.logger {}
 
@@ -47,7 +48,8 @@ class ServerPlugins(
         }
         install(CallLogging) {
             callIdMdc("call-id")
-            filter { call -> call.request.path() !in QUIET_PATHS }
+            // A Good's public link carries its secret in the path: never logged.
+            filter { call -> call.request.path().let { it !in QUIET_PATHS && !it.startsWith(ApiPaths.GOODS_PUBLIC + "/") } }
         }
 
         install(Authentication) {

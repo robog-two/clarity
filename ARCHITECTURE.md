@@ -145,6 +145,9 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/reports` · `GET /api/v1/reports/{id}` | device | reports the agent wrote; one with its revisions, sources and formats ("Word / Pages" for docx) |
 | `GET /api/v1/reports/{id}/source?rev=` | device | a revision's Markdown (latest without `rev`) |
 | `GET /api/v1/reports/{id}/download/{format}?rev=` | device | the rendered file (pdf, docx, odt, txt, md), named after the title; rendered on demand and cached |
+| `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link (made on first use, the same one while live); turn it off |
+| `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
+| `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |
@@ -152,7 +155,11 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `POST /ingest/v1/actions/{id}/result` | connector | report an action's outcome (idempotent) |
 | `/mcp` | device | MCP (streamable HTTP) exposing the same domain tools the agent uses |
 
-The path constants live in `shared/api/Api.kt` (`ApiPaths`).
+The path constants live in `shared/api/Api.kt` (`ApiPaths`). The only routes that answer without a
+device, connector or enrollment credential are `/healthz`, `/readyz` and the Goods links under `/g/`
+(see "Secret links" under Reports). Caddy passes every path to the backend unchanged
+(`deploy/caddy/Caddyfile` has a single `reverse_proxy`), so the backend's own authentication decides
+and nothing else opens up.
 
 ### Authentication
 
@@ -484,10 +491,12 @@ words to the person); code, tables and routes keep the name `report`.
 When the person wants something written to keep (an essay, a report, a letter), the agent makes a
 **report**: Markdown with optional YAML front matter (title, author, date) plus a typed **style
 spec** (`shared/report/ReportStyle`: font family and size, line spacing, margins, first-line indent,
-paragraph spacing, heading family and sizes, title size, alignment, page size, page numbers, title
-page, citation style). The agent picks the style from what the person asked for (`preset: mla`, "12 pt
-Arial, double spaced"); otherwise the default is Times New Roman 12 pt, single spaced, 1 inch margins,
-title and headings in the same family. There are no templates or palettes yet.
+paragraph spacing, the title's and headings' family, sizes, bold and italic, alignment, page size,
+page numbers, title page, citation style). The agent picks the style from what the person asked for
+(`preset: mla`, "12 pt Arial, double spaced"); otherwise the body is Times New Roman 12 pt, single
+spaced, 1 inch margins, and the title and headings are the app's serif, **Libre Caslon Text** (title
+bold italic 20 pt, like the app's titles; headings bold 16/14/12 pt). MLA uses Times New Roman
+throughout. There are no templates or palettes yet.
 
 - **Data** (V25, BCNF): `report` (id, kind `document`; `deck`, `sheet`, `site` reserved, title,
   created_at, created_by_run), `report_revision` (report, n, source, style jsonb, created_at,
@@ -514,12 +523,33 @@ title and headings in the same family. There are no templates or palettes yet.
   footer part with a `PAGE` field to the patched reference document (pandoc keeps the reference
   document's footers), and for OpenDocument a `text:page-number` footer on every master page; all
   centred at the bottom. pandoc runs with `--sandbox` on top of `sanitize.lua`.
+- **Heading font**: the render image has Libre Caslon Text (OFL; static Regular, Bold, Italic and Bold
+  Italic cut from the app's variable fonts at image build). The PDF uses it directly; PDFs draw the
+  title through Clarity's copy of pandoc's Typst template (`computers/render/clarity.typst`), which
+  takes the title's font, size, weight and style from the spec. Word files embed the four faces as
+  obfuscated fonts in the font table (with Times New Roman as the named stand-in) and OpenDocument
+  files carry them under `Fonts/`, so Word and LibreOffice show them without the font installed. Pages
+  ignores embedded fonts and shows its own substitute. Bold and italic are set explicitly on every
+  heading and title style, so the three formats agree.
+- **Secret links** (V26 `report_link`): Download and Share in the app both use one link per Good,
+  `/g/<token>`, a small server-rendered page (title, date, a download link per format, nothing else;
+  no script, its one font served from the backend) whose files are the latest revision's. The token is
+  a 9-byte lookup plus an 18-byte (144-bit) secret from `SecureRandom`, base64url; the row is found by
+  the lookup and the secret compared with `MessageDigest.isEqual`. The secret is kept, not hashed, so
+  asking again returns the same live link (the database already holds the documents themselves). It
+  is made on the first `POST …/link`, stays until `DELETE …/link` (the viewer's "Turn off link"), and a
+  revoked token never works again; the next share makes a new one. Every `/g/` response sends
+  `Cache-Control: private, no-store`, `Referrer-Policy: no-referrer`, `X-Robots-Tag: noindex`, a
+  `default-src 'none'` CSP and `X-Frame-Options: DENY`; request logging skips `/g/` so tokens never
+  reach the logs (Caddy keeps no access log). There is no rate limiting (the backend has no such
+  mechanism); guessing 144 bits is not practical. Anyone the person sends the link to can download the
+  files until it is turned off.
 - **App**: a **Goods** tab (`GET /api/v1/reports`, newest change first; refetched when a report card
-  arrives), a feed card for `Card.Report` (title, kind, a download button per readable format), and a
-  viewer (`…/{id}` and `…/source`, the Markdown drawn by the app's own small renderer, sources, a
-  button per format and a share menu). Downloads stream through the device-authenticated client into
-  the app's cache (`cache/goods/<id>/`) and go to other apps only through a FileProvider grant on that
-  one file, when the person opens or shares it. The lead is told that "put it in my goods" needs
+  arrives), a feed card for `Card.Report` ("In your Goods", title, kind; tapping opens the viewer), and
+  a viewer (`…/{id}` and `…/source`, the Markdown drawn by the app's own small renderer, sources).
+  Its top bar has Download (opens the secret link in the browser) and Share (the link on the share
+  sheet); while a link is live a quiet line says so with "Turn off link". The app never downloads the
+  files itself. The lead is told that "put it in my goods" needs
   nothing beyond `create_report` (every report is in the tab) and `present_report`.
 - **Forward compatibility**: `ClarityJson` decodes a card of an unknown `type` to `Card.Unknown`
   (keeping a `fallbackText` string when the card has one; new card types carry it, as `Card.Report`
@@ -836,10 +866,10 @@ A third container, **render** (`computers/render`, `renderd`), is not an MCP ser
 of the agent's: the backend calls it to turn report revisions into files. It is a Python
 standard-library HTTP server (`POST /render {source, style, format}` → bytes, `GET /healthz` → its
 version) with pinned, sha-256-verified pandoc 3.12.1 and Typst 0.15.1 on Alpine, plus the Liberation
-fonts. It sits only on the internal `render` network (no route to the internet, the database or other
+fonts and Libre Caslon Text. It sits only on the internal `render` network (no route to the internet, the database or other
 containers) and needs a bearer key (`render_key`). Word and OpenDocument files are styled from
 pandoc's own reference documents, patched per style at render time (font family named as is, so Word
-and Pages use Times New Roman; sizes, line spacing, indents, margins, page size; deterministic zip);
+and Pages use Times New Roman for the body; the heading font is embedded; sizes, line spacing, indents, margins, page size; deterministic zip);
 PDFs go through Typst with Liberation Serif/Sans/Mono standing in for Times New Roman, Arial and
 Courier New (metric-compatible). A Lua filter drops raw format code, images (which would read files)
 and metadata beyond the title block; each render runs in its own process group with a timeout

@@ -66,13 +66,21 @@ fun describeStyle(style: ReportStyle): String = buildString {
     append(", margins ").append(pt(style.marginIn)).append(" in")
     if (style.paragraphIndentIn > 0) append(", first-line indent ").append(pt(style.paragraphIndentIn)).append(" in")
     append(", paragraph spacing ").append(pt(style.paragraphSpacingPt)).append(" pt")
-    style.headingFontFamily?.let { append(", headings in ").append(it) }
+    append(", title and headings in ").append(if (style.headingFontFamily == style.fontFamily) "the body font" else style.headingFontFamily)
     append(", heading sizes ").append(style.headingSizesPt.joinToString("/") { pt(it) }).append(" pt")
-    append(", title ").append(pt(style.titleSizePt)).append(" pt")
+    append(face(style.headingBold, style.headingItalic))
+    append(", title ").append(pt(style.titleSizePt)).append(" pt").append(face(style.titleBold, style.titleItalic))
     append(", ").append(style.align).append(", ").append(style.pageSize)
     if (style.pageNumbers) append(", page numbers")
     if (style.titlePage) append(", title page")
     style.citationStyle?.let { append(", citations ").append(it.uppercase()) }
+}
+
+private fun face(bold: Boolean, italic: Boolean): String = when {
+    bold && italic -> " bold italic"
+    bold -> " bold"
+    italic -> " italic"
+    else -> " regular"
 }
 
 private fun pt(value: Double): String = if (value == Math.floor(value)) value.toLong().toString() else value.toString()
