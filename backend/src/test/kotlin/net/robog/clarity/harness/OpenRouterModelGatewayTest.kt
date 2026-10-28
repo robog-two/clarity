@@ -226,6 +226,51 @@ class OpenRouterModelGatewayTest : FunSpec({
         }
     }
 
+    test("stickiness: the run goes as session_id, its last provider first in the order; privacy unchanged") {
+        val body = OpenRouterModelGateway.buildBody(simple(), sticky = Stickiness(session = "run-1", preferred = "DeepInfra"))
+        body["session_id"] shouldBe JsonPrimitive("run-1")
+        body["provider"] shouldBe buildJsonObject {
+            put("data_collection", "deny")
+            put("zdr", true)
+            put("quantizations", JsonArray(listOf("fp8", "bf16", "fp16").map(::JsonPrimitive)))
+            put("sort", "price")
+            put("order", JsonArray(listOf(JsonPrimitive("DeepInfra"))))
+        }
+        // no run, nothing sticky; a session alone sends no order
+        OpenRouterModelGateway.buildBody(simple()).containsKey("session_id") shouldBe false
+        OpenRouterModelGateway.buildBody(simple(), sticky = Stickiness(session = "run-1"))["provider"] shouldBe DEFAULT_PROVIDER
+
+        val configured = OpenRouterRouting(order = listOf("Novita", "DeepInfra"))
+        OpenRouterModelGateway.providerOrder(configured, "DeepInfra") shouldContainExactly listOf("DeepInfra", "Novita")
+        OpenRouterModelGateway.providerOrder(configured, "GMICloud") shouldContainExactly listOf("GMICloud", "Novita", "DeepInfra")
+        OpenRouterModelGateway.providerOrder(configured, null) shouldContainExactly listOf("Novita", "DeepInfra")
+        // with fallbacks off, the preference never narrows the allowed providers
+        OpenRouterModelGateway.providerOrder(OpenRouterRouting(allowFallbacks = false), "GMICloud") shouldBe emptyList()
+        OpenRouterModelGateway.providerOrder(configured.copy(allowFallbacks = false), "GMICloud") shouldContainExactly listOf("Novita", "DeepInfra")
+        OpenRouterModelGateway.providerOrder(configured.copy(allowFallbacks = false), "DeepInfra") shouldContainExactly listOf("DeepInfra", "Novita")
+    }
+
+    test("stickiness: the provider that served a run's call is asked first on its next call, and reported in usage") {
+        FakeOpenRouter { ex, n ->
+            ex.sse(
+                data("""{"id":"g$n","provider":"${if (n == 0) "Novita" else "DeepInfra"}","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}"""),
+                "data: [DONE]\n\n",
+            )
+        }.use { fake ->
+            val gateway = gateway(fake)
+            val first = kotlinx.coroutines.withContext(CurrentRun("run-1")) { gateway.generate(simple()) {} }
+            first.usage.provider shouldBe "Novita"
+            kotlinx.coroutines.withContext(CurrentRun("run-1")) { gateway.generate(simple()) {} }.usage.provider shouldBe "DeepInfra"
+            kotlinx.coroutines.withContext(CurrentRun("run-2")) { gateway.generate(simple()) {} }
+            gateway.generate(simple()) {}
+            val bodies = fake.seen.map { HarnessJson.parseToJsonElement(it.body).jsonObject }
+            bodies.map { it["session_id"]?.jsonPrimitive?.content } shouldContainExactly listOf("run-1", "run-1", "run-2", null)
+            bodies.map { b -> b["provider"]!!.jsonObject["order"]?.jsonArray?.map { it.jsonPrimitive.content } } shouldContainExactly
+                listOf(null, listOf("Novita"), null, null)
+            bodies.forEach { it["provider"]!!.jsonObject["data_collection"] shouldBe JsonPrimitive("deny") }
+        }
+    }
+
     test("provider routing: zero data retention, fp8 or better, cheapest first by default; each can be turned off") {
         OpenRouterModelGateway.buildBody(simple())["provider"] shouldBe DEFAULT_PROVIDER
         OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(zdr = false, quantizations = emptyList(), sort = null))["provider"] shouldBe

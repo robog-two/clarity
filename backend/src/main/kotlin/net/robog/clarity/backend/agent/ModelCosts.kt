@@ -49,6 +49,8 @@ object ModelCalls : Table("model_call") {
     val runId = text("run_id").nullable()
     /** Web searches the call ran (V25); its cost is part of [costMicros], which OpenRouter reports in full. */
     val webSearchRequests = integer("web_search_requests").default(0)
+    /** The upstream provider OpenRouter routed the call to (V27); null when it did not say, and for older calls. */
+    val provider = text("provider").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -77,6 +79,7 @@ class DbUsageRecorder(private val database: Database, private val clock: Clock) 
                 it[ModelCalls.role] = role?.wireName
                 it[ModelCalls.runId] = run
                 it[ModelCalls.webSearchRequests] = usage.webSearchRequests.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                it[ModelCalls.provider] = usage.provider
             }
         }
     }

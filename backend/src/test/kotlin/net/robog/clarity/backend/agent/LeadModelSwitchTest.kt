@@ -79,6 +79,9 @@ class LeadModelSwitchTest : FunSpec({
         RecordingGateway(FakeModel(), recorder, AgentRole.TRIAGE)
             .generate(net.robog.clarity.harness.ModelRequest("anthropic/claude-haiku-5.5", "s", listOf(net.robog.clarity.harness.Message.user("hi")), emptyList(), 10, null))
         database.tx { ModelCalls.selectAll().map { it[ModelCalls.model] to it[ModelCalls.role] } }.last() shouldBe ("anthropic/claude-haiku-5.5" to "triage")
+        // The upstream provider that served a call is kept with it (V27); null when unknown.
+        recorder.record("xiaomi/mimo-v2.6-pro", net.robog.clarity.harness.Usage(10, 1, provider = "DeepInfra"), AgentRole.LEAD)
+        database.tx { ModelCalls.selectAll().map { it[ModelCalls.provider] } }.takeLast(2) shouldBe listOf(null, "DeepInfra")
     }
 
     test("V18: overrides saved for the Anthropic API move to OpenRouter ids, nothing else changes, the provider column goes") {
