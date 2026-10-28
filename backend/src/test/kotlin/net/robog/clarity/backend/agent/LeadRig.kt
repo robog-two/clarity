@@ -165,7 +165,7 @@ class LeadRig(
     val lead: LeadAgent
 
     init {
-        val helperTools = HelperTools(lazy { helpers }, tasks, failureGate)
+        val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
         toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(

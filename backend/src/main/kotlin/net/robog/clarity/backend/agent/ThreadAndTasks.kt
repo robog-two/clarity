@@ -17,6 +17,7 @@ import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.neq
@@ -87,30 +88,39 @@ interface TaskStore {
     suspend fun get(id: TaskId): AgentTask?
 
     /**
-     * Records that helper [runId] works on task [id] ([how]: [TaskLink.EXPLICIT] or
-     * [TaskLink.INFERRED]); the first link of a pair wins and nothing is rewritten. The task, with
+     * Records that helper [runId] works on task [id] ([how]: a [TaskLink] kind); the first link of a pair wins and nothing is rewritten. The task, with
      * its run ids, is pushed to the app. False when the task is unknown.
      */
     suspend fun link(id: TaskId, runId: String, how: String): Boolean
 
     /** When task [id] was created (its Agent's Path starts there). */
     suspend fun createdAt(id: TaskId): Instant?
+
+    /** The task the server created for helper [runId] ([TaskLink.AUTO]), if any. */
+    suspend fun autoTaskOf(runId: String): TaskId?
 }
 
 /** How a helper run came to be linked to a task (`agent_task_run.how`). */
 object TaskLink {
     const val EXPLICIT = "explicit"
     const val INFERRED = "inferred"
+
+    /** The server created the task for a helper the lead's turn left unlinked; it follows the helper's outcome. */
+    const val AUTO = "auto"
 }
+
+/** A helper the lead started without a task; [autoTitle] names the task it gets if the turn gives it none (null: it gets none). */
+data class UnlinkedHelper(val runId: String, val autoTitle: String?)
 
 /**
  * The lead's current turn, for linking helpers to tasks without the lead naming one: the tasks it
  * created or updated, and the helpers it started without a task. While the turn has touched exactly
- * one task, helpers started in it belong to that task. Reset at every turn. Thread-safe.
+ * one task, helpers started in it belong to that task. The ones still unlinked when the turn ends
+ * are [drain]ed and get a task of their own. Reset at every turn. Thread-safe.
  */
 class TurnTasks {
     private val tasks = LinkedHashSet<String>()
-    private val unlinked = mutableListOf<String>()
+    private val unlinked = mutableListOf<UnlinkedHelper>()
 
     @Synchronized fun reset() {
         tasks.clear()
@@ -121,15 +131,18 @@ class TurnTasks {
     @Synchronized fun touched(task: String): List<String> {
         tasks += task
         if (tasks.size != 1) return emptyList()
-        return unlinked.toList().also { unlinked.clear() }
+        return unlinked.map { it.runId }.also { unlinked.clear() }
     }
 
     /** Notes a helper started without a task; returns the task it belongs to, if the turn has one. */
-    @Synchronized fun started(runId: String): String? {
+    @Synchronized fun started(runId: String, autoTitle: String? = null): String? {
         val only = tasks.singleOrNull()
-        if (only == null) unlinked += runId
+        if (only == null) unlinked += UnlinkedHelper(runId, autoTitle)
         return only
     }
+
+    /** At the turn's end: the helpers it left unlinked, now forgotten here. */
+    @Synchronized fun drain(): List<UnlinkedHelper> = unlinked.toList().also { unlinked.clear() }
 }
 
 private val FINISHED = listOf(AgentTask.Status.DONE, AgentTask.Status.FAILED, AgentTask.Status.CANCELLED)
@@ -207,6 +220,14 @@ class ExposedTaskStore(
         } ?: return false
         feed.publish(FeedEvent.TaskChanged(linked))
         return true
+    }
+
+    override suspend fun autoTaskOf(runId: String): TaskId? {
+        val run = runCatching { Uuid.parse(runId) }.getOrNull() ?: return null
+        return database.tx {
+            AgentTaskRuns.select(AgentTaskRuns.taskId).where { (AgentTaskRuns.runId eq run) and (AgentTaskRuns.how eq TaskLink.AUTO) }
+                .limit(1).singleOrNull()?.let { TaskId(it[AgentTaskRuns.taskId].toString()) }
+        }
     }
 
     override suspend fun get(id: TaskId): AgentTask? {
