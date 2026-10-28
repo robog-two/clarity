@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.backend.governance.MailAccounts
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
@@ -145,6 +146,7 @@ class LeadAgent(
     private val settings: SettingsProvider,
     private val clock: Clock,
     private val effortOverride: EffortOverride,
+    private val mailAccounts: MailAccounts,
 ) : BackgroundService {
     override val name = "lead-agent"
 
@@ -363,7 +365,7 @@ class LeadAgent(
     }
 
     private suspend fun systemBlocks() =
-        leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()))
+        leadSystemBlocks(constitutions.current(), HomeClock(zoneOrUtc(settings.current().homeZone), clock.now()), mailAccounts.list())
 
     /**
      * After a turn: once the last call's prompt reached

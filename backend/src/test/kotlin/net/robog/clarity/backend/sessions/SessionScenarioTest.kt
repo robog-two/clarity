@@ -225,6 +225,8 @@ class SessionScenarioTest : FunSpec({
                             put("subject", kotlinx.serialization.json.JsonPrimitive("Contract"))
                             put("body", kotlinx.serialization.json.JsonPrimitive("Signed copy attached."))
                             put("reason", kotlinx.serialization.json.JsonPrimitive("Dana asked for the contract."))
+                            put("from", kotlinx.serialization.json.JsonPrimitive("me@gmail.example"))
+                            put("newThread", kotlinx.serialization.json.JsonPrimitive(true))
                         },
                     )
                 }

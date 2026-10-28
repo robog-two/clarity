@@ -10,6 +10,8 @@ import kotlin.time.Instant
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.robog.clarity.backend.governance.MailAccounts
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.feed.ExposedFeedStore
 import net.robog.clarity.backend.feed.FeedHub
@@ -86,6 +88,9 @@ val TEST_ROLES: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.
     it.copy(lead = it.lead.copy(model = LEAD_MODEL), helper = it.helper.copy(model = HELPER_MODEL))
 }
 
+/** The person's mail accounts in the rig: an email names one of these addresses as its `from`. */
+val RIG_MAIL = listOf(ConnectorAccount("iCloud", "me@icloud.example"), ConnectorAccount("Gmail", "me@gmail.example"))
+
 /** Everything the lead needs, wired by hand against a real database (what Metro does in production). */
 class LeadRig(
     val database: Database,
@@ -142,8 +147,11 @@ class LeadRig(
     val embeddingIndexer = EmbeddingIndexer(database, embeddings, vectors)
     val archive = ConversationArchive(database)
     val memoryTools = MemoryTools(memorySearch, collections, archive, constitutions, settingsProvider, failureGate)
-    val external = ExternalTools(gate)
     private val reader = ExposedNounReader(database)
+    /** The mail accounts an email can go from ([RIG_MAIL]); a test may change them. */
+    var mailAccounts = RIG_MAIL
+    private val mail = MailAccounts { mailAccounts }
+    val external = ExternalTools(gate, mail, reader)
     val domain = DomainTools(reader, ExposedTriggerStore(database, clock), DocumentTools(reader) { DocumentFetch.Unavailable("none") })
 
     val sessionStore = SessionStore(database)
@@ -176,7 +184,7 @@ class LeadRig(
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
-            effortOverride ?: CallEffortOverride(sessionService),
+            effortOverride ?: CallEffortOverride(sessionService), mail,
         )
     }
 

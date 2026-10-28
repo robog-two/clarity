@@ -10,6 +10,7 @@ import kotlinx.serialization.json.putJsonObject
 import net.robog.clarity.connector.sdk.ConfigItem
 import net.robog.clarity.connector.sdk.ConnectorRuntime
 import net.robog.clarity.connector.sdk.items
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.connector.ConnectorConfig
 
 /** Transport security of an IMAP or SMTP connection. */
@@ -76,6 +77,17 @@ fun usableMailAccounts(config: ConnectorConfig, runtime: ConnectorRuntime): List
     val usable = entries.mapNotNull { it.result.getOrNull() }
     return usable.ifEmpty { throw entries.first().result.exceptionOrNull()!! }
 }
+
+/**
+ * The accounts of [config] as the backend may know them: label and send-from address (the
+ * `fromAddress`, else a username that is an address). No secret is read; an item without an
+ * address is left out.
+ */
+fun mailAccountList(config: ConnectorConfig): List<ConnectorAccount> =
+    config.items(ACCOUNTS).mapNotNull { item ->
+        val address = item.text("fromAddress") ?: item.text("username")?.takeIf { '@' in it } ?: return@mapNotNull null
+        ConnectorAccount(item.label, address)
+    }
 
 /**
  * Reads one account [item] (password opened with [runtime]). The password must be sealed;

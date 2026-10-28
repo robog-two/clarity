@@ -7,28 +7,84 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
+import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.connector.ConnectorAccount
+import net.robog.clarity.shared.governance.EmailDraft
 import net.robog.clarity.shared.governance.InviteResponse
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.noun.Handle
+import net.robog.clarity.shared.noun.MessagePayload
+
+private fun emailOf(action: ProposedAction): EmailDraft = when (action) {
+    is ProposedAction.SendEmail -> action.email
+    is ProposedAction.SaveDraft -> action.email
+    else -> error("not an email: $action")
+}
 
 class ProposedActionsTest : FunSpec({
     val utc = TimeZone.UTC
     val newYork = TimeZone.of("America/New_York")
 
-    fun email(to: List<String> = listOf("Dana <dana@x.com>")) =
-        ExternalTools.EmailInput(to = to, subject = "Lunch", body = "Thursday?", reason = "she asked")
+    val icloud = ConnectorAccount("iCloud", "robogamingbysam@icloud.com")
+    val gmail = ConnectorAccount("Gmail", "samuel.elliot.knight@gmail.com")
+    val accounts = listOf(icloud, gmail)
 
-    test("a draft and a send differ only in kind; both keep the key") {
-        val draft = ProposedActions.draft("k1", send = false, input = email())
+    fun email(to: List<String> = listOf("Dana <dana@x.com>"), from: String = gmail.address, inReplyTo: String? = null, newThread: Boolean = inReplyTo == null) =
+        ExternalTools.EmailInput(from = from, to = to, subject = "Lunch", body = "Thursday?", inReplyTo = inReplyTo, newThread = newThread, reason = "she asked")
+
+    fun arrivedAt(address: String) = MessagePayload(
+        channel = MessagePayload.Channel.EMAIL, account = Handle.email(address), sender = Handle.email("dana@x.com"),
+        recipients = listOf(Handle.email(address)), subject = "Lunch?", body = "Free Thursday?", sentAt = Instant.parse("2026-10-26T09:00:00Z"),
+    )
+
+    fun draft(input: ExternalTools.EmailInput, replied: MessagePayload? = null, send: Boolean = true) =
+        ProposedActions.draft("k", send, input, accounts, replied)
+
+    test("a draft and a send differ only in kind; both keep the key and name the sender") {
+        val draft = ProposedActions.draft("k1", send = false, input = email(), accounts = accounts, replied = null)
         draft.shouldBeInstanceOf<ProposedAction.SaveDraft>()
         draft.idempotencyKey shouldBe "k1"
         draft.email.to shouldBe listOf(Handle.email("dana@x.com", "Dana"))
-        draft.summary shouldContain "Dana"
-        ProposedActions.draft("k2", send = true, input = email()).shouldBeInstanceOf<ProposedAction.SendEmail>()
+        draft.email.from shouldBe Handle.email(gmail.address)
+        draft.email.fromLabel shouldBe "Gmail"
+        draft.summary shouldBe "Draft \"Lunch\" to Dana from Gmail"
+        draft(email()).shouldBeInstanceOf<ProposedAction.SendEmail>().summary shouldBe "Send \"Lunch\" to Dana from Gmail"
     }
 
     test("an email needs a recipient") {
-        shouldThrow<IllegalArgumentException> { ProposedActions.draft("k", false, email(to = emptyList())) }
+        shouldThrow<IllegalArgumentException> { draft(email(to = emptyList())) }
+    }
+
+    test("the sender is one of the accounts, by address, \"Name <address>\" or label") {
+        draft(email(from = "ROBOGAMINGBYSAM@icloud.com")).let { emailOf(it).from shouldBe Handle.email(icloud.address) }
+        draft(email(from = "Sam <samuel.elliot.knight@gmail.com>")).let { emailOf(it).fromLabel shouldBe "Gmail" }
+        draft(email(from = "gmail")).let { emailOf(it).from shouldBe Handle.email(gmail.address) }
+    }
+
+    test("an unknown sender is an error that lists the accounts") {
+        val e = shouldThrow<IllegalArgumentException> { draft(email(from = "sam@work.example")) }
+        e.message shouldContain "iCloud <robogamingbysam@icloud.com>"
+        e.message shouldContain "Gmail <samuel.elliot.knight@gmail.com>"
+        shouldThrow<IllegalArgumentException> { ProposedActions.draft("k", true, email(), emptyList(), null) }.message shouldContain "No mail account"
+    }
+
+    test("the thread is explicit: a reply names its message, a new email says so, never both or neither") {
+        val fresh = emailOf(draft(email(newThread = true)))
+        fresh.inReplyTo shouldBe null
+        fresh.replySubject shouldBe null
+        shouldThrow<IllegalArgumentException> { draft(email(newThread = false)) }.message shouldContain "inReplyTo"
+        shouldThrow<IllegalArgumentException> { draft(email(inReplyTo = "m1", newThread = true), arrivedAt(gmail.address)) }.message shouldContain "not both"
+        shouldThrow<IllegalArgumentException> { draft(email(inReplyTo = "m1"), replied = null) }.message shouldContain "No message has the id m1"
+    }
+
+    test("a reply goes from the account its message arrived at and carries the thread's subject") {
+        val reply = emailOf(draft(email(inReplyTo = "m1"), arrivedAt(gmail.address)))
+        reply.inReplyTo shouldBe EntityId("m1")
+        reply.replySubject shouldBe "Lunch?"
+        val wrong = shouldThrow<IllegalArgumentException> { draft(email(from = "iCloud", inReplyTo = "m1"), arrivedAt(gmail.address)) }
+        wrong.message shouldContain "arrived at Gmail <samuel.elliot.knight@gmail.com>"
+        wrong.message shouldContain "set `from` to \"samuel.elliot.knight@gmail.com\""
+        shouldThrow<IllegalArgumentException> { draft(email(inReplyTo = "m1"), arrivedAt("old@elsewhere.example")) }.message shouldContain "newThread"
     }
 
     test("events: times are parsed and ordered, attendees make it an invitation not a hold") {

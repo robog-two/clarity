@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.agent
 
+import net.robog.clarity.shared.connector.ConnectorAccount
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -91,12 +92,20 @@ const val CLIENT_COMPACTION_REQUEST =
 
 /**
  * Pure: the system prompt blocks of the lead. The static persona block carries a cache breakpoint,
- * the constitution block (which changes only on amendment) another.
+ * the constitution block (which changes only on amendment, and names the [mail] accounts) another.
  */
-fun leadSystemBlocks(constitution: Constitution?, home: HomeClock? = null): List<SystemBlock> = listOf(
+fun leadSystemBlocks(
+    constitution: Constitution?,
+    home: HomeClock? = null,
+    mail: List<ConnectorAccount> = emptyList(),
+): List<SystemBlock> = listOf(
     SystemBlock(AgentPrompts.LEAD_SYSTEM, cacheBreakpoint = true),
-    SystemBlock(AgentPrompts.constitutionBlock(constitution, home), cacheBreakpoint = true),
+    SystemBlock(AgentPrompts.constitutionBlock(constitution, home) + mailAccountsLine(mail), cacheBreakpoint = true),
 )
+
+/** Pure: the line naming the person's mail accounts (the `from` choices of an email); empty without any. */
+fun mailAccountsLine(mail: List<ConnectorAccount>): String =
+    if (mail.isEmpty()) "" else "\n\nMail accounts (an email's `from`): " + mail.joinToString { "${it.label} <${it.address}>" } + "."
 
 /** Pure: the system blocks of a helper. */
 fun helperSystemBlocks(): List<SystemBlock> = listOf(SystemBlock(AgentPrompts.HELPER_SYSTEM, cacheBreakpoint = true))

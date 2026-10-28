@@ -7,6 +7,8 @@ import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.governance.ActionGate
+import net.robog.clarity.backend.governance.MailAccounts
+import net.robog.clarity.backend.persistence.NounReader
 import net.robog.clarity.harness.Description
 import net.robog.clarity.harness.Tool
 import net.robog.clarity.harness.ToolEffect
@@ -14,11 +16,14 @@ import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.governance.EmailDraft
 import net.robog.clarity.shared.governance.InviteResponse
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Urgency
+import net.robog.clarity.shared.noun.Handle
+import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.time.LocalTimes
 
 /** The inputs every external tool shares: why, and what prompted it. */
@@ -34,19 +39,57 @@ private fun instant(label: String, raw: String, zone: TimeZone): Instant =
  * Times are read and summarized on the clock of the person's home zone [TimeZone] ([LocalTimes]).
  */
 object ProposedActions {
-    fun draft(key: String, send: Boolean, input: ExternalTools.EmailInput): ProposedAction {
+    /**
+     * An email from one of [accounts] (the person's mail accounts), either new or answering
+     * [replied], the message `inReplyTo` names (null when there is none with that id). A reply goes
+     * from the account that message arrived at.
+     */
+    fun draft(key: String, send: Boolean, input: ExternalTools.EmailInput, accounts: List<ConnectorAccount>, replied: MessagePayload?): ProposedAction {
         require(input.to.isNotEmpty()) { "`to` needs at least one recipient" }
+        val sender = sender(input.from, accounts)
+        val inReplyTo = input.inReplyTo?.trim()?.takeIf(String::isNotEmpty)
+        require(!(input.newThread && inReplyTo != null)) { "Give `inReplyTo` for a reply or `newThread: true` for a new email, not both." }
+        require(input.newThread || inReplyTo != null) {
+            "A reply needs `inReplyTo`, the id of the message it answers (from list_messages). For a new email set `newThread: true`."
+        }
+        if (inReplyTo != null) {
+            requireNotNull(replied) { "No message has the id $inReplyTo. Take `inReplyTo` from list_messages." }
+            val arrivedAt = replied.account.value
+            if (!arrivedAt.equals(sender.address, ignoreCase = true)) {
+                val holder = accounts.firstOrNull { it.address.equals(arrivedAt, ignoreCase = true) }
+                throw IllegalArgumentException(
+                    if (holder != null) "That message arrived at ${holder.line()}, so the reply goes from there: set `from` to \"${holder.address}\"."
+                    else "That message arrived at $arrivedAt, which is not one of the person's mail accounts (${accounts.joinToString { it.line() }}), " +
+                        "so it can't be answered in its thread. Send a new email (`newThread: true`) instead.",
+                )
+            }
+        }
         val email = EmailDraft(
+            from = Handle.email(sender.address),
             to = input.to.map(::parseHandle),
             cc = input.cc.map(::parseHandle),
             subject = input.subject,
             body = input.body,
-            inReplyTo = input.inReplyTo?.let(::EntityId),
+            inReplyTo = inReplyTo?.let(::EntityId),
+            fromLabel = sender.label,
+            replySubject = replied?.takeIf { inReplyTo != null }?.subject,
         )
         val who = email.to.joinToString { it.displayName ?: it.value }
-        return if (send) ProposedAction.SendEmail(key, "Send \"${input.subject}\" to $who", email)
-        else ProposedAction.SaveDraft(key, "Draft \"${input.subject}\" to $who", email)
+        return if (send) ProposedAction.SendEmail(key, "Send \"${input.subject}\" to $who from ${sender.label}", email)
+        else ProposedAction.SaveDraft(key, "Draft \"${input.subject}\" to $who from ${sender.label}", email)
     }
+
+    /** The account [raw] names: by address (also as "Name <address>"), else by its label ("Gmail"). */
+    fun sender(raw: String, accounts: List<ConnectorAccount>): ConnectorAccount {
+        require(accounts.isNotEmpty()) { "No mail account is connected, so there is no address to send from. Tell the person." }
+        val wanted = raw.trim()
+        val address = parseHandle(wanted).value
+        return accounts.firstOrNull { it.address.equals(address, ignoreCase = true) }
+            ?: accounts.filter { it.label.equals(wanted, ignoreCase = true) }.singleOrNull()
+            ?: throw IllegalArgumentException("`from` must be one of the person's mail accounts: ${accounts.joinToString { it.line() }}. Give its address.")
+    }
+
+    private fun ConnectorAccount.line() = "$label <$address>"
 
     fun createEvent(key: String, input: ExternalTools.CreateEventInput, zone: TimeZone): ProposedAction {
         val start = instant("start", input.start, zone)
@@ -98,16 +141,21 @@ object ProposedActions {
 @SingleIn(AppScope::class)
 class ExternalTools(
     private val gate: ActionGate,
+    private val mailAccounts: MailAccounts,
+    private val reader: NounReader,
     private val settings: SettingsProvider = SettingsProvider { net.robog.clarity.shared.session.Settings() },
 ) {
 
     @Serializable
     class EmailInput(
+        @Description("The person's own mail account it goes from: its address (or its name, like \"Gmail\"). A reply goes from the account the message arrived at (`account` in list_messages).")
+        val from: String,
         @Description("Recipients: addresses, or \"Name <address>\".") val to: List<String>,
         val subject: String,
         val body: String,
         val cc: List<String> = emptyList(),
-        @Description("Entity id of the message this replies to (from list_messages), for threading.") val inReplyTo: String? = null,
+        @Description("Id of the message this answers (from list_messages); the email joins its thread. Leave out for a new email.") val inReplyTo: String? = null,
+        @Description("true for a new email that answers nothing; false for a reply, which needs `inReplyTo`.") val newThread: Boolean,
         @Description(WHY) val reason: String,
         @Description(CONTEXT) val context: List<ContextItem> = emptyList(),
         val urgency: Urgency = Urgency.NORMAL,
@@ -183,19 +231,28 @@ class ExternalTools(
         return ToolResult.Ok(gate.propose(action, reason, context, scope.provenance(), urgency).text)
     }
 
+    /** Proposes an email after looking up what [ProposedActions.draft] checks it against: the accounts and the message answered. */
+    private suspend fun proposeEmail(scope: RunScope, name: String, send: Boolean, i: EmailInput): ToolResult {
+        val accounts = mailAccounts.list()
+        val replied = i.inReplyTo?.trim()?.takeIf(String::isNotEmpty)?.let { reader.message(EntityId(it))?.payload }
+        return propose(scope, name, i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.draft(k, send, i, accounts, replied) }
+    }
+
     fun saveDraft(scope: RunScope): Tool = tool<EmailInput>(
         name = "save_draft",
-        description = "Save an email draft in the person's mail account (not sent). Prefer this to send_email unless they asked you to send.",
+        description = "Save an email draft in one of the person's mail accounts (not sent). Prefer this to send_email unless they asked you to send. " +
+            "Choose the account it is from, and whether it answers a message (inReplyTo) or starts a new thread.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
-    ) { i -> propose(scope, "save_draft", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.draft(k, send = false, input = i) } }
+    ) { i -> proposeEmail(scope, "save_draft", send = false, i) }
 
     fun sendEmail(scope: RunScope): Tool = tool<EmailInput>(
         name = "send_email",
-        description = "Send an email as the person. Goes through the guard; usually held for their OK. Result tells you whether it was queued or held.",
+        description = "Send an email as the person. Goes through the guard; usually held for their OK. Result tells you whether it was queued or held. " +
+            "Choose the account it is from, and whether it answers a message (inReplyTo) or starts a new thread.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
-    ) { i -> propose(scope, "send_email", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.draft(k, send = true, input = i) } }
+    ) { i -> proposeEmail(scope, "send_email", send = true, i) }
 
     fun createEvent(scope: RunScope): Tool = tool<CreateEventInput>(
         name = "create_event",

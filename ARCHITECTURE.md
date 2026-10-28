@@ -906,6 +906,12 @@ fun main() = runConnector(manifest) {
 - Local state (`/data`): cursors, caches, full-fidelity copies. Owned by the connector only.
 - Secret config values (passwords) arrive sealed to the connector's own key (X25519 sealed box),
   so the backend stores only ciphertext.
+- Accounts: a connector may announce the person's accounts it acts as (`ConnectorManifest.accounts`,
+  label and address only) and re-registers its manifest when they change. The mail connector's
+  addresses are the `from` choices of `send_email`/`save_draft`: every email names its sender and
+  either the message it answers (which fixes the sender: the account that message arrived at) or
+  `newThread`. The connector sends only from the account named; an email held before senders were
+  chosen (`from` null) still goes from the replied-to message's account, else the first.
 
 | Connector | Nouns | Actions |
 |---|---|---|

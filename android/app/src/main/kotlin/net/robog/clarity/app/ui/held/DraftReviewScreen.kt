@@ -8,6 +8,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Reply
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -108,11 +114,13 @@ fun DraftReviewContent(
             Text(email?.subject ?: held.action.summary, style = MaterialTheme.typography.headlineSmall)
 
             if (email != null) {
-                // Who it goes to comes first: it is sent as the person.
+                // Which address it goes from and who it goes to come first: it is sent as the person.
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    RecipientLine("From", senderLine(email))
                     RecipientLine("To", email.to.joinToString { handleLine(it) })
                     if (email.cc.isNotEmpty()) RecipientLine("Cc", email.cc.joinToString { handleLine(it) })
                 }
+                ThreadPill(email.inReplyTo != null, threadLine(email))
                 OutlinedTextField(
                     value = state.body,
                     onValueChange = onEdit,
@@ -166,8 +174,32 @@ fun DraftReviewContent(
 @Composable
 private fun RecipientLine(label: String, value: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, Modifier.width(28.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+        Text(label, Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
         Text(value, style = MaterialTheme.clarityText.chatSmall)
+    }
+}
+
+/** A tonal pill saying whether the email answers an existing thread or starts a new one. */
+@Composable
+private fun ThreadPill(reply: Boolean, text: String) {
+    Row(
+        Modifier
+            .background(
+                if (reply) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
+                MaterialTheme.shapes.extraLarge,
+            )
+            .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val tint = if (reply) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onTertiaryContainer
+        Icon(
+            if (reply) Icons.AutoMirrored.Outlined.Reply else Icons.Outlined.Edit,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = tint,
+        )
+        Text(text, color = tint, style = MaterialTheme.typography.labelLarge, maxLines = 2)
     }
 }
 

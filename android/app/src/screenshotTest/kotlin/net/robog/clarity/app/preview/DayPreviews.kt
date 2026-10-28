@@ -231,7 +231,11 @@ private val emailHeld = HeldAction(
     action = ProposedAction.SendEmail(
         idempotencyKey = "k1",
         summary = "Reply to Dana about the revised contract terms",
-        email = EmailDraft(to = listOf(Handle.email("dana.whitfield@hartleyandco.com", "Dana Whitfield")), subject = "Re: Revised Terms — Q4 services agreement", body = danaBody),
+        email = EmailDraft(
+            from = Handle.email("samuel.elliot.knight@gmail.com"), fromLabel = "Gmail",
+            to = listOf(Handle.email("dana.whitfield@hartleyandco.com", "Dana Whitfield")), subject = "Re: Revised Terms — Q4 services agreement", body = danaBody,
+            inReplyTo = EntityId("m1"), replySubject = "Revised Terms — Q4 services agreement",
+        ),
     ),
     verdict = GuardVerdict(Decision.ASK, lines = listOf(LineId("l2"), LineId("l5")), rationale = "I’m asking because it goes out as you and touches money (line 2)."),
     agentView = "She asked for a reply before Friday. I agreed to everything except the payment date, which clashes with your invoicing. I kept it short and offered Thursday 2:00, which is clear for both of you.",
@@ -242,6 +246,33 @@ private val emailHeld = HeldAction(
     urgency = Urgency.NORMAL,
     status = HeldAction.Status.HELD,
     ruleDraft = RuleDraft("Replies to Dana about the contract can go out without asking: send them, then tell me.", "she’s a long-time client and these are routine"),
+)
+
+private val okaforBody = """
+    Dear Professor Okafor,
+
+    I’m unwell and won’t make it to class today. I’ll catch up on the notes and the problem set before Thursday.
+
+    Best,
+    Sam
+""".trimIndent()
+
+private val newEmailHeld = HeldAction(
+    id = HeldActionId("h5"),
+    createdAt = t0,
+    action = ProposedAction.SendEmail(
+        idempotencyKey = "k5",
+        summary = "Send \"Missing class today\" to Prof. Okafor from iCloud",
+        email = EmailDraft(
+            from = Handle.email("robogamingbysam@icloud.com"), fromLabel = "iCloud",
+            to = listOf(Handle.email("n.okafor@university.edu", "Prof. Nkechi Okafor")), subject = "Missing class today",
+            body = okaforBody,
+        ),
+    ),
+    verdict = GuardVerdict(Decision.ASK, rationale = "I’m asking because it goes out as you."),
+    agentView = "You asked me to tell your professors you’re out sick today. This is a new email, not a reply to anything.",
+    urgency = Urgency.NORMAL,
+    status = HeldAction.Status.HELD,
 )
 
 private val codeHeld = HeldAction(
@@ -277,6 +308,9 @@ private val moveHeld = HeldAction(
 @Composable private fun ReviewEmail(dark: Boolean) = Screen(dark) {
     DraftReviewContent(DraftReviewState(loading = false, held = emailHeld, body = danaBody), {}, {}, {}, {})
 }
+@Composable private fun ReviewNewEmail(dark: Boolean) = Screen(dark) {
+    DraftReviewContent(DraftReviewState(loading = false, held = newEmailHeld, body = okaforBody), {}, {}, {}, {})
+}
 @Composable private fun ReviewCode(dark: Boolean) = Screen(dark) {
     DraftReviewContent(DraftReviewState(loading = false, held = codeHeld), {}, {}, {}, {})
 }
@@ -292,6 +326,8 @@ private val moveHeld = HeldAction(
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewEmailLight() = ReviewEmail(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewEmailDark() = ReviewEmail(true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewNewEmailLight() = ReviewNewEmail(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewNewEmailDark() = ReviewNewEmail(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCodeLight() = ReviewCode(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCodeDark() = ReviewCode(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCredentialLight() = ReviewCredential(false)

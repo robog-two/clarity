@@ -73,7 +73,8 @@ class DomainTools(
         name = "list_messages",
         description = "List the user's messages (email, SMS, chat) in a time window, newest first. " +
             "Use to see what happened or arrived in a period, or what a person has written. " +
-            "Email comes from the inbox unless you name another folder (e.g. Junk when something seems missing).",
+            "Email comes from the inbox unless you name another folder (e.g. Junk when something seems missing). " +
+            "`account` is the person's own address the message arrived at.",
         json = ClarityJson,
     ) { input ->
         val zone = settings.homeZone()
@@ -228,6 +229,7 @@ private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: Time
     put("id", id.value)
     if (folders.isNotEmpty()) put("folders", JsonArray(folders.map(::JsonPrimitive)))
     put("channel", payload.channel.name.lowercase())
+    put("account", payload.account.value) // the person's own address it arrived at (a reply goes from it)
     put("from", payload.sender.label())
     put("to", JsonArray(payload.recipients.map { JsonPrimitive(it.label()) }))
     payload.subject?.let { put("subject", it) }

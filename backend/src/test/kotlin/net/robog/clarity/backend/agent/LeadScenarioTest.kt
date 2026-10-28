@@ -197,6 +197,8 @@ class LeadScenarioTest : FunSpec({
             else callTool(
                 "toolu_mail", "send_email",
                 buildJsonObject {
+                    put("from", "Gmail")
+                    put("newThread", true)
                     put("to", JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("dana@example.com"))))
                     put("subject", "Contract")
                     put("body", "Signed copy attached.")
@@ -216,6 +218,36 @@ class LeadScenarioTest : FunSpec({
         result.content shouldContain "Held for review"
         result.content shouldContain "Don't retry"
         r.outbox.findByKey(held.single().action.idempotencyKey) shouldBe null
+        val email = (held.single().action as net.robog.clarity.shared.governance.ProposedAction.SendEmail).email
+        email.from?.value shouldBe "me@gmail.example"
+        email.fromLabel shouldBe "Gmail"
+        held.single().action.summary shouldBe "Send \"Contract\" to dana@example.com from Gmail"
+    }
+
+    test("an email from an address that is not one of the person's accounts is a tool error, and nothing is held") {
+        val r = rig()
+        r.model.handler = { request ->
+            if (request.messages.last().content.any { it is Block.Result }) end("asked which account")
+            else callTool(
+                "toolu_mail", "send_email",
+                buildJsonObject {
+                    put("from", "sam@work.example")
+                    put("newThread", true)
+                    put("to", JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("dana@example.com"))))
+                    put("subject", "Contract")
+                    put("body", "Signed copy attached.")
+                    put("reason", "Dana asked for the signed contract.")
+                },
+            )
+        }
+        r.inbox.enqueue(user("send Dana the contract"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+
+        r.heldStore.list() shouldHaveSize 0
+        val result = r.model.requests.last().messages.last().content.filterIsInstance<Block.Result>().single()
+        result.isError shouldBe true
+        result.content shouldContain "iCloud <me@icloud.example>, Gmail <me@gmail.example>"
     }
 
     test("reply guard: the person wrote, the model did the work but ended without send_to_user; one nudge, then it answers") {
@@ -376,6 +408,7 @@ class LeadScenarioTest : FunSpec({
                     buildJsonObject {
                         put("to", JsonArray(listOf(kotlinx.serialization.json.JsonPrimitive("dana@example.com"))))
                         put("subject", "Contract"); put("body", "Hi"); put("reason", "asked")
+                        put("from", "me@icloud.example"); put("newThread", true)
                     },
                 )
             }

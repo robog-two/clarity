@@ -86,6 +86,8 @@ fun sendEmail(id: String, to: String, subject: String = "Contract", body: String
     callTool(
         id, "send_email",
         buildJsonObject {
+            put("from", "me@gmail.example")
+            put("newThread", true)
             put("to", JsonArray(listOf(JsonPrimitive(to))))
             put("subject", subject)
             put("body", body)

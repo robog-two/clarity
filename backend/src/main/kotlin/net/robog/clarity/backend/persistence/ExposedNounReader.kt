@@ -120,6 +120,13 @@ class ExposedNounReader(private val database: Database) : NounReader {
         }
     }
 
+    override suspend fun message(id: EntityId): Stored<MessagePayload>? {
+        val uuid = kotlin.uuid.Uuid.parseOrNull(id.value) ?: return null
+        return database.tx {
+            Messages.selectAll().where { (Messages.id eq uuid) and Messages.deletedAt.isNull() }.singleOrNull()?.toMessage()
+        }
+    }
+
     override suspend fun document(id: EntityId): Stored<DocumentPayload>? {
         val uuid = runCatching { kotlin.uuid.Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx {
