@@ -35,11 +35,17 @@ for format in pdf docx odt txt md; do
   [ "$code" = 200 ] || { echo "FAIL: $format answered $code: $(head -c 400 "$out")"; exit 1; }
   case "$format" in
     pdf) head -c 4 "$out" | grep -q '%PDF' || { echo "FAIL: pdf"; exit 1; } ;;
-    docx|odt) head -c 2 "$out" | grep -q 'PK' || { echo "FAIL: $format is not a zip"; exit 1; } ;;
+    docx|odt) head -c 2 "$out" | grep -q 'PK' || { echo "FAIL: $format is not a zip"; exit 1; }
+      # pageNumbers: a PAGE field in the Word footer, a page-number field in the ODF master page
+      if [ "$format" = docx ]; then part=word/footer-clarity.xml; mark=PAGE; else part=styles.xml; mark='text:page-number'; fi
+      python3 -c 'import sys,zipfile; sys.exit(0 if sys.argv[3] in zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]).decode() else 1)' "$out" "$part" "$mark" \
+        || { echo "FAIL: $format has no page numbers"; exit 1; } ;;
     txt|md) grep -q 'paragraph' "$out" || { echo "FAIL: $format text"; exit 1; } ;;
   esac
   # the key file (named as an image above) must never be read into the file
   if grep -q "$key" "$out"; then echo "FAIL: $format contains the key"; exit 1; fi
   echo "ok $format ($(wc -c <"$out") bytes)"
 done
+t0=$(date +%s); podman stop -t 10 "$name" >/dev/null
+[ $(( $(date +%s) - t0 )) -lt 8 ] || { echo "FAIL: renderd ignored SIGTERM"; exit 1; }
 echo "render smoke OK"

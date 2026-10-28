@@ -34,7 +34,7 @@ enum class ReportFormat(val extension: String, val mimeType: String, val label: 
     /** Pages opens Word files, so there is no separate `.pages` format. */
     @SerialName("docx") DOCX("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Word / Pages"),
     @SerialName("odt") ODT("odt", "application/vnd.oasis.opendocument.text", "OpenDocument"),
-    @SerialName("txt") TXT("txt", "text/plain; charset=utf-8", "Plain text"),
+    @SerialName("txt") TXT("txt", "text/plain; charset=utf-8", "Text"),
     @SerialName("md") MD("md", "text/markdown; charset=utf-8", "Markdown"),
     ;
 
@@ -142,9 +142,13 @@ data class ReportRevisionInfo(val n: Int, val createdAt: Instant, val style: Rep
 @Serializable
 data class ReportCitation(val url: String, val title: String? = null, val citedText: String? = null, val fetchedAt: Instant)
 
-/** A format the app can offer, with its button label ("Word / Pages" for docx). */
+/**
+ * A format the app can offer: its wire name ([ReportFormat.wireName], the `{format}` of the download
+ * route) and its button label ("Word / Pages" for docx). A string, not the enum, so a format added
+ * later never breaks an older app's viewer: it shows the server's label.
+ */
 @Serializable
-data class ReportFormatOption(val format: ReportFormat, val label: String)
+data class ReportFormatOption(val format: String, val label: String)
 
 /** `GET /api/v1/reports/{id}`: metadata, every revision (oldest first) and the sources. */
 @Serializable

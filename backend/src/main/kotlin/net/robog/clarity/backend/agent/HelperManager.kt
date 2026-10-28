@@ -34,6 +34,7 @@ import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
 import net.robog.clarity.harness.WebSearchTool
+import net.robog.clarity.harness.searchFor
 import net.robog.clarity.shared.time.LocalTimes
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
@@ -203,7 +204,8 @@ class HelperManager(
                 tools = set.tools,
                 maxTurns = config.helperMaxTurns,
                 sink = large.sink,
-                webSearch = plan.webSearch,
+                // The cap is per run, not per resume: searches already recorded for it count.
+                webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
             ).copy(outOfSteps = OutOfSteps())
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
@@ -215,7 +217,8 @@ class HelperManager(
             // Open models sometimes end on a tool round with no text: one bounded nudge, never more.
             if (helperOwesResult(terminal)) {
                 journal.append(run.id, Message.user(HELPER_RESULT_NUDGE))
-                harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { onEvent(it) }
+                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)))
+                harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot

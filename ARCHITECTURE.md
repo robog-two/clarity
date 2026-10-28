@@ -478,6 +478,9 @@ an ISO instant, default the last 7 days), and Today carries the pending ones as 
 
 ### Reports (documents the agent writes)
 
+In the product these are the person's **Goods** (the app's Goods tab, card copy and the agent's
+words to the person); code, tables and routes keep the name `report`.
+
 When the person wants something written to keep (an essay, a report, a letter), the agent makes a
 **report**: Markdown with optional YAML front matter (title, author, date) plus a typed **style
 spec** (`shared/report/ReportStyle`: font family and size, line spacing, margins, first-line indent,
@@ -507,8 +510,22 @@ title and headings in the same family. There are no templates or palettes yet.
   reached, the newest cached file of any renderer version is served. The `report-rendition-sweep` job
   (hourly) drops files of an old renderer version, then the least recently downloaded until the cache
   is under `CLARITY_REPORTS_CACHE_MAX_MB` (500); it never touches revisions.
-- **App**: `Card.Report` exists in `:shared`; until the viewer lands the app shows its fallback text
-  (title and formats) as a note. Apps older than this card cannot decode a feed item that carries it.
+- **Page numbers**: with `pageNumbers` the PDF numbers pages through Typst; for Word, renderd adds a
+  footer part with a `PAGE` field to the patched reference document (pandoc keeps the reference
+  document's footers), and for OpenDocument a `text:page-number` footer on every master page; all
+  centred at the bottom. pandoc runs with `--sandbox` on top of `sanitize.lua`.
+- **App**: a **Goods** tab (`GET /api/v1/reports`, newest change first; refetched when a report card
+  arrives), a feed card for `Card.Report` (title, kind, a download button per readable format), and a
+  viewer (`…/{id}` and `…/source`, the Markdown drawn by the app's own small renderer, sources, a
+  button per format and a share menu). Downloads stream through the device-authenticated client into
+  the app's cache (`cache/goods/<id>/`) and go to other apps only through a FileProvider grant on that
+  one file, when the person opens or shares it. The lead is told that "put it in my goods" needs
+  nothing beyond `create_report` (every report is in the tab) and `present_report`.
+- **Forward compatibility**: `ClarityJson` decodes a card of an unknown `type` to `Card.Unknown`
+  (keeping a `fallbackText` string when the card has one; new card types carry it, as `Card.Report`
+  does), so a newer server never breaks the feed. Apps built before this cannot be fixed: they fail to
+  decode a feed item with a card they do not know. `ReportFormatOption.format` is a wire string for
+  the same reason.
 
 ### Web search (helpers only)
 
@@ -526,7 +543,10 @@ under ZDR) is not offered.
   named in the `delegate` answer), so a query can only carry what the task says. The stored tool list
   keeps `web_search`, so a resumed run gets it back.
 - **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
-  as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent.
+  as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
+  per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),
+  `HelperManager` subtracts the searches already recorded for it in `model_call`
+  (`RunStore.webSearchesUsed`).
   `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` is sent as the engine's `excluded_domains`.
 - **Taint and cost**: a call whose usage has `server_tool_use.web_search_requests` > 0 marks the run
   as having read outside content, like the readers in `UNTRUSTED_SOURCE_TOOLS`; the count is in

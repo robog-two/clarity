@@ -90,7 +90,7 @@ class ReportPureTest : FunSpec({
 
     test("formats: a document offers PDF, Word / Pages, OpenDocument, text and Markdown; no .pages") {
         formatsFor(ReportKind.DOCUMENT) shouldContainExactly listOf(ReportFormat.PDF, ReportFormat.DOCX, ReportFormat.ODT, ReportFormat.TXT, ReportFormat.MD)
-        formatOptions(ReportKind.DOCUMENT).single { it.format == ReportFormat.DOCX }.label shouldBe "Word / Pages"
+        formatOptions(ReportKind.DOCUMENT).single { it.format == ReportFormat.DOCX.wireName }.label shouldBe "Word / Pages"
         formatsFor(ReportKind.DECK).shouldBeEmpty()
         ReportFormat.fromWire("pages") shouldBe null
         ReportFormat.fromWire("DOCX") shouldBe ReportFormat.DOCX

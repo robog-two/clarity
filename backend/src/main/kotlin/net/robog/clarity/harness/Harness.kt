@@ -112,8 +112,9 @@ sealed interface HarnessEvent {
 
 /**
  * Pure: the web search a run's next request gets after [used] searches: what is left of the run's
- * [WebSearchTool.maxSearches], or null when there is no search or it is spent. (A resumed run counts
- * again from its resume.)
+ * [WebSearchTool.maxSearches], or null when there is no search or it is spent. The harness counts
+ * from the start of this resume; a caller resuming a run passes a tool already reduced by what the
+ * run used before (HelperManager does, from `model_call`).
  */
 fun searchFor(search: WebSearchTool?, used: Long): WebSearchTool? {
     if (search == null) return null

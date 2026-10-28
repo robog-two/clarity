@@ -352,7 +352,7 @@ class ReportDbTest : FunSpec({
             detail.title shouldBe "The 1918 flu"
             detail.revisions.single().n shouldBe 1
             detail.sources.single().url shouldBe "https://www.cdc.gov/flu/1918"
-            detail.formats.single { it.format == ReportFormat.DOCX }.label shouldBe "Word / Pages"
+            detail.formats.single { it.format == ReportFormat.DOCX.wireName }.label shouldBe "Word / Pages"
 
             val source = fetch("/api/v1/reports/$id/source?rev=1")
             source.status shouldBe HttpStatusCode.OK

@@ -260,18 +260,55 @@ def patch_docx_document(xml, style):
 
     def section(old):
         footnotes = FOOTNOTE_PR.search(old)
+        footer = f'<w:footerReference w:type="default" r:id="{FOOTER_RID}" />' if style["pageNumbers"] else ""
         return (
-            "<w:sectPr>" + (footnotes.group(0) if footnotes else "")
+            "<w:sectPr>" + footer + (footnotes.group(0) if footnotes else "")
             + f'<w:pgSz w:w="{width}" w:h="{height}" />'
             + f'<w:pgMar w:top="{margin}" w:right="{margin}" w:bottom="{margin}" w:left="{margin}" w:header="720" w:footer="720" w:gutter="0" />'
             + "</w:sectPr>"
         )
 
+    if style["pageNumbers"] and "xmlns:r=" not in xml[: xml.find(">", xml.find("<w:document"))]:
+        xml = xml.replace("<w:document", f'<w:document xmlns:r="{R_NS}"', 1)
     matches = list(SECT.finditer(xml))
     if matches:
         last = matches[-1]
         return xml[: last.start()] + section(last.group(0)) + xml[last.end():]
     return xml.replace("</w:body>", section("") + "</w:body>", 1)
+
+
+W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+FOOTER_RID = "rIdClarityFooter"
+FOOTER_PART = "word/footer-clarity.xml"
+FOOTER_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"
+FOOTER_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer"
+
+
+def docx_footer(style):
+    """A footer with the page number (a PAGE field), centred like the PDF's, in the body font and size."""
+    half = int(round(style["fontSizePt"] * 2))
+    run_pr = f'<w:rPr>{rfonts(style["fontFamily"])}<w:sz w:val="{half}" /><w:szCs w:val="{half}" /></w:rPr>'
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:ftr xmlns:w="{W_NS}" xmlns:r="{R_NS}"><w:p><w:pPr><w:jc w:val="center" /></w:pPr>'
+        f'<w:r>{run_pr}<w:fldChar w:fldCharType="begin" /></w:r>'
+        f'<w:r>{run_pr}<w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
+        f'<w:r>{run_pr}<w:fldChar w:fldCharType="separate" /></w:r>'
+        f'<w:r>{run_pr}<w:t>1</w:t></w:r>'
+        f'<w:r>{run_pr}<w:fldChar w:fldCharType="end" /></w:r>'
+        "</w:p></w:ftr>"
+    )
+
+
+def add_footer_rel(xml):
+    rel = f'<Relationship Id="{FOOTER_RID}" Type="{FOOTER_REL}" Target="{FOOTER_PART.split("/", 1)[1]}" />'
+    return xml.replace("</Relationships>", rel + "</Relationships>", 1)
+
+
+def add_footer_type(xml):
+    override = f'<Override PartName="/{FOOTER_PART}" ContentType="{FOOTER_TYPE}" />'
+    return xml.replace("</Types>", override + "</Types>", 1)
 
 
 # ---- OpenDocument (reference.odt) -----------------------------------------------------------------
@@ -386,34 +423,90 @@ def patch_odt_styles(xml, style):
         block = odf_attr(block, "fo:page-width", width)
         return odf_attr(block, "fo:page-height", height)
 
-    return re.sub(r"<style:page-layout-properties\b[^>]*>", page, xml)
+    xml = re.sub(r"<style:page-layout-properties\b[^>]*>", page, xml)
+    if style["pageNumbers"]:
+        xml = odt_page_numbers(xml, style)
+    return xml
+
+
+ODF_FOOTER_STYLE = (
+    '<style:footer-style><style:header-footer-properties fo:min-height="0in" fo:margin-top="0.1in" />'
+    "</style:footer-style>"
+)
+
+
+def odt_page_numbers(xml, style):
+    """A centred page number in the footer of every master page, the body font and size."""
+    family = style["fontFamily"]
+    size = f"{fmt(style['fontSizePt'])}pt"
+    paragraph_style = (
+        '<style:style style:name="Clarity_Page_Number" style:family="paragraph">'
+        '<style:paragraph-properties fo:text-align="center" fo:margin-top="0in" fo:margin-bottom="0in" />'
+        f'<style:text-properties style:font-name="{family}" fo:font-size="{size}" /></style:style>'
+    )
+    xml = xml.replace("</office:styles>", paragraph_style + "</office:styles>", 1)
+    footer = (
+        '<style:footer><text:p text:style-name="Clarity_Page_Number">'
+        '<text:page-number text:select-page="current">1</text:page-number></text:p></style:footer>'
+    )
+
+    def layout(match):
+        block = match.group(0)
+        if "<style:footer-style" in block:
+            return block
+        if block.endswith("/>"):
+            return block[:-2].rstrip() + ">" + ODF_FOOTER_STYLE + "</style:page-layout>"
+        return block.replace("</style:page-layout>", ODF_FOOTER_STYLE + "</style:page-layout>", 1)
+
+    xml = re.sub(r"<style:page-layout\b[^>]*?/>|<style:page-layout\b[^>]*>.*?</style:page-layout>", layout, xml, flags=re.S)
+
+    def master(match):
+        block = match.group(0)
+        if "<style:footer>" in block or "<style:footer " in block:
+            return block
+        if block.endswith("/>"):
+            return block[:-2].rstrip() + ">" + footer + "</style:master-page>"
+        return block.replace("</style:master-page>", footer + "</style:master-page>", 1)
+
+    return re.sub(r"<style:master-page\b[^>]*?/>|<style:master-page\b[^>]*>.*?</style:master-page>", master, xml, flags=re.S)
 
 
 # ---- reference documents --------------------------------------------------------------------------
 
-def patched_zip(path, patches):
-    """A copy of the zip at [path] with [patches] (name -> fn(text)) applied; fixed timestamps, same order."""
+def patched_zip(path, patches, extra=None):
+    """A copy of the zip at [path] with [patches] (name -> fn(text)) applied and [extra] (name -> text)
+    added at the end; fixed timestamps, same order."""
     out = io.BytesIO()
+
+    def write(target, name, data):
+        entry = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+        # ODF wants `mimetype` first and stored; everything else deflated.
+        entry.compress_type = zipfile.ZIP_STORED if name == "mimetype" else zipfile.ZIP_DEFLATED
+        target.writestr(entry, data)
+
     with zipfile.ZipFile(path) as source, zipfile.ZipFile(out, "w") as target:
         for info in source.infolist():
             data = source.read(info.filename)
             if info.filename in patches:
                 data = patches[info.filename](data.decode("utf-8")).encode("utf-8")
-            entry = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
-            # ODF wants `mimetype` first and stored; everything else deflated.
-            entry.compress_type = zipfile.ZIP_STORED if info.filename == "mimetype" else zipfile.ZIP_DEFLATED
-            target.writestr(entry, data)
+            write(target, info.filename, data)
+        for name, text in (extra or {}).items():
+            write(target, name, text.encode("utf-8"))
     return out.getvalue()
 
 
 def reference_docx(style):
-    return patched_zip(
-        os.path.join(DATA, "reference.docx"),
-        {
-            "word/styles.xml": lambda xml: patch_docx_styles(xml, style),
-            "word/document.xml": lambda xml: patch_docx_document(xml, style),
-        },
-    )
+    patches = {
+        "word/styles.xml": lambda xml: patch_docx_styles(xml, style),
+        "word/document.xml": lambda xml: patch_docx_document(xml, style),
+    }
+    extra = None
+    if style["pageNumbers"]:
+        # pandoc keeps the reference document's headers and footers (and the sectPr that names them).
+        patches["word/_rels/document.xml.rels"] = add_footer_rel
+        patches["[Content_Types].xml"] = add_footer_type
+        extra = {FOOTER_PART: docx_footer(style)}
+    return patched_zip(os.path.join(DATA, "reference.docx"), patches, extra)
 
 
 def reference_odt(style):
@@ -475,7 +568,9 @@ def typst_defaults(style):
 def pandoc_command(fmt_name, work, style):
     """The pandoc command line for [fmt_name], with its side files written to [work]. Pure apart from the files."""
     source = os.path.join(work, "source.md")
-    command = [PANDOC, source, "--from", FROM, "--lua-filter", os.path.join(DATA, "sanitize.lua")]
+    # --sandbox: pandoc itself reads nothing but the files named here (sanitize.lua already drops what
+    # could name another one; this is the second lock).
+    command = [PANDOC, source, "--sandbox", "--from", FROM, "--lua-filter", os.path.join(DATA, "sanitize.lua")]
     if style["titlePage"]:
         command += ["--lua-filter", os.path.join(DATA, "titlepage.lua")]
     if fmt_name == "txt":
@@ -664,7 +759,10 @@ def main():
     server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     server.daemon_threads = True
     sys.stderr.write(f"renderd {VERSION} on :{PORT}\n")
+    # As PID 1 nothing handles SIGTERM by default: stop serving when the container is stopped.
+    signal.signal(signal.SIGTERM, lambda *_: threading.Thread(target=server.shutdown, daemon=True).start())
     server.serve_forever()
+    server.server_close()
 
 
 if __name__ == "__main__":

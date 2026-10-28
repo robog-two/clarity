@@ -20,8 +20,10 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.sum
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
@@ -55,6 +57,12 @@ interface RunStore {
 
     /** Stores a copy of the run's transcript (already scrubbed of secret values) for diagnosis. */
     suspend fun saveTranscript(id: String, transcript: JsonElement) {}
+
+    /**
+     * Web searches run [id] has already made, from its recorded model calls (`model_call`): what a
+     * resumed run (after a restart, or the result nudge) counts against its search cap.
+     */
+    suspend fun webSearchesUsed(id: String): Long = 0
 
     /** Runs that were queued or running when the process stopped. */
     suspend fun open(): List<HelperRun>
@@ -98,6 +106,11 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
 
     override suspend fun saveTranscript(id: String, transcript: JsonElement) {
         database.tx { AgentRuns.update({ AgentRuns.id eq Uuid.parse(id) }) { it[AgentRuns.transcript] = transcript } }
+    }
+
+    override suspend fun webSearchesUsed(id: String): Long = database.tx {
+        val total = ModelCalls.webSearchRequests.sum()
+        ModelCalls.select(total).where { ModelCalls.runId eq id }.singleOrNull()?.get(total)?.toLong() ?: 0L
     }
 
     override suspend fun get(id: String): HelperRun? {

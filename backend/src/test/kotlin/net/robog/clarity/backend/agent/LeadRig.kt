@@ -99,12 +99,14 @@ class LeadRig(
     embeddingClient: EmbeddingClient? = null,
     /** The failure gate on memory writes and briefs; by default off (no decision model). */
     val failureGate: FailureGate = FailureGate(null),
+    /** Where model usage goes; by default nowhere (pass a DbUsageRecorder to fill model_call). */
+    usageRecorder: UsageRecorder = UsageRecorder { _, _, _ -> },
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
     val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
-    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, UsageRecorder { _, _, _ -> })
+    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, usageRecorder)
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)

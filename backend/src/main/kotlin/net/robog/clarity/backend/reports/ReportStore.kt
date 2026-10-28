@@ -30,6 +30,7 @@ import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.deleteWhere
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
+import org.jetbrains.exposed.v1.jdbc.select
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 import org.jetbrains.exposed.v1.json.jsonb
@@ -48,7 +49,7 @@ object ReportRevisions : Table("report_revision") {
     val id = long("id").autoIncrement()
     val reportId = uuid("report_id")
     val n = integer("n")
-    val source = text("source")
+    val markdown = text("source")
     val style = jsonb<ReportStyle>("style", ClarityJson)
     val createdAt = timestamp("created_at")
     val createdByRun = text("created_by_run").nullable()
@@ -166,7 +167,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
             ReportRevisions.insert {
                 it[reportId] = id
                 it[n] = 1
-                it[ReportRevisions.source] = source
+                it[ReportRevisions.markdown] = source
                 it[ReportRevisions.style] = style
                 it[createdAt] = now
                 it[createdByRun] = run
@@ -193,7 +194,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
         val uuid = id.uuidOrNull() ?: return emptyList()
         return database.tx {
             ReportRevisions.selectAll().where { ReportRevisions.reportId eq uuid }.orderBy(ReportRevisions.n).map {
-                ReportRevisionInfo(it[ReportRevisions.n], it[ReportRevisions.createdAt], it[ReportRevisions.style], it[ReportRevisions.source].length)
+                ReportRevisionInfo(it[ReportRevisions.n], it[ReportRevisions.createdAt], it[ReportRevisions.style], it[ReportRevisions.markdown].length)
             }
         }
     }
@@ -209,7 +210,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
                 ReportRevisions.insert {
                     it[reportId] = uuid
                     it[n] = latest.n + 1
-                    it[source] = next.source
+                    it[markdown] = next.source
                     it[style] = next.style
                     it[createdAt] = now
                     it[createdByRun] = run
@@ -319,7 +320,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
         id = this[ReportRevisions.id],
         reportId = this[ReportRevisions.reportId].toString(),
         n = this[ReportRevisions.n],
-        source = this[ReportRevisions.source],
+        source = this[ReportRevisions.markdown],
         style = this[ReportRevisions.style],
         createdAt = this[ReportRevisions.createdAt],
         createdByRun = this[ReportRevisions.createdByRun],

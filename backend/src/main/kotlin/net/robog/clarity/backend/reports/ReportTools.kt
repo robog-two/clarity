@@ -162,7 +162,7 @@ class ReportTools(
 
     fun createReport(scope: RunScope): Tool = tool<CreateInput>(
         name = "create_report",
-        description = "Create a document for the person from Markdown. Returns its id; keep the id, not the text. " +
+        description = "Create a document for the person from Markdown; it shows in their Goods tab at once. Returns its id; keep the id, not the text. " +
             "It downloads as PDF, Word / Pages, OpenDocument and plain text.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
@@ -223,7 +223,7 @@ class ReportTools(
 
     fun listReports(): Tool = tool<NoInput>(
         name = "list_reports",
-        description = "List the documents made for the person, newest first (id, title, revision, when).",
+        description = "List the documents made for the person (their Goods), newest first (id, title, revision, when).",
         json = ClarityJson,
     ) {
         val reports = store.list(limit = 30)
@@ -236,8 +236,8 @@ class ReportTools(
 
     fun presentReport(): Tool = tool<PresentInput>(
         name = PRESENT_REPORT,
-        description = "Show a finished report to the person as a card they can download (PDF, Word / Pages, ...). " +
-            "Same delivery rules as send_to_user; this counts as answering them.",
+        description = "Hand a finished report to the person: a card in the feed they can open and download (PDF, Word / Pages, ...). " +
+            "It is already in their Goods tab; this tells them. Same delivery rules as send_to_user; this counts as answering them.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->

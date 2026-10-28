@@ -38,7 +38,7 @@ fun formatsFor(kind: ReportKind): List<ReportFormat> = when (kind) {
     else -> emptyList()
 }
 
-fun formatOptions(kind: ReportKind): List<ReportFormatOption> = formatsFor(kind).map { ReportFormatOption(it, it.label) }
+fun formatOptions(kind: ReportKind): List<ReportFormatOption> = formatsFor(kind).map { ReportFormatOption(it.wireName, it.label) }
 
 /**
  * Reports for the API and the agent's tools: details, sources, and downloads. A download renders on
