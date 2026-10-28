@@ -13,18 +13,15 @@ import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.bearerAuth
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
-import io.ktor.client.request.prepareGet
 import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.HttpResponse
-import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.encodeURLPathPart
-import io.ktor.utils.io.jvm.javaio.toInputStream
-import java.io.File
 import net.robog.clarity.shared.report.ReportDetail
+import net.robog.clarity.shared.report.ReportLink
 import net.robog.clarity.shared.report.ReportList
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
@@ -189,8 +186,14 @@ interface ReportsApi {
     /** The latest revision's Markdown. */
     suspend fun reportSource(id: String): ApiResult<String>
 
-    /** Streams the latest revision as [format] (a wire name) into [into]; nothing is left there on failure. */
-    suspend fun downloadReport(id: String, format: String, into: File): ApiResult<Unit>
+    /**
+     * The Good's secret download page (made on first use, the same one after), as a full URL on the
+     * instance's address. Download opens it; Share sends it.
+     */
+    suspend fun reportLink(id: String): ApiResult<String>
+
+    /** Turns the secret link off; the next [reportLink] makes a new one. */
+    suspend fun revokeReportLink(id: String): ApiResult<Unit>
 }
 
 /** The credential vault's routes and phone-signed decisions. */
@@ -454,35 +457,17 @@ class KtorClarityApi(
 
     override suspend fun reportSource(id: String): ApiResult<String> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/source")
 
-    override suspend fun downloadReport(id: String, format: String, into: File): ApiResult<Unit> {
+    override suspend fun reportLink(id: String): ApiResult<String> {
         val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
-        val path = "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/download/${format.encodeURLPathPart()}"
-        return withContext(io) {
-            val partial = File(into.parentFile, into.name + ".part")
-            try {
-                client.prepareGet {
-                    url(session.instanceUrl + path)
-                    // The server renders on demand (pandoc, Typst); a long document takes a while.
-                    timeout { requestTimeoutMillis = DOWNLOAD_TIMEOUT_MS }
-                }.execute { response ->
-                    if (!response.status.isSuccess()) return@execute ApiResult.Failure(response.toError())
-                    into.parentFile?.mkdirs()
-                    response.bodyAsChannel().toInputStream().use { input -> partial.outputStream().use { input.copyTo(it) } }
-                    if (!partial.renameTo(into)) {
-                        into.delete()
-                        if (!partial.renameTo(into)) return@execute ApiResult.Failure(ApiError.Unreachable("could not save the file"))
-                    }
-                    ApiResult.Success(Unit)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                ApiResult.Failure(ApiError.Unreachable(e.message))
-            } finally {
-                partial.delete()
-            }
+        val path = "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link"
+        return when (val r = authed<ReportLink> { base -> client.post { url(base + path) } }) {
+            is ApiResult.Success -> ApiResult.Success(session.instanceUrl.trimEnd('/') + r.value.path)
+            is ApiResult.Failure -> r
         }
     }
+
+    override suspend fun revokeReportLink(id: String): ApiResult<Unit> =
+        authedUnit { base -> client.delete { url(base + "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link") } }
 
     // --- ingest (phone connector) ---
 
@@ -571,9 +556,6 @@ class KtorClarityApi(
         }
     }
 }
-
-/** How long a download may take: rendering a long document on the server, then the transfer. */
-private const val DOWNLOAD_TIMEOUT_MS = 120_000L
 
 internal suspend fun HttpResponse.toError(): ApiError {
     val problem = try {

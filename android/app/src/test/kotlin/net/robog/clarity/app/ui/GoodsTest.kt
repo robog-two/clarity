@@ -7,8 +7,6 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
-import java.io.File
-import java.nio.file.Files
 import kotlin.test.AfterTest
 import kotlin.test.BeforeTest
 import kotlin.test.Test
@@ -31,11 +29,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
-import net.robog.clarity.app.data.GoodsFile
 import net.robog.clarity.app.data.GoodsRepository
-import net.robog.clarity.app.data.goodsFileName
-import net.robog.clarity.app.data.goodsFilePath
-import net.robog.clarity.app.data.goodsMimeType
 import net.robog.clarity.app.net.DeviceJwtSigner
 import net.robog.clarity.app.net.KtorClarityApi
 import net.robog.clarity.app.net.createHttpClient
@@ -45,15 +39,13 @@ import net.robog.clarity.app.testutil.FixedClock
 import net.robog.clarity.app.testutil.ScreenFeed
 import net.robog.clarity.app.testutil.T0
 import net.robog.clarity.app.testutil.signedIn
-import net.robog.clarity.app.ui.goods.DownloadState
-import net.robog.clarity.app.ui.goods.GoodsFormat
+import net.robog.clarity.app.ui.goods.LinkAction
+import net.robog.clarity.app.ui.goods.LinkRequest
 import net.robog.clarity.app.ui.goods.GoodsViewModel
 import net.robog.clarity.app.ui.goods.MdBlock
 import net.robog.clarity.app.ui.goods.MdInline
 import net.robog.clarity.app.ui.goods.MdMeta
 import net.robog.clarity.app.ui.goods.ReportViewModel
-import net.robog.clarity.app.ui.goods.cardFormats
-import net.robog.clarity.app.ui.goods.countLine
 import net.robog.clarity.app.ui.goods.goodsRows
 import net.robog.clarity.app.ui.goods.goodsWhen
 import net.robog.clarity.app.ui.goods.parseInline
@@ -69,6 +61,7 @@ import net.robog.clarity.shared.report.ReportCitation
 import net.robog.clarity.shared.report.ReportDetail
 import net.robog.clarity.shared.report.ReportFormatOption
 import net.robog.clarity.shared.report.ReportKind
+import net.robog.clarity.shared.report.ReportLink
 import net.robog.clarity.shared.report.ReportList
 import net.robog.clarity.shared.report.ReportRevisionInfo
 import net.robog.clarity.shared.report.ReportStyle
@@ -166,15 +159,6 @@ class GoodsPresentationTest {
         )
         assertEquals(listOf("b", "a"), rows.map { it.id })
         assertEquals("Document · Yesterday · revision 2", rows[0].detail)
-        assertEquals("1 document", countLine(1))
-        assertEquals("2 documents", countLine(2))
-    }
-
-    @Test fun cardFormatsSkipMarkdownAndKeepUnknownOnes() {
-        assertEquals(
-            listOf(GoodsFormat("pdf", "PDF"), GoodsFormat("docx", "Word / Pages"), GoodsFormat("odt", "OpenDocument"), GoodsFormat("txt", "Text"), GoodsFormat("epub", "EPUB")),
-            cardFormats(listOf("pdf", "docx", "odt", "txt", "md", "epub")),
-        )
     }
 
     @Test fun sourcesShowTheirSite() {
@@ -188,16 +172,6 @@ class GoodsPresentationTest {
         assertEquals("Document · revision 3 · Today, 3:00 pm", revisionLine(detail(revisions = 3), now, zone))
     }
 
-    @Test fun downloadsStayInsideTheGoodsFolder() {
-        assertEquals("goods/abc-123/The Devils 1971.pdf", goodsFilePath("abc-123", "The Devils (1971)", "pdf"))
-        val evil = goodsFilePath("../../shared_prefs", "../../x/y", "../docx")
-        assertEquals("goods/sharedprefs/x y.docx", evil)
-        assertFalse(evil.removePrefix("goods/").contains(".."), evil)
-        assertEquals("Document", goodsFileName("///"))
-        assertEquals("application/pdf", goodsMimeType("pdf"))
-        assertEquals("text/plain", goodsMimeType("txt"))
-        assertEquals("application/octet-stream", goodsMimeType("zzz"))
-    }
 }
 
 private fun detail(revisions: Int = 1, sources: List<ReportCitation> = emptyList()) = ReportDetail(
@@ -214,17 +188,17 @@ private class FakeGoods(
     var list: ApiResult<List<ReportSummary>> = ApiResult.Success(emptyList()),
     var detail: ApiResult<ReportDetail> = ApiResult.Success(detail()),
     var source: ApiResult<String> = ApiResult.Success("---\ntitle: Possession and Power\n---\n\n# Background\n\nText."),
-    var download: ApiResult<GoodsFile> = ApiResult.Success(GoodsFile(File("x.pdf"), "application/pdf")),
+    var link: ApiResult<String> = ApiResult.Success("https://clarity.example/g/TOKEN"),
+    var turnOff: ApiResult<Unit> = ApiResult.Success(Unit),
 ) : GoodsRepository {
-    val downloads = mutableListOf<Pair<String, String>>()
+    var linkCalls = 0
+    var turnOffCalls = 0
     var listCalls = 0
     override suspend fun list() = list.also { listCalls++ }
     override suspend fun detail(id: String) = detail
     override suspend fun source(id: String) = source
-    override suspend fun download(id: String, format: String, title: String): ApiResult<GoodsFile> {
-        downloads += format to title
-        return download
-    }
+    override suspend fun link(id: String) = link.also { linkCalls++ }
+    override suspend fun turnOffLink(id: String) = turnOff.also { turnOffCalls++ }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -246,8 +220,8 @@ class ReportViewModelTest {
         assertNull(s.error)
         assertEquals("Possession and Power", s.title, "the front matter's title wins")
         assertTrue(s.subtitle.startsWith("Document · revision 2"))
-        assertEquals(listOf("pdf", "docx"), s.formats.map { it.wire })
         assertEquals(sources, s.sources)
+        assertFalse(s.linkOn)
         assertEquals(MdBlock.Heading(1, listOf(t("Background"))), s.document!!.blocks.first())
     }
 
@@ -273,34 +247,52 @@ class ReportViewModelTest {
         assertNull(s.document)
         assertEquals("Can’t reach your server right now.", s.sourceError)
         assertEquals("The Devils", s.title)
-        assertEquals(2, s.formats.size)
     }
 
-    @Test fun aDownloadBecomesAnOpenRequestThenClears() = runTest(dispatcher) {
+    @Test fun downloadAndShareUseTheOneLinkThenClear() = runTest(dispatcher) {
         val goods = FakeGoods()
         val vm = vm(goods)
         vm.open("r1")
         advanceUntilIdle()
-        vm.download("docx", share = true)
-        assertEquals(DownloadState.Busy, vm.state.value.downloads["docx"])
-        vm.download("docx") // ignored while busy
+        vm.link(LinkAction.Share)
+        assertEquals(LinkAction.Share, vm.state.value.busy)
+        vm.link(LinkAction.Download) // ignored while the link is on its way
         advanceUntilIdle()
-        assertEquals(listOf("docx" to "Possession and Power"), goods.downloads)
-        val open = assertNotNull(vm.state.value.open)
-        assertTrue(open.share)
-        assertTrue(vm.state.value.downloads.isEmpty())
+        assertEquals(1, goods.linkCalls)
+        assertEquals(LinkRequest("https://clarity.example/g/TOKEN", LinkAction.Share, "Possession and Power"), vm.state.value.open)
+        assertTrue(vm.state.value.linkOn)
+        assertNull(vm.state.value.busy)
         vm.opened()
         assertNull(vm.state.value.open)
+        vm.link(LinkAction.Download)
+        advanceUntilIdle()
+        assertEquals(LinkAction.Download, vm.state.value.open!!.action)
+        vm.opened(ok = false)
+        assertEquals("Nothing on this phone can open the link.", vm.state.value.linkNote)
     }
 
-    @Test fun aFailedDownloadSaysWhy() = runTest(dispatcher) {
-        val vm = vm(FakeGoods(download = ApiResult.Failure(ApiError.Http(422, null))))
+    @Test fun anExistingLinkShowsAndCanBeTurnedOff() = runTest(dispatcher) {
+        val goods = FakeGoods(detail = ApiResult.Success(detail().copy(link = "/g/TOKEN")))
+        val vm = vm(goods)
         vm.open("r1")
         advanceUntilIdle()
-        vm.download("pdf")
+        assertTrue(vm.state.value.linkOn)
+        vm.turnOffLink()
         advanceUntilIdle()
-        assertIs<DownloadState.Failed>(vm.state.value.downloads["pdf"])
+        assertEquals(1, goods.turnOffCalls)
+        assertFalse(vm.state.value.linkOn)
+        assertEquals("Link turned off. Sharing again makes a new one.", vm.state.value.linkNote)
+    }
+
+    @Test fun aLinkThatFailsSaysWhy() = runTest(dispatcher) {
+        val vm = vm(FakeGoods(link = ApiResult.Failure(ApiError.Unreachable(null))))
+        vm.open("r1")
+        advanceUntilIdle()
+        vm.link(LinkAction.Download)
+        advanceUntilIdle()
+        assertEquals("Can’t reach your server right now.", vm.state.value.linkNote)
         assertNull(vm.state.value.open)
+        assertNull(vm.state.value.busy)
     }
 }
 
@@ -342,17 +334,18 @@ class GoodsViewModelTest {
 }
 
 class GoodsApiTest {
-    @Test fun listDetailSourceAndADownloadToAFile() = kotlinx.coroutines.runBlocking {
+    @Test fun listDetailSourceAndTheLink() = kotlinx.coroutines.runBlocking {
         val requests = mutableListOf<HttpRequestData>()
         val store = FakeSessionStore(signedIn())
         val json = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString())
         val engine = MockEngine { request ->
             requests += request
-            when (request.url.encodedPath) {
-                "/api/v1/reports" -> respond(ClarityJson.encodeToString(ReportList.serializer(), ReportList(emptyList())), HttpStatusCode.OK, json)
-                "/api/v1/reports/r1" -> respond(ClarityJson.encodeToString(ReportDetail.serializer(), detail()), HttpStatusCode.OK, json)
-                "/api/v1/reports/r1/source" -> respond("# Hello", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/markdown; charset=utf-8"))
-                "/api/v1/reports/r1/download/pdf" -> respond("%PDF-1.7 fake".encodeToByteArray(), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/pdf"))
+            when (request.method.value to request.url.encodedPath) {
+                "GET" to "/api/v1/reports" -> respond(ClarityJson.encodeToString(ReportList.serializer(), ReportList(emptyList())), HttpStatusCode.OK, json)
+                "GET" to "/api/v1/reports/r1" -> respond(ClarityJson.encodeToString(ReportDetail.serializer(), detail()), HttpStatusCode.OK, json)
+                "GET" to "/api/v1/reports/r1/source" -> respond("# Hello", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/markdown; charset=utf-8"))
+                "POST" to "/api/v1/reports/r1/link" -> respond(ClarityJson.encodeToString(ReportLink.serializer(), ReportLink("/g/TOKEN")), HttpStatusCode.OK, json)
+                "DELETE" to "/api/v1/reports/r1/link" -> respond("", HttpStatusCode.NoContent)
                 else -> respond("""{"title":"Not found","status":404}""", HttpStatusCode.NotFound, json)
             }
         }
@@ -360,15 +353,9 @@ class GoodsApiTest {
         assertIs<ApiResult.Success<ReportList>>(api.reports())
         assertEquals("The Devils", assertIs<ApiResult.Success<ReportDetail>>(api.report("r1")).value.title)
         assertEquals("# Hello", assertIs<ApiResult.Success<String>>(api.reportSource("r1")).value)
-
-        val dir = Files.createTempDirectory("goods").toFile()
-        val file = File(dir, "goods/r1/The Devils.pdf")
-        assertIs<ApiResult.Success<Unit>>(api.downloadReport("r1", "pdf", file))
-        assertEquals("%PDF-1.7 fake", file.readText())
-        val missing = File(dir, "goods/r1/The Devils.odt")
-        assertIs<ApiResult.Failure>(api.downloadReport("r1", "odt", missing))
-        assertFalse(missing.exists())
-        assertFalse(File(missing.path + ".part").exists())
+        assertEquals("https://clarity.example/g/TOKEN", assertIs<ApiResult.Success<String>>(api.reportLink("r1")).value)
+        assertIs<ApiResult.Success<Unit>>(api.revokeReportLink("r1"))
+        assertIs<ApiResult.Failure>(api.reportLink("nope"))
         assertTrue(requests.all { it.headers[HttpHeaders.Authorization]?.startsWith("Bearer ") == true }, "every Goods call is device-authenticated")
     }
 }

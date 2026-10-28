@@ -51,7 +51,6 @@ class MainActivity : FragmentActivity() {
             CompositionLocalProvider(
                 LocalMetroViewModelFactory provides graph.metroViewModelFactory,
                 LocalVaultRepository provides graph.vaultRepository,
-                net.robog.clarity.app.ui.goods.LocalGoodsRepository provides graph.goodsRepository,
                 LocalHeldExtras provides vaultExtras,
                 LocalFrontScreen provides graph.frontScreen,
             ) {

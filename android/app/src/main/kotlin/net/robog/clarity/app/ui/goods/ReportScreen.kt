@@ -3,11 +3,10 @@ package net.robog.clarity.app.ui.goods
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -17,26 +16,19 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -66,33 +58,30 @@ fun ReportScreen(reportId: String, onBack: () -> Unit, backLabel: String = "Good
     val state by viewModel.state.collectAsStateWithLifecycle()
     BackHandler { onBack() }
     val context = LocalContext.current
-    var noApp by remember { mutableStateOf<String?>(null) }
-    // A finished download goes to the app that opens it, or to the share sheet.
+    // The download page's link goes to the browser (Download) or the share sheet (Share).
     LaunchedEffect(state.open) {
         val open = state.open ?: return@LaunchedEffect
-        noApp = if (handOver(context, open.file, open.title, open.share)) null else "No app on this phone takes this kind of file."
-        viewModel.opened()
+        viewModel.opened(handOverLink(context, open.url, open.title, share = open.action == LinkAction.Share))
     }
-    ReportContent(state, onBack, backLabel, viewModel::download, viewModel::retry, notice = noApp)
+    ReportContent(state, onBack, backLabel, viewModel::link, viewModel::retry, viewModel::turnOffLink)
 }
 
 /**
- * The viewer: what it is and when it changed, the downloads, the text as it reads, and the web
- * sources it cites. The text is drawn here from the Markdown; the downloads are the server's files.
+ * The viewer: a top bar with back, Download and Share (both use the Good's one download page, which
+ * has every format); what it is and when it changed; the text as it reads; the web sources it cites.
  */
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ReportContent(
     state: ReportUiState,
     onBack: () -> Unit,
     backLabel: String,
-    onDownload: (format: String, share: Boolean) -> Unit,
+    onLink: (LinkAction) -> Unit,
     onRetry: () -> Unit,
+    onTurnOffLink: () -> Unit,
     modifier: Modifier = Modifier,
-    notice: String? = null,
 ) {
     Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()) {
-        BackLink(backLabel, onBack, Modifier.padding(horizontal = ScreenGutter))
+        ViewerTopBar(backLabel, onBack, state, onLink)
         when {
             state.loading -> LoadingSpinner(Modifier.padding(top = 48.dp))
             state.error != null -> Column(Modifier.padding(horizontal = ScreenGutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -103,13 +92,13 @@ fun ReportContent(
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = 8.dp, bottom = 40.dp),
             ) {
-                item(key = "header") { ReportHeader(state, Modifier.padding(bottom = 16.dp)) }
-                item(key = "downloads") { Downloads(state, onDownload, notice, Modifier.padding(bottom = 20.dp)) }
-                item(key = "rule") { HorizontalDivider(Modifier.padding(bottom = 22.dp), color = MaterialTheme.colorScheme.outlineVariant) }
+                item(key = "header") { ReportHeader(state, Modifier.padding(bottom = 12.dp)) }
+                if (state.linkOn || state.linkNote != null) item(key = "link") { LinkLine(state, onTurnOffLink, Modifier.padding(bottom = 8.dp)) }
+                item(key = "rule") { HorizontalDivider(Modifier.padding(top = 8.dp, bottom = 22.dp), color = MaterialTheme.colorScheme.outlineVariant) }
                 val document = state.document
                 when {
                     document == null -> item(key = "no-text") {
-                        ErrorBox("Can’t show the text here", (state.sourceError ?: "It didn’t come through.") + " The downloads still work.")
+                        ErrorBox("Can’t show the text here", (state.sourceError ?: "It didn’t come through.") + " Download still works.")
                     }
                     document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written in this one yet.") }
                     else -> markdownItems(document.blocks)
@@ -124,6 +113,27 @@ fun ReportContent(
                 }
             }
         }
+    }
+}
+
+/** Back on the left; Download and Share, plain icon buttons, on the right (once there is a Good to act on). */
+@Composable
+private fun ViewerTopBar(backLabel: String, onBack: () -> Unit, state: ReportUiState, onLink: (LinkAction) -> Unit) {
+    Row(Modifier.fillMaxWidth().padding(start = ScreenGutter, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        BackLink(backLabel, onBack)
+        Spacer(Modifier.weight(1f))
+        if (!state.loading && state.error == null) {
+            LinkButton(Icons.Outlined.FileDownload, "Download", state.busy == LinkAction.Download, state.busy == null) { onLink(LinkAction.Download) }
+            LinkButton(Icons.Outlined.Share, "Share", state.busy == LinkAction.Share, state.busy == null) { onLink(LinkAction.Share) }
+        }
+    }
+}
+
+@Composable
+private fun LinkButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, busy: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled || busy) {
+        if (busy) CircularProgressIndicator(Modifier.size(20.dp).semantics { contentDescription = "$label: getting the link" }, strokeWidth = 2.dp)
+        else Icon(icon, contentDescription = label)
     }
 }
 
@@ -142,40 +152,17 @@ private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
     }
 }
 
-/** A button per format (opens it in another app) and one that shares a copy in the format chosen. */
+/** While the download link is on, says so quietly, with a way to turn it off; or the last note about it. */
 @Composable
-private fun Downloads(state: ReportUiState, onDownload: (String, Boolean) -> Unit, notice: String?, modifier: Modifier = Modifier) {
-    var shareMenu by remember { mutableStateOf(false) }
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
-            state.formats.forEach { format ->
-                val busy = state.downloads[format.wire] == DownloadState.Busy
-                FilledTonalButton(
-                    onClick = { onDownload(format.wire, false) },
-                    contentPadding = ButtonDefaults.ButtonWithIconContentPadding,
-                    modifier = Modifier.semantics { contentDescription = if (busy) "Downloading ${format.label}" else "Open as ${format.label}" },
-                ) {
-                    if (busy) CircularProgressIndicator(Modifier.size(ButtonDefaults.IconSize), strokeWidth = 2.dp)
-                    else Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
-                    Text(format.label, Modifier.padding(start = ButtonDefaults.IconSpacing))
-                }
-            }
-            if (state.formats.isNotEmpty()) {
-                Box {
-                    OutlinedIconButton(onClick = { shareMenu = true }) { Icon(Icons.Outlined.Share, contentDescription = "Share a copy") }
-                    DropdownMenu(expanded = shareMenu, onDismissRequest = { shareMenu = false }) {
-                        state.formats.forEach { format ->
-                            DropdownMenuItem(text = { Text("Share as ${format.label}") }, onClick = { shareMenu = false; onDownload(format.wire, true) })
-                        }
-                    }
-                }
-            }
-        }
-        val failed = state.downloads.entries.firstNotNullOfOrNull { (wire, s) ->
-            (s as? DownloadState.Failed)?.let { f -> (state.formats.firstOrNull { it.wire == wire }?.label ?: wire) to f.message }
-        }
-        failed?.let { (label, message) -> Text("$label didn’t download. $message", style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.error) }
-        notice?.let { Text(it, style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.error) }
+private fun LinkLine(state: ReportUiState, onTurnOffLink: () -> Unit, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            state.linkNote ?: "Anyone with the link can download it.",
+            Modifier.weight(1f),
+            style = MaterialTheme.clarityText.chatSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (state.linkOn) TextButton(onClick = onTurnOffLink) { Text("Turn off link") }
     }
 }
 

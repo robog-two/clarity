@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- Only the Goods downloads in the cache (data/Goods.kt GOODS_CACHE_DIR) can be lent to another app. -->
-<paths>
-    <cache-path name="goods" path="goods/" />
-</paths>

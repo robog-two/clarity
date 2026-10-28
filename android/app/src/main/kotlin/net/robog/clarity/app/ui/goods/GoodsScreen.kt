@@ -56,7 +56,7 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 32.dp)) {
             item(key = "header") {
                 Column(Modifier.padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Kicker(if (state.rows.isEmpty()) "what I make for you" else countLine(state.rows.size))
+                    Kicker("what I make for you")
                     Text("Goods", style = MaterialTheme.clarityText.heroTitle)
                     Hint("Essays, reports and write-ups I make for you land here. Open one to read it, or download it for Word, Pages or anywhere else.")
                 }
@@ -90,6 +90,3 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
         }
     }
 }
-
-/** Pure: the kicker over a non-empty list ("1 document", "3 documents"); avoids "a Good". */
-fun countLine(count: Int): String = if (count == 1) "1 document" else "$count documents"

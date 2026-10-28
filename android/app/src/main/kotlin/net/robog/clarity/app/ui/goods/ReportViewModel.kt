@@ -18,19 +18,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.AppClock
-import net.robog.clarity.app.data.GoodsFile
 import net.robog.clarity.app.data.GoodsRepository
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.shared.report.ReportCitation
 
-/** A download in progress, or the reason the last one failed. */
-sealed interface DownloadState {
-    data object Busy : DownloadState
-    data class Failed(val message: String) : DownloadState
-}
+/** What the viewer's top bar asked for: open the download page, or share its link. */
+enum class LinkAction { Download, Share }
 
-/** A downloaded file the screen should hand to another app: to view it, or to share it. */
-data class OpenRequest(val file: GoodsFile, val share: Boolean, val title: String)
+/** A link the screen should hand to the browser ([LinkAction.Download]) or the share sheet. */
+data class LinkRequest(val url: String, val action: LinkAction, val title: String)
 
 data class ReportUiState(
     val loading: Boolean = true,
@@ -40,19 +36,23 @@ data class ReportUiState(
     /** "Document · revision 2 · Today, 9:41". */
     val subtitle: String = "",
     val document: MdDocument? = null,
-    /** Why the text could not be shown, while the downloads still work. */
+    /** Why the text could not be shown, while Download and Share still work. */
     val sourceError: String? = null,
-    val formats: List<GoodsFormat> = emptyList(),
     val sources: List<ReportCitation> = emptyList(),
-    /** Per format wire name. */
-    val downloads: Map<String, DownloadState> = emptyMap(),
-    val open: OpenRequest? = null,
+    /** Whether the Good has a live download link (anyone with it can download). */
+    val linkOn: Boolean = false,
+    /** The action waiting for its link. */
+    val busy: LinkAction? = null,
+    /** A short line about the link: why it failed, or that it was turned off. */
+    val linkNote: String? = null,
+    val open: LinkRequest? = null,
 )
 
 /**
- * One Good, read in the app: its details and latest Markdown (fetched together), and downloads in
- * each format through the authenticated client. A finished download becomes [ReportUiState.open]
- * for the screen to hand to a viewer or the share sheet; the screen then calls [opened].
+ * One Good, read in the app: its details and latest Markdown (fetched together). Download and Share
+ * both use the Good's one secret download page (asked of the server, made on first use); the screen
+ * hands [ReportUiState.open] to the browser or the share sheet and then calls [opened]. The link can
+ * be turned off; the next Download or Share makes a new one.
  */
 @Inject
 @ViewModelKey(ReportViewModel::class)
@@ -82,26 +82,35 @@ class ReportViewModel(
         viewModelScope.launch { load(id) }
     }
 
-    /** Downloads [format] (a wire name), then asks the screen to open or [share] it. Ignored while that format is downloading. */
-    fun download(format: String, share: Boolean = false) {
+    /** Asks for the download page's link, then for the screen to open or share it. Ignored while one is on its way. */
+    fun link(action: LinkAction) {
         val id = id ?: return
         val current = _state.value
-        if (current.downloads[format] == DownloadState.Busy || current.title.isEmpty()) return
-        _state.update { it.copy(downloads = it.downloads + (format to DownloadState.Busy)) }
+        if (current.busy != null || current.title.isEmpty()) return
+        _state.update { it.copy(busy = action, linkNote = null) }
         viewModelScope.launch {
-            when (val r = repository.download(id, format, current.title)) {
-                is ApiResult.Success -> _state.update {
-                    it.copy(downloads = it.downloads - format, open = OpenRequest(r.value, share, it.title))
-                }
-                is ApiResult.Failure -> _state.update {
-                    it.copy(downloads = it.downloads + (format to DownloadState.Failed(r.error.sentence())))
-                }
+            when (val r = repository.link(id)) {
+                is ApiResult.Success -> _state.update { it.copy(busy = null, linkOn = true, open = LinkRequest(r.value, action, it.title)) }
+                is ApiResult.Failure -> _state.update { it.copy(busy = null, linkNote = r.error.sentence()) }
             }
         }
     }
 
-    /** The screen handed [ReportUiState.open] over (or could not). */
-    fun opened() = _state.update { it.copy(open = null) }
+    /** Turns the download link off: whoever has it can no longer download. */
+    fun turnOffLink() {
+        val id = id ?: return
+        viewModelScope.launch {
+            when (val r = repository.turnOffLink(id)) {
+                is ApiResult.Success -> _state.update { it.copy(linkOn = false, linkNote = "Link turned off. Sharing again makes a new one.") }
+                is ApiResult.Failure -> _state.update { it.copy(linkNote = r.error.sentence()) }
+            }
+        }
+    }
+
+    /** The screen handed [ReportUiState.open] over; [ok] false when nothing on the phone could take it. */
+    fun opened(ok: Boolean = true) = _state.update {
+        it.copy(open = null, linkNote = if (ok) it.linkNote else "Nothing on this phone can open the link.")
+    }
 
     private suspend fun load(id: String) {
         val (detail, source) = coroutineScope {
@@ -113,7 +122,6 @@ class ReportViewModel(
             is ApiResult.Failure -> _state.update { it.copy(loading = false, error = detail.error.sentence()) }
             is ApiResult.Success -> {
                 val value = detail.value
-                // A long document parses off the main thread.
                 val document = (source as? ApiResult.Success)?.value?.let { withContext(parseOn) { parseMarkdown(it) } }
                 _state.update {
                     it.copy(
@@ -123,8 +131,8 @@ class ReportViewModel(
                         subtitle = revisionLine(value, clock.now(), clock.zone()),
                         document = document,
                         sourceError = (source as? ApiResult.Failure)?.error?.sentence(),
-                        formats = detailFormats(value),
                         sources = value.sources,
+                        linkOn = value.link != null,
                     )
                 }
             }

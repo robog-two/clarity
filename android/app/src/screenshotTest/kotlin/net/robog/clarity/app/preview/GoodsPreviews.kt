@@ -17,9 +17,7 @@ import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.ui.cards.AgentBubble
 import net.robog.clarity.app.ui.cards.SaidBubble
-import net.robog.clarity.app.ui.goods.DownloadState
 import net.robog.clarity.app.ui.goods.GoodsContent
-import net.robog.clarity.app.ui.goods.GoodsFormat
 import net.robog.clarity.app.ui.goods.GoodsUiState
 import net.robog.clarity.app.ui.goods.ReportCardView
 import net.robog.clarity.app.ui.goods.ReportContent
@@ -44,17 +42,16 @@ private fun Goods(dark: Boolean, content: @Composable () -> Unit) {
 private val devilsCard = Card.Report("r1", "Possession and Power in The Devils", listOf("pdf", "docx", "odt", "txt", "md"))
 
 @Composable
-private fun ReportCardInThread(dark: Boolean, busy: String? = null) = Goods(dark) {
+private fun ReportCardInThread(dark: Boolean) = Goods(dark) {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         SaidBubble("Create a report about background for The Devils and put it in my goods tab")
         AgentBubble("Done. The background on The Devils is in your Goods, with the two sources it draws on.")
-        ReportCardView(devilsCard, onOpen = {}, previewBusy = busy)
+        ReportCardView(devilsCard, onOpen = {})
     }
 }
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 420) @Composable fun ReportCardLight() = ReportCardInThread(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 420) @Composable fun ReportCardDark() = ReportCardInThread(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 420) @Composable fun ReportCardDownloading() = ReportCardInThread(false, busy = "pdf")
 
 // ---------- the viewer ----------
 
@@ -85,17 +82,11 @@ Warner Bros. cut the film heavily on release, and the full version is still [har
 2. Russell, Ken, director. *The Devils*. Warner Bros., 1971.
 """.trimIndent()
 
-private val formats = listOf(
-    GoodsFormat("pdf", "PDF"), GoodsFormat("docx", "Word / Pages"), GoodsFormat("odt", "OpenDocument"),
-    GoodsFormat("txt", "Text"), GoodsFormat("md", "Markdown"),
-)
-
 private val viewer = ReportUiState(
     loading = false,
     title = "Possession and Power in The Devils",
     subtitle = "Document · revision 2 · Today, 2:40 pm",
     document = parseMarkdown(essay),
-    formats = formats,
     sources = listOf(
         ReportCitation("https://en.wikipedia.org/wiki/The_Devils_(film)", "The Devils (film)", "directed by Ken Russell", now),
         ReportCitation("https://www.bfi.org.uk/features/devils", "The Devils at 50: Ken Russell's most notorious film", null, now),
@@ -103,12 +94,12 @@ private val viewer = ReportUiState(
 )
 
 @Composable
-private fun Viewer(dark: Boolean, state: ReportUiState) = Goods(dark) { ReportContent(state, {}, "Goods", { _, _ -> }, {}) }
+private fun Viewer(dark: Boolean, state: ReportUiState) = Goods(dark) { ReportContent(state, {}, "Goods", {}, {}, {}) }
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerLight() = Viewer(false, viewer)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerDark() = Viewer(true, viewer)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerDownloading() =
-    Viewer(false, viewer.copy(downloads = mapOf("docx" to DownloadState.Busy, "pdf" to DownloadState.Failed("Can’t reach your server right now."))))
+@PreviewTest @Preview(widthDp = 412, heightDp = 640) @Composable fun ReportViewerLinkOnLight() = Viewer(false, viewer.copy(linkOn = true))
+@PreviewTest @Preview(widthDp = 412, heightDp = 640) @Composable fun ReportViewerLinkOnDark() = Viewer(true, viewer.copy(linkOn = true))
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerLoading() = Viewer(false, ReportUiState())
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorLight() =
     Viewer(false, ReportUiState(loading = false, error = "Can’t reach your server right now."))

@@ -37,6 +37,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import net.robog.clarity.app.ui.theme.ClarityFonts
 import net.robog.clarity.app.ui.theme.clarityText
 
 /** The colours inline Markdown is drawn with (links, code). */
@@ -100,13 +101,14 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
     val reading = MaterialTheme.clarityText.reading
     val colors = MaterialTheme.colorScheme
     when (block) {
+        // Headings as the downloaded files have them by default: the app's serif, bold.
         is MdBlock.Heading -> InlineText(
             block.text,
             when (block.level) {
                 1 -> type.headlineSmall
                 2 -> type.titleLarge
                 else -> type.titleMedium
-            },
+            }.copy(fontFamily = ClarityFonts.reading, fontWeight = FontWeight.Bold),
             modifier.semantics { heading() },
         )
         is MdBlock.Paragraph -> InlineText(block.text, reading, modifier)
