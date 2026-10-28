@@ -13,6 +13,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.ingest.IngestBatch
@@ -63,6 +64,10 @@ interface SyncScope {
  * config (so action handlers see credentials saved after start) and answers [test], the "test this
  * connection" requests from the app.
  *
+ * [accounts] lists the person's accounts the connector acts as (label and address, never
+ * credentials) for a config; whenever that list changes the manifest is registered again with it
+ * ([ConnectorManifest.accounts]), so the backend knows, for example, which addresses mail can go from.
+ *
  * ```kotlin
  * suspend fun main() = runConnector(manifest) { config -> push(records) }
  * ```
@@ -73,6 +78,7 @@ suspend fun runConnector(
     actions: ActionHandlers = ActionHandlers.None,
     runtime: ConnectorRuntime? = null,
     test: (suspend (config: ConnectorConfig) -> ConnectorTestResult)? = null,
+    accounts: ((config: ConnectorConfig) -> List<ConnectorAccount>)? = null,
     sync: suspend SyncScope.(config: ConnectorConfig) -> Unit,
 ) {
     log.info { "starting connector ${manifest.kind} ${manifest.version} against ${settings.baseUrl}" }
@@ -82,7 +88,7 @@ suspend fun runConnector(
             val client = ClarityClient(http)
             val state = FileStateStore(settings.stateDir)
             val loop = launch {
-                runLoop(client, state, manifest, settings.syncInterval, runtime, sync)
+                runLoop(client, state, manifest, settings.syncInterval, runtime, accounts, sync)
             }
             val actionLoop = if (actions.isEmpty && test == null) null else {
                 if (actions.kinds != manifest.handles) {
@@ -118,9 +124,11 @@ internal suspend fun runLoop(
     manifest: ConnectorManifest,
     interval: Duration,
     runtime: ConnectorRuntime? = null,
+    accounts: ((ConnectorConfig) -> List<ConnectorAccount>)? = null,
     sync: suspend SyncScope.(ConnectorConfig) -> Unit,
 ) {
     registerManifest(client, manifest)
+    var announced = manifest.accounts
 
     var etag: String? = null
     var config: ConnectorConfig? = null
@@ -138,7 +146,9 @@ internal suspend fun runLoop(
                 }
             },
         )
-        when (val current = config) {
+        val current = config
+        if (current != null && accounts != null) announced = announceAccounts(client, manifest, announced, current, accounts)
+        when (current) {
             null -> log.warn { "no config available yet; skipping sync" }
             else -> runSync(client, state, current, sync)
         }
@@ -158,6 +168,32 @@ private suspend fun registerManifest(client: ClarityClient, manifest: ConnectorM
         delay(wait)
         wait = minOf(wait * 2, 60.seconds)
     }
+}
+
+/**
+ * Registers [manifest] again when the accounts of [config] differ from [announced]; returns what the
+ * backend now knows. A failed registration (or a failing [accounts]) is retried on the next poll.
+ */
+private suspend fun announceAccounts(
+    client: ClarityClient,
+    manifest: ConnectorManifest,
+    announced: List<ConnectorAccount>,
+    config: ConnectorConfig,
+    accounts: (ConnectorConfig) -> List<ConnectorAccount>,
+): List<ConnectorAccount> {
+    val current = try {
+        accounts(config)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        log.warn(e) { "could not list the accounts of config ${config.version}" }
+        return announced
+    }
+    if (current == announced) return announced
+    return client.putManifest(manifest.copy(accounts = current)).fold(
+        ifLeft = { log.warn { "announcing ${current.size} account(s) failed: ${it.message}; retrying next poll" }; announced },
+        ifRight = { log.info { "announced ${current.size} account(s)" }; current },
+    )
 }
 
 private suspend fun runSync(

@@ -42,11 +42,13 @@ suspend fun syncAccounts(
 
 /**
  * The account an email is sent or drafted from: the one whose `fromAddress` or `username` is
- * [from]; else the one that received the message at [replyTo]; else the first.
+ * [from], and none when no account has that address (it is never sent from another one). Without
+ * [from] (an email held before the sender was chosen): the one that received the message at
+ * [replyTo], else the first.
  */
 fun selectAccount(accounts: List<MailConfig>, from: Handle?, replyTo: SourceId?): MailConfig? {
     from?.value?.trim()?.takeIf(String::isNotEmpty)?.let { wanted ->
-        accounts.firstOrNull { it.fromAddress.equals(wanted, ignoreCase = true) || it.username.equals(wanted, ignoreCase = true) }?.let { return it }
+        return accounts.firstOrNull { it.fromAddress.equals(wanted, ignoreCase = true) || it.username.equals(wanted, ignoreCase = true) }
     }
     replyTo?.value?.let { MailRef.parse(it, accounts.map(MailConfig::id)) }?.let { ref ->
         accounts.firstOrNull { it.id == ref.accountId }?.let { return it }

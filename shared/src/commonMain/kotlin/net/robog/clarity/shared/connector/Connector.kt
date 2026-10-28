@@ -26,7 +26,16 @@ data class ConnectorManifest(
      * OAuth tokens) so that only the connector can read them; the backend stores ciphertext.
      */
     val sealingKey: String? = null,
+    /**
+     * The person's own accounts the connector acts as (a mail connector's addresses), from its
+     * current config. Label and address only, never credentials.
+     */
+    val accounts: List<ConnectorAccount> = emptyList(),
 )
+
+/** One of the person's accounts at a connector: what they call it ("Gmail") and its address. */
+@Serializable
+data class ConnectorAccount(val label: String, val address: String)
 
 /** Connector configuration, versioned so connectors can poll cheaply (`If-None-Match`). */
 @Serializable

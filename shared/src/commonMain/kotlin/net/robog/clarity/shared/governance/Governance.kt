@@ -221,15 +221,24 @@ sealed interface ProposedAction {
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.TWO_FACTOR_CODE }
 }
 
+/**
+ * An email to draft or send. Items held before the sender was chosen have no [from]: the mail
+ * connector then picks the account (see its `selectAccount`).
+ */
 @Serializable
 data class EmailDraft(
+    /** The person's own address it goes from: one of the mail connector's accounts. */
     val from: Handle? = null,
     val to: List<Handle>,
     val cc: List<Handle> = emptyList(),
     val subject: String,
     val body: String,
-    /** The message this replies to, for threading headers. */
+    /** The message this replies to, for threading headers; null for a new thread. */
     val inReplyTo: EntityId? = null,
+    /** What the person calls the [from] account ("Gmail"), for showing it. */
+    val fromLabel: String? = null,
+    /** Subject of the message [inReplyTo] answers, for showing the thread. */
+    val replySubject: String? = null,
 )
 
 @Serializable

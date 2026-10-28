@@ -123,6 +123,15 @@ class LeadPureTest : FunSpec({
             blocks[1].cacheBreakpoint shouldBe true
             blocks[0].text shouldNotContain "Berlin"
         }
+        test("the constitution block names the mail accounts an email can go from") {
+            val mail = listOf(
+                net.robog.clarity.shared.connector.ConnectorAccount("iCloud", "robogamingbysam@icloud.com"),
+                net.robog.clarity.shared.connector.ConnectorAccount("Gmail", "samuel.elliot.knight@gmail.com"),
+            )
+            leadSystemBlocks(sample, mail = mail)[1].text shouldContain
+                "Mail accounts (an email's `from`): iCloud <robogamingbysam@icloud.com>, Gmail <samuel.elliot.knight@gmail.com>."
+            leadSystemBlocks(sample)[1].text shouldNotContain "Mail accounts"
+        }
         test("the lead prompt states the rules the design depends on") {
             AgentPrompts.LEAD_SYSTEM shouldContain "send_to_user"
             AgentPrompts.LEAD_SYSTEM shouldContain "<untrusted"
