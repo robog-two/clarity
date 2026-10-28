@@ -103,8 +103,13 @@ data class Today(
     val doing: List<AgentTask> = emptyList(),
     val heldCount: Int = 0,
     val parked: List<String> = emptyList(),
-    /** True once today's morning call has happened. */
+    /** True once today's morning call has happened (it reached the hand-off). */
     val called: Boolean = false,
+    /**
+     * True once a morning call started today, whether or not it got to the hand-off ([called]): with
+     * [called] false, today's call was missed, snoozed or ended early.
+     */
+    val callStarted: Boolean = false,
     /** Check-ins the agent has scheduled for itself and not yet made, soonest first. */
     val nudges: List<Nudge> = emptyList(),
 )

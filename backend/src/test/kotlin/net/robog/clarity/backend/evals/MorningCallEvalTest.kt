@@ -64,7 +64,7 @@ class MorningCallEvalTest : FunSpec({
         application {
             install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
             install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-            SessionRoutes(r.sessionService, TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.settingsProvider, r.clock)).install(this)
+            SessionRoutes(r.sessionService, TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.sessionStore, r.settingsProvider, r.clock)).install(this)
         }
         return createClient { install(ContentNegotiation) { json(ClarityJson) } }
     }

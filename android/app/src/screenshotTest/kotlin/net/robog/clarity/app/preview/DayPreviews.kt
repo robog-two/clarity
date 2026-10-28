@@ -35,6 +35,7 @@ import net.robog.clarity.app.ui.held.NotNowOptions
 import net.robog.clarity.app.ui.held.RuleDialog
 import net.robog.clarity.app.ui.main.TabBar
 import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.app.ui.today.CallOffer
 import net.robog.clarity.app.ui.today.Doing
 import net.robog.clarity.app.ui.today.DoingRow
 import net.robog.clarity.app.ui.today.doingRows
@@ -175,10 +176,24 @@ private val todayFinished = todayFull.copy(
 // The quieter tasks unfolded: compact, still rows with nothing to press.
 @PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, quietOpen = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, quietOpen = true)
-// This morning's call left unfinished: "call me again" above the day.
-@Composable private fun TodayCallAgain(dark: Boolean) = Screen(dark) { TodayContent(todayFull.copy(callAgain = true), {}, {}, {}) }
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainLight() = TodayCallAgain(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainDark() = TodayCallAgain(true)
+// The morning call, until it reaches the hand-off. (Done, with a plan and no button: TodayFull.)
+private val todayNoPlan = todayFull.copy(
+    today = todayFull.today!!.copy(plan = emptyList(), parked = emptyList(), called = false),
+    doing = doingRows(listOf(task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours)), emptyMap(), t0),
+    heldWaiting = 0,
+)
+@Composable private fun TodayCall(dark: Boolean, offer: CallOffer, started: Boolean) = Screen(dark) {
+    TodayContent(todayNoPlan.copy(today = todayNoPlan.today!!.copy(callStarted = started), callOffer = offer), {}, {}, {})
+}
+// No call yet today: "Start our morning meeting" with "Call me now".
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayNoCallYetLight() = TodayCall(false, CallOffer.START, started = false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayNoCallYetDark() = TodayCall(true, CallOffer.START, started = false)
+// This morning's call ended before the hand-off: "We didn't finish this morning" with "Call me again".
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallEndedEarlyLight() = TodayCall(false, CallOffer.RESTART, started = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallEndedEarlyDark() = TodayCall(true, CallOffer.RESTART, started = true)
+// This morning's call still going on with its screen gone: "call me again" above the day.
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainLight() = TodayCall(false, CallOffer.REJOIN, started = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainDark() = TodayCall(true, CallOffer.REJOIN, started = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyLight() = TodayEmpty(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyDark() = TodayEmpty(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorLight() = TodayError(false)

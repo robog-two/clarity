@@ -48,6 +48,7 @@ import net.robog.clarity.shared.governance.Provenance
 import net.robog.clarity.shared.governance.Section
 import net.robog.clarity.shared.governance.Urgency
 import net.robog.clarity.shared.noun.Handle
+import net.robog.clarity.shared.session.CallStage
 import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionId
@@ -240,7 +241,7 @@ class SessionScenarioTest : FunSpec({
         r.model.requests.first().tools.map { it.name }.toSet().containsAll(SESSION_TOOL_NAMES) shouldBe true
 
         // --- Today reflects the call
-        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.settingsProvider, r.clock).today()
+        val today = TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.sessionStore, r.settingsProvider, r.clock).today()
         today.called shouldBe true
         today.priorities.map { it.text } shouldBe listOf("onboarding spec", "Dana’s contract")
         today.priorities.map { it.sub } shouldBe listOf("important", "due today")
@@ -494,6 +495,25 @@ class SessionScenarioTest : FunSpec({
         val saved = r.constitutions.saveAmendment(amendment.id).ok()
         saved.autonomy[ActionKind.CREATE_EVENT] shouldBe AutonomyTier.DO_THEN_TELL
         r.constitutions.current()!!.autonomy[ActionKind.CREATE_EVENT] shouldBe AutonomyTier.DO_THEN_TELL
+    }
+
+    test("a morning call that ended before the hand-off: Today says it started, and calling again starts a fresh one") {
+        val r = rig()
+        fun today() = TodayService(r.dayPlans, r.tasks, r.heldStore, r.nudges, r.sessionStore, r.settingsProvider, r.clock)
+        today().today().let { it.callStarted shouldBe false; it.called shouldBe false }
+
+        val first = r.sessionService.start(StartSession(SessionKind.MORNING_CALL)).ok()
+        today().today().callStarted shouldBe true
+        r.sessionService.control(first.id, SessionControl.End).ok().state shouldBe Session.State.ENDED
+        today().today().let { it.callStarted shouldBe true; it.called shouldBe false }
+
+        // Nothing limits a day to one call: the new one is its own session, from the first stage.
+        val again = r.sessionService.start(StartSession(SessionKind.MORNING_CALL)).ok()
+        (again.id == first.id) shouldBe false
+        (again.state == Session.State.ENDED) shouldBe false
+        again.stage shouldBe CallStage.CLEAR
+        r.sessionService.live()?.id shouldBe again.id
+        r.sessionService.get(first.id).ok().state shouldBe Session.State.ENDED
     }
 
     test("a snoozed call rings again when its time comes") {

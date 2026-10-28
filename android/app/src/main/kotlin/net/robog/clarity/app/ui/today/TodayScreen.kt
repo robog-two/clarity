@@ -37,6 +37,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
@@ -131,7 +132,7 @@ fun TodayContent(
     quietExpanded: Boolean = false,
     /** Whether "Finished today" starts unfolded (previews and screenshots). */
     finishedExpanded: Boolean = false,
-    /** "Call me again", while today's call is unfinished. */
+    /** "Call me now" / "Call me again", until today's call reached the hand-off ([TodayUiState.callOffer]). */
     onCallAgain: () -> Unit = {},
     /** A task tapped: its thread (the Agent's Path). */
     onOpenTask: (TaskId) -> Unit = {},
@@ -152,7 +153,7 @@ fun TodayContent(
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
             Text("Today", style = MaterialTheme.clarityText.heroTitle)
-            AnimatedVisibility(state.callAgain) { CallAgainCard(state.callAgainProblem, onCallAgain) }
+            AnimatedVisibility(state.callOffer == CallOffer.REJOIN) { CallAgainCard(state.callAgainProblem, onCallAgain) }
             state.error?.let {
                 ErrorBox(it)
                 TextButton(onClick = onRefresh) { Text("Try again") }
@@ -175,7 +176,7 @@ fun TodayContent(
                     Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
                     Phase.Unavailable -> Hint("Your server can’t show today yet. Your plan, what I’m doing and what’s parked will appear here.")
                     Phase.Nothing -> Unit
-                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, finishedExpanded, onOpenTask) }
+                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, finishedExpanded, onOpenTask, onCallAgain) }
                 }
             }
         }
@@ -193,12 +194,13 @@ private fun DayBody(
     quietExpanded: Boolean,
     finishedExpanded: Boolean,
     onOpenTask: (TaskId) -> Unit,
+    onCall: () -> Unit,
 ) {
     Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         var order = 0
         when {
             today.plan.isNotEmpty() -> PlanHero(today.plan, Modifier.springIn(order++))
-            !today.called -> NoPlanYet(Modifier.springIn(order++))
+            !today.called -> NoPlanYet(state.callOffer, state.callAgainProblem, onCall, Modifier.springIn(order++))
         }
         val doing = state.doing
         if (doing.main.isNotEmpty()) {
@@ -294,10 +296,13 @@ private fun StepBadge(n: Int, shape: Shape) {
 
 /**
  * Before the morning call: Frederick's cheese and his line about gathering words for the winter,
- * where the plan will land.
+ * where the plan will land. Until a call reached the hand-off it also offers to ring for one:
+ * [CallOffer.START] when none ran today, [CallOffer.RESTART] when one ended early. A call still going
+ * on is offered above the day instead ([CallAgainCard]).
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun NoPlanYet(modifier: Modifier = Modifier) {
+private fun NoPlanYet(offer: CallOffer, problem: String?, onCall: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainer, shape = RoundedCornerShape(28.dp)) {
         Column(
@@ -313,12 +318,25 @@ private fun NoPlanYet(modifier: Modifier = Modifier) {
                 textAlign = TextAlign.Center,
             )
             Kicker("Frederick, Leo Lionni")
+            val (title, hint, action) = when (offer) {
+                CallOffer.START -> Triple("Start our morning meeting", "Your plan appears here once we’ve talked.", "Call me now")
+                CallOffer.RESTART -> Triple("We didn’t finish this morning", "Your plan appears here once we’ve been through it.", "Call me again")
+                CallOffer.NONE, CallOffer.REJOIN -> Triple("No plan yet", "It appears here after your morning call.", null)
+            }
             Text(
-                "No plan yet",
+                title,
                 Modifier.padding(top = 14.dp),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                textAlign = TextAlign.Center,
             )
-            Hint("It appears here after your morning call.")
+            Hint(hint)
+            if (action != null) {
+                problem?.let { Text(it, style = MaterialTheme.clarityText.chatSmall, color = colors.error, textAlign = TextAlign.Center) }
+                FilledTonalButton(onClick = onCall, shapes = ButtonDefaults.shapes(), modifier = Modifier.padding(top = 10.dp)) {
+                    Icon(Icons.Outlined.Call, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
+                    Text(action, Modifier.padding(start = ButtonDefaults.IconSpacing))
+                }
+            }
         }
     }
 }
@@ -591,7 +609,7 @@ private fun TodayBeforeCallPreview() = PreviewFrame(
 
 @Preview(name = "call unfinished", widthDp = 390, heightDp = 1000)
 @Composable
-private fun TodayCallAgainPreview() = PreviewFrame(previewState.copy(callAgain = true))
+private fun TodayCallAgainPreview() = PreviewFrame(previewState.copy(callOffer = CallOffer.REJOIN))
 
 @Preview(name = "quiet day", widthDp = 390, heightDp = 780)
 @Composable

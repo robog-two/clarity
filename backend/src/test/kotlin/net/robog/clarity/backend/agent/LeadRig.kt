@@ -146,7 +146,8 @@ class LeadRig(
     private val reader = ExposedNounReader(database)
     val domain = DomainTools(reader, ExposedTriggerStore(database, clock), DocumentTools(reader) { DocumentFetch.Unavailable("none") })
 
-    val sessionService = SessionService(SessionStore(database), feed, inbox, heldStore, constitutions, clock)
+    val sessionStore = SessionStore(database)
+    val sessionService = SessionService(sessionStore, feed, inbox, heldStore, constitutions, clock)
     val dayPlans = DayPlanStore(database, clock)
     val sessionTools = SessionTools(sessionService, feed, dayPlans, tasks, constitutions, settingsProvider, clock)
     val vaultStore = ExposedVaultStore(database, clock)
