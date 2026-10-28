@@ -145,6 +145,96 @@ class TaskPathTest : FunSpec({
         helperJob.cancelAndJoin()
     }
 
+    test("a helper the lead's turn leaves without a task gets one of its own at the turn's end; claimed ones and triage do not") {
+        val r = LeadRig(database).also { it.reset() }
+        fun lastResult(request: net.robog.clarity.harness.ModelRequest): Block.Result? = request.messages.last().content.filterIsInstance<Block.Result>().lastOrNull()
+        fun lastUserText(request: net.robog.clarity.harness.ModelRequest): String =
+            request.messages.last { m -> m.role == Role.USER && m.content.any { it is Block.Text } }.content.filterIsInstance<Block.Text>().joinToString { it.text }
+        fun reply(id: String) = callTool(id, "send_to_user", buildJsonObject { put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "On it.") }))) })
+        val blogBrief = "Read the latest blog post on robog.net. Summarize it in three lines."
+        r.model.handler = { request ->
+            if (request.model != LEAD_MODEL) end("Done.")
+            else when (lastResult(request)?.toolUseId) {
+                null -> when {
+                    "kw-weather" in lastUserText(request) ->
+                        callTool("d4", "delegate", buildJsonObject { put("task", "Look at the forecast for Ithaca for the coming week and report it"); put("title", "Weather this week") })
+                    "kw-garden" in lastUserText(request) -> callTool("d2", "delegate", buildJsonObject { put("task", "Find the order mail") })
+                    else -> callTool("d1", "delegate", buildJsonObject { put("task", blogBrief) })
+                }
+                "d1" -> callTool("t1", "delegate", buildJsonObject { put("task", "Is this mail urgent? Answer yes or no."); put("role", "triage") })
+                // the task comes after the helper in the same turn: it claims the helper the usual way
+                "d2" -> callTool("u2", "update_task", buildJsonObject { put("title", "Garden order"); put("status", "working") })
+                "t1", "u2", "d4" -> reply("s-" + lastResult(request)!!.toolUseId)
+                else -> end("ok")
+            }
+        }
+        val helperJob = scope.launch { r.helpers.run() }
+        r.lead.start()
+        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("in-1"), "kw-blog What does the blog say?"))
+        r.lead.step() shouldBe true
+        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("in-2"), "kw-garden Find my order"))
+        r.lead.step() shouldBe true
+        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("in-3"), "kw-weather And the weather?"))
+        r.lead.step() shouldBe true
+        withTimeout(20.seconds) { while (r.runs.open().isNotEmpty()) delay(50) }
+        r.helpers.joinAll()
+
+        val runs = r.runs.list(openOnly = false).associate { it.task to it.id }
+        runs.size shouldBe 4
+        val links = database.tx { AgentTaskRuns.selectAll().associate { it[AgentTaskRuns.runId].toString() to (it[AgentTaskRuns.taskId].toString() to it[AgentTaskRuns.how]) } }
+        links.keys shouldBe setOf(runs.getValue(blogBrief), runs.getValue("Find the order mail"), runs.getValue("Look at the forecast for Ithaca for the coming week and report it"))
+        links.getValue(runs.getValue("Find the order mail")).second shouldBe TaskLink.INFERRED
+        val tasks = r.tasks.list(includeFinished = true).associateBy { it.id.value }
+        tasks.size shouldBe 3
+        // the server's tasks: named from the brief or the given title, and done when their helper is
+        links.getValue(runs.getValue(blogBrief)).let { (task, how) ->
+            how shouldBe TaskLink.AUTO
+            tasks.getValue(task).title shouldBe "Read the latest blog post on robog.net"
+            tasks.getValue(task).status shouldBe AgentTask.Status.DONE
+        }
+        links.getValue(runs.getValue("Look at the forecast for Ithaca for the coming week and report it")).let { (task, how) ->
+            how shouldBe TaskLink.AUTO
+            tasks.getValue(task).title shouldBe "Weather this week"
+            tasks.getValue(task).status shouldBe AgentTask.Status.DONE
+        }
+        // the lead's own task keeps the status the lead gave it
+        tasks.getValue(links.getValue(runs.getValue("Find the order mail")).first).let { it.title shouldBe "Garden order"; it.status shouldBe AgentTask.Status.WORKING }
+        helperJob.cancelAndJoin()
+    }
+
+    test("a server-made task follows its helper to failed or cancelled; a task the lead owns is left alone") {
+        val r = LeadRig(database).also { it.reset() }
+        val lead = RunScope(r.threads.ensure().id, isLead = true)
+        val failing = Uuid.random().toString()
+        val cancelled = Uuid.random().toString()
+        val owned = Uuid.random().toString()
+        listOf(failing, cancelled, owned).forEach { r.runs.create(it, lead.runId, "helper", "Work $it", null, r.clock.now()) }
+        val leadTask = r.tasks.upsert(null, "Lead's task", "", AgentTask.Status.WORKING)!!
+        r.tasks.link(leadTask.id, owned, TaskLink.EXPLICIT)
+
+        lead.startTurn(untrusted = false, requestedByUser = true)
+        lead.turn.started(failing, "Failing work")
+        lead.turn.started(cancelled, "Cancelled work")
+        // cancelled before the turn ended: its task is made in its final state
+        r.runs.finish(cancelled, RunStatus.CANCELLED, null, null, "cancelled by the lead", r.clock.now())
+        r.toolbox.endTurn(lead)
+        r.toolbox.endTurn(lead) // nothing left: no duplicates
+
+        val failingTask = r.tasks.autoTaskOf(failing).shouldNotBeNull()
+        r.tasks.get(failingTask)!!.let { it.title shouldBe "Failing work"; it.status shouldBe AgentTask.Status.WORKING; it.runIds shouldBe listOf(failing) }
+        r.tasks.get(r.tasks.autoTaskOf(cancelled).shouldNotBeNull())!!.status shouldBe AgentTask.Status.CANCELLED
+        r.tasks.list(includeFinished = true) shouldHaveSize 3
+
+        r.runs.finish(failing, RunStatus.FAILED, "x", null, "x", r.clock.now())
+        r.toolbox.runEnded(failing)
+        r.tasks.get(failingTask)!!.status shouldBe AgentTask.Status.FAILED
+
+        r.runs.finish(owned, RunStatus.DONE, "ok", null, null, r.clock.now())
+        r.toolbox.runEnded(owned)
+        r.tasks.autoTaskOf(owned) shouldBe null
+        r.tasks.get(leadTask.id)!!.status shouldBe AgentTask.Status.WORKING
+    }
+
     test("a task's path and a run's path: lead turn, a browser helper and a mail helper, with costs; no secret reaches the app") {
         val clock = StepClock(Instant.parse("2026-10-27T15:00:00Z"))
         database.tx { exec("TRUNCATE agent_journal, agent_thread, agent_run, agent_task, agent_task_run, browser_step, model_call RESTART IDENTITY CASCADE") }

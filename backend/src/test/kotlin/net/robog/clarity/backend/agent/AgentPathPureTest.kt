@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.Role
@@ -192,6 +193,39 @@ class AgentPathPureTest : FunSpec({
             turn.reset()
             turn.started("h2") shouldBe null
             turn.touched("t3") shouldBe listOf("h2")
+        }
+        test("the turn's end drains the helpers it left unlinked, with their task titles; claimed ones are gone") {
+            val turn = TurnTasks()
+            turn.started("h1", "Read the blog") shouldBe null
+            turn.started("h2", null) shouldBe null
+            turn.drain() shouldBe listOf(UnlinkedHelper("h1", "Read the blog"), UnlinkedHelper("h2", null))
+            turn.drain().shouldBeEmpty()
+            turn.started("h3", "Claimed later")
+            turn.touched("t1") shouldBe listOf("h3")
+            turn.drain().shouldBeEmpty()
+        }
+    }
+
+    context("the task the server makes for an unlinked helper") {
+        test("its title: the given one, else the brief's first sentence or line") {
+            autoTaskTitle("  Weather   this week ", "anything") shouldBe "Weather this week"
+            autoTaskTitle(null, "Read the latest blog post on robog.net. Summarize it in three lines.") shouldBe "Read the latest blog post on robog.net"
+            autoTaskTitle(" ", "\n  Check the inbox for Dana\nThen report back") shouldBe "Check the inbox for Dana"
+            autoTaskTitle(null, "Is it urgent? Answer yes or no.") shouldBe "Is it urgent?"
+            autoTaskTitle(null, "") shouldBe "Helper task"
+        }
+        test("a long title is cut on a word boundary with an ellipsis") {
+            val long = autoTaskTitle(null, "Go to the Garden Shop website and find the order confirmation for the blue watering can from last week")
+            long shouldBe "Go to the Garden Shop website and find the order…"
+            (long.length <= 60) shouldBe true
+            autoTaskTitle(null, "x".repeat(80)) shouldBe "x".repeat(59) + "…"
+        }
+        test("it follows the helper's run status once the run has ended") {
+            taskStatusOf(RunStatus.DONE) shouldBe AgentTask.Status.DONE
+            taskStatusOf(RunStatus.FAILED) shouldBe AgentTask.Status.FAILED
+            taskStatusOf(RunStatus.CANCELLED) shouldBe AgentTask.Status.CANCELLED
+            taskStatusOf(RunStatus.RUNNING) shouldBe null
+            taskStatusOf(RunStatus.QUEUED) shouldBe null
         }
     }
 })

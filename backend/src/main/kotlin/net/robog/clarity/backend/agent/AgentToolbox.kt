@@ -11,6 +11,8 @@ import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.TaskId
 
 /** The tools of a run, sorted by name; all of them are sent with every request. */
@@ -31,7 +33,12 @@ val MEMORY_GC_TOOLS = listOf(
 /** The helper-control tools of the lead. */
 @Inject
 @SingleIn(AppScope::class)
-class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: TaskStore, private val gate: FailureGate) {
+class HelperTools(
+    private val helpers: Lazy<HelperManager>,
+    private val tasks: TaskStore,
+    private val runs: RunStore,
+    private val gate: FailureGate,
+) {
     @Serializable
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
@@ -41,6 +48,8 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
         @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
         val taskId: String? = null,
+        @Description("A short name for the person's task list, used only when no taskId is given.")
+        val title: String? = null,
     )
 
     @Serializable
@@ -55,14 +64,42 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
     @Serializable
     class CancelHelperInput(val id: String)
 
-    /** Links a new helper to [taskId], or to the one task the lead's turn touched ([TurnTasks]). */
-    private suspend fun linkHelper(scope: RunScope, runId: String, taskId: TaskId?) {
+    /**
+     * Links a new helper to [taskId], or to the one task the lead's turn touched ([TurnTasks]). A
+     * lead helper left unlinked (not triage) gets a task of its own when the turn ends ([endTurn]).
+     */
+    private suspend fun linkHelper(scope: RunScope, runId: String, input: DelegateInput, taskId: TaskId?) {
         if (taskId != null) {
             tasks.link(taskId, runId, TaskLink.EXPLICIT)
             scope.turn.touched(taskId.value).forEach { tasks.link(taskId, it, TaskLink.INFERRED) }
         } else {
-            scope.turn.started(runId)?.let { tasks.link(TaskId(it), runId, TaskLink.INFERRED) }
+            val autoTitle = if (scope.isLead && delegableRole(input.role) != AgentRole.TRIAGE) autoTaskTitle(input.title, input.task) else null
+            scope.turn.started(runId, autoTitle)?.let { tasks.link(TaskId(it), runId, TaskLink.INFERRED) }
         }
+    }
+
+    /**
+     * The lead's turn ended: every helper it left unlinked gets a task created here
+     * ([TaskLink.AUTO]), WORKING, or already in the helper's final state if it finished meanwhile.
+     */
+    suspend fun endTurn(scope: RunScope) {
+        for (helper in scope.turn.drain()) {
+            val title = helper.autoTitle ?: continue
+            val task = tasks.upsert(null, title, "", AgentTask.Status.WORKING) ?: continue
+            tasks.link(task.id, helper.runId, TaskLink.AUTO)
+            // A quick helper may have ended before its task existed.
+            followRun(task.id, helper.runId)
+        }
+    }
+
+    /** Helper [runId] ended: the task the server created for it, if any, takes its outcome. Tasks the lead owns are left alone. */
+    suspend fun runEnded(runId: String) {
+        tasks.autoTaskOf(runId)?.let { followRun(it, runId) }
+    }
+
+    private suspend fun followRun(task: TaskId, runId: String) {
+        val status = runs.get(runId)?.status?.let(::taskStatusOf) ?: return
+        if (tasks.get(task)?.status != status) tasks.upsert(task, null, null, status)
     }
 
     fun all(scope: RunScope): List<Tool> = listOf(
@@ -79,7 +116,7 @@ class HelperTools(private val helpers: Lazy<HelperManager>, private val tasks: T
                 taskId != null && tasks.get(taskId) == null -> ToolResult.Error("No task with id $taskId; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
-                    linkHelper(scope, started.id, taskId)
+                    linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
                 }
             }
@@ -180,10 +217,44 @@ class AgentToolbox(
 
     }
 
-    /** A helper run finished, failed or was cancelled: it lets go of the browser. */
-    suspend fun runEnded(runId: String) = browser.runEnded(runId)
+    /** A helper run finished, failed or was cancelled: it lets go of the browser, and a task made for it follows its outcome. */
+    suspend fun runEnded(runId: String) {
+        runCatching { browser.runEnded(runId) }
+        helperTools.runEnded(runId)
+    }
+
+    /** The lead's turn ended (normally or not): helpers it left without a task get one. */
+    suspend fun endTurn(scope: RunScope) = helperTools.endTurn(scope)
 
     private fun gcOnly(scope: RunScope): List<Tool> = guarded(scope, listOf(own.replaceProfile(), memory.saveNote(), memory.manageCollection()))
 }
 
 data class HelperToolSet(val tools: ToolSet, val unknown: List<String>)
+
+private const val AUTO_TITLE_MAX = 60
+
+/**
+ * Pure: the title of the task the server creates for an unlinked helper: [title] when given, else
+ * the first sentence or line of [brief]; longer than [AUTO_TITLE_MAX] characters is cut on a word
+ * boundary with an ellipsis.
+ */
+fun autoTaskTitle(title: String?, brief: String): String {
+    val given = title?.trim()?.replace(Regex("\\s+"), " ")?.ifEmpty { null }
+    val raw = given ?: run {
+        val line = brief.lineSequence().map { it.trim() }.firstOrNull { it.isNotEmpty() }.orEmpty()
+        val sentence = Regex("^.*?[.!?](?=\\s|$)").find(line)?.value ?: line
+        sentence.trimEnd('.', ' ').ifEmpty { "Helper task" }
+    }
+    if (raw.length <= AUTO_TITLE_MAX) return raw
+    val room = raw.take(AUTO_TITLE_MAX - 1)
+    val cut = room.lastIndexOf(' ').takeIf { it > AUTO_TITLE_MAX / 2 } ?: room.length
+    return room.take(cut).trimEnd(' ', ',', ';', ':', '.', '-') + "…"
+}
+
+/** Pure: a finished helper run's status as a task status; null while it is still open. */
+fun taskStatusOf(runStatus: String): AgentTask.Status? = when (runStatus) {
+    RunStatus.DONE -> AgentTask.Status.DONE
+    RunStatus.FAILED -> AgentTask.Status.FAILED
+    RunStatus.CANCELLED -> AgentTask.Status.CANCELLED
+    else -> null
+}
