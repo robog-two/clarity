@@ -41,9 +41,13 @@ data class ReportUiState(
     val sources: List<ReportCitation> = emptyList(),
     /** Whether the Good has a live download link (anyone with it can download). */
     val linkOn: Boolean = false,
+    /** Files downloaded through the live link. */
+    val linkDownloads: Long = 0,
     /** The action waiting for its link. */
     val busy: LinkAction? = null,
-    /** A short line about the link: why it failed, or that it was turned off. */
+    /** Turning the link on or off is under way. */
+    val switching: Boolean = false,
+    /** A short message about the link (why it failed, that it was turned off), shown once. */
     val linkNote: String? = null,
     val open: LinkRequest? = null,
 )
@@ -90,22 +94,39 @@ class ReportViewModel(
         _state.update { it.copy(busy = action, linkNote = null) }
         viewModelScope.launch {
             when (val r = repository.link(id)) {
-                is ApiResult.Success -> _state.update { it.copy(busy = null, linkOn = true, open = LinkRequest(r.value, action, it.title)) }
+                is ApiResult.Success -> _state.update {
+                    it.copy(busy = null, linkOn = true, linkDownloads = r.value.downloads, open = LinkRequest(r.value.url, action, it.title))
+                }
                 is ApiResult.Failure -> _state.update { it.copy(busy = null, linkNote = r.error.sentence()) }
             }
         }
     }
 
-    /** Turns the download link off: whoever has it can no longer download. */
-    fun turnOffLink() {
-        val id = id ?: return
-        viewModelScope.launch {
-            when (val r = repository.turnOffLink(id)) {
-                is ApiResult.Success -> _state.update { it.copy(linkOn = false, linkNote = "Link turned off. Sharing again makes a new one.") }
-                is ApiResult.Failure -> _state.update { it.copy(linkNote = r.error.sentence()) }
-            }
+    /** Turns the download link on (a new one, from 0 downloads) without opening or sharing it. */
+    fun turnOnLink() = switchLink {
+        when (val r = repository.link(it)) {
+            is ApiResult.Success -> _state.update { s -> s.copy(switching = false, linkOn = true, linkDownloads = r.value.downloads) }
+            is ApiResult.Failure -> _state.update { s -> s.copy(switching = false, linkNote = r.error.sentence()) }
         }
     }
+
+    /** Turns the download link off: whoever has it can no longer download. */
+    fun turnOffLink() = switchLink {
+        when (val r = repository.turnOffLink(it)) {
+            is ApiResult.Success -> _state.update { s -> s.copy(switching = false, linkOn = false, linkDownloads = 0, linkNote = "Link turned off.") }
+            is ApiResult.Failure -> _state.update { s -> s.copy(switching = false, linkNote = r.error.sentence()) }
+        }
+    }
+
+    private fun switchLink(block: suspend (String) -> Unit) {
+        val id = id ?: return
+        if (_state.value.switching) return
+        _state.update { it.copy(switching = true, linkNote = null) }
+        viewModelScope.launch { block(id) }
+    }
+
+    /** The screen showed [ReportUiState.linkNote]. */
+    fun noteShown() = _state.update { it.copy(linkNote = null) }
 
     /** The screen handed [ReportUiState.open] over; [ok] false when nothing on the phone could take it. */
     fun opened(ok: Boolean = true) = _state.update {
@@ -133,6 +154,7 @@ class ReportViewModel(
                         sourceError = (source as? ApiResult.Failure)?.error?.sentence(),
                         sources = value.sources,
                         linkOn = value.link != null,
+                        linkDownloads = value.linkDownloads,
                     )
                 }
             }

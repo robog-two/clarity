@@ -29,6 +29,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.data.GoodsLink
 import net.robog.clarity.app.data.GoodsRepository
 import net.robog.clarity.app.net.DeviceJwtSigner
 import net.robog.clarity.app.net.KtorClarityApi
@@ -52,6 +53,7 @@ import net.robog.clarity.app.ui.goods.parseInline
 import net.robog.clarity.app.ui.goods.parseMarkdown
 import net.robog.clarity.app.ui.goods.plainText
 import net.robog.clarity.app.ui.goods.revisionLine
+import net.robog.clarity.app.ui.goods.shareSettingsLabel
 import net.robog.clarity.app.ui.goods.sourceSite
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.Card
@@ -161,6 +163,14 @@ class GoodsPresentationTest {
         assertEquals("Document · Yesterday · revision 2", rows[0].detail)
     }
 
+    @Test fun theMenuSaysHowOftenTheLinkWasUsed() {
+        assertEquals("Share settings", shareSettingsLabel(linkOn = false, downloads = 0))
+        assertEquals("Share settings", shareSettingsLabel(linkOn = true, downloads = 0))
+        assertEquals("Share settings (1 download)", shareSettingsLabel(linkOn = true, downloads = 1))
+        assertEquals("Share settings (3 downloads)", shareSettingsLabel(linkOn = true, downloads = 3))
+        assertEquals("Share settings", shareSettingsLabel(linkOn = false, downloads = 3))
+    }
+
     @Test fun sourcesShowTheirSite() {
         assertEquals("cdc.gov", sourceSite("https://www.cdc.gov/flu/1918?x=1"))
         assertEquals("en.wikipedia.org", sourceSite("https://en.wikipedia.org/wiki/The_Devils_(film)"))
@@ -188,7 +198,7 @@ private class FakeGoods(
     var list: ApiResult<List<ReportSummary>> = ApiResult.Success(emptyList()),
     var detail: ApiResult<ReportDetail> = ApiResult.Success(detail()),
     var source: ApiResult<String> = ApiResult.Success("---\ntitle: Possession and Power\n---\n\n# Background\n\nText."),
-    var link: ApiResult<String> = ApiResult.Success("https://clarity.example/g/TOKEN"),
+    var link: ApiResult<GoodsLink> = ApiResult.Success(GoodsLink("https://clarity.example/g/TOKEN", 3)),
     var turnOff: ApiResult<Unit> = ApiResult.Success(Unit),
 ) : GoodsRepository {
     var linkCalls = 0
@@ -261,6 +271,7 @@ class ReportViewModelTest {
         assertEquals(1, goods.linkCalls)
         assertEquals(LinkRequest("https://clarity.example/g/TOKEN", LinkAction.Share, "Possession and Power"), vm.state.value.open)
         assertTrue(vm.state.value.linkOn)
+        assertEquals(3, vm.state.value.linkDownloads)
         assertNull(vm.state.value.busy)
         vm.opened()
         assertNull(vm.state.value.open)
@@ -271,17 +282,28 @@ class ReportViewModelTest {
         assertEquals("Nothing on this phone can open the link.", vm.state.value.linkNote)
     }
 
-    @Test fun anExistingLinkShowsAndCanBeTurnedOff() = runTest(dispatcher) {
-        val goods = FakeGoods(detail = ApiResult.Success(detail().copy(link = "/g/TOKEN")))
+    @Test fun anExistingLinkShowsWithItsCountAndCanBeTurnedOffAndOn() = runTest(dispatcher) {
+        val goods = FakeGoods(detail = ApiResult.Success(detail().copy(link = "/g/TOKEN", linkDownloads = 5)), link = ApiResult.Success(GoodsLink("https://clarity.example/g/NEW", 0)))
         val vm = vm(goods)
         vm.open("r1")
         advanceUntilIdle()
         assertTrue(vm.state.value.linkOn)
+        assertEquals(5, vm.state.value.linkDownloads)
         vm.turnOffLink()
+        assertTrue(vm.state.value.switching)
         advanceUntilIdle()
         assertEquals(1, goods.turnOffCalls)
         assertFalse(vm.state.value.linkOn)
-        assertEquals("Link turned off. Sharing again makes a new one.", vm.state.value.linkNote)
+        assertEquals(0, vm.state.value.linkDownloads)
+        assertEquals("Link turned off.", vm.state.value.linkNote)
+        vm.noteShown()
+        assertNull(vm.state.value.linkNote)
+        vm.turnOnLink()
+        advanceUntilIdle()
+        assertTrue(vm.state.value.linkOn)
+        assertEquals(0, vm.state.value.linkDownloads)
+        assertNull(vm.state.value.open, "turning it on neither opens nor shares")
+        assertFalse(vm.state.value.switching)
     }
 
     @Test fun aLinkThatFailsSaysWhy() = runTest(dispatcher) {
@@ -344,7 +366,7 @@ class GoodsApiTest {
                 "GET" to "/api/v1/reports" -> respond(ClarityJson.encodeToString(ReportList.serializer(), ReportList(emptyList())), HttpStatusCode.OK, json)
                 "GET" to "/api/v1/reports/r1" -> respond(ClarityJson.encodeToString(ReportDetail.serializer(), detail()), HttpStatusCode.OK, json)
                 "GET" to "/api/v1/reports/r1/source" -> respond("# Hello", HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "text/markdown; charset=utf-8"))
-                "POST" to "/api/v1/reports/r1/link" -> respond(ClarityJson.encodeToString(ReportLink.serializer(), ReportLink("/g/TOKEN")), HttpStatusCode.OK, json)
+                "POST" to "/api/v1/reports/r1/link" -> respond(ClarityJson.encodeToString(ReportLink.serializer(), ReportLink("/g/TOKEN", 4)), HttpStatusCode.OK, json)
                 "DELETE" to "/api/v1/reports/r1/link" -> respond("", HttpStatusCode.NoContent)
                 else -> respond("""{"title":"Not found","status":404}""", HttpStatusCode.NotFound, json)
             }
@@ -353,7 +375,7 @@ class GoodsApiTest {
         assertIs<ApiResult.Success<ReportList>>(api.reports())
         assertEquals("The Devils", assertIs<ApiResult.Success<ReportDetail>>(api.report("r1")).value.title)
         assertEquals("# Hello", assertIs<ApiResult.Success<String>>(api.reportSource("r1")).value)
-        assertEquals("https://clarity.example/g/TOKEN", assertIs<ApiResult.Success<String>>(api.reportLink("r1")).value)
+        assertEquals(GoodsLink("https://clarity.example/g/TOKEN", 4), assertIs<ApiResult.Success<GoodsLink>>(api.reportLink("r1")).value)
         assertIs<ApiResult.Success<Unit>>(api.revokeReportLink("r1"))
         assertIs<ApiResult.Failure>(api.reportLink("nope"))
         assertTrue(requests.all { it.headers[HttpHeaders.Authorization]?.startsWith("Bearer ") == true }, "every Goods call is device-authenticated")

@@ -37,6 +37,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
+import net.robog.clarity.app.data.GoodsLink
 import net.robog.clarity.app.data.SessionStore
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.encodeToString
@@ -190,7 +191,7 @@ interface ReportsApi {
      * The Good's secret download page (made on first use, the same one after), as a full URL on the
      * instance's address. Download opens it; Share sends it.
      */
-    suspend fun reportLink(id: String): ApiResult<String>
+    suspend fun reportLink(id: String): ApiResult<GoodsLink>
 
     /** Turns the secret link off; the next [reportLink] makes a new one. */
     suspend fun revokeReportLink(id: String): ApiResult<Unit>
@@ -457,11 +458,11 @@ class KtorClarityApi(
 
     override suspend fun reportSource(id: String): ApiResult<String> = get("${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/source")
 
-    override suspend fun reportLink(id: String): ApiResult<String> {
+    override suspend fun reportLink(id: String): ApiResult<GoodsLink> {
         val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
         val path = "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link"
         return when (val r = authed<ReportLink> { base -> client.post { url(base + path) } }) {
-            is ApiResult.Success -> ApiResult.Success(session.instanceUrl.trimEnd('/') + r.value.path)
+            is ApiResult.Success -> ApiResult.Success(GoodsLink(session.instanceUrl.trimEnd('/') + r.value.path, r.value.downloads))
             is ApiResult.Failure -> r
         }
     }

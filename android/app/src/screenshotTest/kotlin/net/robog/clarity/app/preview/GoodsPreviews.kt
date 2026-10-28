@@ -1,6 +1,24 @@
 package net.robog.clarity.app.preview
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.FileDownload
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import net.robog.clarity.app.ui.goods.shareSettingsLabel
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.Alignment
+import net.robog.clarity.app.ui.goods.ShareSettings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
@@ -93,13 +111,72 @@ private val viewer = ReportUiState(
     ),
 )
 
+/** A Good whose link is on and has had 3 downloads. */
+private val shared = viewer.copy(linkOn = true, linkDownloads = 3)
+
 @Composable
 private fun Viewer(dark: Boolean, state: ReportUiState) = Goods(dark) { ReportContent(state, {}, "Goods", {}, {}, {}) }
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerLight() = Viewer(false, viewer)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerDark() = Viewer(true, viewer)
-@PreviewTest @Preview(widthDp = 412, heightDp = 640) @Composable fun ReportViewerLinkOnLight() = Viewer(false, viewer.copy(linkOn = true))
-@PreviewTest @Preview(widthDp = 412, heightDp = 640) @Composable fun ReportViewerLinkOnDark() = Viewer(true, viewer.copy(linkOn = true))
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerFabLight() = Viewer(false, shared)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerFabDark() = Viewer(true, shared)
+
+/**
+ * The menu open. The screenshot tool draws only the first frame, before the menu items' entry
+ * animation, so the items are drawn here as they settle (M3's FAB menu item: a primary-container pill
+ * with an icon and a label, stacked above the FAB, which is the real one in its open state).
+ */
+@Composable
+private fun MenuOpen(dark: Boolean) = Goods(dark) {
+    Box(Modifier.fillMaxSize()) {
+        ReportContent(shared, {}, "Goods", {}, {}, {}, initialMenuOpen = true)
+        Column(
+            Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp + 56.dp + 8.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            listOf(
+                Icons.Outlined.FileDownload to "Download",
+                Icons.Outlined.Share to "Share",
+                Icons.Outlined.Settings to shareSettingsLabel(shared.linkOn, shared.linkDownloads),
+            ).forEach { (icon, label) ->
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer, contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
+                    Row(Modifier.height(56.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(icon, contentDescription = null)
+                        Text(label, style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+        }
+    }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerMenuOpenLight() = MenuOpen(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerMenuOpenDark() = MenuOpen(true)
+
+/** The share settings sheet over the viewer (drawn in place: a modal sheet is its own window). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SettingsSheet(dark: Boolean, state: ReportUiState) = Goods(dark) {
+    Box(Modifier.fillMaxSize()) {
+        ReportContent(state, {}, "Goods", {}, {}, {})
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f)))
+        Surface(
+            Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
+            shape = BottomSheetDefaults.ExpandedShape,
+            color = BottomSheetDefaults.ContainerColor,
+            tonalElevation = BottomSheetDefaults.Elevation,
+        ) {
+            Column {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { BottomSheetDefaults.DragHandle() }
+                ShareSettings(state, {}, {})
+            }
+        }
+    }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOnLight() = SettingsSheet(false, shared)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOnDark() = SettingsSheet(true, shared)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOffLight() = SettingsSheet(false, viewer)
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerLoading() = Viewer(false, ReportUiState())
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorLight() =
     Viewer(false, ReportUiState(loading = false, error = "Can’t reach your server right now."))
