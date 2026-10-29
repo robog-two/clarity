@@ -233,6 +233,54 @@ class TaskPathTest : FunSpec({
         r.toolbox.runEnded(owned)
         r.tasks.autoTaskOf(owned) shouldBe null
         r.tasks.get(leadTask.id)!!.status shouldBe AgentTask.Status.WORKING
+        // ...but the helper's result names it by its full id, so the lead can close it; a server-made task is not named
+        r.toolbox.openLeadTasksOf(owned) shouldBe listOf("${leadTask.id.value} \"Lead's task\" (working)")
+        r.toolbox.openLeadTasksOf(failing) shouldBe emptyList()
+        InboxItem.HelperResult(owned, "Work", true, "ok", r.toolbox.openLeadTasksOf(owned)).summary shouldContain
+            "It worked on task ${leadTask.id.value} \"Lead's task\" (working), still open: update it with update_task"
+    }
+
+    test("a task is found by a unique 8-hex-digit prefix of its id, as the agent shortens it; update_task and delegate accept it") {
+        val r = LeadRig(database).also { it.reset() }
+        val devils = r.tasks.upsert(null, "Research The Devils (1971) background", "web research", AgentTask.Status.WORKING)!!
+        val short = devils.id.value.take(8)
+        val update = r.own.updateTask()
+        update.invoke(buildJsonObject { put("id", short); put("status", "done") }).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Ok>()
+            .content shouldBe "Task ${devils.id.value}: Research The Devils (1971) background (done)."
+        r.tasks.get(devils.id)!!.status shouldBe AgentTask.Status.DONE
+        r.tasks.get(TaskId(short.uppercase()))!!.id shouldBe devils.id
+        r.tasks.createdAt(TaskId(short)).shouldNotBeNull()
+        val run = Uuid.random().toString()
+        r.runs.create(run, r.threads.ensure().id, "helper", "Work", null, r.clock.now())
+        r.tasks.link(TaskId(short), run, TaskLink.EXPLICIT) shouldBe true
+        r.tasks.get(devils.id)!!.runIds shouldBe listOf(run)
+
+        // too short, not an id, or no task: an error that lists the open tasks by full id
+        val soup = r.tasks.upsert(null, "Get soup ingredients", "Thursday 9am", AgentTask.Status.WORKING)!!
+        r.tasks.get(TaskId(short.take(7))) shouldBe null
+        r.tasks.get(TaskId("will-assign-after")) shouldBe null
+        r.tasks.get(TaskId(Uuid.random().toString())) shouldBe null
+        r.tasks.upsert(TaskId("0000000a"), null, null, AgentTask.Status.DONE) shouldBe null
+        update.invoke(buildJsonObject { put("id", "0000000a"); put("status", "done") }).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Error>()
+            .message shouldBe "No task with id 0000000a. Open tasks:\n- ${soup.id.value} \"Get soup ingredients\" (working) · Thursday 9am"
+        r.own.listTasks().invoke(buildJsonObject { }).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Ok>()
+            .content shouldBe "- ${soup.id.value} \"Get soup ingredients\" (working) · Thursday 9am"
+    }
+
+    test("send_to_user refuses a card without a known type, so nothing blank reaches the feed") {
+        val r = LeadRig(database).also { it.reset() }
+        val send = r.own.sendToUser()
+        fun cards(vararg card: JsonObject) = buildJsonObject { put("cards", JsonArray(card.toList())) }
+        // what the model sent: a text card without its `type`
+        val missing = send.invoke(cards(buildJsonObject { put("text", "Tim is in your contacts with only a phone number.") }))
+        missing.shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Error>().message shouldContain "Invalid input for send_to_user"
+        send.invoke(cards(buildJsonObject { put("type", "txt"); put("text", "x") })).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Error>()
+        send.invoke(cards(buildJsonObject { put("type", "unknown"); put("fallbackText", "x") })).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Error>()
+            .message shouldContain "`unknown` is not a card type"
+        r.feedStore.page(0, 10).items shouldBe emptyList()
+
+        send.invoke(cards(buildJsonObject { put("type", "text"); put("text", "Found Tim.") })).shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Ok>()
+        r.feedStore.page(0, 10).items.single().cards shouldBe listOf(net.robog.clarity.shared.feed.Card.Text("Found Tim."))
     }
 
     test("a task's path and a run's path: lead turn, a browser helper and a mail helper, with costs; no secret reaches the app") {

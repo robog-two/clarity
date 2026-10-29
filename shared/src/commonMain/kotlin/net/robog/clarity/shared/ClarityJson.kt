@@ -1,6 +1,7 @@
 package net.robog.clarity.shared
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.modules.EmptySerializersModule
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import net.robog.clarity.shared.feed.Card
@@ -17,3 +18,9 @@ val ClarityJson: Json = Json {
         polymorphic(Card::class) { defaultDeserializer { Card.Unknown.serializer() } }
     }
 }
+
+/**
+ * [ClarityJson] without the [Card.Unknown] fallback, for input that must be valid as written (the
+ * cards the agent sends): a card with a missing or unknown `type` is a decoding error, not a card.
+ */
+val ClarityStrictJson: Json = Json(ClarityJson) { serializersModule = EmptySerializersModule() }

@@ -234,7 +234,9 @@ class HelperManager(
                 runCatching { runs.saveTranscript(run.id, helperTranscript(journal.load(run.id), grants::scrub)) }
                     .onFailure { log.warn { "helper ${run.id}: transcript not saved (${it::class.simpleName})" } }
                 runs.finish(run.id, if (ok) RunStatus.DONE else RunStatus.FAILED, text, terminal?.usage, if (ok) null else text, now)
-                inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text), dedupKey = "helper:${run.id}")
+                // The lead's own tasks do not follow the helper; it is told which are still open so it closes them.
+                val openTasks = runCatching { toolbox.value.openLeadTasksOf(run.id) }.getOrDefault(emptyList())
+                inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text, openTasks), dedupKey = "helper:${run.id}")
             }
         }
     }

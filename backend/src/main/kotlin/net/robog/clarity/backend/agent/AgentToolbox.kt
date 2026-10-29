@@ -122,6 +122,12 @@ class HelperTools(
         tasks.autoTaskOf(runId)?.let { followRun(it, runId) }
     }
 
+    /** The open tasks helper [runId] worked on that the lead owns (not the one made for it), as "id \"title\" (status)". */
+    suspend fun openLeadTasksOf(runId: String): List<String> {
+        val auto = tasks.autoTaskOf(runId)
+        return tasks.list().filter { runId in it.runIds && it.id != auto }.map(::taskLine)
+    }
+
     private suspend fun followRun(task: TaskId, runId: String) {
         val status = runs.get(runId)?.status?.let(::taskStatusOf) ?: return
         if (tasks.get(task)?.status != status) tasks.upsert(task, null, null, status)
@@ -135,10 +141,12 @@ class HelperTools(
             effect = ToolEffect.WRITE,
             json = ClarityJson,
         ) { input ->
-            val taskId = input.taskId?.trim()?.ifEmpty { null }?.let(::TaskId)
+            val named = input.taskId?.trim()?.ifEmpty { null }
+            // Resolved to the task's full id, so a shortened id links the same task update_task touched.
+            val taskId = named?.let { tasks.get(TaskId(it))?.id }
             when {
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
-                taskId != null && tasks.get(taskId) == null -> ToolResult.Error("No task with id $taskId; create it with update_task first, or omit `taskId`.")
+                named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
@@ -215,7 +223,7 @@ class AgentToolbox(
         }
         with(own) {
             addAll(listOf(readJournal(), readProfile()))
-            if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask(scope)))
+            if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask(scope), listTasks()))
         }
         addAll(if (forLead) reports.leadTools(scope) else reports.helperTools(scope))
         if (forLead) addAll(helperTools.all(scope))
@@ -249,6 +257,9 @@ class AgentToolbox(
         runCatching { browser.runEnded(runId) }
         helperTools.runEnded(runId)
     }
+
+    /** The still-open tasks the lead owns that helper [runId] worked on (see [HelperTools.openLeadTasksOf]). */
+    suspend fun openLeadTasksOf(runId: String): List<String> = helperTools.openLeadTasksOf(runId)
 
     /** The lead's turn ended (normally or not): helpers it left without a task get one. */
     suspend fun endTurn(scope: RunScope) = helperTools.endTurn(scope)

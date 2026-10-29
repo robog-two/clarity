@@ -92,11 +92,22 @@ sealed interface InboxItem {
             "protected time still holds it). If it no longer applies, send nothing."
     }
 
-    /** A helper finished. Its output was derived from whatever it read, so it is quoted as untrusted. */
+    /**
+     * A helper finished. Its output was derived from whatever it read, so it is quoted as untrusted.
+     * [openTasks]: the still-open tasks of the person's list it worked on that the lead owns, as
+     * "id \"title\" (status)", so the lead can close them by their full id.
+     */
     @Serializable @SerialName("helper_result")
-    data class HelperResult(val runId: String, val task: String, val ok: Boolean, val result: String) : InboxItem {
+    data class HelperResult(
+        val runId: String,
+        val task: String,
+        val ok: Boolean,
+        val result: String,
+        val openTasks: List<String> = emptyList(),
+    ) : InboxItem {
         override val priority get() = Priority.NORMAL
-        override val summary get() = "Helper $runId ${if (ok) "finished" else "failed"} its task: ${task.take(200)}"
+        override val summary get() = "Helper $runId ${if (ok) "finished" else "failed"} its task: ${task.take(200)}" +
+            (if (openTasks.isEmpty()) "" else " It worked on task ${openTasks.joinToString("; ")}, still open: update it with update_task, done or failed when it is.")
         override val untrusted get() = listOf(UntrustedPart("helper:$runId", result))
     }
 
