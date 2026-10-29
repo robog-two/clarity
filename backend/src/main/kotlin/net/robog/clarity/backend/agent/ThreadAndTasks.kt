@@ -17,10 +17,13 @@ import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.castTo
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -75,7 +78,10 @@ class ExposedThreadStore(private val database: Database, private val clock: Cloc
 
 /** The agent's own to-do list ("what I'm doing" on Today); changes are pushed to the app. */
 interface TaskStore {
-    /** Creates the task when [id] is null, else updates the given fields. Null when [id] is unknown. */
+    /**
+     * Creates the task when [id] is null, else updates the given fields. Null when [id] is unknown.
+     * Wherever a [TaskId] is looked up, a unique prefix of at least 8 hex digits names the task too.
+     */
     suspend fun upsert(
         id: TaskId?,
         title: String?,
@@ -183,7 +189,7 @@ class ExposedTaskStore(
                 }
                 AgentTasks.selectAll().where { AgentTasks.id eq newId }.single().toTask()
             } else {
-                val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return@tx null
+                val uuid = taskUuid(id) ?: return@tx null
                 val changed = AgentTasks.update({ AgentTasks.id eq uuid }) {
                     title?.let { t -> it[AgentTasks.title] = t }
                     detail?.let { d -> it[AgentTasks.detail] = d }
@@ -212,15 +218,15 @@ class ExposedTaskStore(
         rows.map { it.toTask(runs[it[AgentTasks.id]].orEmpty()) }
     }
 
-    override suspend fun createdAt(id: TaskId): Instant? {
-        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
-        return database.tx { AgentTasks.select(AgentTasks.createdAt).where { AgentTasks.id eq uuid }.singleOrNull()?.get(AgentTasks.createdAt) }
+    override suspend fun createdAt(id: TaskId): Instant? = database.tx {
+        val uuid = taskUuid(id) ?: return@tx null
+        AgentTasks.select(AgentTasks.createdAt).where { AgentTasks.id eq uuid }.singleOrNull()?.get(AgentTasks.createdAt)
     }
 
     override suspend fun link(id: TaskId, runId: String, how: String): Boolean {
-        val task = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return false
         val run = runCatching { Uuid.parse(runId) }.getOrNull() ?: return false
         val linked = database.tx {
+            val task = taskUuid(id) ?: return@tx null
             if (AgentTasks.selectAll().where { AgentTasks.id eq task }.empty()) return@tx null
             AgentTaskRuns.insertIgnore {
                 it[taskId] = task
@@ -242,12 +248,26 @@ class ExposedTaskStore(
         }
     }
 
-    override suspend fun get(id: TaskId): AgentTask? {
-        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
-        return database.tx {
-            AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask(runsOf(listOf(uuid))[uuid].orEmpty())
-        }
+    override suspend fun get(id: TaskId): AgentTask? = database.tx {
+        val uuid = taskUuid(id) ?: return@tx null
+        AgentTasks.selectAll().where { AgentTasks.id eq uuid }.singleOrNull()?.toTask(runsOf(listOf(uuid))[uuid].orEmpty())
     }
+}
+
+/** The shortest id prefix [taskUuid] accepts: the 8 hex digits the agent abbreviates ids to. */
+private const val MIN_TASK_ID_PREFIX = 8
+
+/**
+ * The task [id] names: a full id as given (it may not exist), or the one task whose id starts with
+ * it (the agent shortens ids to their first 8 hex digits in its notes and summaries). Null for a
+ * prefix that matches no task or several. Call inside a transaction.
+ */
+private fun taskUuid(id: TaskId): Uuid? {
+    val text = id.value.trim().lowercase()
+    runCatching { Uuid.parse(text) }.getOrNull()?.let { return it }
+    if (text.count { it != '-' } < MIN_TASK_ID_PREFIX || text.any { !(it.isDigit() || it in 'a'..'f' || it == '-') }) return null
+    return AgentTasks.select(AgentTasks.id).where { AgentTasks.id.castTo(TextColumnType()) like "$text%" }
+        .limit(2).map { it[AgentTasks.id] }.singleOrNull()
 }
 
 /** The run ids linked to each of [tasks], oldest link first. Call inside a transaction. */

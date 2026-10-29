@@ -24,6 +24,7 @@ import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.ClarityStrictJson
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
@@ -67,7 +68,7 @@ class OwnStateTools(
 ) {
     @Serializable
     class SendToUserInput(
-        @Description("What to show, in order. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}. Held items and credential forms are not in the chat until you post their card; post each once.")
+        @Description("What to show, in order. Each card names its `type`, e.g. {\"type\": \"text\", \"text\": \"...\"}. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}. Held items and credential forms are not in the chat until you post their card; post each once.")
         val cards: List<Card>,
         @Description("urgent = interrupt now (respects protected time), normal = shows in the app, batch = evening summary. Default normal.")
         val urgency: Urgency = Urgency.NORMAL,
@@ -81,10 +82,12 @@ class OwnStateTools(
         description = "The only way to reach the person. Shows typed cards in their feed; urgency decides whether it also notifies them. " +
             "Always answer when the person wrote to you; otherwise silence is fine. Short.",
         effect = ToolEffect.WRITE,
-        json = ClarityJson,
+        // Strict: a card without a known `type` is an error the model fixes, never a blank card in the feed.
+        json = ClarityStrictJson,
     ) { input ->
         when {
             input.cards.isEmpty() -> ToolResult.Error("`cards` must not be empty")
+            input.cards.any { it is Card.Unknown } -> ToolResult.Error("`unknown` is not a card type; use text, chips, plan, note, context, proposal, tasks or credential_request")
             input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal or tasks")
             input.cards.any { it is Card.Report } -> ToolResult.Error("Show a report with present_report, which checks it exists and lists its formats.")
             else -> post(input.cards, input.urgency, input.sessionId, input.about)
@@ -261,15 +264,27 @@ class OwnStateTools(
     ) { input ->
         if (input.id == null && input.title.isNullOrBlank()) return@tool ToolResult.Error("A new task needs a `title`.")
         val task = tasks.upsert(input.id?.let(::TaskId), input.title, input.detail, input.status, input.heldActionId?.let(::HeldActionId))
-        if (task == null) return@tool ToolResult.Error("No task with id ${input.id}.")
+        if (task == null) return@tool ToolResult.Error("No task with id ${input.id}. Open tasks:\n${openTaskLines()}")
         scope?.turn?.touched(task.id.value)?.forEach { tasks.link(task.id, it, TaskLink.INFERRED) }
         ToolResult.Ok("Task ${task.id.value}: ${task.title} (${task.status.name.lowercase()}).")
     }
+
+    fun listTasks(): Tool = tool<NoInput>(
+        name = "list_tasks",
+        description = "The open items on the person's \"what I'm doing\" list, newest first: id, title, status and detail.",
+        json = ClarityJson,
+    ) { ToolResult.Ok(openTaskLines()) }
+
+    private suspend fun openTaskLines(): String =
+        tasks.list().joinToString("\n") { "- ${taskLine(it)}" + it.detail.takeIf(String::isNotBlank)?.let { d -> " · $d" }.orEmpty() }.ifEmpty { "(none)" }
 
     private suspend fun today(): LocalDate = journalDate(clock.now(), settings.current().homeZone)
 
     private companion object { const val MAX_FACT_CHARS = 240 }
 }
+
+/** Pure: how a task is named to the agent, by its full id: `id "title" (status)`. */
+fun taskLine(task: AgentTask): String = "${task.id.value} \"${task.title}\" (${task.status.name.lowercase()})"
 
 /** Pure: the journal date for [now] in [zoneId]. */
 fun journalDate(now: Instant, zoneId: String): LocalDate = net.robog.clarity.shared.time.ScheduleClock.homeDate(now, zoneOrUtc(zoneId))

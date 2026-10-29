@@ -2,9 +2,12 @@ package net.robog.clarity.shared.feed
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlinx.serialization.SerializationException
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.ClarityStrictJson
 
-/** A newer server's cards never break the feed: unknown types decode to [Card.Unknown]. */
+/** A newer server's cards never break the feed: unknown types decode to [Card.Unknown]. Input the server validates uses [ClarityStrictJson]. */
 class CardCompatTest {
     @Test
     fun unknownCardTypeDecodesWithItsFallbackText() {
@@ -28,5 +31,15 @@ class CardCompatTest {
         val asUnknown = ClarityJson.decodeFromString(Card.serializer(), encoded.replace("\"type\":\"report\"", "\"type\":\"report_v9\""))
         assertEquals(Card.Unknown("The Devils. In your Goods, to open or download."), asUnknown)
         assertEquals(card, ClarityJson.decodeFromString(Card.serializer(), encoded))
+    }
+
+    @Test
+    fun strictJsonRejectsCardsWithoutAKnownType() {
+        // The agent's own cards must be valid as written: no fallback for a missing or unknown type.
+        for (raw in listOf("""{"text":"Got it."}""", """{"type":"txt","text":"Got it."}""")) {
+            assertFailsWith<SerializationException> { ClarityStrictJson.decodeFromString(Card.serializer(), raw) }
+            assertEquals(Card.Unknown(null), ClarityJson.decodeFromString(Card.serializer(), raw))
+        }
+        assertEquals(Card.Text("Got it."), ClarityStrictJson.decodeFromString(Card.serializer(), """{"type":"text","text":"Got it."}"""))
     }
 }
