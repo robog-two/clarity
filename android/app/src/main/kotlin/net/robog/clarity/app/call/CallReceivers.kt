@@ -40,19 +40,21 @@ class CallAlarmReceiver : BroadcastReceiver() {
     }
 }
 
-/** "Not now" on the incoming call and "hang up" on the ongoing call. */
+/** "Not now" on the incoming call, its ringing ending unanswered, and "hang up" on the ongoing call. */
 class CallActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val graph = context.graph()
         when (intent.action) {
             ACTION_DECLINE -> async { graph.callService.snooze() }
             ACTION_HANG_UP -> async { graph.callService.hangUp() }
+            ACTION_RING_ENDED -> async { graph.callService.ringEnded() }
         }
     }
 
     companion object {
         const val ACTION_DECLINE = "net.robog.clarity.call.DECLINE"
         const val ACTION_HANG_UP = "net.robog.clarity.call.HANG_UP"
+        const val ACTION_RING_ENDED = "net.robog.clarity.call.RING_ENDED"
     }
 }
 

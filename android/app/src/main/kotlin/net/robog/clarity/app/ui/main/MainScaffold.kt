@@ -1,10 +1,5 @@
 package net.robog.clarity.app.ui.main
 
-import android.Manifest
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -26,14 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -85,18 +75,9 @@ fun MainScaffold(
         }
     }
 
-    // Ask once for permission to notify: the heads-up, the call and urgent holds all need it.
-    val context = LocalContext.current
-    var asked by rememberSaveable { mutableStateOf(false) }
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-    LaunchedEffect(Unit) {
-        if (!asked && Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        ) {
-            asked = true
-            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }
+    // What the morning call needs and the phone does not allow yet (notifications, full screen, exact
+    // alarms): explained, then the system prompt or settings page; "not now" holds until the next open.
+    CallPermissionGate()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
