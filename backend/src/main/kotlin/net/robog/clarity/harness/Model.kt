@@ -448,7 +448,13 @@ data class ModelRequest(
 }
 
 /** The finished (accumulated) assistant turn. */
-data class ModelResponse(val content: List<Block>, val stopReason: StopReason, val usage: Usage) {
+data class ModelResponse(
+    val content: List<Block>,
+    val stopReason: StopReason,
+    val usage: Usage,
+    /** The provider sent no usage for the call: its tokens and cost are unknown, not zero. */
+    val usageMissing: Boolean = false,
+) {
     val toolUses: List<Block.ToolUse> get() = content.filterIsInstance<Block.ToolUse>()
     val text: String get() = content.filterIsInstance<Block.Text>().joinToString("") { it.text }
 }

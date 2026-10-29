@@ -8,6 +8,7 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
+import io.kotest.matchers.types.shouldBeInstanceOf
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.CopyOnWriteArrayList
@@ -405,10 +406,14 @@ class OpenRouterModelGatewayTest : FunSpec({
     }
 
     test("usage: cached and written tokens split out of the prompt, the reported cost in micro-dollars") {
+        // The detail blocks as OpenRouter streams them.
         val usage = OpenRouterModelGateway.toUsage(
             HarnessJson.parseToJsonElement(
                 """{"prompt_tokens":1000,"completion_tokens":50,"total_tokens":1050,"cost":0.0012345,
-                   "prompt_tokens_details":{"cached_tokens":600,"cache_write_tokens":100}}""",
+                   "prompt_tokens_details":{"cached_tokens":600,"cache_write_tokens":100,"audio_tokens":0,"video_tokens":0},
+                   "completion_tokens_details":{"reasoning_tokens":12,"image_tokens":0,"audio_tokens":0},
+                   "cost_details":{"upstream_inference_cost":0.0002345,"upstream_inference_prompt_cost":0.0002,"upstream_inference_completions_cost":0.0000345},
+                   "server_tool_use_details":{"web_search_requests":0,"tool_calls_requested":0,"tool_calls_executed":0}}""",
             ).jsonObject,
         )
         usage shouldBe Usage(inputTokens = 300, outputTokens = 50, cacheCreationInputTokens = 100, cacheReadInputTokens = 600, reportedCostMicros = 1_235)
@@ -521,6 +526,79 @@ class OpenRouterModelGatewayTest : FunSpec({
             proxy.seen.single().uri shouldBe "http://openrouter.invalid/api/v1/chat/completions"
         }
         httpsProxyFromEnv(mapOf("CLARITY_HTTPS_PROXY" to "http://egress:3128"))!!.type() shouldBe Proxy.Type.HTTP
+    }
+
+    test("a captured web search stream (deepseek through OpenRouter): every usage field, the citations, the answer") {
+        val sse = OpenRouterModelGatewayTest::class.java.getResource("/fixtures/openrouter-web-search.sse")!!.readText()
+        val acc = OpenRouterModelGateway.StreamAccumulator("deepseek/deepseek-v4.1-flash-1017")
+        OpenRouterModelGateway.parseSse(sse.lineSequence(), acc::accept)
+        val response = acc.response()
+        response.usageMissing shouldBe false
+        response.usage shouldBe Usage(
+            inputTokens = 1_697,
+            outputTokens = 126,
+            cacheCreationInputTokens = 0,
+            cacheReadInputTokens = 1_024,
+            reportedCostMicros = 1_321,
+            webSearchRequests = 1,
+            provider = "Ionstream",
+        )
+        response.stopReason shouldBe StopReason.END_TURN
+        response.text shouldBe "W. H. Stevenson discovered the only surviving manuscript of *Le Roman de Silence* in 1911 while " +
+            "examining the Wollaton Hall archives for the Historical Manuscripts Commission."
+        val cited = citationsOf(response.content.last())
+        cited.map { it.url } shouldBe listOf(
+            "https://collection.sl.nsw.gov.au/record/74VKpg4MArWy",
+            "https://www.medievalists.net/2026/07/10-lost-medieval-texts-rediscovered-centuries-later",
+            "https://repository.lib.fsu.edu/islandora/object/fsu:911249",
+        )
+        cited.all { !it.title.isNullOrBlank() && !it.content.isNullOrBlank() } shouldBe true
+    }
+
+    test("a stream with no usage chunk says its usage is missing") {
+        val acc = OpenRouterModelGateway.StreamAccumulator("m")
+        acc.accept("""{"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}""")
+        acc.response().usageMissing shouldBe true
+    }
+
+    test("a stream that stalls between chunks fails after the idle timeout and frees the call") {
+        val release = CountDownLatch(1)
+        FakeOpenRouter { ex, _ ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
+            ex.sendResponseHeaders(200, 0)
+            ex.responseBody.write(data("""{"choices":[{"delta":{"content":"first"}}]}""").toByteArray())
+            ex.responseBody.flush()
+            release.await(30, TimeUnit.SECONDS)
+        }.use { fake ->
+            try {
+                val stalled = OpenRouterModelGateway(KEY, fake.baseUrl, null, retryDelays = listOf(10.milliseconds), idleTimeout = 500.milliseconds)
+                val error = withTimeout(10.seconds) {
+                    runCatching { stalled.generate(simple()) }.exceptionOrNull()
+                }
+                error.shouldBeInstanceOf<OpenRouterException>().message!! shouldContain "stalled"
+                fake.seen.size shouldBe 1
+            } finally {
+                release.countDown()
+            }
+        }
+    }
+
+    test("keep-alive comments keep a slow stream alive") {
+        FakeOpenRouter { ex, _ ->
+            ex.responseHeaders.add("content-type", "text/event-stream")
+            ex.sendResponseHeaders(200, 0)
+            repeat(6) {
+                ex.responseBody.write(": OPENROUTER PROCESSING\n\n".toByteArray())
+                ex.responseBody.flush()
+                Thread.sleep(150)
+            }
+            ex.responseBody.write(data("""{"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}""").toByteArray())
+            ex.responseBody.write("data: [DONE]\n\n".toByteArray())
+            ex.responseBody.close()
+        }.use { fake ->
+            val slow = OpenRouterModelGateway(KEY, fake.baseUrl, null, retryDelays = listOf(10.milliseconds), idleTimeout = 500.milliseconds)
+            slow.generate(simple()).text shouldBe "done"
+        }
     }
 
     test("cancelling the coroutine aborts a stream that is still open") {

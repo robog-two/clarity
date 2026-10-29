@@ -14,6 +14,14 @@ data class AgentConfig(
     val helperMaxTurns: Int = 60,
     /** What one helper run may spend, in dollars (`CLARITY_HELPER_MAX_COST`); then it wraps up and stops. */
     val helperMaxCostUsd: Double = 0.15,
+    /** What one lead turn may spend, in dollars (`CLARITY_LEAD_TURN_MAX_COST`); then the turn stops. */
+    val leadTurnMaxCostUsd: Double = 0.50,
+    /** Hard stops on all model calls ([SpendLimits]): per role per day and in all per week. */
+    val spend: SpendLimits = SpendLimits(),
+    /** Helpers the lead may start in 24 hours (`CLARITY_HELPER_MAX_PER_DAY`). */
+    val helperMaxPerDay: Int = 20,
+    /** Times a helper run is resumed after a restart before it is failed instead (`CLARITY_HELPER_MAX_RESUMES`). */
+    val helperMaxResumes: Int = 3,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
@@ -149,6 +157,21 @@ data class WebSearchConfig(
         val ENGINES = listOf("parallel", "exa", "perplexity", "native", "auto")
     }
 }
+
+/**
+ * Hard spend stops, in dollars, read from `model_call`: [weeklyUsd] for every call in the last 7
+ * days (`CLARITY_SPEND_WEEKLY_MAX`), and per role in the last 24 hours (`CLARITY_SPEND_DAILY_MAX_LEAD`,
+ * `_HELPER`, `_GUARD`, `_TRIAGE`). Over one, no model is called until older calls age out.
+ */
+data class SpendLimits(
+    val weeklyUsd: Double = 10.0,
+    val dailyUsd: Map<AgentRole, Double> = mapOf(
+        AgentRole.LEAD to 3.0,
+        AgentRole.HELPER to 3.0,
+        AgentRole.GUARD to 1.0,
+        AgentRole.TRIAGE to 1.0,
+    ),
+)
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */
 const val DEFAULT_JEV_MODEL = "typesafe/jev-1.14-20261014"

@@ -46,6 +46,32 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
     }
 
+    test("hard spend stops, the lead's turn cap, and the helper limits: defaults and overrides") {
+        val c = load().getOrNull()!!.agent
+        c.spend shouldBe SpendLimits()
+        c.spend.weeklyUsd shouldBe 10.0
+        c.spend.dailyUsd shouldBe mapOf(AgentRole.LEAD to 3.0, AgentRole.HELPER to 3.0, AgentRole.GUARD to 1.0, AgentRole.TRIAGE to 1.0)
+        c.leadTurnMaxCostUsd shouldBe 0.5
+        c.helperMaxPerDay shouldBe 20
+        c.helperMaxResumes shouldBe 3
+        val custom = load(
+            mapOf(
+                "CLARITY_SPEND_WEEKLY_MAX" to "7",
+                "CLARITY_SPEND_DAILY_MAX_HELPER" to "1.5",
+                "CLARITY_LEAD_TURN_MAX_COST" to "0.25",
+                "CLARITY_HELPER_MAX_PER_DAY" to "5",
+                "CLARITY_HELPER_MAX_RESUMES" to "0",
+            ),
+        ).getOrNull()!!.agent
+        custom.spend.weeklyUsd shouldBe 7.0
+        custom.spend.dailyUsd[AgentRole.HELPER] shouldBe 1.5
+        custom.spend.dailyUsd[AgentRole.LEAD] shouldBe 3.0
+        custom.leadTurnMaxCostUsd shouldBe 0.25
+        custom.helperMaxPerDay shouldBe 5
+        custom.helperMaxResumes shouldBe 0
+        load(mapOf("CLARITY_SPEND_WEEKLY_MAX" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+    }
+
     test("a helper run may spend $0.15 by default; the cap is a dollar amount above 0") {
         load().getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.15
         load(mapOf("CLARITY_HELPER_MAX_COST" to "0.5")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.5

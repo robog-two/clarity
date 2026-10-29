@@ -99,5 +99,8 @@ object AgentRuns : Table("agent_run") {
     val role = text("role")
     val result = text("result").nullable()
     val tools = jsonb<JsonElement>("tools", ClarityJson).nullable()
+
+    // V35: how many times a helper run was started (first start and each resume)
+    val starts = integer("starts").default(0)
     override val primaryKey = PrimaryKey(id)
 }

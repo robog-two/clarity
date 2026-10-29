@@ -62,13 +62,17 @@ class WebSearchServerToolTest : FunSpec({
     test("usage counts the searches and adds them up") {
         val usage = OpenRouterModelGateway.toUsage(
             kotlinx.serialization.json.Json.parseToJsonElement(
-                """{"prompt_tokens":120,"completion_tokens":30,"cost":0.0021,"server_tool_use":{"web_search_requests":2}}""",
+                """{"prompt_tokens":120,"completion_tokens":30,"cost":0.0021,"server_tool_use_details":{"web_search_requests":2,"tool_calls_requested":2,"tool_calls_executed":2}}""",
             ).jsonObject,
         )
         usage.webSearchRequests shouldBe 2
         usage.reportedCostMicros shouldBe 2_100
         (usage + Usage(webSearchRequests = 1)).webSearchRequests shouldBe 3
         OpenRouterModelGateway.toUsage(buildJsonObject { put("prompt_tokens", JsonPrimitive(1)) }).webSearchRequests shouldBe 0
+        // The documented shape is read too.
+        OpenRouterModelGateway.toUsage(
+            kotlinx.serialization.json.Json.parseToJsonElement("""{"prompt_tokens":1,"server_tool_use":{"web_search_requests":3}}""").jsonObject,
+        ).webSearchRequests shouldBe 3
     }
 
     test("the streamed usage counts searches under server_tool_use_details") {
@@ -104,7 +108,7 @@ class WebSearchServerToolTest : FunSpec({
               {"type":"url_citation","url_citation":{"url":"https://www.cdc.gov/flu/1918","title":"dup"}},
               {"type":"file","file":{"name":"x"}}
             ]},"finish_reason":"stop"}],
-            "usage":{"prompt_tokens":10,"completion_tokens":5,"server_tool_use":{"web_search_requests":1}}}""".replace("\n", ""),
+            "usage":{"prompt_tokens":10,"completion_tokens":5,"server_tool_use_details":{"web_search_requests":1,"tool_calls_requested":1,"tool_calls_executed":1}}}""".replace("\n", ""),
         )
         val response = acc.response()
         response.usage.webSearchRequests shouldBe 1

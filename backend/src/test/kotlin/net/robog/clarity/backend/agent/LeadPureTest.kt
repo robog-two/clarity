@@ -71,6 +71,89 @@ class LeadPureTest : FunSpec({
             helperOwesResult(finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
             helperOwesResult(null) shouldBe false
         }
+        test("hard spend stops: the week first, then the role's day; each names its period") {
+            val limits = net.robog.clarity.backend.config.SpendLimits()
+            val now = Instant.parse("2026-10-29T15:00:00Z")
+            spendStop(limits, AgentRole.HELPER, spentWeek = 9_999_999, spentToday = 2_999_999, now = now) shouldBe null
+            val week = spendStop(limits, AgentRole.HELPER, spentWeek = 10_000_000, spentToday = 0, now = now)!!
+            week.periodKey shouldBe "week:2026-10-29"
+            week.text shouldContain "$10.00"
+            week.text.startsWith(SPEND_LIMIT_PREFIX) shouldBe true
+            val day = spendStop(limits, AgentRole.HELPER, spentWeek = 5_000_000, spentToday = 3_000_000, now = now)!!
+            day.periodKey shouldBe "day:helper:2026-10-29"
+            day.text shouldContain "the helper spent $3.00"
+            spendStop(limits, null, spentWeek = 5_000_000, spentToday = 99_000_000, now = now) shouldBe null
+            usd(1_234_567) shouldBe "$1.23"
+        }
+        test("a lead turn begins at the inbox's or the person's words, an operator note or a summary; never at tool results") {
+            beginsLeadTurn(Message.user("hi")) shouldBe true
+            beginsLeadTurn(Message.system(REPLY_NUDGE)) shouldBe true
+            beginsLeadTurn(Message.summary("s")) shouldBe true
+            beginsLeadTurn(Message(Role.USER, listOf(Block.Result("1", "ok"), Block.Text("note")))) shouldBe false
+            beginsLeadTurn(Message(Role.ASSISTANT, listOf(Block.Text("a")))) shouldBe false
+        }
+        test("compaction backs off after two failures in a row, longer after each") {
+            compactionDue(0, 0) shouldBe true
+            compactionDue(1, 0) shouldBe true
+            compactionDue(2, 4) shouldBe false
+            compactionDue(2, 5) shouldBe true
+            compactionDue(3, 9) shouldBe false
+            compactionDue(3, 10) shouldBe true
+            compactionDue(100, 50) shouldBe true
+        }
+        test("the record of actions after a summary: changing calls with key arguments and the first line of the result") {
+            val history = listOf(
+                Message.user("go"),
+                Message(
+                    Role.ASSISTANT,
+                    listOf(
+                        Block.ToolUse("1", "create_report", buildJsonObject { put("title", "Silence"); put("source", "# long document") }),
+                        Block.ToolUse("2", "search_memory", buildJsonObject { put("query", "tea") }),
+                        Block.ToolUse("3", "send_email", buildJsonObject { put("subject", "Contract"); put("body", "secret body text") }),
+                    ),
+                ),
+                Message(
+                    Role.USER,
+                    listOf(
+                        Block.Result("1", "Report r-1 created: \"Silence\", revision 1.\nStyle: default"),
+                        Block.Result("2", "nothing"),
+                        Block.Result("3", "Held for review", isError = true),
+                    ),
+                ),
+                Message(Role.ASSISTANT, listOf(Block.ToolUse("4", "delegate", buildJsonObject { put("task", "Research Silence") }))),
+            )
+            val record = sideEffectRecord(history, setOf("create_report", "send_email", "delegate"))!!
+            record.lines() shouldBe listOf(
+                SIDE_EFFECT_RECORD_HEADING,
+                "- create_report(title: Silence) → Report r-1 created: \"Silence\", revision 1.",
+                "- send_email(subject: Contract) → error: Held for review",
+                "- delegate(task: Research Silence) → no result",
+            )
+            record shouldNotContain "secret body"
+            sideEffectRecord(history, emptySet()) shouldBe null
+            val many = listOf(Message(Role.ASSISTANT, (1..50).map { Block.ToolUse("t$it", "delegate", buildJsonObject { put("task", "t$it") }) }))
+            sideEffectRecord(many, setOf("delegate"), max = 40)!!.lines().size shouldBe 41
+        }
+        test("delegation: a daily cap, the same task once while it runs, and again within hours only with a reason") {
+            val now = Instant.parse("2026-10-29T15:00:00Z")
+            fun run(task: String, status: String, ago: kotlin.time.Duration, id: String = "h") =
+                HelperRun(id, null, "helper", task, null, status, null, now - ago, now - ago + 5.minutes)
+            normalizedTask("  Research  *Le Roman de Silence*! ") shouldBe "research le roman de silence"
+            delegationRefusal("Research Silence", emptyList(), now, 20, null) shouldBe null
+            delegationRefusal("x", List(20) { run("t$it", RunStatus.DONE, 1.hours) }, now, 20, null)!! shouldContain "20 helpers"
+            delegationRefusal("x", List(20) { run("t$it", RunStatus.DONE, 25.hours) }, now, 20, null) shouldBe null
+            val done = listOf(run("Research *Silence*", RunStatus.DONE, 2.hours, "h1"))
+            delegationRefusal("research silence", done, now, 20, null)!! shouldContain "helper h1 already ran this task"
+            delegationRefusal("research silence", done, now, 20, "the first one hit a paywall") shouldBe null
+            delegationRefusal("research silence", listOf(run("Research Silence", RunStatus.FAILED, 7.hours)), now, 20, null) shouldBe null
+            delegationRefusal("research silence", listOf(run("Research Silence", RunStatus.CANCELLED, 1.hours)), now, 20, null) shouldBe null
+            val running = listOf(run("Research Silence", RunStatus.RUNNING, 1.minutes, "h2"))
+            delegationRefusal("research silence", running, now, 20, "again") !! shouldContain "h2 is already working"
+            callRunId("thread", "toolu_1") shouldBe callRunId("thread", "toolu_1")
+            (callRunId("thread", "toolu_1") == callRunId("thread", "toolu_2")) shouldBe false
+            nudgeSteps(HELPER_SAVE_NUDGE) shouldBe 2
+            nudgeSteps(HELPER_RESULT_NUDGE) shouldBe 1
+        }
         test("the spend cap: reached at the cap, counting what was spent before; the lead is told plainly") {
             val cap = net.robog.clarity.harness.SpendCap(maxCostMicros = 150_000, spentBefore = 100_000)
             net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage(reportedCostMicros = 49_999)) shouldBe false

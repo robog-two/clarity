@@ -78,6 +78,8 @@ class HelperTools(
         val taskId: String? = null,
         @Description("A short name for the person's task list, used only when no taskId is given.")
         val title: String? = null,
+        @Description("Only to run again a task a helper already did or failed in the last hours: why it is worth another run.")
+        val retryReason: String? = null,
     )
 
     @Serializable
@@ -151,7 +153,7 @@ class HelperTools(
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
-                else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
+                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
                 }

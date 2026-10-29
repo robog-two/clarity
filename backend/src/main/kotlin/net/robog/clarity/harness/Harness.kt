@@ -47,6 +47,16 @@ data class RunRequest(
     val webSearch: WebSearchTool? = null,
     /** Stops the run with one wrap-up call once it has spent this much; null: no cap. */
     val spendCap: SpendCap? = null,
+    /**
+     * Model calls this run already made ([turnsUsed] of its journal), counted against [maxTurns]: a
+     * resumed run continues its step budget instead of starting a fresh one.
+     */
+    val turnsUsed: Int = 0,
+    /**
+     * When set, a resume also counts the model calls its journal holds since the last message this
+     * matches ([turnsUsed] of the history; `{ false }` counts the whole run): they come off [maxTurns].
+     */
+    val countStepsSince: ((Message) -> Boolean)? = null,
 ) {
     constructor(
         model: String,
@@ -159,6 +169,8 @@ fun planTools(tools: List<Tool>, policy: ToolPolicy): ToolPlan =
 class Harness(
     private val gateway: ModelGateway,
     private val journal: RunJournal = InMemoryRunJournal(),
+    /** Results of tool calls already made, so a resume never runs one twice ([ToolLedger]). */
+    private val ledger: ToolLedger = ToolLedger.NONE,
 ) {
 
     fun run(request: RunRequest, interrupts: Flow<List<Message>> = emptyFlow()): Flow<HarnessEvent> =
@@ -167,7 +179,8 @@ class Harness(
     /**
      * Continues run [runId] from its journal (`request.runId` is replaced; `request.messages` is
      * ignored unless the journal is empty). If the last journaled message is an assistant turn with
-     * unanswered `tool_use` blocks, those tools run again (EXTERNAL tools are idempotent by design).
+     * unanswered `tool_use` blocks, those tools run again, except calls the [ledger] already has a
+     * result for: those get the kept result.
      */
     fun resume(runId: String, request: RunRequest, interrupts: Flow<List<Message>> = emptyFlow()): Flow<HarnessEvent> =
         channelFlow { loop(request.copy(runId = runId), interrupts, resumed = true) }.buffer(Channel.UNLIMITED)
@@ -201,8 +214,10 @@ class Harness(
         val runId = request.runId
         var history = initial
         var usage = Usage.ZERO
-        var turn = 0
+        var turn = request.turnsUsed + (request.countStepsSince?.let { turnsUsed(initial, it) } ?: 0)
         var completedCalls = 0
+        // Every tool call id in the run, so a new call never reuses one (idempotency keys and the ledger key on it).
+        val usedIds = history.flatMap { m -> m.content.filterIsInstance<Block.ToolUse>().map { it.id } }.toMutableSet()
 
         suspend fun append(messages: List<Message>) {
             messages.forEach { journal.append(runId, it) }
@@ -250,9 +265,24 @@ class Harness(
         while (true) {
             if (calls == null && overSpend(request.spendCap, usage)) {
                 val cap = requireNotNull(request.spendCap)
+                if (!cap.finalCall) {
+                    send(HarnessEvent.Finished(RunResult(FinishReason.SPEND_LIMIT, usage, history, "")))
+                    return
+                }
                 if (!spendReported) append(mergeIntoResults(listOf(Block.Text(cap.report)), drain()))
                 val report = wrapUp(cap.notRun)
                 send(HarnessEvent.Finished(RunResult(FinishReason.SPEND_LIMIT, usage, history, report)))
+                return
+            }
+            // A resumed run whose steps are already spent makes no new step.
+            if (calls == null && turn >= request.maxTurns) {
+                val steps = request.outOfSteps
+                var report = ""
+                if (steps != null && steps.finalCall) {
+                    append(mergeIntoResults(listOf(Block.Text(steps.report)), drain()))
+                    report = wrapUp(steps.notRun)
+                }
+                send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
                 return
             }
             if (calls == null) {
@@ -279,10 +309,11 @@ class Harness(
                             send(HarnessEvent.CacheMiss(turn, response.usage))
                         }
                         // In the journal's (jsonb) key order, so this turn replays the same from memory and from the journal.
-                        append(listOf(Message(Role.ASSISTANT, journalStable(response.content))))
+                        val content = uniqueToolIds(journalStable(response.content), usedIds)
+                        append(listOf(Message(Role.ASSISTANT, content)))
                         if (response.text.isNotEmpty()) send(HarnessEvent.AssistantText(response.text))
 
-                        when (val decision = decide(response, turn, request.maxTurns)) {
+                        when (val decision = decide(response.copy(content = content), turn, request.maxTurns)) {
                             is Decision.Stop -> {
                                 val late = drain()
                                 if (late.isNotEmpty() && decision.reason == FinishReason.END_TURN) {
@@ -292,7 +323,13 @@ class Harness(
                                 val steps = request.outOfSteps
                                 if (decision.reason == FinishReason.MAX_TURNS && steps != null) {
                                     // The requested tools never run; one last call (whose tools never run either) says where it got to.
-                                    val notRun = response.toolUses.map { Block.Result(it.id, steps.notRun, isError = true) }
+                                    val notRun = content.filterIsInstance<Block.ToolUse>().map { Block.Result(it.id, steps.notRun, isError = true) }
+                                    if (!steps.finalCall) {
+                                        // No last call: the open calls are closed, so the journal never ends on them.
+                                        append(mergeIntoResults(notRun, late))
+                                        send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, response.text)))
+                                        return
+                                    }
                                     append(mergeIntoResults(notRun + Block.Text(steps.report), late))
                                     val report = wrapUp(steps.notRun)
                                     send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
@@ -312,7 +349,7 @@ class Harness(
             calls = null
             val results = executeAll(runId, toRun, plan, request)
             // At the spend cap the results carry its report request; the next pass makes the wrap-up call.
-            spendReported = overSpend(request.spendCap, usage)
+            spendReported = overSpend(request.spendCap, usage) && request.spendCap?.finalCall == true
             val note = (if (spendReported) request.spendCap?.report else stepsLeftNote(turn, request.maxTurns, request.outOfSteps))
                 ?.let { listOf(Block.Text(it)) }.orEmpty()
             append(mergeIntoResults(results + note, drain()))
@@ -377,6 +414,20 @@ class Harness(
             is Dispatch.Run -> dispatch.call
             is Dispatch.Unknown -> dispatch.call
         }
+        // Already run before a crash: the kept result, never a second run.
+        if (dispatch is Dispatch.Run) {
+            val found = try {
+                ledger.find(runId, call.id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            found?.let { kept ->
+                send(HarnessEvent.ToolCompleted(call.id, call.name, kept.content, kept.isError))
+                return Block.Result(call.id, kept.content, kept.isError)
+            }
+        }
         val result: ToolResult = when (dispatch) {
             is Dispatch.Run -> {
                 send(HarnessEvent.ToolCalled(call.id, call.name, call.input))
@@ -395,6 +446,15 @@ class Harness(
             is ToolResult.Error -> result.message to true
         }
         val content = sink?.limit(runId, call.id, call.name, raw) ?: raw
+        if (dispatch is Dispatch.Run) {
+            try {
+                ledger.record(runId, call.id, LedgerEntry(call.name, content, isError))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The journal still gets the result; only a crash right now would run the call again.
+            }
+        }
         send(HarnessEvent.ToolCompleted(call.id, call.name, content, isError))
         return Block.Result(call.id, content, isError)
     }

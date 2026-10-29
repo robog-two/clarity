@@ -130,12 +130,18 @@ class LeadRig(
     val sandboxTools: List<net.robog.clarity.harness.Tool> = listOf(FakeFetchPage()),
     /** What one helper run may spend, in dollars. */
     helperMaxCostUsd: Double = 0.15,
+    /** The hard spend stops checked before each call; by default none. */
+    spendGuard: SpendGuard = SpendGuard.OFF,
+    /** Tool results kept for resumes; by default none (pass a PgToolLedger to keep them). */
+    ledger: net.robog.clarity.harness.ToolLedger = net.robog.clarity.harness.ToolLedger.NONE,
+    /** Further agent settings over the rig's. */
+    configure: (AgentConfig) -> AgentConfig = { it },
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
-    val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, helperMaxCostUsd = helperMaxCostUsd)
+    val config = configure(AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, helperMaxCostUsd = helperMaxCostUsd))
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
-    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, usageRecorder)
+    val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, usageRecorder, spendGuard, ledger)
 
     val signals = InboxSignals()
     val inbox = ExposedInboxStore(database, clock, signals)
@@ -218,7 +224,7 @@ class LeadRig(
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
-                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link " +
+                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, tool_call_ledger, spend_notice " +
                     "RESTART IDENTITY CASCADE",
             )
         }

@@ -37,9 +37,12 @@ import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.FinishReason
 import net.robog.clarity.harness.HarnessEvent
 import net.robog.clarity.harness.Message
+import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.Role
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.harness.SpendCap
 import net.robog.clarity.harness.StopReason
+import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.contextSince
 import net.robog.clarity.harness.foldInterrupts
 import net.robog.clarity.shared.feed.Card
@@ -63,11 +66,16 @@ fun lastSystemText(messages: List<Message>, prefix: String): String? =
 fun needsResume(history: List<Message>): Boolean {
     val last = history.lastOrNull() ?: return false
     return when (last.role) {
-        Role.USER -> !last.isSummary
+        // A turn that ran out of steps closed its calls: it is over, not open.
+        Role.USER -> !last.isSummary && !closedOutOfSteps(last)
         Role.SYSTEM -> true
         Role.ASSISTANT -> last.content.any { it is Block.ToolUse }
     }
 }
+
+/** Pure: whether [message] only closes calls a turn had no steps left for ([LEAD_OUT_OF_STEPS]). */
+fun closedOutOfSteps(message: Message): Boolean =
+    message.content.isNotEmpty() && message.content.all { it is Block.Result && it.isError && it.content == LEAD_OUT_OF_STEPS.notRun }
 
 /**
  * Pure: when the journal ends in an assistant turn whose tool calls never got results (the run
@@ -79,6 +87,38 @@ fun closeOpenToolCalls(history: List<Message>): Message? {
     if (open.isEmpty()) return null
     return Message(Role.USER, open.map { Block.Result(it.id, "Not run: the turn ended before this call could run.", isError = true) })
 }
+
+/** The steps the lead gets after [REPLY_NUDGE]: the reply, and the end of the turn. */
+const val REPLY_NUDGE_STEPS = 2
+
+/** What the lead's tool results say near the end of a turn's steps; at the end its calls are closed and the turn stops. */
+val LEAD_OUT_OF_STEPS = OutOfSteps(
+    warnAt = 3,
+    finalCall = false,
+    warning = "Note: about %d steps are left in this turn. Finish the most useful part; if the person is waiting, tell them where things stand with send_to_user.",
+    notRun = "Not run: the turn ran out of steps.",
+)
+
+/** How a spend stop's message begins ([SpendLimitReached]). */
+const val SPEND_LIMIT_PREFIX = "Spend limit reached"
+
+/**
+ * Pure: whether [message] begins a lead turn, for counting the steps a resumed turn already took:
+ * the inbox's messages and the person's words (user text without tool results), operator notes,
+ * and a summary.
+ */
+fun beginsLeadTurn(message: Message): Boolean = when (message.role) {
+    Role.USER -> message.content.none { it is Block.Result }
+    Role.SYSTEM -> message.content.any { it is Block.Text }
+    Role.ASSISTANT -> false
+}
+
+/** Turns to wait after the second compaction failure in a row (times the failures after it). */
+const val COMPACTION_BACKOFF_TURNS = 5
+
+/** Pure: whether to try compacting again after [failures] in a row, [turnsSince] turns after the last. */
+fun compactionDue(failures: Int, turnsSince: Int): Boolean =
+    failures < 2 || turnsSince >= (COMPACTION_BACKOFF_TURNS * (failures - 1)).coerceAtMost(50)
 
 /**
  * The operator note appended when the person wrote and the lead ended its turn without answering
@@ -165,6 +205,15 @@ class LeadAgent(
 
     /** The prompt size of the lead's last model call (from usage); null until one ran, and after a client-side compaction. */
     private var lastPromptTokens: Long? = null
+
+    /** Client-side compactions that failed in a row, and turns since the last one ([compactionDue]). */
+    private var compactionFailures = 0
+    private var turnsSinceCompactionFailure = 0
+
+    private fun compactionFailed() {
+        compactionFailures++
+        turnsSinceCompactionFailure = 0
+    }
 
     /** Journal decorator: marks inbox rows consumed once the message carrying them is durable. */
     private val trackedJournal = object : RunJournal {
@@ -320,7 +369,8 @@ class LeadAgent(
         if (!owesReply(replyOwed.get(), first)) return
         log.info { "the person wrote and the lead ended without send_to_user: nudging once" }
         foldInterrupts(Role.ASSISTANT, listOf(Message.system(REPLY_NUDGE))).forEach { trackedJournal.append(threadId, it) }
-        val second = runHarness(bound)
+        // The nudge has a small budget of its own: the reply, then the end of the turn.
+        val second = runHarness(bound, maxTurns = REPLY_NUDGE_STEPS)
         if (owesReply(replyOwed.get(), second)) {
             log.warn { "the lead still did not answer the person after the nudge; leaving it" }
         }
@@ -331,7 +381,7 @@ class LeadAgent(
      * Anthropic blocks) stay in the journal as they are; the gateway replays reasoning only to the
      * model that wrote it, so nothing in the history is ever edited.
      */
-    private suspend fun runHarness(bound: BoundRole): HarnessEvent.Terminal? = coroutineScope {
+    private suspend fun runHarness(bound: BoundRole, maxTurns: Int = config.maxTurns): HarnessEvent.Terminal? = coroutineScope {
         val tools = toolbox.leadTools(scope)
         val request = roleRequest(
             role = bound.config,
@@ -339,8 +389,14 @@ class LeadAgent(
             system = systemBlocks(),
             messages = emptyList(),
             tools = tools.tools,
-            maxTurns = config.maxTurns,
+            maxTurns = maxTurns,
             sink = large.sink,
+        ).copy(
+            // Out of steps: the open calls are closed (never left to run at the next boot) and the turn ends.
+            outOfSteps = LEAD_OUT_OF_STEPS,
+            spendCap = SpendCap(dollarsToMicros(config.leadTurnMaxCostUsd), finalCall = false),
+            // A turn resumed at boot continues its step budget.
+            countStepsSince = ::beginsLeadTurn,
         )
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
         val watcher = launch { watchUserInput(interrupts) }
@@ -376,6 +432,10 @@ class LeadAgent(
     private suspend fun compactClientSide(bound: BoundRole) {
         val history = journal.load(threadId)
         if (!shouldCompactClientSide(bound.config, lastPromptTokens, history)) return
+        if (!compactionDue(compactionFailures, turnsSinceCompactionFailure)) {
+            turnsSinceCompactionFailure++
+            return
+        }
         log.info { "compacting the lead thread client-side (last prompt ${lastPromptTokens ?: "unknown"} tokens, threshold ${bound.config.compactAtTokens})" }
         val tools = toolbox.leadTools(scope)
         val request = clientCompactionRequest(bound.config, systemBlocks(), history, tools.tools)
@@ -385,15 +445,21 @@ class LeadAgent(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.warn(e) { "client-side compaction failed; the next turn tries again" }
+            compactionFailed()
+            log.warn(e) { "client-side compaction failed ($compactionFailures in a row); trying again later" }
             return
         }
         val summary = response.text.trim()
         if (response.stopReason != StopReason.END_TURN || summary.isEmpty()) {
-            log.warn { "client-side compaction gave no summary (${response.stopReason}); the next turn tries again" }
+            compactionFailed()
+            log.warn { "client-side compaction gave no summary (${response.stopReason}, $compactionFailures in a row); trying again later" }
             return
         }
-        trackedJournal.append(threadId, Message.summary(summary))
+        compactionFailures = 0
+        // What was done stays on record past the summary, from the journal (not from the model).
+        val effects = tools.tools.filter { it.effect != ToolEffect.READ }.map { it.name }.toSet()
+        val record = sideEffectRecord(history, effects)
+        trackedJournal.append(threadId, Message.summary(if (record == null) summary else "$summary\n\n$record"))
         lastPromptTokens = null
         threads.markCompacted(clock.now())
         // A pill in the app's chat names what the compacted stretch was about.
@@ -406,11 +472,16 @@ class LeadAgent(
                 failures = 0
                 val u = terminal.usage
                 log.info { "lead turn ${terminal.reason} (in=${u.inputTokens} out=${u.outputTokens} cacheRead=${u.cacheReadInputTokens})" }
+                if (terminal.reason == FinishReason.SPEND_LIMIT) log.warn { "lead turn reached its spend limit (${"$"}${config.leadTurnMaxCostUsd}) and stopped" }
+                if (terminal.reason == FinishReason.MAX_TURNS) log.warn { "lead turn ran out of steps (${config.maxTurns})" }
                 if (terminal.reason == FinishReason.REFUSAL) {
                     note("The model declined to continue with that. If you meant it, say it another way.")
                 }
             }
-            is HarnessEvent.Failed -> {
+            is HarnessEvent.Failed -> if (terminal.message.startsWith(SPEND_LIMIT_PREFIX)) {
+                // The spend guard has told the person (once); a note per turn would only repeat it.
+                log.warn { "lead turn stopped: ${terminal.message}" }
+            } else {
                 failures++
                 log.error { "lead turn failed: ${terminal.message}" }
                 if (failures == 1) note("I couldn't reach the model just now (${terminal.message.take(120)}). I'll try again shortly.")

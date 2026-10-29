@@ -297,6 +297,16 @@ private class Lookup(
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
                 helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.15),
+                leadTurnMaxCostUsd = dollars("CLARITY_LEAD_TURN_MAX_COST", "agent.leadTurnMaxCost", 0.50),
+                spend = SpendLimits(
+                    weeklyUsd = dollars("CLARITY_SPEND_WEEKLY_MAX", "agent.spend.weeklyMax", SpendLimits().weeklyUsd),
+                    dailyUsd = AgentRole.entries.associateWith { role ->
+                        val name = role.name
+                        dollars("CLARITY_SPEND_DAILY_MAX_$name", "agent.spend.dailyMax.${name.lowercase()}", SpendLimits().dailyUsd.getValue(role))
+                    },
+                ),
+                helperMaxPerDay = int("CLARITY_HELPER_MAX_PER_DAY", "agent.helperMaxPerDay", 20),
+                helperMaxResumes = int("CLARITY_HELPER_MAX_RESUMES", "agent.helperMaxResumes", 3, min = 0),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),

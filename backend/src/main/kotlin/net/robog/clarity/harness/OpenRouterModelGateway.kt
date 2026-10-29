@@ -118,6 +118,8 @@ class OpenRouterModelGateway(
     private val routing: OpenRouterRouting = OpenRouterRouting(),
     /** Told which upstream provider served each response (the stream's `provider`), when it says. */
     private val onServed: (provider: String) -> Unit = {},
+    /** The longest wait between two lines of the stream; then the call fails, so a stalled stream frees its slot. */
+    private val idleTimeout: Duration = STREAM_IDLE_TIMEOUT,
 ) : ModelGateway {
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
@@ -189,7 +191,16 @@ class OpenRouterModelGateway(
                 throw error
             }
             val accumulator = StreamAccumulator(model, onTextDelta)
-            stream.bufferedReader().useLines { lines -> parseSse(lines, accumulator::accept) }
+            // OpenRouter sends keep-alive comments while a model thinks, so a long silence means a stalled stream.
+            val watchdog = IdleWatchdog(idleTimeout) { stream.close() }
+            try {
+                stream.bufferedReader().useLines { lines -> parseSse(lines.onEach { watchdog.touch() }, accumulator::accept) }
+            } catch (e: IOException) {
+                if (watchdog.fired) throw OpenRouterException(null, "OpenRouter stream stalled: nothing for $idleTimeout")
+                throw e
+            } finally {
+                watchdog.stop()
+            }
             accumulator.provider?.let(onServed)
             return accumulator.response()
         }
@@ -211,8 +222,11 @@ class OpenRouterModelGateway(
 
         private val CONNECT_TIMEOUT = 30.seconds
 
-        /** Until the response headers arrive; the stream itself has no deadline. */
+        /** Until the response headers arrive; the stream itself has [STREAM_IDLE_TIMEOUT] between lines. */
         private val RESPONSE_TIMEOUT = 10.minutes
+
+        /** The longest silence between two lines of a stream. */
+        val STREAM_IDLE_TIMEOUT: Duration = 3.minutes
 
         private const val ERROR_BODY_LIMIT = 2_000
 
@@ -555,6 +569,7 @@ class OpenRouterModelGateway(
         private val citations = LinkedHashMap<String, UrlCitation>()
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
+        private var usageSeen = false
 
         /** The upstream provider that served the stream, from its chunks' `provider`. */
         var provider: String? = null
@@ -569,7 +584,7 @@ class OpenRouterModelGateway(
                 val message = (error["message"] as? JsonPrimitive)?.contentOrNull ?: "unknown error"
                 throw OpenRouterException(null, "OpenRouter stream failed: ${message.take(300)}")
             }
-            (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it) }
+            (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it); usageSeen = true }
             (chunk["provider"] as? JsonPrimitive)?.contentOrNull?.let { provider = it }
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             val delta = choice["delta"] as? JsonObject
@@ -623,11 +638,49 @@ class OpenRouterModelGateway(
                 kept + answer + cited,
                 stopReason(finish, uses.isNotEmpty()),
                 usage.copy(webSearchRequests = searches, provider = provider),
+                usageMissing = !usageSeen,
             )
         }
 
         private companion object {
             val REASONING_TEXT_FIELDS = setOf("text", "summary", "data")
+        }
+    }
+}
+
+/**
+ * Calls [onIdle] once when [touch] has not been called for [timeout] (checked a few times per
+ * [timeout] on one shared daemon thread); [stop] ends the watch.
+ */
+internal class IdleWatchdog(private val timeout: Duration, private val onIdle: () -> Unit) {
+    @Volatile private var last = System.nanoTime()
+    @Volatile var fired = false
+        private set
+    private val task: java.util.concurrent.ScheduledFuture<*>
+
+    init {
+        val period = (timeout.inWholeMilliseconds / 4).coerceIn(50, 5_000)
+        task = TIMER.scheduleAtFixedRate({ check() }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    fun touch() {
+        last = System.nanoTime()
+    }
+
+    fun stop() {
+        task.cancel(false)
+    }
+
+    private fun check() {
+        if (fired || System.nanoTime() - last < timeout.inWholeNanoseconds) return
+        fired = true
+        task.cancel(false)
+        runCatching(onIdle)
+    }
+
+    private companion object {
+        val TIMER: java.util.concurrent.ScheduledExecutorService = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "openrouter-idle-watchdog").apply { isDaemon = true }
         }
     }
 }

@@ -35,6 +35,10 @@ import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
 import net.robog.clarity.harness.SpendCap
+import net.robog.clarity.harness.ToolCallContext
+import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import net.robog.clarity.harness.WebSearchTool
 import net.robog.clarity.harness.searchFor
 import net.robog.clarity.shared.time.LocalTimes
@@ -157,10 +161,20 @@ class HelperManager(
     suspend fun delegate(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, String> =
         start(task, tools, role, parent).map { it.text }
 
-    /** Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not start. */
-    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, Delegated> {
+    /**
+     * Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not
+     * start. At most [AgentConfig.helperMaxPerDay] in 24 hours, and not the same task again within
+     * [REPEAT_WINDOW] of one that ran, unless the lead gives a [retryReason].
+     */
+    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope, retryReason: String? = null): Either<String, Delegated> {
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
+        // The same delegate call made again (a resumed lead turn) gets the helper it already started.
+        val id = coroutineContext[ToolCallContext]?.let { callRunId(it.runId, it.toolUseId) } ?: Uuid.random().toString()
+        runs.get(id)?.let { return Delegated(id, "Helper $id was already started for this call (${it.status}).").right() }
+        val now = clock.now()
+        val recent = runs.startedSince(now - REPEAT_WINDOW.coerceAtLeast(1.days))
+        delegationRefusal(task, recent, now, config.helperMaxPerDay, retryReason)?.let { return it.left() }
         val probe = RunScope("probe", isLead = false)
         // Web search only when the lead names it, and then without any personal-data or outbound tool.
         val search = tools != null && WEB_SEARCH in tools
@@ -178,7 +192,6 @@ class HelperManager(
         // Pages are read only from our side: research without the sandbox's fetch_page does not start.
         if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
-        val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
         val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
@@ -239,7 +252,15 @@ class HelperManager(
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
         live[run.id] = interrupts
         var terminal: HarnessEvent.Terminal? = null
+        var stopped: String? = null
         try {
+            // A run that keeps being resumed (a crash loop at boot) is failed instead of resumed again.
+            val starts = runs.recordStart(run.id)
+            if (starts > 1 + config.helperMaxResumes) {
+                stopped = "The helper was stopped: it was resumed ${starts - 1} times after restarts without finishing."
+                log.warn { "helper ${run.id}: started $starts times, failing it" }
+                throw TooManyResumes()
+            }
             runs.markRunning(run.id)
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
@@ -256,7 +277,8 @@ class HelperManager(
                 sink = large.sink,
                 // The cap is per run, not per resume: searches already recorded for it count.
                 webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
-            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id))
+            // A resume continues the run's step budget: every model call in its journal counts.
+            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id), countStepsSince = { false })
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
@@ -270,18 +292,26 @@ class HelperManager(
             // Open models sometimes end with no text, or with the document as text: one bounded nudge, never more.
             helperNudge(terminal, set.tools.map { it.name })?.let { nudge ->
                 journal.append(run.id, Message.user(nudge))
-                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)), spendCap = spendCap(run.id))
+                // The nudge has a budget of its own: one step to write the result, two to save the document and say so.
+                val nudged = request.copy(
+                    webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
+                    spendCap = spendCap(run.id),
+                    maxTurns = nudgeSteps(nudge),
+                    countStepsSince = { it.role == net.robog.clarity.harness.Role.USER && it.content.any { b -> b is net.robog.clarity.harness.Block.Text && b.text == nudge } },
+                )
                 harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
+        } catch (_: TooManyResumes) {
+            // [stopped] says why
         } catch (e: Exception) {
             log.error(e) { "helper ${run.id} crashed" }
         }
         if ((terminal as? HarnessEvent.Finished)?.reason == FinishReason.SPEND_LIMIT) {
             log.warn { "helper ${run.id} hit its spend limit (${"$"}${config.helperMaxCostUsd}) and was stopped" }
         }
-        val (ok, text) = helperOutcome(terminal)
+        val (ok, text) = stopped?.let { false to it } ?: helperOutcome(terminal)
         withContext(NonCancellable) {
             val now = clock.now()
             val current = runs.get(run.id)
@@ -297,6 +327,42 @@ class HelperManager(
         }
     }
 }
+
+private class TooManyResumes : RuntimeException()
+
+/** How long a task that ran is not delegated again without a retry reason. */
+val REPEAT_WINDOW: kotlin.time.Duration = 6.hours
+
+/** Pure: [task] reduced to its words, so the same task in other spacing or case is the same. */
+fun normalizedTask(task: String): String = task.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+/**
+ * Pure: why delegating [task] now is refused, given the helper runs started in the last day or more
+ * ([recent]), or null: more than [maxPerDay] started in 24 hours; the same task ([normalizedTask])
+ * still running; or the same task done or failed within [REPEAT_WINDOW] and no [retryReason].
+ */
+fun delegationRefusal(task: String, recent: List<HelperRun>, now: kotlin.time.Instant, maxPerDay: Int, retryReason: String?): String? {
+    val today = recent.count { it.startedAt >= now - 24.hours }
+    if (today >= maxPerDay) {
+        return "Not started: $today helpers were started in the last 24 hours, the limit. Do the rest yourself, or tell the person."
+    }
+    val same = recent.filter { normalizedTask(it.task) == normalizedTask(task) }
+    same.firstOrNull { it.status in RunStatus.OPEN }?.let {
+        return "Not started: helper ${it.id} is already working on this task. Send it news with message_helper."
+    }
+    if (!retryReason.isNullOrBlank()) return null
+    val ran = same.firstOrNull { it.status == RunStatus.DONE || it.status == RunStatus.FAILED }
+        ?.takeIf { (it.finishedAt ?: it.startedAt) >= now - REPEAT_WINDOW }
+        ?: return null
+    return "Not started: helper ${ran.id} already ran this task (${ran.status}). Use its result; to run it again, say why in retryReason."
+}
+
+/** Pure: the run id of the helper that tool call [toolUseId] of run [runId] starts, the same every time. */
+fun callRunId(runId: String, toolUseId: String): String =
+    java.util.UUID.nameUUIDFromBytes("delegate:$runId:$toolUseId".toByteArray()).toString()
+
+/** Pure: the steps a nudged helper gets: two to save the document and say so, one to write a result. */
+fun nudgeSteps(nudge: String): Int = if (nudge == HELPER_SAVE_NUDGE) 2 else 1
 
 /** What a helper run gets from its stored tool list: the tools to build, and web search when it was granted. */
 data class HelperRunPlan(val tools: List<String>?, val webSearch: WebSearchTool?)
