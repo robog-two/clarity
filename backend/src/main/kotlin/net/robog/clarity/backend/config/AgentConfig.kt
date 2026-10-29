@@ -130,6 +130,8 @@ data class WebSearchConfig(
     val maxSearchesPerRun: Int = 10,
     val maxResults: Int = 5,
     val excludedDomains: List<String> = emptyList(),
+    /** Characters of each result's page OpenRouter passes on; the helper fetches pages itself. */
+    val maxCharactersPerResult: Int = net.robog.clarity.harness.DEFAULT_SEARCH_EXCERPT_CHARS,
 ) {
     /** The server tool a granted helper's run carries; null when search is off. */
     fun tool(): net.robog.clarity.harness.WebSearchTool? = if (!enabled) null else net.robog.clarity.harness.WebSearchTool(
@@ -138,6 +140,7 @@ data class WebSearchConfig(
         maxResults = maxResults,
         maxSearches = maxSearchesPerRun,
         excludedDomains = excludedDomains,
+        maxCharacters = maxCharactersPerResult,
     )
 
     companion object {

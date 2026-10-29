@@ -37,9 +37,12 @@ const val WEB_SEARCH = "web_search"
 /** MCP tools of the sandbox (`sandbox__shell`, ...). */
 const val SANDBOX_PREFIX = "sandbox__"
 
+/** The sandbox's page reader: a search helper opens pages with it, so they are fetched from our side. */
+const val FETCH_PAGE = "${SANDBOX_PREFIX}fetch_page"
+
 /**
  * Pure: the tools a helper with web search keeps from [requested]: only the sandbox and the report
- * tools (always all of them, plus `cite_sources`). Everything that reads personal data or reaches
+ * tools (always all of them, plus `cite_sources` and [FETCH_PAGE]). Everything that reads personal data or reaches
  * outside (mail, contacts, calendar, memory, journal, profile, drafts and other guarded actions, the
  * browser, the vault and credentials, saved results) is dropped, so a search query can only carry
  * what the task says. Returns (kept, dropped); `web_search` itself is neither.
@@ -47,7 +50,7 @@ const val SANDBOX_PREFIX = "sandbox__"
 fun researchTools(requested: List<String>): Pair<List<String>, List<String>> {
     val asked = requested.filter { it != WEB_SEARCH }.distinct()
     val (kept, dropped) = asked.partition { it.startsWith(SANDBOX_PREFIX) || it in REPORT_TOOLS || it == CITE_SOURCES }
-    return (kept + REPORT_TOOLS + CITE_SOURCES).distinct() to dropped
+    return (kept + REPORT_TOOLS + CITE_SOURCES + FETCH_PAGE).distinct() to dropped
 }
 
 /** The memory clean-up helper's tools. */

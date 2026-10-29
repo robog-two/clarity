@@ -204,7 +204,8 @@ private class Lookup(
     /**
      * `CLARITY_WEB_SEARCH` (default true), `CLARITY_WEB_SEARCH_ENGINE` (parallel), `CLARITY_WEB_SEARCH_MODE`
      * (fast; blank: the engine's default), `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10 per helper run),
-     * `CLARITY_WEB_SEARCH_MAX_RESULTS` (5 per search), `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` (comma list).
+     * `CLARITY_WEB_SEARCH_MAX_RESULTS` (5 per search), `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` (comma list),
+     * `CLARITY_WEB_SEARCH_MAX_CHARACTERS` (400: the excerpt of each result; pages are fetched by the sandbox).
      * Yaml `agent.webSearch.*`. Firecrawl is refused: OpenRouter rejects it under zero data retention.
      */
     context(_: Raise<ConfigError>)
@@ -222,6 +223,8 @@ private class Lookup(
         }
         val maxResults = int("CLARITY_WEB_SEARCH_MAX_RESULTS", "agent.webSearch.maxResults", defaults.maxResults)
         if (maxResults > 25) raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_MAX_RESULTS", maxResults.toString(), "expected 1 to 25"))
+        val maxCharacters = int("CLARITY_WEB_SEARCH_MAX_CHARACTERS", "agent.webSearch.maxCharactersPerResult", defaults.maxCharactersPerResult)
+        if (maxCharacters > 100_000) raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_MAX_CHARACTERS", maxCharacters.toString(), "expected 1 to 100000"))
         return WebSearchConfig(
             enabled = bool("CLARITY_WEB_SEARCH", "agent.webSearch.enabled", defaults.enabled),
             engine = engine,
@@ -230,6 +233,7 @@ private class Lookup(
             maxResults = maxResults,
             excludedDomains = string("CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS", "agent.webSearch.excludedDomains")
                 ?.split(',')?.map { it.trim().lowercase() }?.filter(String::isNotEmpty).orEmpty(),
+            maxCharactersPerResult = maxCharacters,
         )
     }
 

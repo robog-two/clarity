@@ -71,6 +71,40 @@ class LeadPureTest : FunSpec({
             helperOwesResult(finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
             helperOwesResult(null) shouldBe false
         }
+        test("a document written as the reply is a document only when long and with a heading") {
+            val body = "The poem turns on one image. ".repeat(60)
+            looksLikeDocument("# Recap\n\n$body") shouldBe true
+            looksLikeDocument("Intro\n  ## Sources\n$body") shouldBe true
+            looksLikeDocument(body) shouldBe false
+            looksLikeDocument("# Recap\n\nshort") shouldBe false
+            looksLikeDocument("#hashtag\n$body") shouldBe false
+        }
+        test("a report helper that wrote the document as its reply and saved nothing gets one save nudge") {
+            val doc = "# Recap\n\n" + "A sourced line. ".repeat(120)
+            val tools = listOf("create_report", "edit_report", "cite_sources")
+            fun done(text: String, transcript: List<Message> = emptyList(), reason: net.robog.clarity.harness.FinishReason = net.robog.clarity.harness.FinishReason.END_TURN) =
+                net.robog.clarity.harness.HarnessEvent.Finished(net.robog.clarity.harness.RunResult(reason, net.robog.clarity.harness.Usage.ZERO, transcript, text))
+            fun call(name: String, error: Boolean) = listOf(
+                Message(Role.ASSISTANT, listOf(Block.ToolUse("c1", name, JsonObject(emptyMap())))),
+                Message(Role.USER, listOf(Block.Result("c1", "ok", isError = error))),
+            )
+            helperOwesReport(done(doc), tools) shouldBe true
+            helperNudge(done(doc), tools) shouldBe HELPER_SAVE_NUDGE
+            // A failed create_report does not count as saved; a successful one or an edit does.
+            helperOwesReport(done(doc, call("create_report", error = true)), tools) shouldBe true
+            helperOwesReport(done(doc, call("create_report", error = false)), tools) shouldBe false
+            helperOwesReport(done(doc, call("edit_report", error = false)), tools) shouldBe false
+            helperOwesReport(done(doc, call("read_report", error = false)), tools) shouldBe true
+            // Only for a helper that can create reports, ended on its own, with a document as its reply.
+            helperOwesReport(done(doc), listOf("browser__look")) shouldBe false
+            helperOwesReport(done(doc, reason = net.robog.clarity.harness.FinishReason.MAX_TURNS), tools) shouldBe false
+            helperOwesReport(done("Report 1 created: a recap of the poem."), tools) shouldBe false
+            helperOwesReport(null, tools) shouldBe false
+            // The empty-result nudge comes first; a fine result gets none.
+            helperNudge(done(" "), tools) shouldBe HELPER_RESULT_NUDGE
+            helperNudge(done("Report 1 created."), tools) shouldBe null
+            HELPER_SAVE_NUDGE shouldContain "create_report"
+        }
         test("the lead prompt tells it to always answer the person, in the same turn") {
             AgentPrompts.LEAD_SYSTEM shouldContain "When the person writes to you, always answer with send_to_user in the same turn"
         }

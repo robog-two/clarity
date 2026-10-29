@@ -243,7 +243,7 @@ data class Usage(
     val cacheCreation1hTokens: Long = 0,
     /** What the provider says the call cost, in millionths of a dollar (OpenRouter); null when it does not say. */
     val reportedCostMicros: Long? = null,
-    /** Web searches the server ran for this call (`usage.server_tool_use.web_search_requests`). */
+    /** Web searches the server ran for this call (`usage.server_tool_use_details.web_search_requests`). */
     val webSearchRequests: Long = 0,
     /** The upstream provider that served the call (OpenRouter's `provider`); in a sum, the latest known. */
     val provider: String? = null,
@@ -304,6 +304,9 @@ const val MIN_COMPACT_AT_TOKENS = 50_000L
  */
 fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").startsWith("anthropic/")
 
+/** How much of each search result's page OpenRouter passes on by default: a short excerpt. */
+const val DEFAULT_SEARCH_EXCERPT_CHARS: Int = 400
+
 /**
  * OpenRouter's web search server tool (`{"type": "openrouter:web_search"}`): the search runs on
  * OpenRouter's side, its results go straight into the model's context, and the answer carries
@@ -311,6 +314,8 @@ fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").start
  * never the lead. [maxSearches] caps the searches of one request (`max_tool_calls`, which also bounds
  * any other server tool) and [maxResults] the results of each; [maxTotalResults] the results of the
  * whole request. [excludedDomains] is the engine's block list (Parallel, Exa and others honour it).
+ * [maxCharacters] caps each result's excerpt (`max_characters`; Exa, Parallel and Perplexity): the
+ * helper reads pages itself with `fetch_page`, so a search only needs enough to pick them.
  */
 data class WebSearchTool(
     val engine: String = "parallel",
@@ -319,10 +324,12 @@ data class WebSearchTool(
     val maxSearches: Int = 10,
     val maxTotalResults: Int? = null,
     val excludedDomains: List<String> = emptyList(),
+    val maxCharacters: Int? = DEFAULT_SEARCH_EXCERPT_CHARS,
 ) {
     init {
         require(maxSearches >= 1) { "maxSearches must be at least 1" }
         require(maxResults in 1..25) { "maxResults must be from 1 to 25" }
+        require(maxCharacters == null || maxCharacters in 1..100_000) { "maxCharacters must be from 1 to 100000" }
     }
 }
 

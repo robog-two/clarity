@@ -8,6 +8,10 @@ import dev.zacsweers.metro.SingleIn
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Clock
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonTransformingSerializer
 import net.robog.clarity.backend.agent.OwnStateTools
 import net.robog.clarity.backend.agent.RunScope
 import net.robog.clarity.backend.agent.SettingsProvider
@@ -19,7 +23,12 @@ import net.robog.clarity.harness.Tool
 import net.robog.clarity.harness.ToolCallContext
 import net.robog.clarity.harness.ToolEffect
 import net.robog.clarity.harness.ToolResult
+import net.robog.clarity.harness.Block
+import net.robog.clarity.harness.Message
+import net.robog.clarity.harness.UrlCitation
 import net.robog.clarity.harness.citationsIn
+import net.robog.clarity.backend.agent.FETCH_PAGE
+import kotlin.time.Instant
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.Card
@@ -35,6 +44,36 @@ const val PRESENT_REPORT = "present_report"
 
 /** Attaches the web sources a search helper's answers cited to a report: only helpers with web search. */
 const val CITE_SOURCES = "cite_sources"
+
+/** How much of a fetched page is kept as a source's excerpt. */
+const val SOURCE_EXCERPT_CHARS = 300
+
+/** A page a run opened with `fetch_page`: the source to cite and when it was fetched. */
+data class FetchedSource(val citation: UrlCitation, val fetchedAt: Instant?)
+
+/**
+ * Pure: the pages [messages] opened with [FETCH_PAGE] that came back, first fetch of each URL, in
+ * order. Read from the result's header (`Title:`, `URL:`, `Fetched:`, `Description:`); the excerpt is
+ * the description, else the start of the page's text.
+ */
+fun fetchedPagesIn(messages: List<Message>): List<FetchedSource> {
+    val blocks = messages.flatMap(Message::content)
+    val fetches = blocks.filterIsInstance<Block.ToolUse>().filter { it.name == FETCH_PAGE }.map { it.id }.toSet()
+    return blocks.filterIsInstance<Block.Result>()
+        .filter { it.toolUseId in fetches && !it.isError }
+        .mapNotNull { fetchedPage(it.content) }
+        .distinctBy { it.citation.url }
+}
+
+private fun fetchedPage(content: String): FetchedSource? {
+    val header = content.substringBefore("\n\n").lines()
+    fun field(name: String) = header.firstOrNull { it.startsWith("$name: ") }?.removePrefix("$name: ")?.trim()?.ifEmpty { null }
+    val url = field("URL")?.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: return null
+    val body = content.substringAfter("\n\n", "").replace(Regex("\\s+"), " ").trim()
+    val excerpt = field("Description") ?: body.take(SOURCE_EXCERPT_CHARS).ifEmpty { null }
+    val at = field("Fetched")?.let { runCatching { Instant.parse(it) }.getOrNull() }
+    return FetchedSource(UrlCitation(url, field("Title"), excerpt?.take(SOURCE_EXCERPT_CHARS)), at)
+}
 
 /** How much of a report `read_report` returns at once. */
 const val READ_REPORT_CHARS = 12_000
@@ -102,6 +141,15 @@ class StyleInput(
     }
 }
 
+/**
+ * [StyleInput] that also takes a bare string as its preset (`"style": "mla"` is `{"preset": "mla"}`).
+ * The advertised schema stays the object.
+ */
+object LenientStyleInput : JsonTransformingSerializer<StyleInput>(StyleInput.serializer()) {
+    override fun transformDeserialize(element: JsonElement): JsonElement =
+        if (element is JsonPrimitive && element.isString) JsonObject(mapOf("preset" to element)) else element
+}
+
 /** Pure: [input] over [base] and checked; Left is the message for the model. */
 fun resolveStyle(input: StyleInput?, base: ReportStyle): arrow.core.Either<String, ReportStyle> {
     if (input == null) return base.right()
@@ -132,7 +180,7 @@ class ReportTools(
         @Description("The whole document in Markdown: # headings, paragraphs, lists, tables, > quotes. Optional YAML front matter (title, author, date) at the top.")
         val source: String,
         @Description("How it should look, from what the person asked for (fonts, sizes, spacing, margins, heading font/bold/italic/size, MLA...). Omit for the default: body Times New Roman 12, single spaced, 1 in margins; title and headings in Libre Caslon Text.")
-        val style: StyleInput? = null,
+        @Serializable(with = LenientStyleInput::class) val style: StyleInput? = null,
     )
 
     @Serializable
@@ -143,7 +191,7 @@ class ReportTools(
     )
 
     @Serializable
-    class StyleChangeInput(val id: String, @Description("Only the fields to change; the rest stay as they are.") val style: StyleInput)
+    class StyleChangeInput(val id: String, @Description("Only the fields to change; the rest stay as they are.") @Serializable(with = LenientStyleInput::class) val style: StyleInput)
 
     @Serializable
     class ReadInput(val id: String, @Description("First line to show (default 1).") val fromLine: Int = 1, @Description("A revision number; default the latest.") val revision: Int? = null)
@@ -161,7 +209,7 @@ class ReportTools(
     @Serializable
     class CiteInput(
         val id: String,
-        @Description("Only these URLs (as cited in your search answers); omit to attach every source cited in this task so far.") val urls: List<String>? = null,
+        @Description("Only these URLs (pages you fetched); omit to attach every page fetched in this task so far.") val urls: List<String>? = null,
     )
 
     /** The lead's report tools: drafting, reading and presenting. */
@@ -175,6 +223,7 @@ class ReportTools(
     fun createReport(scope: RunScope): Tool = tool<CreateInput>(
         name = "create_report",
         description = "Create a document for the person from Markdown; it shows in their Goods tab at once. Returns its id; keep the id, not the text. " +
+            "A document you are asked for goes here, not into your reply. " +
             "It downloads as PDF, Word / Pages, OpenDocument and plain text.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
@@ -266,21 +315,25 @@ class ReportTools(
 
     fun citeSources(): Tool = tool<CiteInput>(
         name = CITE_SOURCES,
-        description = "Attach the web sources your search answers cited (in this task) to a report, so its works-cited list comes from real pages.",
+        description = "Attach the pages you opened with fetch_page (in this task) to a report, so its works-cited list comes from pages you read.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
         val id = input.id.trim()
         if (store.report(id) == null) return@tool ToolResult.Error("No report with id $id.")
         val runId = coroutineContext[ToolCallContext]?.runId ?: return@tool ToolResult.Error("No search results to cite here.")
-        val cited = citationsIn(journal.load(runId))
+        val messages = journal.load(runId)
+        // Pages the run fetched itself come first; search citations only when it fetched none.
+        val fetched = fetchedPagesIn(messages)
+        val cited = fetched.map { it.citation }.ifEmpty { citationsIn(messages) }
         val wanted = input.urls?.map { it.trim() }?.toSet()
         val chosen = if (wanted == null) cited else cited.filter { it.url in wanted }
         when {
-            cited.isEmpty() -> ToolResult.Error("Your answers have cited no web pages yet; search first.")
-            chosen.isEmpty() -> ToolResult.Error("None of those URLs were cited. Cited so far: ${cited.take(20).joinToString { it.url }}")
+            cited.isEmpty() -> ToolResult.Error("You have opened no pages yet; open the ones you rely on with fetch_page first.")
+            chosen.isEmpty() -> ToolResult.Error("None of those URLs were fetched. Fetched so far: ${cited.take(20).joinToString { it.url }}")
             else -> {
-                val added = store.addSources(id, chosen, clock.now())
+                val times = fetched.mapNotNull { page -> page.fetchedAt?.let { page.citation.url to it } }.toMap()
+                val added = store.addSources(id, chosen, clock.now(), times)
                 ToolResult.Ok("Report $id: $added new source(s) attached (${chosen.size - added} already there).")
             }
         }

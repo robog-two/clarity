@@ -319,6 +319,7 @@ class OpenRouterModelGateway(
                 put("max_results", maxResults)
                 put("max_total_results", maxTotalResults ?: (maxResults * maxSearches))
                 if (excludedDomains.isNotEmpty()) put("excluded_domains", JsonArray(excludedDomains.map(::JsonPrimitive)))
+                maxCharacters?.let { put("max_characters", it) }
             }
         }
 
@@ -511,7 +512,9 @@ class OpenRouterModelGateway(
             val cached = details.long("cached_tokens")
             val written = details.long("cache_write_tokens")
             val cost = (usage["cost"] as? JsonPrimitive)?.doubleOrNull
-            val searches = (usage["server_tool_use"] as? JsonObject)?.long("web_search_requests") ?: 0
+            // OpenRouter streams `server_tool_use_details`; its docs name `server_tool_use`.
+            val searches = listOf("server_tool_use_details", "server_tool_use")
+                .firstNotNullOfOrNull { usage[it] as? JsonObject }?.long("web_search_requests") ?: 0
             return Usage(
                 inputTokens = (usage.long("prompt_tokens") - cached - written).coerceAtLeast(0),
                 outputTokens = usage.long("completion_tokens"),
@@ -607,7 +610,13 @@ class OpenRouterModelGateway(
             val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
             // Citations likewise, after the answer; the request builder never sends them back.
             val cited = if (answer.isEmpty() || citations.isEmpty()) emptyList() else listOf(citationsBlock(citations.values.toList()))
-            return ModelResponse(kept + answer + cited, stopReason(finish, uses.isNotEmpty()), usage.copy(provider = provider))
+            // Citations mean a search ran, even when the usage did not count it: at least one, so the run is tainted.
+            val searches = if (citations.isEmpty()) usage.webSearchRequests else usage.webSearchRequests.coerceAtLeast(1)
+            return ModelResponse(
+                kept + answer + cited,
+                stopReason(finish, uses.isNotEmpty()),
+                usage.copy(webSearchRequests = searches, provider = provider),
+            )
         }
 
         private companion object {

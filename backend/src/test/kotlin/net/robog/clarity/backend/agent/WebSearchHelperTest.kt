@@ -11,6 +11,7 @@ import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,7 +63,7 @@ class WebSearchPureTest : FunSpec({
         PERSONAL.forEach { kept shouldNotContain it }
         (WEB_SEARCH in kept) shouldBe false
         dropped shouldContainExactly listOf("send_email", "list_messages", "browser__look", "ask_code")
-        researchTools(PERSONAL + WEB_SEARCH).first.toSet() shouldBe (REPORT_TOOLS + CITE_SOURCES).toSet()
+        researchTools(PERSONAL + WEB_SEARCH).first.toSet() shouldBe (REPORT_TOOLS + CITE_SOURCES + FETCH_PAGE).toSet()
     }
 
     test("a run gets search only when its stored tool list names it, never by default") {
@@ -91,6 +92,7 @@ class WebSearchPureTest : FunSpec({
             it.engine shouldBe "parallel"
             it.mode shouldBe "fast"
             it.maxSearches shouldBe 10
+            it.maxCharacters shouldBe 400
         }
         WebSearchConfig(enabled = false).tool().shouldBeNull()
         ("firecrawl" in WebSearchConfig.ENGINES) shouldBe false
@@ -101,6 +103,15 @@ class WebSearchPureTest : FunSpec({
         searchedIn(HarnessEvent.Called(1, Usage(10, 5))) shouldBe false
         searchedIn(HarnessEvent.Finished(RunResult(FinishReason.END_TURN, Usage(webSearchRequests = 4), emptyList(), "x"))) shouldBe false
         searchGrantText(listOf("send_email")) shouldContain "left out: send_email"
+        searchGrantText(emptyList()) shouldNotContain "cannot open pages"
+        searchGrantText(emptyList(), canFetch = false) shouldContain "cannot open pages"
+        // The count OpenRouter streams (server_tool_use_details) reaches the taint.
+        val streamed = net.robog.clarity.harness.OpenRouterModelGateway.toUsage(
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"prompt_tokens":10,"completion_tokens":2,"server_tool_use_details":{"web_search_requests":2}}""",
+            ) as kotlinx.serialization.json.JsonObject,
+        )
+        searchedIn(HarnessEvent.Called(1, streamed)) shouldBe true
     }
 })
 

@@ -21,7 +21,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import java.nio.file.Files
 
 class McpServerTest : FunSpec({
-    test("lists the six tools and executes calls over streamable HTTP with the bearer key") {
+    test("lists the seven tools and executes calls over streamable HTTP with the bearer key") {
         val ws = Workspace(Files.createTempDirectory("sbx-mcp"))
         testApplication {
             application { sandboxModule(sandboxTools(ws), bearerKey = "k3y") }
@@ -33,9 +33,10 @@ class McpServerTest : FunSpec({
 
             val tools = client.listTools().tools
             tools.map { it.name }.shouldContainExactlyInAnyOrder(
-                "shell", "read_file", "write_file", "edit_file", "search_files", "list_files",
+                "shell", "read_file", "write_file", "edit_file", "search_files", "list_files", "fetch_page",
             )
             tools.first { it.name == "read_file" }.annotations?.readOnlyHint shouldBe true
+            tools.first { it.name == "fetch_page" }.inputSchema.required shouldBe listOf("url")
             tools.first { it.name == "shell" }.inputSchema.required shouldBe listOf("command")
 
             val ok = client.callTool("shell", mapOf("command" to "echo from-sandbox"))

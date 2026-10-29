@@ -27,7 +27,11 @@ rpc() { # rpc <json>
     -H 'Accept: application/json, text/event-stream' -d "$1"
 }
 [ "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url" -d '{}')" = 401 ] || { echo "FAIL: unauthenticated request not rejected"; exit 1; }
-rpc '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q '"name":"shell"' || { echo "FAIL: tools/list"; exit 1; }
+tools="$(rpc '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+for t in shell fetch_page; do echo "$tools" | grep -q "\"name\":\"$t\"" || { echo "FAIL: tools/list has no $t"; exit 1; }; done
+# No proxy in the smoke run, so fetch_page must say there is no internet (and never fetch directly).
+fetch="$(rpc '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fetch_page","arguments":{"url":"https://example.org/"}}}')"
+echo "$fetch" | grep -q 'no internet' || { echo "FAIL: fetch_page without a proxy: $fetch"; exit 1; }
 cmd='for t in rg jq git python3 pandoc pdftotext sqlite3; do command -v $t >/dev/null || echo MISSING $t; done; echo hello > a.txt; id -u; touch /usr/x 2>&1 | head -1'
 out="$(rpc "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"shell\",\"arguments\":{\"command\":\"$cmd\"}}}")"
 echo "$out"

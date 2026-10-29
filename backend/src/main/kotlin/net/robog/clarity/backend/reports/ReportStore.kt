@@ -129,7 +129,8 @@ interface ReportStore {
     suspend fun list(limit: Int = 100): List<ReportSummary>
 
     /** Adds [citations] to [id]'s sources (a URL already there is kept as it was); returns how many were new. */
-    suspend fun addSources(id: String, citations: List<UrlCitation>, at: Instant): Int
+    /** Adds [citations] (each once by URL), fetched at [at] unless [fetchedAt] names its own time. */
+    suspend fun addSources(id: String, citations: List<UrlCitation>, at: Instant, fetchedAt: Map<String, Instant> = emptyMap()): Int
 
     suspend fun sources(id: String): List<ReportCitation>
 
@@ -237,7 +238,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
         }.sortedByDescending { it.updatedAt }
     }
 
-    override suspend fun addSources(id: String, citations: List<UrlCitation>, at: Instant): Int {
+    override suspend fun addSources(id: String, citations: List<UrlCitation>, at: Instant, fetchedAt: Map<String, Instant>): Int {
         val uuid = id.uuidOrNull() ?: return 0
         return database.tx {
             citations.distinctBy { it.url }.count { c ->
@@ -246,7 +247,7 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
                     it[url] = c.url
                     it[title] = c.title?.take(MAX_SOURCE_TITLE)
                     it[citedText] = c.content?.take(MAX_CITED_TEXT)
-                    it[fetchedAt] = at
+                    it[ReportSources.fetchedAt] = fetchedAt[c.url] ?: at
                 }.insertedCount > 0
             }
         }

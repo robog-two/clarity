@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.vault.GrantStore
+import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.FinishReason
 import net.robog.clarity.harness.HarnessEvent
 import net.robog.clarity.harness.HarnessJson
@@ -56,6 +57,45 @@ const val HELPER_RESULT_NUDGE: String =
 /** Pure: a helper that finished on its own but left no final text gets one more turn to write it. */
 fun helperOwesResult(event: HarnessEvent.Terminal?): Boolean =
     event is HarnessEvent.Finished && event.reason == FinishReason.END_TURN && event.result.finalText.isBlank()
+
+/** Appended once when a report helper wrote its document as its reply instead of saving it. */
+const val HELPER_SAVE_NUDGE: String =
+    "You wrote the document in your reply instead of saving it. Save it now with create_report (the text you wrote, as is, " +
+        "with the style you were given), then reply with only the report id and a line about it."
+
+/** How long a reply must be to count as a whole document ([looksLikeDocument]). */
+const val DOCUMENT_MIN_CHARS: Int = 1500
+
+private val MARKDOWN_HEADING = Regex("^#{1,6}\\s+\\S")
+
+/** Pure: whether [text] reads like a whole document: long, with a Markdown heading line. */
+fun looksLikeDocument(text: String): Boolean =
+    text.length >= DOCUMENT_MIN_CHARS && text.lineSequence().any { MARKDOWN_HEADING.containsMatchIn(it.trimStart()) }
+
+/** The tools whose success means a report was saved. */
+private val SAVING_TOOLS = setOf("create_report", "edit_report")
+
+/** Pure: whether [transcript] holds a create_report or edit_report call that succeeded. */
+fun savedReportIn(transcript: List<Message>): Boolean {
+    val blocks = transcript.flatMap(Message::content)
+    val saving = blocks.filterIsInstance<Block.ToolUse>().filter { it.name in SAVING_TOOLS }.map { it.id }.toSet()
+    return blocks.filterIsInstance<Block.Result>().any { it.toolUseId in saving && !it.isError }
+}
+
+/**
+ * Pure: a helper that can create reports, finished on its own with a document as its reply and
+ * never saved a report in the run gets one more turn to save it.
+ */
+fun helperOwesReport(event: HarnessEvent.Terminal?, tools: Collection<String>): Boolean =
+    "create_report" in tools && event is HarnessEvent.Finished && event.reason == FinishReason.END_TURN &&
+        looksLikeDocument(event.result.finalText) && !savedReportIn(event.transcript)
+
+/** Pure: the one nudge a finished helper gets ([HELPER_RESULT_NUDGE] or [HELPER_SAVE_NUDGE]), or null. */
+fun helperNudge(event: HarnessEvent.Terminal?, tools: Collection<String>): String? = when {
+    helperOwesResult(event) -> HELPER_RESULT_NUDGE
+    helperOwesReport(event, tools) -> HELPER_SAVE_NUDGE
+    else -> null
+}
 
 /** Pure: what a finished helper reports back to the lead. */
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
@@ -130,7 +170,9 @@ class HelperManager(
             if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
         val granted = toolbox.value.helperTools(probe, chosen)
-        if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
+        // fetch_page comes with search unasked; without the sandbox the helper goes on without it.
+        val unknown = if (search) granted.unknown - FETCH_PAGE else granted.unknown
+        if (unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${unknown.joinToString()}.".left()
         val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
@@ -141,7 +183,7 @@ class HelperManager(
         start(requireNotNull(runs.get(id)))
         val names = granted.tools.tools.map { it.name }
         val text = if (search) {
-            delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped)
+            delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped, FETCH_PAGE in names)
         } else {
             delegatedText(id, roleName, chosen, names)
         }
@@ -210,13 +252,16 @@ class HelperManager(
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
-                if (searchedIn(event)) runScope.taint()
+                if (searchedIn(event)) {
+                    runScope.taint()
+                    log.info { "helper ${run.id}: model call ran ${(event as HarnessEvent.Called).usage.webSearchRequests} web searches" }
+                }
                 if (event is HarnessEvent.Terminal) terminal = event
             }
             harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { onEvent(it) }
-            // Open models sometimes end on a tool round with no text: one bounded nudge, never more.
-            if (helperOwesResult(terminal)) {
-                journal.append(run.id, Message.user(HELPER_RESULT_NUDGE))
+            // Open models sometimes end with no text, or with the document as text: one bounded nudge, never more.
+            helperNudge(terminal, set.tools.map { it.name })?.let { nudge ->
+                journal.append(run.id, Message.user(nudge))
                 val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)))
                 harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
@@ -257,11 +302,12 @@ fun helperRunPlan(stored: List<String>?, search: WebSearchTool?): HelperRunPlan 
 /** Pure: whether [event] is a model call that ran web searches (the run has then read outside content). */
 fun searchedIn(event: HarnessEvent): Boolean = event is HarnessEvent.Called && event.usage.webSearchRequests > 0
 
-/** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost. */
-fun searchGrantText(dropped: List<String>): String =
+/** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost and whether it can open pages. */
+fun searchGrantText(dropped: List<String>, canFetch: Boolean = true): String =
     " It can search the web (only it; you cannot), and has no personal data or outbound tools" +
         (if (dropped.isEmpty()) "" else " (left out: ${dropped.sorted().joinToString()})") +
-        ", so its task must say everything it needs."
+        ", so its task must say everything it needs." +
+        (if (canFetch) "" else " It cannot open pages now (the sandbox is not available), so it has only the search results' short excerpts.")
 
 /** A helper that started: its run id and what `delegate` tells the lead. */
 data class Delegated(val id: String, val text: String)
