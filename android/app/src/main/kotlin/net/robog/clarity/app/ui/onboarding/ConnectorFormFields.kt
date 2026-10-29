@@ -60,8 +60,10 @@ fun FieldInput(
             ToggleRow(field.label, field.description.orEmpty(), values.text(field.key) == "true", onCheckedChange = { onText(field.key, it.toString()) })
         FieldKind.ENUM -> ClarityDropdown(
             label = label,
-            selected = values.text(field.key),
-            options = (if (field.required) emptyList() else listOf("" to "not set")) + field.options.map { it.value to it.title },
+            // Nothing stored yet (an item saved before the field existed): show the default the connector uses.
+            selected = values.text(field.key).ifEmpty { field.defaultChoice.orEmpty() },
+            options = (if (field.required || field.defaultChoice != null) emptyList() else listOf("" to "not set")) +
+                field.options.map { it.value to it.title },
             onSelect = { onText(field.key, it) },
             supporting = field.description,
             error = error?.message(),

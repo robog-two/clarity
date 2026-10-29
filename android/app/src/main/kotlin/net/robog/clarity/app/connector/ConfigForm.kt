@@ -63,6 +63,12 @@ data class FormField(
     val collection: CollectionSpec? = null,
 ) {
     val secret: Boolean get() = kind == FieldKind.PASSWORD
+
+    /**
+     * Only for [FieldKind.ENUM]: the choice shown while nothing is stored, which is the schema
+     * default (what the connector uses then); null when the default is not one of the [options].
+     */
+    val defaultChoice: String? get() = default?.takeIf { d -> options.any { it.value == d } }
 }
 
 sealed interface FieldError {

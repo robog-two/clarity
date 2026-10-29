@@ -49,6 +49,9 @@ import net.robog.clarity.backend.config.HttpConfig
 import net.robog.clarity.backend.config.InstanceConfig
 import net.robog.clarity.backend.config.Secret
 import net.robog.clarity.backend.di.AppGraph
+import net.robog.clarity.backend.ingest.IngestEventBus
+import net.robog.clarity.backend.ingest.IngestService
+import net.robog.clarity.backend.ingest.Ingested
 import net.robog.clarity.backend.persistence.ExposedNounReader
 import net.robog.clarity.backend.persistence.Messages
 import net.robog.clarity.backend.persistence.TimeRange
@@ -77,6 +80,7 @@ import net.robog.clarity.shared.connector.ConnectorTestReport
 import net.robog.clarity.shared.connector.ConnectorTestRequest
 import net.robog.clarity.shared.connector.ConnectorTestResult
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.delay
 import net.robog.clarity.shared.noun.ContactPayload
 import net.robog.clarity.shared.noun.DocumentPayload
@@ -280,6 +284,20 @@ class ClarityIntegrationTest : FunSpec({
             transaction(db) {
                 Messages.selectAll().where { Messages.deletedAt.isNull() }.count()
             } shouldBe 0L
+
+            // --- history (a first import, a mail backfill) is stored like any record, and its ingest event says so: no trigger fires for it
+            val published = mutableListOf<Ingested>()
+            val recordingBus = object : IngestEventBus {
+                override val events = MutableSharedFlow<Ingested>()
+                override suspend fun publish(event: Ingested) { published += event }
+            }
+            val old = message("Your invoice from last year", sender = "billing@example.com")
+            push(keyA, upsert("hist-1", "1", old).copy(history = true)).single().shouldBeInstanceOf<RecordOutcome.Created>()
+            IngestService(db, Clock.System, recordingBus).ingest(
+                ConnectorId("a"),
+                IngestBatch(listOf(upsert("hist-2", "1", message("Older still", sender = "dan@example.com")).copy(history = true), upsert("new-1", "1", message("Fresh news", sender = "erin@example.com")))),
+            ).getOrNull().shouldNotBeNull().results.map { it.outcome::class } shouldBe listOf(RecordOutcome.Created::class, RecordOutcome.Created::class)
+            published.map { it.created to it.history } shouldBe listOf(true to true, true to false)
 
             // --- batch size limit
             val tooMany = List(IngestBatch.MAX_RECORDS + 1) { upsert("x$it", "1", message("m$it")) }

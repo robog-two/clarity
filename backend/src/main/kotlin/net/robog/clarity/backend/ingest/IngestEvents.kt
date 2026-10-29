@@ -5,12 +5,17 @@ import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.noun.Payload
 
-/** Published after an ingest transaction commits, once per created or merged entity. */
+/**
+ * Published after an ingest transaction commits, once per created or merged entity. [history] is
+ * the record's [net.robog.clarity.shared.ingest.IngestRecord.Upsert.history]: old data being
+ * imported, not a new arrival.
+ */
 data class Ingested(
     val connectorId: ConnectorId,
     val entityId: EntityId,
     val payload: Payload,
     val created: Boolean,
+    val history: Boolean = false,
 )
 
 /** In-process fan-out of ingest events (triggers, future projections). */

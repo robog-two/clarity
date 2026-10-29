@@ -40,6 +40,7 @@ import net.robog.clarity.app.ui.onboarding.ConstitutionSectionView
 import net.robog.clarity.app.ui.onboarding.ConstitutionUi
 import net.robog.clarity.app.ui.onboarding.DoneContent
 import net.robog.clarity.app.ui.onboarding.DoneState
+import net.robog.clarity.app.ui.onboarding.FieldInput
 import net.robog.clarity.app.ui.onboarding.InterviewPhase
 import net.robog.clarity.app.ui.onboarding.ItemEdit
 import net.robog.clarity.app.ui.onboarding.ModelContent
@@ -217,6 +218,25 @@ fun SetupConnectorAccountEdit() = Frame { ConnectorSetupContent(mailState(editin
 
 @PreviewTest @Screen @Composable
 fun SetupConnectorAccountNew() = Frame { ConnectorSetupContent(mailState(editing = true, newItem = true), SetupActions()) }
+
+private val MAIL_HISTORY = ConfigForms.parse(
+    Json.parseToJsonElement(
+        """
+        {"type":"object","properties":{"history":{"type":"string","title":"Mail history",
+          "description":"How far back to import mail. A longer history fetches the older mail; a shorter one deletes nothing.",
+          "enum":["30d","90d","1y","all"],"x-enum-titles":["30 days","90 days","1 year","All time"],"default":"30d"}}}
+        """,
+    ).jsonObject,
+).fields.single()
+
+/** The mail account's history choice: as an account saved before it existed shows it (the default), and set to all time. */
+@PreviewTest @Part @Composable
+fun SetupMailHistoryField() = Frame {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        FieldInput(MAIL_HISTORY, FormValues(), null, { _, _ -> }, { _, _ -> })
+        FieldInput(MAIL_HISTORY, FormValues().withText("history", "all"), null, { _, _ -> }, { _, _ -> })
+    }
+}
 
 @PreviewTest @Screen @Composable
 fun SetupConnectorPresets() = Frame { ConnectorSetupContent(mailState(choosing = true), SetupActions()) }

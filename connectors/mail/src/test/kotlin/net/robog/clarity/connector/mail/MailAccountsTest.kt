@@ -62,7 +62,7 @@ private fun accountsConfig(vararg accounts: JsonObject) = ConnectorConfig(1, Jso
 
 private fun mailConfig(id: String, user: String, from: String = user) = MailConfig(
     imapHost = "h", imapPort = 1, imapSecurity = Security.NONE, smtpHost = "h", smtpPort = 2, smtpSecurity = Security.NONE,
-    username = user, password = "pw", fromAddress = from, fromName = null, folders = listOf("INBOX"), initialWindowDays = 30, id = id,
+    username = user, password = "pw", fromAddress = from, fromName = null, folders = listOf("INBOX"), historyDays = 30, id = id,
 )
 
 private fun mime(from: String, to: String, subject: String): MimeMessage = MimeMessage(Session.getInstance(Properties())).apply {
@@ -103,6 +103,33 @@ class MailAccountsTest : FunSpec({
             val entries = parseMailAccounts(accountsConfig(account(keys, "a1", "Work", "w@example.com", "pw", 1, 2), noHost), runtime)
             entries[0].result.isSuccess shouldBe true
             entries[1].result.exceptionOrNull()!!.message shouldBe "Broken: IMAP host is not set"
+        }
+
+        test("mail history is one of four choices; an item saved before the choice keeps its initialWindowDays") {
+            fun days(extra: Map<String, JsonElement>) =
+                parseMailAccounts(accountsConfig(account(keys, "a1", "Work", "w@example.com", "pw", 1, 2, extra = extra)), runtime)
+                    .single().result.getOrThrow().historyDays
+            days(mapOf("history" to JsonPrimitive("30d"))) shouldBe 30
+            days(mapOf("history" to JsonPrimitive("90d"))) shouldBe 90
+            days(mapOf("history" to JsonPrimitive("1y"))) shouldBe 365
+            days(mapOf("history" to JsonPrimitive("all"))) shouldBe null
+            // the choice wins over a legacy value left in the item
+            days(mapOf("history" to JsonPrimitive("all"), "initialWindowDays" to JsonPrimitive(30))) shouldBe null
+            // legacy configs (the live accounts have 30) keep their number until a choice is saved
+            days(mapOf("initialWindowDays" to JsonPrimitive(30))) shouldBe 30
+            days(mapOf("initialWindowDays" to JsonPrimitive(45))) shouldBe 45
+            days(mapOf("history" to JsonPrimitive("bogus"), "initialWindowDays" to JsonPrimitive(60))) shouldBe 60
+            days(emptyMap()) shouldBe 30
+        }
+
+        test("the schema offers mail history as a titled choice with a default") {
+            val item = (mailConfigSchema["properties"] as JsonObject)["accounts"]!!.let { (it as JsonObject)["items"] as JsonObject }
+            val history = (item["properties"] as JsonObject)["history"] as JsonObject
+            history["title"] shouldBe JsonPrimitive("Mail history")
+            (history["enum"] as JsonArray).map { (it as JsonPrimitive).content } shouldContainExactly listOf("30d", "90d", "1y", "all")
+            (history["x-enum-titles"] as JsonArray).map { (it as JsonPrimitive).content } shouldContainExactly listOf("30 days", "90 days", "1 year", "All time")
+            history["default"] shouldBe JsonPrimitive("30d")
+            (item["properties"] as JsonObject).containsKey("initialWindowDays") shouldBe false
         }
 
         test("the schema is a collection of accounts with presets") {
@@ -209,7 +236,7 @@ class MailAccountsTest : FunSpec({
             val reports = syncAccounts(parseMailAccounts(mixed, runtime), InMemoryStateStore(), { pushed += it })
 
             reports.map { it.result.isSuccess } shouldContainExactly listOf(false, false, true)
-            pushed.filterIsInstance<IngestRecord.Upsert>().map { (it.payload as MessagePayload).subject } shouldContainExactly listOf("For work", "After failures")
+            pushed.filterIsInstance<IngestRecord.Upsert>().map { (it.payload as MessagePayload).subject } shouldContainExactly listOf("After failures", "For work") // history comes newest first
         }
 
         test("the connection test names every account; a rejected password comes first and makes it not ok") {
