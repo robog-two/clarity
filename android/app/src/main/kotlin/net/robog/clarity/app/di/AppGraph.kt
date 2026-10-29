@@ -186,9 +186,17 @@ interface AppGraph : ViewModelGraph {
 
     @Provides @SingleIn(AppScope::class)
     fun database(context: Context): ClarityDatabase =
-        Room.databaseBuilder(context, ClarityDatabase::class.java, "clarity.db")
+        // A copy of the server's feed, tasks and held items: it lives in the cache folder, so "Clear
+        // cache" resyncs it from the server while sign-in and keys (DataStore, Keystore) stay.
+        Room.databaseBuilder(context, ClarityDatabase::class.java, context.cacheDir.resolve("clarity.db").path)
             // The cache is rebuilt from the server, so a schema change just starts it over.
             .fallbackToDestructiveMigration(dropAllTables = true)
+            .addCallback(object : androidx.room.RoomDatabase.Callback() {
+                // Runs once, on Room's executor: drop the copy older versions kept in the data folder.
+                override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                    context.deleteDatabase("clarity.db")
+                }
+            })
             .build()
 
     @Provides @SingleIn(AppScope::class)
