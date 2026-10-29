@@ -196,7 +196,7 @@ class SchemaSubsetTest {
         assertEquals(
             listOf(
                 "label", "imapHost", "imapPort", "imapSecurity", "smtpHost", "smtpPort", "smtpSecurity", "username", "password",
-                "fromAddress", "fromName", "folders", "initialWindowDays",
+                "fromAddress", "fromName", "folders", "history",
             ),
             spec.itemForm.fields.map { it.key },
         )
@@ -204,6 +204,15 @@ class SchemaSubsetTest {
         assertEquals(listOf("SSL/TLS", "STARTTLS", "None"), items["imapSecurity"]!!.options.map { it.title })
         assertEquals(FieldKind.STRING_LIST, items["folders"]!!.kind)
         assertEquals(listOf("INBOX"), items["folders"]!!.defaultList)
+        val history = items["history"]!!
+        assertEquals(FieldKind.ENUM, history.kind)
+        assertEquals("mail history", history.label)
+        assertEquals(listOf("30 days", "90 days", "1 year", "All time"), history.options.map { it.title })
+        assertEquals("30d", history.defaultChoice)
+        // a new account starts at the default; an account stored before the field existed has no value (the dropdown shows the default)
+        assertEquals("30d", spec.itemForm.initialValues().text("history"))
+        assertEquals("", spec.itemForm.valuesFromStored(JsonObject(mapOf("label" to JsonPrimitive("Work")))).text("history"))
+        assertNull(items["imapPort"]!!.defaultChoice)
         assertEquals(FieldKind.PASSWORD, items["password"]!!.kind)
         assertEquals("imap.example.com", items["imapHost"]!!.placeholder)
 

@@ -19,7 +19,8 @@ private val log = KotlinLogging.logger {}
 /**
  * Subscribes to ingest events and puts a [InboxItem.TriggerFired] in the lead's inbox for every enabled trigger whose query matches.
  * Only *newly created* entities fire triggers: a second connector merging into an existing
- * entity is the same fact, not a new arrival.
+ * entity is the same fact, not a new arrival. Neither is history a connector imports (a first
+ * import, a mail backfill): those records are stored but fire nothing.
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
@@ -33,7 +34,7 @@ class TriggerMatcher(
 
     override suspend fun run() {
         bus.events.collect { event ->
-            if (event.created) {
+            if (event.created && !event.history) {
                 try {
                     handle(event)
                 } catch (e: CancellationException) {

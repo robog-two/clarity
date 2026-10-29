@@ -19,7 +19,12 @@ sealed interface IngestRecord {
     val sourceVersion: String
     val observedAt: Instant
 
-    /** A created or updated record. */
+    /**
+     * A created or updated record. [history] marks data the source already had before the
+     * connector looked (a first import, or older mail fetched after a longer history was chosen):
+     * it is stored and searchable like anything else, but it is not a new arrival, so no trigger
+     * fires for it and nothing wakes the assistant.
+     */
     @Serializable
     @SerialName("upsert")
     data class Upsert(
@@ -27,6 +32,7 @@ sealed interface IngestRecord {
         override val sourceVersion: String,
         override val observedAt: Instant,
         val payload: Payload,
+        val history: Boolean = false,
     ) : IngestRecord
 
     /** The record no longer exists in the source. */

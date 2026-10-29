@@ -53,7 +53,7 @@ class MailServerTest : FunSpec({
         imapHost = "127.0.0.1", imapPort = imapPort, imapSecurity = Security.NONE,
         smtpHost = "127.0.0.1", smtpPort = smtpPort, smtpSecurity = Security.NONE,
         username = me, password = "secret", fromAddress = me, fromName = "Me Myself",
-        folders = listOf("INBOX"), initialWindowDays = 30,
+        folders = listOf("INBOX"), historyDays = 30,
     )
     val access = MailAccess(config)
 
@@ -90,7 +90,9 @@ class MailServerTest : FunSpec({
 
         val first = runSync(sync)
         first shouldHaveSize 2
-        val upserts = first.map { it.shouldBeInstanceOf<IngestRecord.Upsert>() }
+        // the first import is history, imported newest first
+        first.all { (it as IngestRecord.Upsert).history } shouldBe true
+        val upserts = first.map { it.shouldBeInstanceOf<IngestRecord.Upsert>() }.reversed()
         upserts.map { (it.payload as MessagePayload).subject } shouldContainExactly listOf("Lunch", "Invoice")
         (upserts[0].payload as MessagePayload).account shouldBe Handle.email(me)
         (upserts[1].payload as MessagePayload).threadRef shouldBe "<inv-1@example.com>"
