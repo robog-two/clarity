@@ -12,6 +12,8 @@ data class AgentConfig(
     val maxTurns: Int = 30,
     /** A helper's step limit (`CLARITY_AGENT_HELPER_MAX_TURNS`): browsing takes many small steps. */
     val helperMaxTurns: Int = 60,
+    /** What one helper run may spend, in dollars (`CLARITY_HELPER_MAX_COST`); then it wraps up and stops. */
+    val helperMaxCostUsd: Double = 0.15,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),

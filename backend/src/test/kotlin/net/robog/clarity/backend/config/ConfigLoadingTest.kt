@@ -46,6 +46,15 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
     }
 
+    test("a helper run may spend $0.15 by default; the cap is a dollar amount above 0") {
+        load().getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.15
+        load(mapOf("CLARITY_HELPER_MAX_COST" to "0.5")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.5
+        load(mapOf("CLARITY_HELPER_MAX_COST" to "$1")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 1.0
+        for (bad in listOf("0", "-1", "lots")) {
+            load(mapOf("CLARITY_HELPER_MAX_COST" to bad)).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+        }
+    }
+
     test("agent roles default to the MiMo lead and DeepSeek Flash helper, guard and triage, all on OpenRouter") {
         val roles = load().getOrNull()!!.agent.roles
         roles[AgentRole.LEAD].model shouldBe "xiaomi/mimo-v2.6-pro"

@@ -34,6 +34,7 @@ import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.harness.SpendCap
 import net.robog.clarity.harness.WebSearchTool
 import net.robog.clarity.harness.searchFor
 import net.robog.clarity.shared.time.LocalTimes
@@ -97,11 +98,15 @@ fun helperNudge(event: HarnessEvent.Terminal?, tools: Collection<String>): Strin
     else -> null
 }
 
+/** Pure: [usd] in millionths of a dollar. */
+fun dollarsToMicros(usd: Double): Long = Math.round(usd * 1_000_000)
+
 /** Pure: what a finished helper reports back to the lead. */
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
     is HarnessEvent.Finished -> when (event.reason) {
         FinishReason.END_TURN -> true to event.result.finalText.ifBlank { "(the helper finished without a result)" }
         FinishReason.MAX_TURNS -> false to "The helper ran out of steps. Its report: ${event.result.finalText.ifBlank { "(none)" }}"
+        FinishReason.SPEND_LIMIT -> false to "The helper hit its spend limit for one task and was stopped. Its report: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.MAX_TOKENS -> false to "The helper's answer was cut off: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.REFUSAL -> false to "The model declined to do this task."
         FinishReason.OTHER -> false to "The helper stopped unexpectedly. Last words: ${event.result.finalText.ifBlank { "(none)" }}"
@@ -170,9 +175,9 @@ class HelperManager(
             if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
         val granted = toolbox.value.helperTools(probe, chosen)
-        // fetch_page comes with search unasked; without the sandbox the helper goes on without it.
-        val unknown = if (search) granted.unknown - FETCH_PAGE else granted.unknown
-        if (unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${unknown.joinToString()}.".left()
+        // Pages are read only from our side: research without the sandbox's fetch_page does not start.
+        if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
+        if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
         val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
@@ -183,7 +188,7 @@ class HelperManager(
         start(requireNotNull(runs.get(id)))
         val names = granted.tools.tools.map { it.name }
         val text = if (search) {
-            delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped, FETCH_PAGE in names)
+            delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped)
         } else {
             delegatedText(id, roleName, chosen, names)
         }
@@ -191,6 +196,9 @@ class HelperManager(
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
+
+    /** The run's spend cap, counting what it already spent (a resume, the nudge). */
+    private suspend fun spendCap(id: String) = SpendCap(dollarsToMicros(config.helperMaxCostUsd), runs.costUsed(id))
 
     suspend fun list(openOnly: Boolean): List<HelperRun> = runs.list(openOnly)
 
@@ -248,7 +256,7 @@ class HelperManager(
                 sink = large.sink,
                 // The cap is per run, not per resume: searches already recorded for it count.
                 webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
-            ).copy(outOfSteps = OutOfSteps())
+            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id))
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
@@ -262,13 +270,16 @@ class HelperManager(
             // Open models sometimes end with no text, or with the document as text: one bounded nudge, never more.
             helperNudge(terminal, set.tools.map { it.name })?.let { nudge ->
                 journal.append(run.id, Message.user(nudge))
-                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)))
+                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)), spendCap = spendCap(run.id))
                 harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
         } catch (e: Exception) {
             log.error(e) { "helper ${run.id} crashed" }
+        }
+        if ((terminal as? HarnessEvent.Finished)?.reason == FinishReason.SPEND_LIMIT) {
+            log.warn { "helper ${run.id} hit its spend limit (${"$"}${config.helperMaxCostUsd}) and was stopped" }
         }
         val (ok, text) = helperOutcome(terminal)
         withContext(NonCancellable) {
@@ -302,12 +313,14 @@ fun helperRunPlan(stored: List<String>?, search: WebSearchTool?): HelperRunPlan 
 /** Pure: whether [event] is a model call that ran web searches (the run has then read outside content). */
 fun searchedIn(event: HarnessEvent): Boolean = event is HarnessEvent.Called && event.usage.webSearchRequests > 0
 
-/** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost and whether it can open pages. */
-fun searchGrantText(dropped: List<String>, canFetch: Boolean = true): String =
+/** Pure: what `delegate` adds for a helper granted web search, naming the tools it lost. */
+fun searchGrantText(dropped: List<String>): String =
     " It can search the web (only it; you cannot), and has no personal data or outbound tools" +
         (if (dropped.isEmpty()) "" else " (left out: ${dropped.sorted().joinToString()})") +
-        ", so its task must say everything it needs." +
-        (if (canFetch) "" else " It cannot open pages now (the sandbox is not available), so it has only the search results' short excerpts.")
+        ", so its task must say everything it needs."
+
+/** Why a research helper does not start when the sandbox (and its fetch_page) is not there. */
+const val RESEARCH_NEEDS_SANDBOX: String = "Research needs the sandbox to open pages, and it is not available right now."
 
 /** A helper that started: its run id and what `delegate` tells the lead. */
 data class Delegated(val id: String, val text: String)

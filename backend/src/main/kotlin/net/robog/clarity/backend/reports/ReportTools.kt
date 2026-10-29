@@ -150,6 +150,18 @@ object LenientStyleInput : JsonTransformingSerializer<StyleInput>(StyleInput.ser
         if (element is JsonPrimitive && element.isString) JsonObject(mapOf("preset" to element)) else element
 }
 
+/**
+ * Pure: the report a `create_report` titled [title] would repeat, from those its run already
+ * [created]: a helper makes one report per run (it edits that one after), so any earlier one; the
+ * lead's run lasts all day, so only one with the same title.
+ */
+fun repeatedReport(created: List<StoredReport>, title: String, isLead: Boolean): StoredReport? =
+    if (isLead) created.firstOrNull { it.title.trim().equals(title.trim(), ignoreCase = true) } else created.firstOrNull()
+
+/** Pure: why a repeated `create_report` is refused, naming the report to change instead. */
+fun repeatedReportText(report: StoredReport): String =
+    "This run already created report ${report.id} (\"${report.title}\"). Change it with edit_report, or read it with read_report."
+
 /** Pure: [input] over [base] and checked; Left is the message for the model. */
 fun resolveStyle(input: StyleInput?, base: ReportStyle): arrow.core.Either<String, ReportStyle> {
     if (input == null) return base.right()
@@ -233,10 +245,11 @@ class ReportTools(
             title.isEmpty() || title.length > MAX_REPORT_TITLE_CHARS -> ToolResult.Error("`title` must be 1-$MAX_REPORT_TITLE_CHARS characters.")
             input.source.isBlank() -> ToolResult.Error("`source` must not be empty.")
             input.source.length > MAX_REPORT_SOURCE_CHARS -> ToolResult.Error("`source` is longer than $MAX_REPORT_SOURCE_CHARS characters; split it into several reports.")
-            else -> resolveStyle(input.style, ReportStyle()).fold({ ToolResult.Error(it) }) { style ->
-                val (report, revision) = store.create(ReportKind.DOCUMENT, title, input.source, style, scope.runId)
-                ToolResult.Ok("Report ${report.id} created: \"${report.title}\", revision 1, ${revision.source.lines().size} lines. Style: ${describeStyle(style)}.")
-            }
+            else -> repeatedReport(store.createdBy(scope.runId), title, scope.isLead)?.let { ToolResult.Error(repeatedReportText(it)) }
+                ?: resolveStyle(input.style, ReportStyle()).fold({ ToolResult.Error(it) }) { style ->
+                    val (report, revision) = store.create(ReportKind.DOCUMENT, title, input.source, style, scope.runId)
+                    ToolResult.Ok("Report ${report.id} created: \"${report.title}\", revision 1, ${revision.source.lines().size} lines. Style: ${describeStyle(style)}.")
+                }
         }
     }
 

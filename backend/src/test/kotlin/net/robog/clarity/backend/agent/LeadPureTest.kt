@@ -71,6 +71,19 @@ class LeadPureTest : FunSpec({
             helperOwesResult(finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
             helperOwesResult(null) shouldBe false
         }
+        test("the spend cap: reached at the cap, counting what was spent before; the lead is told plainly") {
+            val cap = net.robog.clarity.harness.SpendCap(maxCostMicros = 150_000, spentBefore = 100_000)
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage(reportedCostMicros = 49_999)) shouldBe false
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage(reportedCostMicros = 50_000)) shouldBe true
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage()) shouldBe false
+            net.robog.clarity.harness.overSpend(null, net.robog.clarity.harness.Usage(reportedCostMicros = Long.MAX_VALUE / 2)) shouldBe false
+            dollarsToMicros(0.15) shouldBe 150_000L
+            val (ok, text) = helperOutcome(finished(net.robog.clarity.harness.FinishReason.SPEND_LIMIT, "Report r1 has the first half."))
+            ok shouldBe false
+            text shouldContain "spend limit"
+            text shouldContain "Report r1 has the first half."
+            helperNudge(finished(net.robog.clarity.harness.FinishReason.SPEND_LIMIT, "# Doc\n" + "x".repeat(2_000)), listOf("create_report")) shouldBe null
+        }
         test("a document written as the reply is a document only when long and with a heading") {
             val body = "The poem turns on one image. ".repeat(60)
             looksLikeDocument("# Recap\n\n$body") shouldBe true

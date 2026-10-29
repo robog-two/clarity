@@ -45,6 +45,8 @@ data class RunRequest(
      * caps the whole run: each request gets what is left, and none once it is spent ([searchFor]).
      */
     val webSearch: WebSearchTool? = null,
+    /** Stops the run with one wrap-up call once it has spent this much; null: no cap. */
+    val spendCap: SpendCap? = null,
 ) {
     constructor(
         model: String,
@@ -228,7 +230,31 @@ class Harness(
             }
         }
 
+        // One last call that says where the run got to; its tools never run. Returns its text.
+        suspend fun wrapUp(notRun: String): String {
+            turn++
+            send(HarnessEvent.TurnStarted(turn))
+            val last = callModel(modelRequest(request, plan, history, search = null), Channel())
+            if (last !is CallOutcome.Done) return ""
+            usage += last.response.usage
+            send(HarnessEvent.Called(turn, last.response.usage))
+            append(listOf(Message(Role.ASSISTANT, journalStable(last.response.content))))
+            if (last.response.text.isNotEmpty()) send(HarnessEvent.AssistantText(last.response.text))
+            val ignored = last.response.toolUses.map { Block.Result(it.id, notRun, isError = true) }
+            if (ignored.isNotEmpty()) append(listOf(Message(Role.USER, ignored)))
+            return last.response.text
+        }
+
+        // Whether the spend cap's report request is already in the history (it rides on the last tool results).
+        var spendReported = false
         while (true) {
+            if (calls == null && overSpend(request.spendCap, usage)) {
+                val cap = requireNotNull(request.spendCap)
+                if (!spendReported) append(mergeIntoResults(listOf(Block.Text(cap.report)), drain()))
+                val report = wrapUp(cap.notRun)
+                send(HarnessEvent.Finished(RunResult(FinishReason.SPEND_LIMIT, usage, history, report)))
+                return
+            }
             if (calls == null) {
                 turn++
                 send(HarnessEvent.TurnStarted(turn))
@@ -268,19 +294,7 @@ class Harness(
                                     // The requested tools never run; one last call (whose tools never run either) says where it got to.
                                     val notRun = response.toolUses.map { Block.Result(it.id, steps.notRun, isError = true) }
                                     append(mergeIntoResults(notRun + Block.Text(steps.report), late))
-                                    turn++
-                                    send(HarnessEvent.TurnStarted(turn))
-                                    var report = ""
-                                    val last = callModel(modelRequest(request, plan, history, search = null), Channel())
-                                    if (last is CallOutcome.Done) {
-                                        usage += last.response.usage
-                                        send(HarnessEvent.Called(turn, last.response.usage))
-                                        append(listOf(Message(Role.ASSISTANT, journalStable(last.response.content))))
-                                        if (last.response.text.isNotEmpty()) send(HarnessEvent.AssistantText(last.response.text))
-                                        val ignored = last.response.toolUses.map { Block.Result(it.id, steps.notRun, isError = true) }
-                                        if (ignored.isNotEmpty()) append(listOf(Message(Role.USER, ignored)))
-                                        report = last.response.text
-                                    }
+                                    val report = wrapUp(steps.notRun)
                                     send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
                                     return
                                 }
@@ -297,7 +311,10 @@ class Harness(
             val toRun = calls ?: continue
             calls = null
             val results = executeAll(runId, toRun, plan, request)
-            val note = stepsLeftNote(turn, request.maxTurns, request.outOfSteps)?.let { listOf(Block.Text(it)) }.orEmpty()
+            // At the spend cap the results carry its report request; the next pass makes the wrap-up call.
+            spendReported = overSpend(request.spendCap, usage)
+            val note = (if (spendReported) request.spendCap?.report else stepsLeftNote(turn, request.maxTurns, request.outOfSteps))
+                ?.let { listOf(Block.Text(it)) }.orEmpty()
             append(mergeIntoResults(results + note, drain()))
         }
     }

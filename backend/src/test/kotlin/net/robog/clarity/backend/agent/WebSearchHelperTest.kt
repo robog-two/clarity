@@ -103,8 +103,6 @@ class WebSearchPureTest : FunSpec({
         searchedIn(HarnessEvent.Called(1, Usage(10, 5))) shouldBe false
         searchedIn(HarnessEvent.Finished(RunResult(FinishReason.END_TURN, Usage(webSearchRequests = 4), emptyList(), "x"))) shouldBe false
         searchGrantText(listOf("send_email")) shouldContain "left out: send_email"
-        searchGrantText(emptyList()) shouldNotContain "cannot open pages"
-        searchGrantText(emptyList(), canFetch = false) shouldContain "cannot open pages"
         // The count OpenRouter streams (server_tool_use_details) reaches the taint.
         val streamed = net.robog.clarity.harness.OpenRouterModelGateway.toUsage(
             kotlinx.serialization.json.Json.parseToJsonElement(

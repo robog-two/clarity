@@ -98,6 +98,14 @@ private class Lookup(
     }
 
     context(_: Raise<ConfigError>)
+    fun dollars(envName: String, path: String, default: Double): Double {
+        val raw = string(envName, path) ?: return default
+        val value = raw.trim().removePrefix("$").toDoubleOrNull()
+        if (value == null || value <= 0.0 || value.isInfinite()) raise(ConfigError.Invalid(envName, raw, "expected a dollar amount above 0, e.g. 0.15"))
+        return value
+    }
+
+    context(_: Raise<ConfigError>)
     fun bool(envName: String, path: String, default: Boolean): Boolean {
         val raw = string(envName, path) ?: return default
         return raw.lowercase().toBooleanStrictOrNull()
@@ -288,6 +296,7 @@ private class Lookup(
                 roles = roles,
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
+                helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.15),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),

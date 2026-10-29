@@ -79,6 +79,17 @@ class ReportPureTest : FunSpec({
         resolveStyle(StyleInput(pageSize = "legal"), ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "pageSize"
     }
 
+    test("a run's second create_report repeats its report: any for a helper, the same title for the lead") {
+        fun report(id: String, title: String) = StoredReport(id, ReportKind.DOCUMENT, title, Instant.parse("2026-10-29T15:00:00Z"), "run")
+        val made = listOf(report("r1", "Le Roman de Silence: A Refresher"), report("r2", "Other"))
+        repeatedReport(emptyList(), "Anything", isLead = false) shouldBe null
+        repeatedReport(made, "A new title", isLead = false) shouldBe made[0]
+        repeatedReport(made, "  le roman de silence: a refresher ", isLead = true) shouldBe made[0]
+        repeatedReport(made, "A new title", isLead = true) shouldBe null
+        repeatedReportText(made[0]) shouldBe
+            "This run already created report r1 (\"Le Roman de Silence: A Refresher\"). Change it with edit_report, or read it with read_report."
+    }
+
     test("style may be a bare preset name; the schema still asks for an object") {
         fun create(style: String) = ClarityJson.decodeFromString(
             ReportTools.CreateInput.serializer(), """{"title":"T","source":"# T","style":$style}""",

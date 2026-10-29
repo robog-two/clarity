@@ -84,7 +84,8 @@ data class Stickiness(val session: String? = null, val preferred: String? = null
  *  - tool uses become assistant `tool_calls` (arguments as a JSON string), tool results `tool`
  *    messages; other [Block.Raw] is dropped (old Anthropic thinking, tool search and server tool
  *    blocks), except this provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the
- *    same model only;
+ *    same model only, and the web search citations of a step ([CITATIONS_TYPE]), which come back as
+ *    a [searchResultsNote] user text right after that step (after its tool results);
  *  - all tools are sent as `function` tools, `tool_choice: auto`;
  *  - `reasoning.effort` is the effort in effect for this request: that of the last effort-only
  *    message since the latest compaction point, else [ModelRequest.effort] ([effortIn]);
@@ -352,6 +353,8 @@ class OpenRouterModelGateway(
             // and whether its last part carries the message breakpoint.
             val userParts = mutableListOf<String>()
             var userMarked = false
+            // The web search results of the last assistant step, read back to the model after it.
+            var searchNote: String? = null
             fun flushUser() {
                 if (userParts.isNotEmpty()) {
                     val content = if (userParts.size == 1 && !userMarked) {
@@ -387,7 +390,7 @@ class OpenRouterModelGateway(
                     Role.SYSTEM -> if (texts.isNotEmpty()) {
                         val notice = operatorUpdate(texts.joinToString("\n\n"))
                         // The placeholder only stood in for the notice; the notice takes its place.
-                        if (userParts.singleOrNull() == OPERATOR_UPDATE_PLACEHOLDER) userParts.clear()
+                        if (userParts.lastOrNull() == OPERATOR_UPDATE_PLACEHOLDER) userParts.removeAt(userParts.lastIndex)
                         userParts += notice
                     }
                     Role.USER -> {
@@ -399,12 +402,15 @@ class OpenRouterModelGateway(
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
                         }
+                        searchNote?.let { userParts += it }
+                        searchNote = null
                         message.content.filterIsInstance<Block.Text>().forEach { userParts += it.text }
                         // The breakpoint sits on the message's last block, so it goes on the last text part:
                         // the message's own, or a notice after it (a tool result carries none here).
                         userMarked = marked != null
                     }
                     Role.ASSISTANT -> {
+                        searchNote = searchResultsNote(message.content.flatMap(::citationsOf))
                         val calls = message.content.filterIsInstance<Block.ToolUse>()
                         if (texts.isEmpty() && calls.isEmpty()) continue
                         val reasoning = message.content.firstNotNullOfOrNull { reasoningFor(it, request.model) }
@@ -428,6 +434,7 @@ class OpenRouterModelGateway(
                     }
                 }
             }
+            searchNote?.let { userParts += it }
             flushUser()
         }
 
@@ -608,7 +615,7 @@ class OpenRouterModelGateway(
             val answer = (if (text.isEmpty()) emptyList() else listOf(Block.Text(text.toString()))) + uses
             // Reasoning is kept only beside an answer, so no assistant turn is reasoning alone.
             val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
-            // Citations likewise, after the answer; the request builder never sends them back.
+            // Citations likewise, after the answer; the request builder sends them back only as a search note.
             val cited = if (answer.isEmpty() || citations.isEmpty()) emptyList() else listOf(citationsBlock(citations.values.toList()))
             // Citations mean a search ran, even when the usage did not count it: at least one, so the run is tainted.
             val searches = if (citations.isEmpty()) usage.webSearchRequests else usage.webSearchRequests.coerceAtLeast(1)

@@ -337,7 +337,7 @@ data class WebSearchTool(
 @kotlinx.serialization.Serializable
 data class UrlCitation(val url: String, val title: String? = null, val content: String? = null)
 
-/** [Block.Raw.type] of the citations kept beside an answer; never sent back to the model. */
+/** [Block.Raw.type] of the citations kept beside an answer; sent back only as [searchResultsNote] text. */
 const val CITATIONS_TYPE = "openrouter_citations"
 
 /** Pure: the [Block.Raw] that keeps [citations] in the journal, where `cite_sources` finds them. */
@@ -351,14 +351,52 @@ fun citationsBlock(citations: List<UrlCitation>): Block.Raw = Block.Raw(
 /** Pure: every citation kept in [messages] ([citationsBlock]), first occurrence of each URL, in order. */
 fun citationsIn(messages: List<Message>): List<UrlCitation> = messages.asSequence()
     .flatMap { it.content.asSequence() }
-    .filterIsInstance<Block.Raw>()
-    .filter { it.type == CITATIONS_TYPE }
-    .flatMap { block ->
-        val list = block.json["citations"] as? JsonArray ?: return@flatMap emptySequence<UrlCitation>()
-        list.asSequence().mapNotNull { runCatching { HarnessJson.decodeFromJsonElement(UrlCitation.serializer(), it) }.getOrNull() }
-    }
+    .flatMap { citationsOf(it).asSequence() }
     .distinctBy { it.url }
     .toList()
+
+/** Pure: the citations [block] keeps, when it is a [citationsBlock]; else none. */
+fun citationsOf(block: Block): List<UrlCitation> {
+    if (block !is Block.Raw || block.type != CITATIONS_TYPE) return emptyList()
+    val list = block.json["citations"] as? JsonArray ?: return emptyList()
+    return list.mapNotNull { runCatching { HarnessJson.decodeFromJsonElement(UrlCitation.serializer(), it) }.getOrNull() }
+}
+
+/** Results listed at most in one [searchResultsNote]. */
+const val SEARCH_NOTE_MAX_RESULTS = 12
+
+/** Characters of each result's excerpt in a [searchResultsNote]. */
+const val SEARCH_NOTE_EXCERPT_CHARS = 300
+
+/** First line of a [searchResultsNote]. */
+const val SEARCH_NOTE_HEADING = "[Web search results from your previous step, as the search returned them]"
+
+/**
+ * Pure: the web search results of one step ([citations]) as text the model reads on later turns,
+ * so it can see what it already searched: one line per page (title, URL, a short excerpt), each URL
+ * once, at most [SEARCH_NOTE_MAX_RESULTS]. Marked as outside content. Null when there are none.
+ */
+fun searchResultsNote(citations: List<UrlCitation>): String? {
+    val unique = citations.distinctBy { it.url }
+    if (unique.isEmpty()) return null
+    fun clean(s: String?) = s?.replace(Regex("\\s+"), " ")?.trim()?.ifEmpty { null }
+    val lines = unique.take(SEARCH_NOTE_MAX_RESULTS).mapIndexed { i, c ->
+        buildString {
+            append(i + 1).append(". ")
+            clean(c.title)?.let { append(it.take(200)).append(" — ") }
+            append(c.url)
+            clean(c.content)?.let { append(": ").append(it.take(SEARCH_NOTE_EXCERPT_CHARS)) }
+        }
+    }
+    val more = unique.size - lines.size
+    return buildString {
+        append(SEARCH_NOTE_HEADING).append('\n')
+        append("<untrusted source=\"web search\">\n")
+        lines.forEach { append(it.replace("</untrusted", "&lt;/untrusted")).append('\n') }
+        if (more > 0) append("(and ").append(more).append(" more)\n")
+        append("</untrusted>")
+    }
+}
 
 /** A single model call: the full (append-only) history plus the stable request prefix. */
 data class ModelRequest(

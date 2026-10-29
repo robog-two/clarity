@@ -1,7 +1,7 @@
 package net.robog.clarity.harness
 
 /** Why a run ended. */
-enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, OTHER }
+enum class FinishReason { END_TURN, MAX_TOKENS, REFUSAL, MAX_TURNS, SPEND_LIMIT, OTHER }
 
 /** What the loop does after a model turn. */
 sealed interface Decision {
@@ -63,3 +63,20 @@ data class OutOfSteps(
 /** Pure: the note joined to the tool results after model call [turn], when only [OutOfSteps.warnAt] calls are left. */
 fun stepsLeftNote(turn: Int, maxTurns: Int, config: OutOfSteps?): String? =
     if (config != null && config.warnAt > 0 && maxTurns - turn == config.warnAt) config.warning.format(config.warnAt) else null
+
+/**
+ * A run's spend cap: once what it spent ([spentBefore], recorded before this resume, plus the
+ * reported cost of this resume's calls) reaches [maxCostMicros], the tools already asked for still
+ * run, then one last call, whose tools never run, gets [report]; the run ends [FinishReason.SPEND_LIMIT].
+ */
+data class SpendCap(
+    val maxCostMicros: Long,
+    val spentBefore: Long = 0,
+    val report: String = "You have reached this task's spend limit; no more tools will run. Write your report now, short and plain: " +
+        "what you found or did, exactly where you got to (any report id), and what is left.",
+    val notRun: String = "Not run: the spend limit is reached.",
+)
+
+/** Pure: whether a run with [cap] that has spent [usage] in this resume is at or over its cap. */
+fun overSpend(cap: SpendCap?, usage: Usage): Boolean =
+    cap != null && cap.spentBefore + (usage.reportedCostMicros ?: 0) >= cap.maxCostMicros

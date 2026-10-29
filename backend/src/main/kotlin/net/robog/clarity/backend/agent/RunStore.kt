@@ -64,6 +64,9 @@ interface RunStore {
      */
     suspend fun webSearchesUsed(id: String): Long = 0
 
+    /** What run [id] has already spent, in millionths of a dollar, from its recorded model calls (`model_call`). */
+    suspend fun costUsed(id: String): Long = 0
+
     /** Runs that were queued or running when the process stopped. */
     suspend fun open(): List<HelperRun>
     suspend fun list(openOnly: Boolean, limit: Int = 50): List<HelperRun>
@@ -111,6 +114,11 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
     override suspend fun webSearchesUsed(id: String): Long = database.tx {
         val total = ModelCalls.webSearchRequests.sum()
         ModelCalls.select(total).where { ModelCalls.runId eq id }.singleOrNull()?.get(total)?.toLong() ?: 0L
+    }
+
+    override suspend fun costUsed(id: String): Long = database.tx {
+        val total = ModelCalls.costMicros.sum()
+        ModelCalls.select(total).where { ModelCalls.runId eq id }.singleOrNull()?.get(total) ?: 0L
     }
 
     override suspend fun get(id: String): HelperRun? {

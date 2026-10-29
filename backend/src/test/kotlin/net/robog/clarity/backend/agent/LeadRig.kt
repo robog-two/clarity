@@ -83,6 +83,26 @@ fun args(vararg pairs: Pair<String, String>): JsonObject = buildJsonObject { pai
 const val LEAD_MODEL = "anthropic/claude-opus-5.5"
 const val HELPER_MODEL = "anthropic/claude-sonnet-5.5"
 
+/**
+ * The sandbox's `fetch_page` as a local tool (no network): each URL fetched gives a page in sandboxd's
+ * format, its title and text from [pages] (else made up from the URL). [fetched] lists the URLs asked for.
+ */
+class FakeFetchPage(private val pages: Map<String, Pair<String, String>> = emptyMap()) : net.robog.clarity.harness.Tool {
+    val fetched = CopyOnWriteArrayList<String>()
+    override val name = FETCH_PAGE
+    override val description = "Open a web page and read it as text."
+    override val inputSchema: JsonObject = buildJsonObject { put("type", "object") }
+    override val effect = net.robog.clarity.harness.ToolEffect.EXTERNAL
+
+    override suspend fun invoke(input: JsonObject): net.robog.clarity.harness.ToolResult {
+        val url = (input["url"] as? kotlinx.serialization.json.JsonPrimitive)?.content
+            ?: return net.robog.clarity.harness.ToolResult.Error("Missing required string argument \"url\".")
+        fetched += url
+        val (title, text) = pages[url] ?: ("Page at $url" to "Text of $url.")
+        return net.robog.clarity.harness.ToolResult.Ok("Title: $title\nURL: $url\nFetched: 2026-10-29T15:00:00Z\nCharacters 0-${text.length} of ${text.length}\n\n$text")
+    }
+}
+
 /** The default roles with the lead and helper on [LEAD_MODEL] and [HELPER_MODEL] (the scripted model tells them apart by name). */
 val TEST_ROLES: net.robog.clarity.backend.config.AgentRoles = net.robog.clarity.backend.config.AgentRoles().let {
     it.copy(lead = it.lead.copy(model = LEAD_MODEL), helper = it.helper.copy(model = HELPER_MODEL))
@@ -106,10 +126,14 @@ class LeadRig(
     val failureGate: FailureGate = FailureGate(null),
     /** Where model usage goes; by default nowhere (pass a DbUsageRecorder to fill model_call). */
     usageRecorder: UsageRecorder = UsageRecorder { _, _, _ -> },
+    /** The sandbox's tools, served in-process; by default only a fake fetch_page. */
+    val sandboxTools: List<net.robog.clarity.harness.Tool> = listOf(FakeFetchPage()),
+    /** What one helper run may spend, in dollars. */
+    helperMaxCostUsd: Double = 0.15,
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
-    val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles)
+    val config = AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, helperMaxCostUsd = helperMaxCostUsd)
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
     val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, usageRecorder)
 
@@ -137,7 +161,7 @@ class LeadRig(
         ConnectorRouter(database, NoConnectorPreferences()), events, UtcPersonZone(), clock,
     )
 
-    val mcp = McpToolSources(config, null)
+    val mcp = McpToolSources(config, null, sandboxTools)
     val large = LargeResults(database, mcp, clock)
     val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate)
     val collections = ExposedCollectionStore(database, clock)

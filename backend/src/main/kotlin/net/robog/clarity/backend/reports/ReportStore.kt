@@ -113,6 +113,9 @@ interface ReportStore {
 
     suspend fun report(id: String): StoredReport?
 
+    /** The reports [run] created, oldest first. */
+    suspend fun createdBy(run: String): List<StoredReport>
+
     /** Revision [n] of [id], or its latest when [n] is null. */
     suspend fun revision(id: String, n: Int? = null): StoredRevision?
 
@@ -128,8 +131,10 @@ interface ReportStore {
     /** Newest first (by latest revision). */
     suspend fun list(limit: Int = 100): List<ReportSummary>
 
-    /** Adds [citations] to [id]'s sources (a URL already there is kept as it was); returns how many were new. */
-    /** Adds [citations] (each once by URL), fetched at [at] unless [fetchedAt] names its own time. */
+    /**
+     * Adds [citations] to [id]'s sources (a URL already there is kept as it was), fetched at [at]
+     * unless [fetchedAt] names a URL's own time; returns how many were new.
+     */
     suspend fun addSources(id: String, citations: List<UrlCitation>, at: Instant, fetchedAt: Map<String, Instant> = emptyMap()): Int
 
     suspend fun sources(id: String): List<ReportCitation>
@@ -176,6 +181,10 @@ class ExposedReportStore(private val database: Database, private val clock: Cloc
             val report = Reports.selectAll().where { Reports.id eq id }.single().toReport()
             report to latestRow(id)!!.toRevision()
         }
+    }
+
+    override suspend fun createdBy(run: String): List<StoredReport> = database.tx {
+        Reports.selectAll().where { Reports.createdByRun eq run }.orderBy(Reports.createdAt).map { it.toReport() }
     }
 
     override suspend fun report(id: String): StoredReport? {
