@@ -54,7 +54,7 @@ class ConfigFormTest {
     @Test fun mapsSchemaPropertiesToFields() {
         val byKey = form.fields.associateBy { it.key }
         assertEquals(listOf("host", "port", "username", "password", "token", "calendar_url", "use_tls", "timeout_s", "mode"), form.fields.map { it.key })
-        assertEquals("imap host", byKey["host"]!!.label)
+        assertEquals("IMAP host", byKey["host"]!!.label)
         assertEquals(FieldKind.TEXT, byKey["host"]!!.kind)
         assertEquals(FieldKind.NUMBER, byKey["port"]!!.kind)
         assertTrue(byKey["port"]!!.integer)

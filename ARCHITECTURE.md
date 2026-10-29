@@ -714,7 +714,7 @@ itself changes only through an amendment the person approves.
 
 ### Domain tools (backend, also served at `/mcp`)
 
-Reads: `list_messages`, `list_calendar_events`, `search_contacts`,
+Reads: `list_messages`, `search_messages`, `list_calendar_events`, `search_contacts`,
 `search_documents`, `read_document`, `search_memory`, `read_memory`, `open_collection`, `read_journal`, `today`.
 Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`, `save_note`, `manage_collection`,
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper

@@ -22,6 +22,30 @@ enum class Security(val wire: String) {
     }
 }
 
+/** The "Mail history" choices: how far back a folder's mail is imported. [days] null is everything. */
+enum class MailHistory(val wire: String, val title: String, val days: Int?) {
+    DAYS_30("30d", "30 days", 30),
+    DAYS_90("90d", "90 days", 90),
+    YEAR("1y", "1 year", 365),
+    ALL("all", "All time", null),
+    ;
+
+    companion object {
+        val DEFAULT = DAYS_30
+
+        fun parse(raw: String?): MailHistory? = entries.firstOrNull { it.wire.equals(raw?.trim(), ignoreCase = true) }
+    }
+}
+
+/**
+ * Days of mail to import for [item]: its "Mail history" choice (null for all time); without one,
+ * the `initialWindowDays` of configs saved before the choice existed, else [MailHistory.DEFAULT].
+ */
+fun historyDays(item: ConfigItem): Int? {
+    MailHistory.parse(item.text("history"))?.let { return it.days }
+    return (item.int("initialWindowDays") ?: MailHistory.DEFAULT.days!!).coerceIn(1, 36500)
+}
+
 /** Name of the config collection that holds the mail accounts. */
 const val ACCOUNTS = "accounts"
 
@@ -42,13 +66,14 @@ data class MailConfig(
     val fromAddress: String,
     val fromName: String?,
     val folders: List<String>,
-    val initialWindowDays: Int,
+    /** Days of mail to import, counted back from now; null imports everything. A longer history later backfills. */
+    val historyDays: Int?,
     /** Stable id of the account ([DEFAULT_ACCOUNT] for a legacy flat config); part of every source id. */
     val id: String = DEFAULT_ACCOUNT,
     /** What the person called the account ("Work"). */
     val label: String = id,
 ) {
-    override fun toString(): String = "MailConfig($label[$id], imap=$imapHost:$imapPort, smtp=$smtpHost:$smtpPort, username=$username, password=<redacted>, folders=$folders)"
+    override fun toString(): String = "MailConfig($label[$id], imap=$imapHost:$imapPort, smtp=$smtpHost:$smtpPort, username=$username, password=<redacted>, folders=$folders, historyDays=${historyDays ?: "all"})"
 }
 
 /** Why the saved configuration cannot be used yet; the message is shown in the app. */
@@ -116,7 +141,7 @@ fun parseMailAccount(item: ConfigItem, config: ConnectorConfig, runtime: Connect
         fromAddress = fromAddress,
         fromName = item.text("fromName"),
         folders = item.list("folders"), // empty: every folder
-        initialWindowDays = (item.int("initialWindowDays") ?: 30).coerceIn(1, 3650),
+        historyDays = historyDays(item),
         id = item.id,
         label = item.label,
     )
@@ -170,7 +195,13 @@ private val mailAccountItem = buildJsonObject {
             putJsonObject("items") { put("type", "string") }
             put("examples", example("INBOX"))
         }
-        putJsonObject("initialWindowDays") { put("type", "integer"); put("title", "Days of history on first sync"); put("default", 30); put("minimum", 1); put("maximum", 3650) }
+        putJsonObject("history") {
+            put("type", "string"); put("title", "Mail history")
+            put("description", "How far back to import mail. A longer history fetches the older mail; a shorter one deletes nothing.")
+            putJsonArray("enum") { MailHistory.entries.forEach { add(JsonPrimitive(it.wire)) } }
+            putJsonArray("x-enum-titles") { MailHistory.entries.forEach { add(JsonPrimitive(it.title)) } }
+            put("default", MailHistory.DEFAULT.wire)
+        }
     }
 }
 

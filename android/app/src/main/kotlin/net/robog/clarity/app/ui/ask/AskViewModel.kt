@@ -39,6 +39,7 @@ import net.robog.clarity.app.voice.VoiceCapture
 import net.robog.clarity.app.voice.micChipState
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.latestReactions
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldAction
@@ -87,8 +88,10 @@ fun sessionLabel(session: Session, zone: TimeZone, today: LocalDate): String {
  * topic pill at the start of each stretch that a compaction later titled. A topic marker
  * ([FeedItem.topic]) closes its stretch, so its pill goes before the first message after the
  * previous marker; the marker itself is not shown. The main chat picks up again without a pill.
+ * A reaction is not shown either: it goes onto the message it reacts to ([latestReactions]).
  */
 fun askEntries(items: List<FeedItem>, sessions: Map<SessionId, Session>, zone: TimeZone, today: LocalDate): List<ChatEntry> {
+    val reactions = latestReactions(items)
     val entries = mutableListOf<ChatEntry>()
     var stretch = mutableListOf<FeedItem>()
     fun flush(marker: FeedItem?) {
@@ -101,12 +104,15 @@ fun askEntries(items: List<FeedItem>, sessions: Map<SessionId, Session>, zone: T
                 id?.let { sessions[it] }?.let { entries += ChatEntry.Pill("start-$id-${item.seq}", sessionLabel(it, zone, today)) }
                 current = id
             }
-            entries += ChatEntry.Message(item)
+            entries += ChatEntry.Message(item, reactions[item.id])
         }
         stretch = mutableListOf()
     }
     for (item in items) {
-        if (item.topic != null) flush(item) else stretch += item
+        when {
+            item.topic != null -> flush(item)
+            item.reaction == null -> stretch += item
+        }
     }
     flush(null)
     return entries

@@ -47,7 +47,8 @@ val MAIL_ACCOUNTS_SCHEMA_JSON = """
           "fromAddress": {"type": "string", "title": "From address", "format": "email"},
           "fromName": {"type": "string", "title": "From name"},
           "folders": {"type": "array", "title": "Folders", "items": {"type": "string"}, "default": ["INBOX"]},
-          "initialWindowDays": {"type": "integer", "title": "Initial window (days)", "minimum": 1, "default": 30}
+          "history": {"type": "string", "title": "Mail history", "enum": ["30d", "90d", "1y", "all"],
+                      "x-enum-titles": ["30 days", "90 days", "1 year", "All time"], "default": "30d"}
         }
       }
     }

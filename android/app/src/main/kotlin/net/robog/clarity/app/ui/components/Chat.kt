@@ -44,20 +44,26 @@ import net.robog.clarity.app.ui.cards.FeedItemView
 import net.robog.clarity.app.ui.cards.LiveBubble
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.Reaction
+import net.robog.clarity.shared.feed.latestReactions
 
 /** One row of a chat transcript: a feed item, or a pill that names what follows (a meeting, a topic). */
 sealed interface ChatEntry {
     val key: String
 
-    data class Message(val item: FeedItem) : ChatEntry {
+    /** [reaction]: Clarity's tapback on this message, if any. */
+    data class Message(val item: FeedItem, val reaction: Reaction? = null) : ChatEntry {
         override val key: String get() = "m${item.seq}"
     }
 
     data class Pill(override val key: String, val label: String) : ChatEntry
 }
 
-/** Items as plain messages, no dividers. */
-fun chatEntries(items: List<FeedItem>): List<ChatEntry> = items.map { ChatEntry.Message(it) }
+/** Items as plain messages, no dividers; reactions go onto the messages they react to. */
+fun chatEntries(items: List<FeedItem>): List<ChatEntry> {
+    val reactions = latestReactions(items)
+    return items.filter { it.reaction == null }.map { ChatEntry.Message(it, reactions[it.id]) }
+}
 
 /**
  * The conversation, oldest at the top. Built bottom-up (newest first, reverseLayout) so it opens at
@@ -86,7 +92,7 @@ fun ChatTranscript(
         live?.let { text -> item(key = "live") { LiveBubble(text, arrivingItem()) } }
         items(entries.asReversed(), key = { it.key }) { entry ->
             when (entry) {
-                is ChatEntry.Message -> FeedItemView(entry.item, arrivingItem(), env = env)
+                is ChatEntry.Message -> FeedItemView(entry.item, arrivingItem(), env = env, reaction = entry.reaction)
                 is ChatEntry.Pill -> ChatPill(entry.label, arrivingItem())
             }
         }

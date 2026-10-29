@@ -15,7 +15,11 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.robog.clarity.backend.persistence.MessageSearch
 import net.robog.clarity.backend.persistence.NounReader
+import net.robog.clarity.backend.persistence.OpenRange
+import net.robog.clarity.backend.persistence.SearchTerm
+import net.robog.clarity.backend.persistence.searchTerms
 import net.robog.clarity.backend.persistence.Stored
 import net.robog.clarity.backend.persistence.TimeRange
 import net.robog.clarity.backend.triggers.StoredTrigger
@@ -55,7 +59,7 @@ class DomainTools(
 ) {
 
     val all: List<Tool> by lazy {
-        (listOf(listMessages, listCalendarEvents, searchContacts, listTriggers, createTrigger, deleteTrigger) + documents.all)
+        (listOf(listMessages, searchMessages, listCalendarEvents, searchContacts, listTriggers, createTrigger, deleteTrigger) + documents.all)
             .sortedBy { it.name }
     }
 
@@ -72,7 +76,8 @@ class DomainTools(
     private val listMessages = tool<ListMessagesInput>(
         name = "list_messages",
         description = "List the user's messages (email, SMS, chat) in a time window, newest first. " +
-            "Use to see what happened or arrived in a period, or what a person has written. " +
+            "Use to see what happened or arrived in a period, or what a known address has written; " +
+            "to find mail by topic, word or a person's name, use search_messages. " +
             "Email comes from the inbox unless you name another folder (e.g. Junk when something seems missing). " +
             "`account` is the person's own address the message arrived at.",
         json = ClarityJson,
@@ -85,6 +90,47 @@ class DomainTools(
             val folders = reader.messageFolders(found.map { it.id })
             ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty(), zone) }.asJsonArray().toString())
         }
+    }
+
+    @Serializable
+    class SearchMessagesInput(
+        @Description("Words to find in names, addresses, subjects and bodies, e.g. `astrology club` or `turecek`. Every word must match (a name or address may match part of it); put a phrase in double quotes.")
+        val query: String,
+        @Description("Only messages sent at or after this. $LOCAL_TIME_HINT A plain date means the start of that day.") val from: String? = null,
+        @Description("Only messages sent before this, local time like `from`. A plain date means the end of that day.") val until: String? = null,
+        @Description("email, sms or chat; default all") val channel: String? = null,
+        @Description("Email folder or label (INBOX, Sent, Junk, Spam, a label); default every folder. SMS and chat are always included.")
+        val folder: String = "*",
+        @Description("Maximum messages to return (1-$MAX_LIMIT, default 20)") val limit: Int = 20,
+    )
+
+    private val searchMessages = tool<SearchMessagesInput>(
+        name = "search_messages",
+        description = "Search all of the person's messages (email, SMS, chat) by words: a person's name or part of an address, " +
+            "a topic, a subject. Best matches first, newest among equals. Each result has a short `snippet` around the match, " +
+            "not the whole body; read a message in full with list_messages around its sentAt.",
+        json = ClarityJson,
+    ) { input ->
+        val zone = settings.homeZone()
+        val terms = searchTerms(input.query)
+        if (terms.isEmpty()) return@tool ToolResult.Error("`query` needs at least one word.")
+        val from = input.from?.takeIf { it.isNotBlank() }?.let { raw ->
+            when (val b = parseBound("from", raw, zone, DayAs.START)) { is Parsed.Bad -> return@tool ToolResult.Error(b.message); is Parsed.Ok -> b.value }
+        }
+        val until = input.until?.takeIf { it.isNotBlank() }?.let { raw ->
+            when (val b = parseBound("until", raw, zone, DayAs.END)) { is Parsed.Bad -> return@tool ToolResult.Error(b.message); is Parsed.Ok -> b.value }
+        }
+        if (from != null && until != null && until <= from) return@tool ToolResult.Error("`until` must be after `from`")
+        val channel = input.channel?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+            MessagePayload.Channel.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+                ?: return@tool ToolResult.Error("`channel` is email, sms or chat, not \"$raw\".")
+        }
+        val folder = input.folder.trim().takeUnless { it.isEmpty() || it == "*" }
+        val hits = reader.searchMessages(MessageSearch(terms, OpenRange(from, until), channel, folder, input.limit.clampLimit()))
+        if (hits.messages.isEmpty() && folder != null) return@tool emptyFolderAnswer(folder, reader.emailFolders())
+        val folders = reader.messageFolders(hits.messages.map { it.id })
+        val json = hits.messages.map { it.messageJson(folders[it.id].orEmpty(), zone, snippetOf = terms) }.asJsonArray().toString()
+        ToolResult.Ok(if (hits.partial) "$json\nNo message matched every word; these match some of them." else json)
     }
 
     @Serializable
@@ -225,7 +271,8 @@ private fun Iterable<JsonElement>.asJsonArray() = JsonArray(toList())
 
 private fun Handle.label(): String = if (displayName.isNullOrBlank()) value else "$displayName <$value>"
 
-private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: TimeZone): JsonElement = buildJsonObject {
+/** A message as the agent reads it; with [snippetOf], a short [snippet] around those terms instead of the body. */
+private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: TimeZone, snippetOf: List<SearchTerm>? = null): JsonElement = buildJsonObject {
     put("id", id.value)
     if (folders.isNotEmpty()) put("folders", JsonArray(folders.map(::JsonPrimitive)))
     put("channel", payload.channel.name.lowercase())
@@ -235,7 +282,31 @@ private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: Time
     payload.subject?.let { put("subject", it) }
     put("sentAt", agentTime(payload.sentAt, zone))
     payload.threadRef?.let { put("thread", it) }
-    put("body", payload.body.truncated())
+    if (snippetOf == null) put("body", payload.body.truncated()) else snippet(payload.body, snippetOf).takeIf { it.isNotEmpty() }?.let { put("snippet", it) }
+}
+
+internal const val SNIPPET_CHARS = 240
+
+private val SPACES = Regex("\\s+")
+
+/**
+ * Pure: about [SNIPPET_CHARS] of [body] around the first place one of [terms] starts a word (whitespace
+ * collapsed, cut on word boundaries, "…" where text was cut). A word also matches by its stem-like
+ * prefix ("astrology" finds "astrological"); with no match, the start of the body.
+ */
+internal fun snippet(body: String, terms: List<SearchTerm>): String {
+    val text = body.replace(SPACES, " ").trim()
+    if (text.length <= SNIPPET_CHARS) return text
+    val needles = terms.flatMap { it.words }.flatMap { w -> listOfNotNull(w, w.take(maxOf(4, w.length - 3)).takeIf { w.length > 4 }) }
+    val at = needles.asSequence()
+        .mapNotNull { n -> Regex("(?<![\\p{L}\\p{N}])" + Regex.escape(n), RegexOption.IGNORE_CASE).find(text)?.range?.first }
+        .minOrNull() ?: 0
+    var start = (at - SNIPPET_CHARS / 3).coerceAtLeast(0)
+    var end = (start + SNIPPET_CHARS).coerceAtMost(text.length)
+    start = (end - SNIPPET_CHARS).coerceAtLeast(0)
+    if (start > 0) text.indexOf(' ', start).takeIf { it in start until at }?.let { start = it + 1 }
+    if (end < text.length) text.lastIndexOf(' ', end).takeIf { it > maxOf(start, at) }?.let { end = it }
+    return (if (start > 0) "…" else "") + text.substring(start, end) + (if (end < text.length) "…" else "")
 }
 
 private const val MAX_BODY_CHARS = 1_500

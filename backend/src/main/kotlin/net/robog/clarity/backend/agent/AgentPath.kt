@@ -280,12 +280,14 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
     } to null
     return when (tool) {
         "send_to_user" -> "Sent you a message" to (input["cards"]?.let { feedText(it.toString()) })
+        "react" -> "Reacted to your message" to arg("reaction")?.let { net.robog.clarity.shared.feed.Reaction.fromWire(it)?.emoji ?: it }
         "update_task" -> (if (input["id"] == null) "Added a task" else "Updated the task") to listOfNotNull(arg("title"), arg("detail")).joinToString(" · ").ifEmpty { null }
         "delegate" -> "Started a helper" to null
         "list_helpers" -> "Checked on helpers" to null
         "message_helper" -> "Messaged a helper" to null
         "cancel_helper" -> "Stopped a helper" to null
         "list_messages" -> count("message", "Read", "Checked mail") to arg("participant", "folder")
+        "search_messages" -> count("message", "Found", "Searched mail") to arg("query")
         "list_calendar_events" -> count("event", "Found", "Checked your calendar") to arg("date", "from")
         "search_contacts" -> count("contact", "Found", "Looked up contacts") to arg("query")
         "search_memory" -> "Searched memory" to arg("query")
@@ -325,7 +327,8 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
 
 /** Pure: the number of entries in a JSON array result; null when the result is not one. */
 private fun jsonCount(result: String?): Int? {
-    val text = result?.trim() ?: return null
+    // Compact JSON is one line; a note may follow it on the next.
+    val text = result?.trim()?.substringBefore('\n') ?: return null
     if (!text.startsWith("[")) return null
     return (runCatching { ClarityJson.parseToJsonElement(text) }.getOrNull() as? JsonArray)?.size
 }

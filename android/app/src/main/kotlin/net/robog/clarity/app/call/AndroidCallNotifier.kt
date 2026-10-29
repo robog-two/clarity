@@ -7,6 +7,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.Person
 import androidx.core.net.toUri
@@ -16,29 +19,28 @@ import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.toUri
 import net.robog.clarity.shared.session.Session
 
-/** Posts the heads-up and the incoming call (`CallStyle`, full-screen intent), and builds the ongoing-call notification. */
+/**
+ * Posts the heads-up and the incoming call, and builds the ongoing-call notification.
+ *
+ * The incoming call rings like a phone call: a `CallStyle` notification (answer / not now, category
+ * CALL) on a channel with the phone's ringtone and a vibration, insistent (it keeps ringing) for
+ * [RING_TIMEOUT], then it turns into a missed call. It always carries a full-screen intent: with the
+ * permission, the call screen opens over the lock screen; without it (Android 14+), Android shows a
+ * sticky ringing heads-up instead. A `CallStyle` with neither a full-screen intent nor a foreground
+ * service is refused outright on Android 12+, so the intent is what makes it a call at all.
+ */
 @SuppressLint("MissingPermission") // POST_NOTIFICATIONS is checked through DeviceCapabilities before posting
 class AndroidCallNotifier(private val context: Context) : CallNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
     private val agent = Person.Builder().setName(AGENT_NAME).setImportant(true).build()
 
     init {
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_HEADS_UP, "Heads-up before the call", NotificationManager.IMPORTANCE_DEFAULT),
-        )
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_CALL, "Morning call", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "The call that starts your morning meeting"
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            },
-        )
-        manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ONGOING, "Call in progress", NotificationManager.IMPORTANCE_LOW),
-        )
+        CallChannels.RETIRED.forEach(manager::deleteNotificationChannel)
+        CallChannels.ALL.forEach { manager.createNotificationChannel(it.toChannel()) }
     }
 
     override fun headsUp(title: String, body: String) {
-        val notification = NotificationCompat.Builder(context, CHANNEL_HEADS_UP)
+        val notification = NotificationCompat.Builder(context, CallChannels.HEADS_UP)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(body)
@@ -51,33 +53,67 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
     }
 
     override fun incoming(presentation: IncomingPresentation, callTime: String) {
-        when (presentation) {
-            IncomingPresentation.None -> Unit
-            IncomingPresentation.Plain -> manager.notify(
+        val style = incomingStyle(presentation) ?: return
+        manager.cancel(ID_MISSED)
+        if (!style.callStyle) {
+            manager.notify(
                 ID_INCOMING,
-                NotificationCompat.Builder(context, CHANNEL_CALL)
+                NotificationCompat.Builder(context, style.channel)
                     .setSmallIcon(R.drawable.ic_notification)
                     .setContentTitle("Time for your morning meeting")
                     .setContentText("Open the app when you’re ready.")
+                    .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
                     .setContentIntent(mainScreen(DeepLink.Today, code = 2))
                     .build(),
             )
-            IncomingPresentation.FullScreenCall, IncomingPresentation.HeadsUpCall -> {
-                val builder = NotificationCompat.Builder(context, CHANNEL_CALL)
-                    .setSmallIcon(R.drawable.ic_notification)
-                    .setContentText("morning meeting · about 8 min")
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setOngoing(true)
-                    .setContentIntent(callScreen(answer = false, code = 3))
-                    .setStyle(NotificationCompat.CallStyle.forIncomingCall(agent, decline(), callScreen(answer = true, code = 4)))
-                if (presentation == IncomingPresentation.FullScreenCall) {
-                    builder.setFullScreenIntent(callScreen(answer = false, code = 5), true)
-                }
-                manager.notify(ID_INCOMING, builder.build())
-            }
+            return
         }
+        val builder = NotificationCompat.Builder(context, style.channel)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentText("morning meeting · about 8 min")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setContentIntent(callScreen(answer = false, code = 3))
+            // Unanswered (the timeout) or swiped away: a missed call. Answering and "not now" cancel it
+            // from the app, which sends nothing.
+            .setDeleteIntent(action(CallActionReceiver.ACTION_RING_ENDED, code = 10))
+            .setStyle(NotificationCompat.CallStyle.forIncomingCall(agent, decline(), callScreen(answer = true, code = 4)))
+        style.timeout?.let { builder.setTimeoutAfter(it.inWholeMilliseconds) }
+        if (style.fullScreenIntent) builder.setFullScreenIntent(callScreen(answer = false, code = 5), true)
+        val notification = builder.build()
+        if (style.insistent) notification.flags = notification.flags or Notification.FLAG_INSISTENT
+        try {
+            manager.notify(ID_INCOMING, notification)
+        } catch (e: IllegalArgumentException) {
+            // Android refused the call style (it should not, with the full-screen intent): ring anyway,
+            // as a notification with the same two buttons.
+            Log.w(TAG, "call style refused, ringing without it", e)
+            val plain = builder.setStyle(null)
+                .addAction(0, "Not now", decline())
+                .addAction(0, "Answer", callScreen(answer = true, code = 4))
+                .build()
+            if (style.insistent) plain.flags = plain.flags or Notification.FLAG_INSISTENT
+            manager.notify(ID_INCOMING, plain)
+        }
+    }
+
+    override fun missed() {
+        val notification = NotificationCompat.Builder(context, CallChannels.HEADS_UP)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Missed call from $AGENT_NAME")
+            .setContentText("morning meeting · call back when you’re ready")
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setSilent(true)
+            .setAutoCancel(true)
+            .setContentIntent(callScreen(answer = true, code = 11))
+            .addAction(0, "Call back", callScreen(answer = true, code = 12))
+            .addAction(0, "Ring in $SNOOZE_MINUTES min", decline())
+            .build()
+        manager.notify(ID_MISSED, notification)
     }
 
     /**
@@ -91,7 +127,7 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
             Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_HANG_UP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val builder = NotificationCompat.Builder(context, CHANNEL_ONGOING)
+        val builder = NotificationCompat.Builder(context, CallChannels.ONGOING)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentText(ongoingCallText(session?.stage))
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -107,11 +143,16 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
     }
 
     override fun cancelHeadsUp() = manager.cancel(ID_HEADS_UP)
-    override fun cancelIncoming() = manager.cancel(ID_INCOMING)
+    override fun cancelIncoming() {
+        manager.cancel(ID_INCOMING)
+        manager.cancel(ID_MISSED)
+    }
 
-    private fun decline(): PendingIntent = PendingIntent.getBroadcast(
-        context, 8,
-        Intent(context, CallActionReceiver::class.java).setAction(CallActionReceiver.ACTION_DECLINE),
+    private fun decline(): PendingIntent = action(CallActionReceiver.ACTION_DECLINE, code = 8)
+
+    private fun action(name: String, code: Int): PendingIntent = PendingIntent.getBroadcast(
+        context, code,
+        Intent(context, CallActionReceiver::class.java).setAction(name),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -134,11 +175,36 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
     companion object {
         /** The ongoing call notification, which [OngoingCallService] runs in the foreground with. */
         const val ID_ONGOING = 9103
+        private const val TAG = "CallNotifier"
         private const val AGENT_NAME = "Personal Agent"
-        private const val CHANNEL_HEADS_UP = "heads_up"
-        private const val CHANNEL_CALL = "morning_call"
-        private const val CHANNEL_ONGOING = "call_in_progress"
         private const val ID_HEADS_UP = 9101
         private const val ID_INCOMING = 9102
+        private const val ID_MISSED = 9104
+    }
+}
+
+private fun ChannelSpec.toChannel(): NotificationChannel {
+    val importance = when (importance) {
+        ChannelSpec.Importance.LOW -> NotificationManager.IMPORTANCE_LOW
+        ChannelSpec.Importance.DEFAULT -> NotificationManager.IMPORTANCE_DEFAULT
+        ChannelSpec.Importance.HIGH -> NotificationManager.IMPORTANCE_HIGH
+    }
+    val spec = this
+    return NotificationChannel(id, name, importance).apply {
+        spec.description?.let { description = it }
+        if (spec.publicOnLockScreen) lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        if (spec.ringtone) {
+            setSound(
+                RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build(),
+            )
+        }
+        spec.vibration?.let {
+            enableVibration(true)
+            vibrationPattern = it
+        }
     }
 }

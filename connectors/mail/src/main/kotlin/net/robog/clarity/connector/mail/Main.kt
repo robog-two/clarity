@@ -94,13 +94,15 @@ suspend fun main() {
             log.info { "mail is not configured yet: no account has been added" }
             return@runConnector
         }
-        syncAccounts(entries, state, { push(it) }).forEach { report ->
+        val usable = entries.mapNotNull { it.result.getOrNull() }
+        val syncs = usable.associate { it.id to MailSync(MailAccess(it), state.scoped(it.id)) }
+        syncAccounts(entries, state, { push(it) }, syncFor = { cfg, _ -> syncs.getValue(cfg.id) }).forEach { report ->
             report.result.onFailure { log.warn { "mail account '${report.label}' was not synced: ${it.message}" } }
         }
         // Between polls, wait on each server (IDLE) instead of sleeping; an account without IDLE waits for the SDK's interval.
         coroutineScope {
-            for (cfg in entries.mapNotNull { it.result.getOrNull() }) launch {
-                watchAccount(cfg, MailSync(MailAccess(cfg), state.scoped(cfg.id))) { push(it) }
+            for (cfg in usable) launch {
+                watchAccount(cfg, syncs.getValue(cfg.id)) { push(it) }
             }
         }
     }
@@ -108,7 +110,8 @@ suspend fun main() {
 
 /**
  * Keeps one account in step with its server for up to [RUN_WINDOW]; stops early on a server without
- * IDLE or after [MAX_IDLE_FAILURES] failures in a row. A dropped connection (a quiet connection that
+ * IDLE or after [MAX_IDLE_FAILURES] failures in a row. While older mail is still being imported
+ * ([MailSync.backfillPending]) it syncs again right away instead of waiting. A dropped connection (a quiet connection that
  * something on the way closed) reconnects and syncs, since mail may have arrived while it was dead.
  */
 private suspend fun watchAccount(cfg: MailConfig, sync: MailSync, push: suspend (List<IngestRecord>) -> Unit) {
@@ -117,6 +120,10 @@ private suspend fun watchAccount(cfg: MailConfig, sync: MailSync, push: suspend 
     var failures = 0
     try {
         while (started.elapsedNow() < RUN_WINDOW - IDLE_SLICE) {
+            if (sync.backfillPending) {
+                sync.syncAll(push)
+                continue
+            }
             val outcome = withContext(Dispatchers.IO) { runCatching { idleForChange(access, cfg.folders.firstOrNull() ?: "INBOX", IDLE_SLICE) } }
             val changed = outcome.getOrElse { e ->
                 failures++

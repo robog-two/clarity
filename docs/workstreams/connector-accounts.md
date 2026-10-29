@@ -79,7 +79,9 @@ Top level: `{ "accounts": <collection>, ...connector-wide options if any }`, wit
 - **mail** items: `id`, `label` ("Work", "Personal"), `imapHost`, `imapPort`, `imapSecurity`
   (enum `ssl`/`starttls`/`none`), `smtpHost`, `smtpPort`, `smtpSecurity`, `username`, `password`
   (secret), `fromAddress`, `fromName`, `folders` (string array, default `["INBOX"]`) and
-  `initialWindowDays`.
+  `history` ("Mail history": enum `30d`/`90d`/`1y`/`all`, default `30d`; a longer choice backfills
+  older mail, a shorter one deletes nothing; items saved before it existed keep their
+  `initialWindowDays`).
   - Presets: iCloud (`imap.mail.me.com` 993 ssl, `smtp.mail.me.com` 587 starttls, app-specific
     password); Fastmail (`imap.fastmail.com` 993 ssl, `smtp.fastmail.com` 465 ssl, app password);
     Gmail (`imap.gmail.com` 993 ssl, `smtp.gmail.com` 465 ssl, app password, needs 2-step

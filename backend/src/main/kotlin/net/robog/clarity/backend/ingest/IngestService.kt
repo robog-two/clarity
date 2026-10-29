@@ -74,7 +74,8 @@ class IngestService(
                 SourceLedger.recordSighting(this, connector, plan.payload.noun, record.sourceId, record.sourceVersion, now)
                 SourceLedger.link(this, connector, plan.payload.noun, record.sourceId, upserted.id, record.sourceVersion)
                 val entityId = EntityId(upserted.id.toString())
-                events += Ingested(connector, entityId, plan.payload, upserted.created)
+                val history = (record as? IngestRecord.Upsert)?.history == true
+                events += Ingested(connector, entityId, plan.payload, upserted.created, history)
                 if (upserted.created) RecordOutcome.Created(entityId) else RecordOutcome.Merged(entityId)
             }
             is RecordPlan.Remove -> {

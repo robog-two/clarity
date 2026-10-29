@@ -48,6 +48,16 @@ class CallService(
         return result
     }
 
+    /**
+     * The ringing notification went without an answer: it timed out, or was swiped away. (Answering
+     * and "not now" cancel it from the app, which does not count.) It leaves a missed call to call
+     * back from, or to ring again later.
+     */
+    fun ringEnded() {
+        tracker.ring(false)
+        notifier.missed()
+    }
+
     /** Ends the running call (the ongoing call notification's hang-up button). */
     suspend fun hangUp(): ApiResult<Session?> {
         tracker.ring(false)

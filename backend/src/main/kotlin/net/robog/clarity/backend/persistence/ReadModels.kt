@@ -28,6 +28,11 @@ interface NounReader {
      * [emailFolderPattern]); null means every folder. SMS and chat have no folders and are always included.
      */
     suspend fun messages(range: TimeRange, participant: String? = null, limit: Int = 50, folder: String? = null): List<Stored<MessagePayload>>
+    /**
+     * Text search over names and addresses (fragments), subjects and bodies (words, stemmed), most
+     * relevant first and newest among equals; soft-deleted messages never match.
+     */
+    suspend fun searchMessages(search: MessageSearch): MessageHits = MessageHits(emptyList())
     /** The email folders each message is in (from its live source links); messages without any are left out. */
     suspend fun messageFolders(ids: List<EntityId>): Map<EntityId, List<String>> = emptyMap()
     /** One message by id, or null when there is none (or it was deleted). */

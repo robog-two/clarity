@@ -48,6 +48,13 @@ data class FeedItem(
      * field show nothing for it.
      */
     val topic: String? = null,
+    /**
+     * Set on a reaction: the agent's tapback on one of the person's messages ([ItemReaction.itemId]).
+     * A reaction has no cards and is never shown or notified as an item of its own; the app draws it
+     * on its target, and the newest reaction (highest seq) on a message replaces any earlier one. It
+     * comes as an item of its own so that a phone holding the target already gets it by seq.
+     */
+    val reaction: ItemReaction? = null,
 ) {
     @Serializable
     enum class Author {
@@ -55,6 +62,40 @@ data class FeedItem(
         @SerialName("user") USER,
     }
 }
+
+/**
+ * A reaction on the wire: [reaction] is a [Reaction] wire name, kept as a string so a reaction added
+ * later never breaks an older app's feed (it is just not drawn there).
+ */
+@Serializable
+data class ItemReaction(val itemId: FeedItemId, val reaction: String) {
+    /** The reaction, or null when this build does not know it. */
+    val known: Reaction? get() = Reaction.fromWire(reaction)
+}
+
+/** The agent's tapbacks on the person's messages. */
+@Serializable
+enum class Reaction(val wire: String, val emoji: String) {
+    @SerialName("thumbs_up") THUMBS_UP("thumbs_up", "👍"),
+    @SerialName("heart") HEART("heart", "❤️"),
+    @SerialName("laugh") LAUGH("laugh", "😂"),
+    @SerialName("thumbs_down") THUMBS_DOWN("thumbs_down", "👎"),
+    ;
+
+    companion object {
+        fun fromWire(value: String): Reaction? = entries.firstOrNull { it.wire == value }
+    }
+}
+
+/**
+ * The reaction now on each message among [items]: the one of the highest seq that targets it (a
+ * later reaction replaces an earlier one). A message whose latest reaction this build does not
+ * know shows none.
+ */
+fun latestReactions(items: List<FeedItem>): Map<FeedItemId, Reaction> =
+    items.mapNotNull { item -> item.reaction?.let { item.seq to it } }.sortedBy { it.first }
+        .associate { (_, r) -> r.itemId to r.known }
+        .mapNotNull { (id, r) -> r?.let { id to it } }.toMap()
 
 /**
  * The typed building blocks the client renders. The model never sends free-form UI: every
