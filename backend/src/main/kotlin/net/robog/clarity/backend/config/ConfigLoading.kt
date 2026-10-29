@@ -98,8 +98,11 @@ private class Lookup(
     }
 
     context(_: Raise<ConfigError>)
-    fun dollars(envName: String, path: String, default: Double): Double {
-        val raw = string(envName, path) ?: return default
+    fun dollars(envName: String, path: String, default: Double): Double = dollarsOrNull(envName, path) ?: default
+
+    context(_: Raise<ConfigError>)
+    fun dollarsOrNull(envName: String, path: String): Double? {
+        val raw = string(envName, path) ?: return null
         val value = raw.trim().removePrefix("$").toDoubleOrNull()
         if (value == null || value <= 0.0 || value.isInfinite()) raise(ConfigError.Invalid(envName, raw, "expected a dollar amount above 0, e.g. 0.15"))
         return value
@@ -299,11 +302,11 @@ private class Lookup(
                 helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.15),
                 leadTurnMaxCostUsd = dollars("CLARITY_LEAD_TURN_MAX_COST", "agent.leadTurnMaxCost", 0.50),
                 spend = SpendLimits(
-                    weeklyUsd = dollars("CLARITY_SPEND_WEEKLY_MAX", "agent.spend.weeklyMax", SpendLimits().weeklyUsd),
-                    dailyUsd = AgentRole.entries.associateWith { role ->
+                    weeklyUsd = dollarsOrNull("CLARITY_SPEND_WEEKLY_MAX", "agent.spend.weeklyMax"),
+                    dailyUsd = AgentRole.entries.mapNotNull { role ->
                         val name = role.name
-                        dollars("CLARITY_SPEND_DAILY_MAX_$name", "agent.spend.dailyMax.${name.lowercase()}", SpendLimits().dailyUsd.getValue(role))
-                    },
+                        dollarsOrNull("CLARITY_SPEND_DAILY_MAX_$name", "agent.spend.dailyMax.${name.lowercase()}")?.let { role to it }
+                    }.toMap(),
                 ),
                 helperMaxPerDay = int("CLARITY_HELPER_MAX_PER_DAY", "agent.helperMaxPerDay", 20),
                 helperMaxResumes = int("CLARITY_HELPER_MAX_RESUMES", "agent.helperMaxResumes", 3, min = 0),

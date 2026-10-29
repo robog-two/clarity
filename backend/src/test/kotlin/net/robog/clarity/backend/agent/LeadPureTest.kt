@@ -72,8 +72,10 @@ class LeadPureTest : FunSpec({
             helperOwesResult(null) shouldBe false
         }
         test("hard spend stops: the week first, then the role's day; each names its period") {
-            val limits = net.robog.clarity.backend.config.SpendLimits()
+            val limits = net.robog.clarity.backend.config.SpendLimits(weeklyUsd = 10.0, dailyUsd = mapOf(AgentRole.HELPER to 3.0))
             val now = Instant.parse("2026-10-29T15:00:00Z")
+            // Off by default: no global stop however much was spent.
+            spendStop(net.robog.clarity.backend.config.SpendLimits(), AgentRole.HELPER, spentWeek = 99_000_000, spentToday = 99_000_000, now = now) shouldBe null
             spendStop(limits, AgentRole.HELPER, spentWeek = 9_999_999, spentToday = 2_999_999, now = now) shouldBe null
             val week = spendStop(limits, AgentRole.HELPER, spentWeek = 10_000_000, spentToday = 0, now = now)!!
             week.periodKey shouldBe "week:2026-10-29"

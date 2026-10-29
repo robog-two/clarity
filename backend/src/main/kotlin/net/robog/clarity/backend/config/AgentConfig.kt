@@ -164,19 +164,17 @@ data class WebSearchConfig(
 }
 
 /**
- * Hard spend stops, in dollars, read from `model_call`: [weeklyUsd] for every call in the last 7
- * days (`CLARITY_SPEND_WEEKLY_MAX`), and per role in the last 24 hours (`CLARITY_SPEND_DAILY_MAX_LEAD`,
- * `_HELPER`, `_GUARD`, `_TRIAGE`). Over one, no model is called until older calls age out.
+ * Optional hard spend stops, in dollars, read from `model_call`: [weeklyUsd] for every call in the
+ * last 7 days (`CLARITY_SPEND_WEEKLY_MAX`), and per role in the last 24 hours (`CLARITY_SPEND_DAILY_MAX_LEAD`,
+ * `_HELPER`, `_GUARD`, `_TRIAGE`, ...). Over one, no model is called until older calls age out. Off
+ * unless set: spend is kept down by tuning, and runaway runs are stopped by the per-run caps.
  */
 data class SpendLimits(
-    val weeklyUsd: Double = 10.0,
-    val dailyUsd: Map<AgentRole, Double> = mapOf(
-        AgentRole.LEAD to 3.0,
-        AgentRole.HELPER to 3.0,
-        AgentRole.GUARD to 1.0,
-        AgentRole.TRIAGE to 1.0,
-    ),
-)
+    val weeklyUsd: Double? = null,
+    val dailyUsd: Map<AgentRole, Double> = emptyMap(),
+) {
+    val any: Boolean get() = weeklyUsd != null || dailyUsd.isNotEmpty()
+}
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */
 const val DEFAULT_JEV_MODEL = "typesafe/jev-1.14-20261014"

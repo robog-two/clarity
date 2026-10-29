@@ -293,9 +293,21 @@ class RunawayGuardsDbTest : FunSpec({
         rows shouldBe listOf(true, true)
     }
 
+    test("no global spend stop unless one is set: spending past $10 a week still calls the model") {
+        val r = LeadRig(database).also { it.reset() }
+        val guard = DbSpendGuard(database, Clock.System, r.config, r.feed)
+        DbUsageRecorder(database, Clock.System).record("m", Usage(1, 1, reportedCostMicros = 50_000_000), AgentRole.LEAD)
+        guard.check(AgentRole.LEAD).shouldBeNull()
+        guard.check(AgentRole.HELPER).shouldBeNull()
+    }
+
     test("a hard spend stop: no call is made, helpers fail with it, and the person is told once") {
         lateinit var guard: DbSpendGuard
-        val r = LeadRig(database, spendGuard = SpendGuard { guard.check(it) }).also { it.reset() }
+        val r = LeadRig(
+            database,
+            spendGuard = SpendGuard { guard.check(it) },
+            configure = { it.copy(spend = net.robog.clarity.backend.config.SpendLimits(weeklyUsd = 10.0)) },
+        ).also { it.reset() }
         guard = DbSpendGuard(database, Clock.System, r.config, r.feed)
         guard.check(AgentRole.HELPER).shouldBeNull()
         // This week's calls already cost the weekly limit.

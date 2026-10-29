@@ -56,8 +56,8 @@ fun usd(micros: Long): String = "$" + "%.2f".format(micros / 1_000_000.0)
  */
 fun spendStop(limits: SpendLimits, role: AgentRole?, spentWeek: Long, spentToday: Long, now: Instant): SpendStop? {
     val date = now.toLocalDateTime(TimeZone.UTC).date
-    val weekly = dollarsToMicros(limits.weeklyUsd)
-    if (spentWeek >= weekly) {
+    val weekly = limits.weeklyUsd?.let(::dollarsToMicros)
+    if (weekly != null && spentWeek >= weekly) {
         return SpendStop(
             "week:$date",
             "Spend limit reached: model calls cost ${usd(spentWeek)} in the last 7 days (the limit is ${usd(weekly)}). " +
@@ -97,6 +97,7 @@ class DbSpendGuard(
     private val warned = ConcurrentHashMap.newKeySet<String>()
 
     override suspend fun check(role: AgentRole?): SpendStop? {
+        if (!config.spend.any) return null
         val now = clock.now()
         val (week, today) = database.tx {
             val total = ModelCalls.costMicros.sum()

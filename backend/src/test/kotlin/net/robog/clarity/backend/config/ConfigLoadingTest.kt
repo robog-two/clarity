@@ -49,8 +49,10 @@ class ConfigLoadingTest : FunSpec({
     test("hard spend stops, the lead's turn cap, and the helper limits: defaults and overrides") {
         val c = load().getOrNull()!!.agent
         c.spend shouldBe SpendLimits()
-        c.spend.weeklyUsd shouldBe 10.0
-        c.spend.dailyUsd shouldBe mapOf(AgentRole.LEAD to 3.0, AgentRole.HELPER to 3.0, AgentRole.GUARD to 1.0, AgentRole.TRIAGE to 1.0)
+        // No global stop unless one is set; per-run caps catch runaways.
+        c.spend.weeklyUsd shouldBe null
+        c.spend.dailyUsd shouldBe emptyMap()
+        c.spend.any shouldBe false
         c.leadTurnMaxCostUsd shouldBe 0.5
         c.helperMaxPerDay shouldBe 20
         c.helperMaxResumes shouldBe 3
@@ -65,7 +67,8 @@ class ConfigLoadingTest : FunSpec({
         ).getOrNull()!!.agent
         custom.spend.weeklyUsd shouldBe 7.0
         custom.spend.dailyUsd[AgentRole.HELPER] shouldBe 1.5
-        custom.spend.dailyUsd[AgentRole.LEAD] shouldBe 3.0
+        custom.spend.dailyUsd[AgentRole.LEAD] shouldBe null
+        custom.spend.any shouldBe true
         custom.leadTurnMaxCostUsd shouldBe 0.25
         custom.helperMaxPerDay shouldBe 5
         custom.helperMaxResumes shouldBe 0
