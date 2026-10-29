@@ -20,7 +20,9 @@ import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.andWhere
@@ -76,6 +78,19 @@ class HeldActionStore(private val database: Database, private val clock: Clock) 
     suspend fun findByKey(key: String): HeldAction? = database.tx {
         HeldActions.selectAll().where { HeldActions.idempotencyKey eq key }.singleOrNull()?.toHeld()
     }
+
+    /**
+     * Held actions in [statuses] whose key starts with [keyPrefix] (one run's or thread's), created
+     * since [since], newest first, each with the action as the agent first proposed it (before the
+     * person edited it), when it was edited.
+     */
+    suspend fun recentByKeyPrefix(keyPrefix: String, since: Instant, statuses: Set<HeldAction.Status>): List<Pair<HeldAction, ProposedAction?>> =
+        database.tx {
+            HeldActions.selectAll().where {
+                (HeldActions.idempotencyKey like likePrefix(keyPrefix)) and (HeldActions.createdAt greaterEq since) and
+                    (HeldActions.status inList statuses.map { it.wire() })
+            }.orderBy(HeldActions.createdAt, SortOrder.DESC).limit(200).map { it.toHeld() to it[HeldActions.originalAction] }
+        }
 
     suspend fun get(id: HeldActionId): HeldAction? {
         val uuid = parseHeldId(id.value) ?: return null

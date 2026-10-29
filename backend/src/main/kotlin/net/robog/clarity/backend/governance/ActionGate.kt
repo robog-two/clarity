@@ -102,6 +102,7 @@ class ActionGate(
         urgency: Urgency,
     ): ProposalOutcome {
         existing(action.idempotencyKey)?.let { return it }
+        repeated(action)?.let { return it }
 
         val constitution = constitutions.current() ?: emptyConstitution(clock.now())
         val verdict = guard.check(action, constitution, provenance, agentReason = agentView, zone = zone.zone())
@@ -162,6 +163,31 @@ class ActionGate(
         return held.findByKey(key)?.let(::outcomeFor)
     }
 
+    /**
+     * The same action ([actionFingerprint]) the same run or thread proposed in the last
+     * [REPEAT_WINDOW] that is queued, sent, waiting for the person or approved: a repeat (a later
+     * step or turn sending the same email again) gets that one back instead of acting twice. An
+     * edited version, a declined or failed one, and another run's are not repeats.
+     */
+    private suspend fun repeated(action: ProposedAction): ProposalOutcome? {
+        val print = actionFingerprint(action) ?: return null
+        val prefix = runKeyPrefix(action.idempotencyKey) ?: return null
+        val since = clock.now() - REPEAT_WINDOW
+        outbox.recentByKeyPrefix(prefix, since).firstOrNull { actionFingerprint(it.action) == print }?.let {
+            val done = it.status == OutboxStatus.DONE
+            return ProposalOutcome.Allowed(it.id, "Already ${if (done) "sent" else "queued"} as ${it.id}: ${it.action.summary}. Not sent again.")
+        }
+        held.recentByKeyPrefix(prefix, since, REPEATABLE_HELD).firstOrNull { (h, original) ->
+            actionFingerprint(h.action) == print || original?.let(::actionFingerprint) == print
+        }?.let { (h, _) ->
+            return when (h.status) {
+                HeldAction.Status.HELD -> ProposalOutcome.Held(h.id, "Already waiting for the person as ${h.id}: ${h.action.summary}. Don't propose it again; they will decide.")
+                else -> ProposalOutcome.Held(h.id, "Already approved by the person as ${h.id}: ${h.action.summary}. Not sent again.")
+            }
+        }
+        return null
+    }
+
     private fun outcomeFor(h: HeldAction): ProposalOutcome = when (h.status) {
         HeldAction.Status.HELD ->
             ProposalOutcome.Held(h.id, "Held for review: ${h.action.summary}. ${h.verdict.rationale} Don't retry; the person will decide.")
@@ -175,6 +201,9 @@ class ActionGate(
             ProposalOutcome.Blocked(h.id, "Not done: the person already ruled on ${h.action.summary} (${h.status.name.lowercase()}). Don't propose it again.")
     }
 }
+
+/** Held statuses in which a proposal is still standing: an identical one from the same run is a repeat. */
+private val REPEATABLE_HELD = setOf(HeldAction.Status.HELD, HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED)
 
 /** Decisions on held actions (`POST /api/v1/held/{id}/decision`) and listing. */
 @Inject

@@ -35,6 +35,8 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.core.lessEq
+import org.jetbrains.exposed.v1.core.like
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
@@ -178,6 +180,14 @@ class ActionOutbox(
 
     suspend fun findByKey(key: String): OutboxRow? = database.tx {
         ActionOutboxTable.selectAll().where { ActionOutboxTable.idempotencyKey eq key }.singleOrNull()?.toRow()
+    }
+
+    /** Queued, delivering or delivered actions whose key starts with [keyPrefix] (one run's), created since [since], newest first. */
+    suspend fun recentByKeyPrefix(keyPrefix: String, since: Instant): List<OutboxRow> = database.tx {
+        ActionOutboxTable.selectAll().where {
+            (ActionOutboxTable.idempotencyKey like likePrefix(keyPrefix)) and (ActionOutboxTable.createdAt greaterEq since) and
+                (ActionOutboxTable.status neq OutboxStatus.FAILED)
+        }.orderBy(ActionOutboxTable.createdAt, SortOrder.DESC).limit(200).map { it.toRow() }
     }
 
     suspend fun get(id: ActionId): OutboxRow? {
