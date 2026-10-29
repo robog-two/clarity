@@ -50,10 +50,10 @@ object ProposedActions {
         val inReplyTo = input.inReplyTo?.trim()?.takeIf(String::isNotEmpty)
         require(!(input.newThread && inReplyTo != null)) { "Give `inReplyTo` for a reply or `newThread: true` for a new email, not both." }
         require(input.newThread || inReplyTo != null) {
-            "A reply needs `inReplyTo`, the id of the message it answers (from list_messages). For a new email set `newThread: true`."
+            "A reply needs `inReplyTo`, the id of the message it answers (from list_messages or search_messages). For a new email set `newThread: true`."
         }
         if (inReplyTo != null) {
-            requireNotNull(replied) { "No message has the id $inReplyTo. Take `inReplyTo` from list_messages." }
+            requireNotNull(replied) { "No message has the id $inReplyTo. Take `inReplyTo` from list_messages or search_messages." }
             val arrivedAt = replied.account.value
             if (!arrivedAt.equals(sender.address, ignoreCase = true)) {
                 val holder = accounts.firstOrNull { it.address.equals(arrivedAt, ignoreCase = true) }
@@ -148,13 +148,13 @@ class ExternalTools(
 
     @Serializable
     class EmailInput(
-        @Description("The person's own mail account it goes from: its address (or its name, like \"Gmail\"). A reply goes from the account the message arrived at (`account` in list_messages).")
+        @Description("The person's own mail account it goes from: its address (or its name, like \"Gmail\"). A reply goes from the account the message arrived at (`account` in list_messages and search_messages).")
         val from: String,
         @Description("Recipients: addresses, or \"Name <address>\".") val to: List<String>,
         val subject: String,
         val body: String,
         val cc: List<String> = emptyList(),
-        @Description("Id of the message this answers (from list_messages); the email joins its thread. Leave out for a new email.") val inReplyTo: String? = null,
+        @Description("Id of the message this answers (from list_messages or search_messages); the email joins its thread. Leave out for a new email.") val inReplyTo: String? = null,
         @Description("true for a new email that answers nothing; false for a reply, which needs `inReplyTo`.") val newThread: Boolean,
         @Description(WHY) val reason: String,
         @Description(CONTEXT) val context: List<ContextItem> = emptyList(),

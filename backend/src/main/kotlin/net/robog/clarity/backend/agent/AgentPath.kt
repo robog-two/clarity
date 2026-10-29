@@ -286,6 +286,7 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "message_helper" -> "Messaged a helper" to null
         "cancel_helper" -> "Stopped a helper" to null
         "list_messages" -> count("message", "Read", "Checked mail") to arg("participant", "folder")
+        "search_messages" -> count("message", "Found", "Searched mail") to arg("query")
         "list_calendar_events" -> count("event", "Found", "Checked your calendar") to arg("date", "from")
         "search_contacts" -> count("contact", "Found", "Looked up contacts") to arg("query")
         "search_memory" -> "Searched memory" to arg("query")
@@ -325,7 +326,8 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
 
 /** Pure: the number of entries in a JSON array result; null when the result is not one. */
 private fun jsonCount(result: String?): Int? {
-    val text = result?.trim() ?: return null
+    // Compact JSON is one line; a note may follow it on the next.
+    val text = result?.trim()?.substringBefore('\n') ?: return null
     if (!text.startsWith("[")) return null
     return (runCatching { ClarityJson.parseToJsonElement(text) }.getOrNull() as? JsonArray)?.size
 }

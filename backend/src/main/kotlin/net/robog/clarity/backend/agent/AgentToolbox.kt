@@ -23,7 +23,7 @@ data class ToolSet(val tools: List<Tool>)
 
 /** What a helper may use unless the lead narrows it: reads, the gated external tools and the report tools. */
 val HELPER_BASE = setOf(
-    "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
+    "list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
     "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
     "request_credential", "list_credentials", "ask_code",
 ) + REPORT_TOOLS

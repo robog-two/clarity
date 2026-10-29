@@ -9,7 +9,13 @@ import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import net.robog.clarity.backend.persistence.MessageHits
+import net.robog.clarity.backend.persistence.MessageSearch
 import net.robog.clarity.backend.persistence.NounReader
+import net.robog.clarity.backend.persistence.OpenRange
+import net.robog.clarity.backend.persistence.SearchTerm
+import net.robog.clarity.backend.persistence.searchTerms
 import net.robog.clarity.backend.persistence.Stored
 import net.robog.clarity.backend.persistence.TimeRange
 import net.robog.clarity.backend.triggers.StoredTrigger
@@ -58,6 +64,26 @@ private class FakeReader : NounReader {
 
     var events: List<Stored<CalendarEventPayload>>? = null
 
+    var lastSearch: MessageSearch? = null
+    var partialHits = false
+    override suspend fun searchMessages(search: MessageSearch): MessageHits {
+        lastSearch = search
+        val body = "Intro. ".repeat(100) + "Are you coming to the Astrology Club tonight? " + "More text. ".repeat(100)
+        return MessageHits(
+            listOf(
+                Stored(
+                    EntityId("m2"),
+                    MessagePayload(
+                        MessagePayload.Channel.EMAIL, Handle.email("me@x.org"), Handle.email("turecekt@gmail.com", "Tim Turecek"),
+                        listOf(Handle.email("me@x.org")), "Club", body, t0,
+                    ),
+                    t0, t0,
+                ),
+            ),
+            partial = partialHits,
+        )
+    }
+
     override suspend fun searchContacts(query: String, limit: Int) =
         listOf(Stored(EntityId("c1"), ContactPayload("Bob", listOf(Handle.email("bob@x.org"))), t0, t0))
 
@@ -81,12 +107,13 @@ class DomainToolsTest : FunSpec({
     val tools = DomainTools(reader, triggers, DocumentTools(reader) { DocumentFetch.Unavailable("none") }, SettingsProvider { home })
         .all.associateBy { it.name }
 
-    test("exposes the eight tools, sorted, with the right effects") {
+    test("exposes the nine tools, sorted, with the right effects") {
         tools.keys.toList() shouldContainExactly
             listOf(
                 "create_trigger", "delete_trigger", "list_calendar_events", "list_messages", "list_triggers",
-                "read_document", "search_contacts", "search_documents",
+                "read_document", "search_contacts", "search_documents", "search_messages",
             )
+        tools.getValue("search_messages").effect shouldBe ToolEffect.READ
         tools.getValue("create_trigger").effect shouldBe ToolEffect.WRITE
         tools.getValue("delete_trigger").effect shouldBe ToolEffect.WRITE
         tools.getValue("list_messages").effect shouldBe ToolEffect.READ
@@ -206,6 +233,68 @@ class DomainToolsTest : FunSpec({
         } finally {
             reader.events = null
         }
+    }
+
+    test("search_messages forwards terms and filters, and answers with a snippet instead of the body") {
+        val result = tools.getValue("search_messages").invoke(
+            obj("""{"query":"astrology \"club meeting\"","from":"2026-10-01","channel":"Email","limit":999}"""),
+        ).shouldBeInstanceOf<ToolResult.Ok>()
+        val search = reader.lastSearch!!
+        search.terms.map { it.words } shouldBe listOf(listOf("club", "meeting"), listOf("astrology"))
+        search.range shouldBe OpenRange(Instant.parse("2026-10-01T04:00:00Z"), null)
+        search.channel shouldBe MessagePayload.Channel.EMAIL
+        search.folder shouldBe null // every folder unless one is named
+        search.limit shouldBe 200
+        val first = (Json.parseToJsonElement(result.content) as kotlinx.serialization.json.JsonArray).first().jsonObject
+        first["id"].toString() shouldBe "\"m2\""
+        first["account"].toString() shouldBe "\"me@x.org\""
+        first["from"].toString() shouldBe "\"Tim Turecek <turecekt@gmail.com>\""
+        first.containsKey("body") shouldBe false
+        val snippet = first.getValue("snippet").jsonPrimitive.content
+        snippet shouldContain "Astrology Club"
+        (snippet.length <= SNIPPET_CHARS + 2) shouldBe true
+        result.content.contains("\n") shouldBe false
+    }
+
+    test("search_messages notes partial matches, takes a folder, and rejects bad input") {
+        reader.partialHits = true
+        try {
+            tools.getValue("search_messages").invoke(obj("""{"query":"astrology zebra","folder":"Junk"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+                .content shouldContain "No message matched every word"
+            reader.lastSearch!!.folder shouldBe "Junk"
+        } finally {
+            reader.partialHits = false
+        }
+        tools.getValue("search_messages").invoke(obj("""{"query":"  ...  "}""")).shouldBeInstanceOf<ToolResult.Error>()
+        tools.getValue("search_messages").invoke(obj("""{"query":"x","channel":"fax"}""")).shouldBeInstanceOf<ToolResult.Error>()
+        tools.getValue("search_messages").invoke(obj("""{"query":"x","from":"soon"}""")).shouldBeInstanceOf<ToolResult.Error>()
+        tools.getValue("search_messages").invoke(obj("""{"query":"x","from":"2026-10-02","until":"2026-10-01"}""")).shouldBeInstanceOf<ToolResult.Error>()
+    }
+
+    test("search_messages is a helper default and taints the run like list_messages") {
+        ("search_messages" in HELPER_BASE) shouldBe true
+        ("search_messages" in UNTRUSTED_SOURCE_TOOLS) shouldBe true
+    }
+
+    test("snippet: around the match on word boundaries, stem-tolerant, start of body without a match, short bodies whole") {
+        val terms = listOf(SearchTerm(listOf("astrology")))
+        val body = "word ".repeat(200) + "the astrological society meets\n\n on Friday " + "tail ".repeat(200)
+        val cut = snippet(body, terms)
+        cut shouldContain "astrological society meets on Friday"
+        cut.startsWith("…") shouldBe true
+        cut.endsWith("…") shouldBe true
+        (cut.length <= SNIPPET_CHARS + 2) shouldBe true
+        snippet("nothing here ".repeat(50), terms).startsWith("nothing here") shouldBe true
+        snippet("  short\n body ", terms) shouldBe "short body"
+    }
+
+    test("searchTerms: quoted phrases, then words; punctuation splits; at most eight") {
+        searchTerms("\"Astrology Club\" turecekt@gmail.com").map { it.words } shouldBe
+            listOf(listOf("astrology", "club"), listOf("turecekt"), listOf("gmail"), listOf("com"))
+        searchTerms("a b c d e f g h i j").size shouldBe 8
+        searchTerms("!!!") shouldBe emptyList()
+        SearchTerm(listOf("astrology", "club")).tsQuery('A') shouldBe "astrology:*A <-> club:*A"
+        SearchTerm(listOf("50%_off")).peoplePattern() shouldBe "%50\\%\\_off%"
     }
 
     test("search_contacts returns handles") {

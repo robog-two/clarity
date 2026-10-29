@@ -16,6 +16,9 @@ import org.jetbrains.exposed.v1.core.Op
 import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.TextColumnType
+import org.jetbrains.exposed.v1.core.IColumnType
+import org.jetbrains.exposed.v1.core.IntegerColumnType
+import kotlin.uuid.Uuid
 import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.eq
@@ -117,6 +120,53 @@ class ExposedNounReader(private val database: Database) : NounReader {
             }.orEmpty()
             val byId = Documents.selectAll().where { Documents.id inList ids.map { it.toKotlinUuid() } }.associate { it[Documents.id] to it.toDocument() }
             ids.mapNotNull { byId[it.toKotlinUuid()] }
+        }
+    }
+
+    override suspend fun searchMessages(search: MessageSearch): MessageHits {
+        val terms = search.terms.ifEmpty { return MessageHits(emptyList()) }
+        val args = mutableListOf<Pair<IColumnType<*>, Any?>>()
+        fun text(value: String) = "?".also { args += TextColumnType() to value }
+        // Per term: 3 for a name or address, 2 for the subject, 1 for the body; a stopword-only term matches everything.
+        val scores = terms.map { t ->
+            "CASE WHEN m.people LIKE ${text(t.peoplePattern())} THEN 3 " +
+                "WHEN m.search @@ to_tsquery('english', ${text(t.tsQuery('A'))}) THEN 2 " +
+                "WHEN m.search @@ to_tsquery('english', ${text(t.tsQuery())}) THEN 1 " +
+                "WHEN numnode(to_tsquery('english', ${text(t.tsQuery())})) = 0 THEN 0 ELSE -1 END"
+        }
+        val anyTerm = terms.joinToString(" OR ") { t ->
+            "m.people LIKE ${text(t.peoplePattern())} OR m.search @@ to_tsquery('english', ${text(t.tsQuery())})"
+        }
+        val filters = buildList {
+            add("m.deleted_at IS NULL")
+            add("($anyTerm)")
+            search.range.from?.let { add("m.sent_at >= ?"); args += Messages.sentAt.columnType to it }
+            search.range.until?.let { add("m.sent_at < ?"); args += Messages.sentAt.columnType to it }
+            search.channel?.let { add("m.channel = ${text(it.wire())}") }
+            search.folder?.let {
+                add(
+                    "(m.channel <> '$EMAIL' OR EXISTS (SELECT 1 FROM source_link sl WHERE sl.entity_id = m.id " +
+                        "AND sl.noun = 'message' AND sl.deleted_at IS NULL AND sl.source_id ~* ${text(emailFolderPattern(it))}))",
+                )
+            }
+        }
+        args += IntegerColumnType() to search.limit.coerceIn(1, MAX_LIMIT)
+        // Placeholders appear in the order of [args]: the term scores, then the filters, then the limit.
+        val perTerm = scores.withIndex().joinToString(", ") { (i, score) -> "$score AS s$i" }
+        val matched = scores.indices.joinToString(" + ") { "(CASE WHEN s$it >= 0 THEN 1 ELSE 0 END)" }
+        val score = scores.indices.joinToString(" + ") { "GREATEST(s$it, 0)" }
+        val sql = "SELECT id, $matched AS matched FROM (" +
+            "SELECT m.id, m.sent_at, $perTerm FROM message m WHERE ${filters.joinToString(" AND ")}) per_term " +
+            "ORDER BY matched DESC, $score DESC, sent_at DESC LIMIT ?"
+        return database.tx {
+            val ranked = exec(sql, args) { rs ->
+                buildList { while (rs.next()) add(rs.getString(1).let(Uuid::parse) to rs.getInt(2)) }
+            }.orEmpty()
+            // Ordered by terms matched first: when the best hit has them all, keep only those that do.
+            val partial = ranked.isNotEmpty() && ranked.first().second < terms.size
+            val ids = if (partial) ranked.map { it.first } else ranked.filter { it.second == terms.size }.map { it.first }
+            val byId = Messages.selectAll().where { Messages.id inList ids }.associate { it[Messages.id] to it.toMessage() }
+            MessageHits(ids.mapNotNull { byId[it] }, partial)
         }
     }
 
