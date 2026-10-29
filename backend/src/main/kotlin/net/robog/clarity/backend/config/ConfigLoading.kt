@@ -285,6 +285,7 @@ private class Lookup(
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
+                triggerFiresPerHour = int("CLARITY_TRIGGER_FIRES_PER_HOUR", "agent.triggerFiresPerHour", 6, min = 1),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
                 openRouterApiKey = openRouterKey,

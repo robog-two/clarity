@@ -8,6 +8,7 @@ import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
@@ -19,6 +20,7 @@ import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.shared.session.Settings
 import org.jetbrains.exposed.v1.core.vendors.ForUpdateOption
+import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.notInList
@@ -42,9 +44,11 @@ data class FireContext(
 
 /**
  * A recurring job. Contributed as a set via `@ContributesIntoSet(AppScope::class)`. [fire] runs
- * inside the transaction that claimed the job's row: if it throws, nothing is advanced and the job
- * is retried; if the process dies after it ran, it runs again, so [fire] must be idempotent
- * (inbox items carry dedup keys derived from [FireContext.scheduledFor]). Keep it short; start long
+ * inside the transaction that claimed the job's row: if it throws, its writes roll back and the job
+ * is retried later with a growing delay (the other jobs go on firing meanwhile); if the process dies
+ * after it ran, it runs again, so [fire] must be idempotent (inbox items carry dedup keys derived
+ * from [FireContext.scheduledFor], which stays the same across retries). Work that commits outside
+ * the transaction (a helper run) claims its slot first with [JobSlots]. Keep it short; start long
  * work in the background.
  */
 interface ScheduledJob {
@@ -119,33 +123,68 @@ class Scheduler(
             jobs.forEach { job ->
                 val schedule = job.schedule(current)
                 if (schedule !is Schedule.Every) {
-                    ScheduledJobs.update({ ScheduledJobs.name eq job.name }) { it[nextRunAt] = schedule.nextAfter(now, zone) }
+                    ScheduledJobs.update({ ScheduledJobs.name eq job.name }) {
+                        it[nextRunAt] = schedule.nextAfter(now, zone)
+                        it[failures] = 0
+                        it[retrySlot] = null
+                    }
                 }
             }
         }
     }
 
-    /** Claims and fires one due job; false when none is due. */
+    /** The row a tick claimed, kept outside its transaction so a failure can still be recorded. */
+    private class Claimed(val name: String, val nextRunAt: Instant, val failures: Int, val slot: Instant)
+
+    /**
+     * Claims and fires one due job; false when none is due. A job that throws is rolled back and
+     * then, in a transaction of its own, pushed back by [failureBackoff]: it never blocks the jobs
+     * due after it, and it keeps its slot ([FireContext.scheduledFor]) for the retries.
+     */
     suspend fun tickOnce(): Boolean {
         val current = settings.current()
         val now = clock.now()
         val zone = zoneOrUtc(current.homeZone)
-        return database.tx {
-            val row = ScheduledJobs.selectAll().where { ScheduledJobs.nextRunAt lessEq now }
-                .orderBy(ScheduledJobs.nextRunAt).limit(1)
-                .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
-                .singleOrNull() ?: return@tx false
-            val jobName = row[ScheduledJobs.name]
-            val job = byName[jobName]
-            if (job != null) {
-                job.fire(FireContext(row[ScheduledJobs.nextRunAt], now, row[ScheduledJobs.lastRunAt], current))
-                log.debug { "scheduled job $jobName fired" }
+        var claimed: Claimed? = null
+        try {
+            return database.tx {
+                val row = ScheduledJobs.selectAll().where { ScheduledJobs.nextRunAt lessEq now }
+                    .orderBy(ScheduledJobs.nextRunAt).limit(1)
+                    .forUpdate(ForUpdateOption.PostgreSQL.ForUpdate(ForUpdateOption.PostgreSQL.MODE.SKIP_LOCKED))
+                    .singleOrNull() ?: return@tx false
+                val jobName = row[ScheduledJobs.name]
+                val slot = row[ScheduledJobs.retrySlot] ?: row[ScheduledJobs.nextRunAt]
+                claimed = Claimed(jobName, row[ScheduledJobs.nextRunAt], row[ScheduledJobs.failures], slot)
+                val job = byName[jobName]
+                if (job != null) {
+                    job.fire(FireContext(slot, now, row[ScheduledJobs.lastRunAt], current))
+                    log.debug { "scheduled job $jobName fired" }
+                }
+                ScheduledJobs.update({ ScheduledJobs.name eq jobName }) {
+                    it[lastRunAt] = now
+                    it[nextRunAt] = job?.schedule(current)?.nextAfter(now, zone) ?: (now + UNKNOWN_JOB_BACKOFF)
+                    it[failures] = 0
+                    it[retrySlot] = null
+                }
+                true
             }
-            ScheduledJobs.update({ ScheduledJobs.name eq jobName }) {
-                it[lastRunAt] = now
-                it[nextRunAt] = job?.schedule(current)?.nextAfter(now, zone) ?: (now + UNKNOWN_JOB_BACKOFF)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val failed = claimed ?: throw e // nothing was claimed: the claim itself failed
+            val tries = failed.failures + 1
+            val regular = byName[failed.name]?.schedule(current)?.nextAfter(now, zone) ?: (now + UNKNOWN_JOB_BACKOFF)
+            val retryAt = minOf(now + failureBackoff(tries), regular)
+            log.warn(e) { "scheduled job ${failed.name} failed ($tries in a row); next try at $retryAt" }
+            database.tx {
+                // Only if no one else moved the row meanwhile (another instance retried it already).
+                ScheduledJobs.update({ (ScheduledJobs.name eq failed.name) and (ScheduledJobs.nextRunAt eq failed.nextRunAt) }) {
+                    it[nextRunAt] = retryAt
+                    it[failures] = tries
+                    it[retrySlot] = failed.slot
+                }
             }
-            true
+            return true
         }
     }
 
@@ -154,10 +193,20 @@ class Scheduler(
         return next?.let { it - clock.now() } ?: MAX_WAIT
     }
 
-    private companion object {
-        val MIN_WAIT = 1.seconds
-        val MAX_WAIT = 30.seconds
-        val RETRY_AFTER_FAILURE = 1.minutes
-        val UNKNOWN_JOB_BACKOFF = 365.days
+    companion object {
+        /** The first retry of a failed job waits this long; each further failure doubles it, up to [MAX_FAILURE_BACKOFF]. */
+        val FIRST_FAILURE_BACKOFF = 1.minutes
+        val MAX_FAILURE_BACKOFF = 1.hours
+
+        /** Pure: how long to wait before the next try after [tries] failures in a row (at least 1). */
+        fun failureBackoff(tries: Int): Duration {
+            val doublings = (tries - 1).coerceIn(0, 20)
+            return (FIRST_FAILURE_BACKOFF * (1 shl doublings)).coerceAtMost(MAX_FAILURE_BACKOFF)
+        }
+
+        private val MIN_WAIT = 1.seconds
+        private val MAX_WAIT = 30.seconds
+        private val RETRY_AFTER_FAILURE = 1.minutes
+        private val UNKNOWN_JOB_BACKOFF = 365.days
     }
 }

@@ -4,7 +4,9 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import net.robog.clarity.backend.config.AgentConfig
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
@@ -48,6 +50,7 @@ private class RecordingInbox : InboxStore {
     }
     override suspend fun pending(limit: Int): List<PendingItem> = emptyList()
     override suspend fun markConsumed(seqs: Collection<Long>) = Unit
+    override suspend fun countKeyed(keyPrefix: String, since: Instant): Int = enqueued.count { it?.startsWith(keyPrefix) == true }
 }
 
 class TriggerMatcherTest : FunSpec({
@@ -65,6 +68,34 @@ class TriggerMatcherTest : FunSpec({
             testScheduler.advanceUntilIdle()
 
             inbox.enqueued shouldContainExactly listOf("trigger:t1:new")
+        }
+    }
+
+    // Guards against: one trigger waking the lead for every matching record when they keep arriving.
+    test("a trigger wakes the lead at most its hourly limit") {
+        runTest {
+            val bus = InMemoryIngestEventBus()
+            val inbox = RecordingInbox()
+            val config = AgentConfig(reviewInterval = 2.hours, triggerFiresPerHour = 2)
+            val matcher = TriggerMatcher(bus, OneTrigger(TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")), inbox, config = config)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { matcher.run() }
+            (1..5).forEach { bus.publish(Ingested(ConnectorId("mail"), EntityId("n$it"), mail("invoice $it"), created = true)) }
+            testScheduler.advanceUntilIdle()
+            inbox.enqueued shouldContainExactly listOf("trigger:t1:n1", "trigger:t1:n2")
+        }
+    }
+
+    // Guards against: a message the agent sent from the person's account matching the trigger that made it send it.
+    test("a message sent from the person's own account fires no trigger") {
+        runTest {
+            val bus = InMemoryIngestEventBus()
+            val inbox = RecordingInbox()
+            val matcher = TriggerMatcher(bus, OneTrigger(TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")), inbox)
+            backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { matcher.run() }
+            bus.publish(Ingested(ConnectorId("mail"), EntityId("sent"), mail("re: your invoice").copy(sender = Handle.email("me@example.com")), created = true))
+            bus.publish(Ingested(ConnectorId("mail"), EntityId("in"), mail("an invoice"), created = true))
+            testScheduler.advanceUntilIdle()
+            inbox.enqueued shouldContainExactly listOf("trigger:t1:in")
         }
     }
 })

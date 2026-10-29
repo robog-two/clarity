@@ -28,6 +28,11 @@ data class AgentConfig(
     val browser: BrowserPilotConfig = BrowserPilotConfig(),
     /** OpenRouter web search for helpers the lead grants it (`CLARITY_WEB_SEARCH*`). */
     val webSearch: WebSearchConfig = WebSearchConfig(),
+    /**
+     * `CLARITY_TRIGGER_FIRES_PER_HOUR`: how often one trigger may wake the lead in an hour; matches
+     * past it are stored but wake nothing (the periodic review still sees them).
+     */
+    val triggerFiresPerHour: Int = 6,
 ) {
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model

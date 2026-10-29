@@ -194,7 +194,7 @@ class LeadRig(
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
-                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link " +
+                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, agent_trigger, job_slot_claim, browser_run_state " +
                     "RESTART IDENTITY CASCADE",
             )
         }
