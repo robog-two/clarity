@@ -17,9 +17,11 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.NOTIFY_IN_APP
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedPage
+import net.robog.clarity.shared.feed.ItemReaction
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.session.SessionId
 import org.jetbrains.exposed.v1.core.ResultRow
+import org.jetbrains.exposed.v1.core.SortOrder
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greater
@@ -48,6 +50,8 @@ data class FeedDraft(
     val about: List<Handle> = emptyList(),
     /** A topic marker's title ([FeedItem.topic]). */
     val topic: String? = null,
+    /** A reaction's target and kind ([FeedItem.reaction]). */
+    val reaction: ItemReaction? = null,
 )
 
 data class Appended(val item: FeedItem, val created: Boolean)
@@ -60,6 +64,9 @@ interface FeedStore {
     suspend fun page(after: Long, limit: Int): FeedPage
 
     suspend fun get(id: FeedItemId): FeedItem?
+
+    /** The newest visible item [author] wrote that is a message (not a reaction or a topic marker). */
+    suspend fun latestMessage(author: FeedItem.Author): FeedItem?
 
     /** Replaces the cards of an item and its streaming flag (a streaming agent message being completed). */
     suspend fun update(id: FeedItemId, cards: List<Card>, streaming: Boolean): FeedItem?
@@ -107,6 +114,7 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
             it[batchState] = if (draft.batchPending) PENDING else null
             it[notifyAbout] = draft.about.ifEmpty { null }
             it[topic] = draft.topic
+            it[reaction] = draft.reaction
         }.insertedCount > 0
         if (inserted) {
             Appended(FeedItems.selectAll().where { FeedItems.id eq id }.single().toItem(), created = true)
@@ -127,6 +135,12 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
     override suspend fun get(id: FeedItemId): FeedItem? {
         val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx { FeedItems.selectAll().where { FeedItems.id eq uuid }.singleOrNull()?.toItem() }
+    }
+
+    override suspend fun latestMessage(author: FeedItem.Author): FeedItem? = database.tx {
+        FeedItems.selectAll()
+            .where { (FeedItems.author eq author.wire()) and FeedItems.batchState.isNull() and FeedItems.reaction.isNull() and FeedItems.topic.isNull() }
+            .orderBy(FeedItems.seq, SortOrder.DESC).limit(1).singleOrNull()?.toItem()
     }
 
     override suspend fun update(id: FeedItemId, cards: List<Card>, streaming: Boolean): FeedItem? {
@@ -201,4 +215,5 @@ private fun ResultRow.toItem() = FeedItem(
     streaming = this[FeedItems.streaming],
     notify = this[FeedItems.notify] ?: NOTIFY_IN_APP,
     topic = this[FeedItems.topic],
+    reaction = this[FeedItems.reaction],
 )

@@ -88,7 +88,8 @@ fun AmendContent(
             }
             if (state.settled) Hint("This one is settled. Nothing more to decide here.")
             else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
-            state.talk.forEach { FeedItemView(it) }
+            val reactions = androidx.compose.runtime.remember(state.talk) { net.robog.clarity.shared.feed.latestReactions(state.talk) }
+            state.talk.forEach { FeedItemView(it, reaction = reactions[it.id]) }
             state.live?.let { LiveBubble(it) }
             if (state.waitingAgent) Hint("Working on it…", italic = true)
             state.proposal?.let { p ->

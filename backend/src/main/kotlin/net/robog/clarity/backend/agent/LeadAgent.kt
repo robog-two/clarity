@@ -91,10 +91,10 @@ const val REPLY_NUDGE: String =
 
 /**
  * Tools whose successful call shows the person something, so it counts as answering them:
- * `send_to_user`, and the session tools that post their own card (in a live call the person sees
+ * `send_to_user`, `react` (a tapback on their message is a whole answer), and the session tools that post their own card (in a live call the person sees
  * "captured · N" or the plan appear; a nudge there would only add chatter).
  */
-val ANSWERING_TOOLS: Set<String> = setOf("send_to_user", "present_report", "capture", "set_priorities", "set_plan", "hand_off", "propose_line")
+val ANSWERING_TOOLS: Set<String> = setOf("send_to_user", "react", "present_report", "capture", "set_priorities", "set_plan", "hand_off", "propose_line")
 
 /**
  * Pure: whether a run that just ended still owes the person a reply: they wrote during this turn

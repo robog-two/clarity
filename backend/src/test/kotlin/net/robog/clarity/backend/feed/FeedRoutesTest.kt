@@ -76,6 +76,7 @@ private class MemoryFeedStore : FeedStore {
     }
 
     override suspend fun get(id: FeedItemId) = items.firstOrNull { it.first.id == id }?.first
+    override suspend fun latestMessage(author: FeedItem.Author) = items.lastOrNull { it.first.author == author && it.first.reaction == null && it.first.topic == null }?.first
     override suspend fun update(id: FeedItemId, cards: List<Card>, streaming: Boolean): FeedItem? = null
     override suspend fun pendingBatch() = items.filter { it.second.batchPending }.map { it.first }
     override suspend fun markSummarized(ids: Collection<FeedItemId>) = Unit

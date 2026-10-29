@@ -33,7 +33,7 @@ fun archiveExcluded(tool: String): Boolean =
 
 /** Tools whose results are Clarity's own (confirmations); everything else read something from outside. */
 private val OWN_RESULT_TOOLS = setOf(
-    "send_to_user", "write_journal", "set_scratch", "update_task", "remember_fact", "replace_profile", "delegate", "message_helper",
+    "send_to_user", "react", "write_journal", "set_scratch", "update_task", "remember_fact", "replace_profile", "delegate", "message_helper",
     "cancel_helper", "list_helpers", "list_tasks", "save_note", "manage_collection", "create_trigger", "delete_trigger", "read_journal", "read_profile",
     "update_plan", "capture", "set_priorities", "set_plan", "hand_off", "propose_line", "finalize_constitution", "propose_amendment", "stage_done",
     "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb", "list_triggers",

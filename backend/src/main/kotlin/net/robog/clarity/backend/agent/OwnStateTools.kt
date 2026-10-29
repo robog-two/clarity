@@ -10,6 +10,9 @@ import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
@@ -29,6 +32,10 @@ import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.FeedItemId
+import net.robog.clarity.shared.feed.ItemReaction
+import net.robog.clarity.shared.feed.NOTIFY_IN_APP
+import net.robog.clarity.shared.feed.Reaction
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Urgency
@@ -118,6 +125,59 @@ class OwnStateTools(
             ),
         )
         return ToolResult.Ok(decision.describe(settings.homeZone()))
+    }
+
+    @Serializable
+    class ReactInput(
+        @Description("thumbs_up, heart, laugh or thumbs_down.") val reaction: Reaction,
+        @Description("The id of the person's message to react to. Omit it for their latest message (almost always the one).")
+        val messageId: String? = null,
+    )
+
+    /**
+     * `react`: a tapback on one of the person's messages, as an item of its own (no cards, no
+     * notification) that the app draws on its target; a later one on the same message replaces it.
+     * An unknown reaction is refused with the allowed names before decoding (the decoder's own
+     * message does not list them).
+     */
+    fun react(): Tool {
+        val typed = tool<ReactInput>(
+            name = "react",
+            description = "React to the person's message with a tapback (no notification) instead of writing back. " +
+                "Only for a message that clearly needs no reply: a plain acknowledgement, thanks, \"ok\", \"done\". " +
+                "A question, a request, new information, or anything you should confirm gets a written reply with send_to_user. " +
+                "A second reaction on the same message replaces the first.",
+            effect = ToolEffect.WRITE,
+            json = ClarityStrictJson,
+        ) { input -> reactTo(input.reaction, input.messageId?.trim()?.ifEmpty { null }) }
+        return object : Tool by typed {
+            override suspend fun invoke(input: JsonObject): ToolResult =
+                reactionError(input["reaction"])?.let { ToolResult.Error(it) } ?: typed.invoke(input)
+        }
+    }
+
+    private suspend fun reactTo(reaction: Reaction, messageId: String?): ToolResult {
+        val target = if (messageId == null) {
+            feed.latestMessage(FeedItem.Author.USER) ?: return ToolResult.Error("The person has not written anything to react to.")
+        } else {
+            feed.get(FeedItemId(messageId)) ?: return ToolResult.Error("No message with id $messageId. Omit messageId to react to the person's latest message.")
+        }
+        if (target.author != FeedItem.Author.USER) {
+            return ToolResult.Error("Message ${target.id} is not the person's; you can only react to what they wrote. Omit messageId for their latest message.")
+        }
+        // Keyed by the tool call, so a call re-run after a crash does not react twice.
+        val call = coroutineContext[ToolCallContext]
+        feed.append(
+            FeedDraft(
+                author = FeedItem.Author.AGENT,
+                cards = emptyList(),
+                sessionId = target.sessionId,
+                clientInputId = call?.let { ClientInputId("tool:${it.runId}:${it.toolUseId}") },
+                notify = NOTIFY_IN_APP,
+                reaction = ItemReaction(target.id, reaction.wire),
+            ),
+        )
+        return ToolResult.Ok("Reacted ${reaction.emoji} to \u201c${saidText(target)}\u201d (message ${target.id}). It shows on their message, without a notification.")
     }
 
     @Serializable
@@ -284,6 +344,19 @@ class OwnStateTools(
 }
 
 /** Pure: how a task is named to the agent, by its full id: `id "title" (status)`. */
+/** Pure: why `react`'s [reaction] argument is refused (not one of [Reaction]'s wire names), or null when it is fine or absent. */
+fun reactionError(reaction: JsonElement?): String? {
+    val value = (reaction as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+    if (Reaction.fromWire(value) != null) return null
+    return "Unknown reaction \"$value\": use one of ${Reaction.entries.joinToString { it.wire }}."
+}
+
+/** Pure: the person's words in [item], shortened, for a tool result. */
+private fun saidText(item: FeedItem, limit: Int = 80): String {
+    val text = item.cards.filterIsInstance<Card.Said>().joinToString(" ") { it.text }.replace(Regex("\\s+"), " ").trim()
+    return if (text.length <= limit) text else text.take(limit - 1).trimEnd() + "\u2026"
+}
+
 fun taskLine(task: AgentTask): String = "${task.id.value} \"${task.title}\" (${task.status.name.lowercase()})"
 
 /** Pure: the journal date for [now] in [zoneId]. */

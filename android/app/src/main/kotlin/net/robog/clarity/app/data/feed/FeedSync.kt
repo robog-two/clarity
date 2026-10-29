@@ -251,8 +251,8 @@ class FeedSync(
         val existing = store.itemAt(item.seq)
         mergeItem(existing, item, final)?.let {
             store.upsertItem(it)
-            // A topic marker is a pill in the chat, never a notification.
-            if (it.topic == null && (becameComplete(existing, it) || holdReleased(existing, it))) arrive(Arrival.Item(it), onArrival)
+            // A topic marker is a pill in the chat and a reaction a badge on a message, never a notification.
+            if (it.topic == null && it.reaction == null && (becameComplete(existing, it) || holdReleased(existing, it))) arrive(Arrival.Item(it), onArrival)
         }
     }
 
