@@ -193,7 +193,13 @@ class DomainTools(
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { spec ->
-        ToolResult.Ok(triggers.create(spec).toJson().toString())
+        // A repeated create (a looping model, or a call re-run after a restart) gets the trigger it already made.
+        val existing = triggers.list().firstOrNull { sameTrigger(it.spec, spec) }
+        if (existing != null) {
+            ToolResult.Ok("A trigger with this match is already active; no new one was made.\n" + existing.toJson().toString())
+        } else {
+            ToolResult.Ok(triggers.create(spec).toJson().toString())
+        }
     }
 
     @Serializable
@@ -360,4 +366,8 @@ private fun StoredTrigger.toJson(): JsonObject = buildJsonObject {
     put("instruction", spec.instruction)
     put("query", ClarityJson.encodeToJsonElement(RecordQuery.serializer(), spec.query))
 }
+
+/** Pure: whether [new] would match exactly what the active trigger [old] already matches (same noun and query). */
+fun sameTrigger(old: TriggerSpec, new: TriggerSpec): Boolean =
+    old.enabled && new.enabled && old.noun == new.noun && old.query == new.query
 

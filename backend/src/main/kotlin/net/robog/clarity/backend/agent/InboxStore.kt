@@ -6,13 +6,17 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withTimeoutOrNull
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
+import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.like
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
@@ -40,6 +44,9 @@ interface InboxStore {
 
     /** Marks items consumed; call only after the turn carrying them is journaled. */
     suspend fun markConsumed(seqs: Collection<Long>)
+
+    /** How many items whose dedup key starts with [keyPrefix] were enqueued since [since] (consumed or not). */
+    suspend fun countKeyed(keyPrefix: String, since: Instant): Int = 0
 }
 
 @Inject
@@ -72,6 +79,11 @@ class ExposedInboxStore(
     override suspend fun pending(limit: Int): List<PendingItem> = database.tx {
         InboxItems.selectAll().where { InboxItems.consumedAt.isNull() }.orderBy(InboxItems.seq).limit(limit)
             .map { PendingItem(it[InboxItems.seq], it[InboxItems.item], it[InboxItems.createdAt]) }
+    }
+
+    override suspend fun countKeyed(keyPrefix: String, since: Instant): Int = database.tx {
+        val pattern = keyPrefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        InboxItems.selectAll().where { (InboxItems.dedupKey like pattern) and (InboxItems.createdAt greaterEq since) }.count().toInt()
     }
 
     override suspend fun markConsumed(seqs: Collection<Long>) {

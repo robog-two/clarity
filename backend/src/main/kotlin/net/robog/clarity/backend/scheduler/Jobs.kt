@@ -115,6 +115,7 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
  * Daily: drop expired scratch notes and have a helper tidy memory: merge and expire profile facts,
  * merge duplicate collections, keep their descriptions accurate, and file durable facts from recent
  * journal entries into collections. Skipped while there is little to tidy (it costs a helper run).
+ * At most one helper per slot ([JobSlots]), however often the slot is retried.
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
@@ -123,6 +124,7 @@ class MemoryGcJob(
     private val constitutions: ConstitutionStore,
     private val collections: CollectionStore,
     private val helpers: HelperManager,
+    private val slots: JobSlots,
 ) : ScheduledJob {
     override val name = "memory-gc"
 
@@ -136,6 +138,11 @@ class MemoryGcJob(
         val worthIt = profile.size >= MIN_FACTS || collections.collections().size >= MIN_COLLECTIONS ||
             memory.journal(weekAgo, today).size >= MIN_JOURNAL
         if (!worthIt) return
+        // The helper run is saved outside this transaction: a retry of the slot must not start a second one.
+        if (!slots.claim(name, context.scheduledFor)) {
+            log.info { "memory clean-up for ${context.scheduledFor} already started; not starting another" }
+            return
+        }
         helpers.delegate(
             task = memoryGcTask(weekAgo, today),
             tools = MEMORY_GC_TOOLS,

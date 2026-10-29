@@ -73,6 +73,8 @@ class BrowserPilot(
     private val settleCap: Duration = 8.seconds,
     /** How often the page is asked whether it has settled. */
     private val settlePoll: Duration = 250.milliseconds,
+    /** Each run's caps and sign-in state, kept across restarts. */
+    private val runStates: BrowserRunStates = MemoryBrowserRunStates(),
 ) {
     private val settings: BrowserPilotConfig = config.browser
 
@@ -95,9 +97,54 @@ class BrowserPilot(
         val cookies = ConcurrentHashMap<String, String>()
         /** Code placeholders already typed: a new code field needs a fresh code, never one of these. */
         val usedCodes: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+        fun snapshot() = BrowserRunSnapshot(
+            actions = actions, seq = seq, hadLease = hadLease, shownResume = shownResume, taskKey = taskKey,
+            signIn = signIn.toMap(), starters = starters.map { SignInStarter(it.first, it.second) },
+            cookies = cookies.toMap(), usedCodes = usedCodes.toList(),
+        )
+
+        companion object {
+            fun from(saved: BrowserRunSnapshot) = RunState().apply {
+                actions = saved.actions
+                seq = saved.seq
+                hadLease = saved.hadLease
+                shownResume = saved.shownResume
+                taskKey = saved.taskKey
+                signIn.putAll(saved.signIn)
+                saved.starters.forEach { starters += it.flow to it.label }
+                cookies.putAll(saved.cookies)
+                usedCodes += saved.usedCodes
+            }
+        }
     }
 
     private val runs = ConcurrentHashMap<String, RunState>()
+
+    /** A run this process has not seen yet picks up its saved state (a restart, or a resumed run). */
+    private suspend fun restore(runId: String) {
+        if (runs.containsKey(runId)) return
+        val saved = try {
+            runStates.load(runId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(e) { "could not load the browser state of run $runId; starting it fresh" }
+            null
+        }
+        if (saved != null) runs.putIfAbsent(runId, RunState.from(saved))
+    }
+
+    private suspend fun persist(runId: String) {
+        val state = runs[runId] ?: return
+        try {
+            runStates.save(runId, state.snapshot())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.warn(e) { "could not save the browser state of run $runId" }
+        }
+    }
 
     /** Shared by every run (there is one browser): popups and their openers, secret-filled elements, the last tab list. */
     @Volatile private var openers: Map<Int, Int> = emptyMap()
@@ -237,10 +284,15 @@ class BrowserPilot(
         private suspend fun guarded(block: suspend () -> ToolResult): ToolResult {
             // The lead never browses: fail closed even if it was handed these tools.
             if (scope.isLead) return ToolResult.Error(BrowserGate.LEAD_REFUSED)
+            restore(scope.runId)
             if (state.taskKey == null) state.taskKey = taskKey(scope.purpose)
-            val note = when (val lease = takeLease()) {
-                is Lease.Refused -> return lease.result
-                is Lease.Held -> lease.note
+            val note = try {
+                when (val lease = takeLease()) {
+                    is Lease.Refused -> return lease.result
+                    is Lease.Held -> lease.note
+                }
+            } finally {
+                persist(scope.runId)
             }
             val result = try {
                 block()
@@ -249,6 +301,8 @@ class BrowserPilot(
             } catch (e: Exception) {
                 log.warn(e) { "browser pilot step failed" }
                 ToolResult.Error("The browser step failed: ${gate.scrub(e.message ?: e::class.simpleName.orEmpty())}")
+            } finally {
+                persist(scope.runId)
             }
             leases.touch(scope.runId, clock.now())
             return if (note == null) result else when (result) {
@@ -1334,7 +1388,10 @@ class BrowserPilot(
         data class Refused(val result: ToolResult) : Lease
     }
 
-    /** Run [runId] finished, failed or was cancelled: it gives the browser back (keeping where it was) and leaves the queue. */
+    /**
+     * Run [runId] finished, failed or was cancelled: it gives the browser back (keeping where it was)
+     * and leaves the queue. Its saved state stays, so a resumed run keeps its caps.
+     */
     suspend fun runEnded(runId: String) {
         val state = runs[runId]
         if (leases.holder() == runId) saveResume(runId, state)

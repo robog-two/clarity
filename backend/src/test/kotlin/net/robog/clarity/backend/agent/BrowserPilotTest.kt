@@ -274,6 +274,19 @@ class BrowserPilotTest : FunSpec({
         rig.site.clicked.size shouldBe 2
     }
 
+    // Guards against: a run resumed after a restart getting a fresh set of browser actions.
+    test("a pilot rebuilt for the same run keeps its action count") {
+        val leases = MemoryBrowserLeases()
+        val states = MemoryBrowserRunStates()
+        val before = PilotRig(settings = BrowserPilotConfig(maxActions = 2), leases = leases, runStates = states)
+        before.act("the Details button", "x")
+        val after = PilotRig(settings = BrowserPilotConfig(maxActions = 2), leases = leases, runStates = states)
+        after.call("look")
+        after.act("the Details button", "x")
+        after.act("the Details button", "x") shouldContain "used its 2 actions"
+        before.site.clicked.size + after.site.clicked.size shouldBe 2
+    }
+
     test("a typed value goes only into a field; a placeholder is substituted by the gate and never shown") {
         val rig = PilotRig()
         rig.site.open(rig.site.signin(false))
