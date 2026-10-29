@@ -359,7 +359,7 @@ private val PREVIEW_SCHEMA = Json.parseToJsonElement(
         "label":{"type":"string","title":"Name","examples":["Work"]},
         "imapHost":{"type":"string","title":"IMAP host"},
         "imapPort":{"type":"integer","title":"IMAP port","default":993},
-        "imapSecurity":{"type":"string","enum":["ssl","starttls","none"],"x-enum-titles":["SSL","STARTTLS","None"],"default":"ssl"},
+        "imapSecurity":{"type":"string","title":"IMAP security","enum":["ssl","starttls","none"],"x-enum-titles":["SSL","STARTTLS","None"],"default":"ssl"},
         "username":{"type":"string"},
         "password":{"type":"string","format":"password"},
         "folders":{"type":"array","items":{"type":"string"},"default":["INBOX"]}}}}}}

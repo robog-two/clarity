@@ -143,7 +143,7 @@ class SchemaSubsetTest {
 
     @Test fun labelDescriptionPlaceholderDefaultAndRequired() {
         val name = byKey["name"]!!
-        assertEquals("display name", name.label)
+        assertEquals("Display name", name.label)
         assertEquals("Shown in lists", name.description)
         assertEquals("Sam", name.placeholder)
         assertEquals("Me", name.default)
@@ -206,7 +206,7 @@ class SchemaSubsetTest {
         assertEquals(listOf("INBOX"), items["folders"]!!.defaultList)
         val history = items["history"]!!
         assertEquals(FieldKind.ENUM, history.kind)
-        assertEquals("mail history", history.label)
+        assertEquals("Mail history", history.label)
         assertEquals(listOf("30 days", "90 days", "1 year", "All time"), history.options.map { it.title })
         assertEquals("30d", history.defaultChoice)
         // a new account starts at the default; an account stored before the field existed has no value (the dropdown shows the default)

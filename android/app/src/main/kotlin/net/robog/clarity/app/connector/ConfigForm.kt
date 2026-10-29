@@ -42,7 +42,7 @@ data class CollectionSpec(
 /** One input of a connector's settings form, derived from a property of its `configSchema`. */
 data class FormField(
     val key: String,
-    /** Lowercase label shown above the input. */
+    /** Sentence-case label shown above the input, as the schema titles it. */
     val label: String,
     val description: String? = null,
     val kind: FieldKind = FieldKind.TEXT,
@@ -354,7 +354,7 @@ object ConfigForms {
             val default = p["default"]
             FormField(
                 key = key,
-                label = (p["title"].str() ?: humanize(key)).lowercase(),
+                label = p["title"].str() ?: humanize(key),
                 description = p["description"].str(),
                 kind = kind,
                 required = key in required,
@@ -450,6 +450,7 @@ object ConfigForms {
 
     private fun humanize(key: String): String =
         key.replace(Regex("([a-z])([A-Z])"), "$1 $2").replace('_', ' ').replace('-', ' ')
+            .lowercase().replaceFirstChar { it.titlecase() }
 
     private fun JsonElement?.str(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.content
 

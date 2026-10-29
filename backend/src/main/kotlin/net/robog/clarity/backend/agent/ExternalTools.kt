@@ -240,7 +240,7 @@ class ExternalTools(
 
     fun saveDraft(scope: RunScope): Tool = tool<EmailInput>(
         name = "save_draft",
-        description = "Save an email draft in one of the person's mail accounts (not sent). Prefer this to send_email unless they asked you to send. " +
+        description = "Save an email draft in one of the person's mail accounts (not sent). Only when the person asks for a draft; to email someone, use send_email. " +
             "Choose the account it is from, and whether it answers a message (inReplyTo) or starts a new thread.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
@@ -248,7 +248,7 @@ class ExternalTools(
 
     fun sendEmail(scope: RunScope): Tool = tool<EmailInput>(
         name = "send_email",
-        description = "Send an email as the person. Goes through the guard; usually held for their OK. Result tells you whether it was queued or held. " +
+        description = "Send an email as the person. It goes to the person for approval unless their rules allow it, so there is no need to save a draft before it. Result tells you whether it was queued or held. " +
             "Choose the account it is from, and whether it answers a message (inReplyTo) or starts a new thread.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
