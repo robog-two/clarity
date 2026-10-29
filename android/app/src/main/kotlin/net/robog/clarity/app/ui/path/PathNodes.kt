@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.AccountTree
+import androidx.compose.material.icons.outlined.AddReaction
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Check
@@ -127,6 +128,7 @@ private fun browserLook(item: PathItem.Browser, running: Boolean): NodeLook {
 private fun actionIcon(tool: String): ImageVector = when {
     tool.startsWith("browser__") -> Icons.Outlined.Language
     tool == "send_to_user" -> Icons.AutoMirrored.Outlined.Send
+    tool == "react" -> Icons.Outlined.AddReaction
     tool in setOf("list_messages", "save_draft", "send_email") -> Icons.Outlined.Mail
     tool in setOf("list_calendar_events", "create_event", "move_event", "respond_to_invite") -> Icons.Outlined.Event
     tool == "create_reminder" -> Icons.Outlined.Alarm

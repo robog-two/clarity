@@ -54,4 +54,9 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
     suspend fun releasedSince(since: Instant) = store.releasedSince(since)
 
     suspend fun page(after: Long, limit: Int) = store.page(after, limit)
+
+    suspend fun get(id: FeedItemId) = store.get(id)
+
+    /** The newest message [author] wrote (see [FeedStore.latestMessage]). */
+    suspend fun latestMessage(author: FeedItem.Author) = store.latestMessage(author)
 }

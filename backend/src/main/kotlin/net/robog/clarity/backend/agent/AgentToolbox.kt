@@ -223,7 +223,7 @@ class AgentToolbox(
         }
         with(own) {
             addAll(listOf(readJournal(), readProfile()))
-            if (forLead) addAll(listOf(sendToUser(), rememberFact(), writeJournal(), setScratch(), updateTask(scope), listTasks()))
+            if (forLead) addAll(listOf(sendToUser(), react(), rememberFact(), writeJournal(), setScratch(), updateTask(scope), listTasks()))
         }
         addAll(if (forLead) reports.leadTools(scope) else reports.helperTools(scope))
         if (forLead) addAll(helperTools.all(scope))

@@ -5,6 +5,7 @@ import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.ItemReaction
 import net.robog.clarity.shared.noun.Handle
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.datetime.date
@@ -55,6 +56,7 @@ object FeedItems : Table("feed_item") {
     val releasedAt = timestamp("released_at").nullable()
     val notifyAbout = jsonb<List<Handle>>("notify_about", ClarityJson).nullable()
     val topic = text("topic").nullable()
+    val reaction = jsonb<ItemReaction>("reaction", ClarityJson).nullable()
     override val primaryKey = PrimaryKey(seq)
 }
 

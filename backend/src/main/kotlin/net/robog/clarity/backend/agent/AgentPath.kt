@@ -280,6 +280,7 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
     } to null
     return when (tool) {
         "send_to_user" -> "Sent you a message" to (input["cards"]?.let { feedText(it.toString()) })
+        "react" -> "Reacted to your message" to arg("reaction")?.let { net.robog.clarity.shared.feed.Reaction.fromWire(it)?.emoji ?: it }
         "update_task" -> (if (input["id"] == null) "Added a task" else "Updated the task") to listOfNotNull(arg("title"), arg("detail")).joinToString(" · ").ifEmpty { null }
         "delegate" -> "Started a helper" to null
         "list_helpers" -> "Checked on helpers" to null

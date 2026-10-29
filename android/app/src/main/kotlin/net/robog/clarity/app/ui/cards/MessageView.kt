@@ -1,5 +1,11 @@
 package net.robog.clarity.app.ui.cards
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -29,6 +35,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material3.Badge
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
@@ -47,7 +54,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.ui.held.HeldRowView
 import net.robog.clarity.app.ui.held.heldRows
@@ -61,6 +71,7 @@ import androidx.compose.runtime.LaunchedEffect
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.Reaction
 import net.robog.clarity.shared.feed.TaskId
 
 private const val CURSOR = "▍"
@@ -74,10 +85,14 @@ private fun Card.isMessage() = this is Card.Text || this is Card.Said || this is
 /**
  * One feed item as messages: its words as bubbles, then a row for each approval or login it asks
  * for (tap to open it), then its other cards gathered into one stack that opens a pager.
+ * [reaction] is Clarity's tapback on it, drawn on the corner of the person's (last) bubble.
  */
 @Composable
-fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = CardEnv()) {
+fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = CardEnv(), reaction: Reaction? = null) {
     val lastText = item.cards.indexOfLast { it is Card.Text }
+    val lastSaid = item.cards.indexOfLast { it is Card.Said }
+    // A reaction is drawn on its target, never as an item of its own.
+    if (item.reaction != null) return
     val actions = item.cards.filter { it is Card.Proposal || it is Card.CredentialRequest }
     val attachments = item.cards.filterNot { it.isMessage() || it in actions }
     var sheet by remember { mutableStateOf<List<Card>?>(null) }
@@ -85,7 +100,7 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
         item.cards.forEachIndexed { i, card ->
             when (card) {
                 is Card.Text -> AgentBubble(card.text, streaming = item.streaming && i == lastText)
-                is Card.Said -> SaidBubble(card.text)
+                is Card.Said -> SaidBubble(card.text, reaction = reaction?.takeIf { i == lastSaid })
                 is Card.Note -> NoteBubble(card.text)
                 is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport)
                 // A newer server's card: its own words when it sent some, else nothing.
@@ -121,19 +136,63 @@ fun AgentBubble(text: String, modifier: Modifier = Modifier, streaming: Boolean 
     }
 }
 
-/** What the person said: a bubble on the right. */
+/**
+ * What the person said: a bubble on the right. Clarity's [reaction] sits on its bottom-start
+ * corner, like a tapback; the bubble moves in by the badge's overhang so nothing overlaps its neighbours.
+ */
 @Composable
-fun SaidBubble(text: String, modifier: Modifier = Modifier) {
+fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? = null) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text,
-            Modifier
-                .widthIn(max = MaxBubble)
-                .background(MaterialTheme.colorScheme.primaryContainer, YouShape)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            style = MaterialTheme.clarityText.chat,
-        )
+        Box(Modifier.widthIn(max = MaxBubble + ReactionOverhang)) {
+            Text(
+                text,
+                Modifier
+                    .padding(start = if (reaction != null) ReactionOverhang else 0.dp, bottom = if (reaction != null) ReactionDrop else 0.dp)
+                    .widthIn(max = MaxBubble)
+                    .background(MaterialTheme.colorScheme.primaryContainer, YouShape)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                style = MaterialTheme.clarityText.chat,
+            )
+            if (reaction != null) ReactionBadge(reaction, Modifier.align(Alignment.BottomStart))
+        }
+    }
+}
+
+private val ReactionOverhang = 14.dp
+private val ReactionDrop = 16.dp
+
+/** "Clarity reacted 👍": what a screen reader says for a reaction. */
+fun reactionDescription(reaction: Reaction): String = "Clarity reacted ${reaction.emoji}"
+
+/**
+ * Clarity's tapback: the emoji in a small tonal pill, ringed in the surface colour so it reads as
+ * cut out of the bubble's corner. A new reaction swaps in on the expressive spatial spring.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+fun ReactionBadge(reaction: Reaction, modifier: Modifier = Modifier) {
+    val spatial = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
+    val effects = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
+    AnimatedContent(
+        reaction,
+        modifier.clearAndSetSemantics { contentDescription = reactionDescription(reaction) },
+        transitionSpec = { (scaleIn(spatial, initialScale = 0.4f) + fadeIn(effects)) togetherWith (scaleOut(spatial) + fadeOut(effects)) },
+        label = "reaction",
+    ) { shown ->
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            border = BorderStroke(2.dp, MaterialTheme.colorScheme.surface),
+            shadowElevation = 1.dp,
+        ) {
+            Text(
+                shown.emoji,
+                Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp, lineHeight = 20.sp),
+            )
+        }
     }
 }
 
