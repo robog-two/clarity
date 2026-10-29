@@ -12,6 +12,8 @@ import net.robog.clarity.shared.session.Settings
 interface CallNotifier {
     fun headsUp(title: String, body: String)
     fun incoming(presentation: IncomingPresentation, callTime: String)
+    /** The call rang out unanswered (or was swiped away): a quiet missed call to call back from. */
+    fun missed()
     fun cancelHeadsUp()
     fun cancelIncoming()
 }

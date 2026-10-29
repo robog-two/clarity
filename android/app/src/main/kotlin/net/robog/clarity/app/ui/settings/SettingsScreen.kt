@@ -480,7 +480,7 @@ private fun MorningCallPage(state: SettingsUiState, settings: Settings, actions:
         if (!state.notificationsOn) SelectRow("notifications", "off, so I can’t reach you", "allow", actions.onAllowNotifications)
         if (state.needsExactAlarms) SelectRow("exact timing", "the call may ring a few minutes late", "allow", actions.onAllowExactAlarms)
         if (!state.fullScreenOk && calling) {
-            SelectRow("show the call over the lock screen", "off, so it arrives as a notification", "allow", actions.onAllowFullScreen)
+            SelectRow("show the call over the lock screen", "off, so it rings as a banner instead", "allow", actions.onAllowFullScreen)
         }
     }
 }

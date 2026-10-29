@@ -187,6 +187,7 @@ class RecordingNotifier : CallNotifier {
     override fun incoming(presentation: IncomingPresentation, callTime: String) { log += "incoming:$presentation@$callTime" }
     override fun cancelHeadsUp() { log += "cancelHeadsUp" }
     override fun cancelIncoming() { log += "cancelIncoming" }
+    override fun missed() { log += "missed" }
 }
 
 /** A ledger that records which items were claimed. */

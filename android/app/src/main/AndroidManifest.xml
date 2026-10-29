@@ -10,7 +10,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The call rings at the minute set, not "around" it. The person allows it in settings. -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <!-- The incoming call opens over the lock screen (Android 14+: allowed in settings). -->
+    <!-- The incoming call opens over the lock screen (Android 14+: allowed in settings; the app asks on
+         open). Its full-screen intent is also what lets Android 12+ post the ringing CallStyle at all:
+         without the permission, Android 14+ shows it as a sticky ringing heads-up instead. -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <!-- Re-arm the call alarms and the phone connector after a restart. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
