@@ -40,6 +40,8 @@ class RegistryInstaller(
     private val runner: ProcessRunner,
     private val egress: EgressAccess,
     private val path: String = SYSTEM_PATH,
+    /** Where release assets come from; tests point it at a local server. */
+    private val releaseBase: String = "https://github.com",
 ) : Installer {
     override suspend fun install(spec: ServerSpec, home: ServerHome): Installed {
         val credential = egress.grant(installUser(spec.id), installHosts(spec.kind))
@@ -112,7 +114,7 @@ class RegistryInstaller(
         step(home, "cleaning the old install", listOf("rm", "-rf", app, home.dir.resolve("download").toString()), env, redactor)
         step(home, "preparing", listOf("mkdir", "-p", "-m", "700", app, home.dir.resolve("download").toString()), env, redactor)
 
-        val url = URI("https://github.com/${spec.pkg}/releases/download/${spec.version}/${spec.asset}")
+        val url = URI("$releaseBase/${spec.pkg}/releases/download/${spec.version}/${spec.asset}")
         val client = proxiedHttpClient(credential, followRedirects = true)
         try {
             val response = client.sendAsync(
