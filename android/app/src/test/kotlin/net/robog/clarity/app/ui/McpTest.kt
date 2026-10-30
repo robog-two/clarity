@@ -150,7 +150,7 @@ class McpHostSchemaTest {
         assertEquals(FieldKind.PASSWORD, kinds["secret2"])
         assertEquals(FieldKind.URL, kinds["url"])
         assertEquals(FieldKind.TEXT, kinds["secretEnv"])
-        assertTrue(itemForm.fields.single { it.key == "label" }.required)
+        assertEquals(setOf("label", "kind"), itemForm.fields.filter { it.required }.map { it.key }.toSet())
     }
 
     @Test fun theKindDropdownUsesItsTitles() {
@@ -159,18 +159,51 @@ class McpHostSchemaTest {
         assertEquals(listOf("npm package", "Python package", "GitHub release binary", "Remote URL"), kind.options.map { it.title })
     }
 
-    @Test fun enabledStartsOn() {
+    @Test fun enabledStartsOnAndKindStartsAtNpm() {
         assertEquals("true", itemForm.initialValues().text("enabled"))
+        assertEquals("npm", itemForm.initialValues().text("kind"))
+    }
+
+    private fun shown(kind: String) = itemForm.visibleFields(itemForm.initialValues().withText("kind", kind)).map { it.key }.toSet()
+
+    @Test fun eachKindShowsOnlyItsFields() {
+        val always = setOf("label", "description", "enabled", "kind", "args", "env", "secret", "allowHosts")
+        val packaged = always + setOf("package", "version", "command", "secretEnv", "secretEnv2", "secret2")
+        assertEquals(packaged, shown("npm"))
+        assertEquals(packaged, shown("pypi"))
+        assertEquals(packaged + setOf("asset", "sha256"), shown("github-release"))
+        assertEquals(always + "url", shown("remote"))
+    }
+
+    @Test fun anUnsetKindCountsAsItsDefault() {
+        assertEquals(shown("npm"), itemForm.visibleFields(itemForm.initialValues().withText("kind", "")).map { it.key }.toSet())
+    }
+
+    @Test fun hiddenFieldsAreNotCheckedOrSent() {
+        // A server switched from a package to a remote URL keeps what was typed, but none of it is sent.
+        val values = itemForm.initialValues().withText("label", "Wiki").withText("kind", "remote")
+            .withText("package", "left-over").withText("version", "^1").withText("secret2", "old")
+            .withText("url", "https://mcp.wiki.example.com/mcp")
+        assertTrue(itemForm.errors(values).isEmpty())
+        val out = form.toConfigValues(FormValues().withItem("servers", ItemValues("wk0000000001", values)), seal)
+        val item = out["servers"]!!.jsonArray.single().jsonObject
+        assertEquals(setOf("id", "label", "enabled", "kind", "url"), item.keys)
+        assertEquals(itemForm.errors(values.withText("url", "nope")).keys, setOf("url"))
     }
 
     @Test fun presetsPrefillListsButNeverSecrets() {
         val gh = servers.collection!!.presets.first { it.title == "GitHub" }
         assertEquals("github-release", gh.values.text("kind"))
         assertEquals("GITHUB_PERSONAL_ACCESS_TOKEN", gh.values.text("secretEnv"))
-        assertEquals(listOf("api.github.com"), gh.values.list("allowHosts"))
-        assertEquals(listOf("GITHUB_TOOLSETS=repos,issues,pull_requests,notifications"), gh.values.list("env"))
+        assertEquals("v2.0.3", gh.values.text("version"))
+        assertEquals(listOf("api.github.com", "raw.githubusercontent.com"), gh.values.list("allowHosts"))
+        assertEquals(listOf("GITHUB_TOOLSETS=context,repos,issues,pull_requests,notifications"), gh.values.list("env"))
         assertEquals(listOf("stdio"), gh.values.list("args"))
-        assertTrue(gh.description!!.contains("github.com/settings/tokens"))
+        assertTrue(gh.description!!.contains("github.com/settings/personal-access-tokens"))
+        val canvas = servers.collection!!.presets.first { it.title == "Canvas" }
+        assertEquals("pypi", canvas.values.text("kind"))
+        assertEquals("canvas-mcp", canvas.values.text("package"))
+        assertEquals("1.16.0", canvas.values.text("version"))
     }
 
     @Test fun twoSecretsPerItemAreSealedUnderTheirOwnItemFields() {
@@ -203,7 +236,7 @@ class McpHostSchemaTest {
     }
 
     @Test fun aRemoteUrlIsChecked() {
-        val values = itemForm.initialValues().withText("label", "Asana").withText("url", "not a url")
+        val values = itemForm.initialValues().withText("label", "Asana").withText("kind", "remote").withText("url", "not a url")
         assertTrue(itemForm.errors(values).containsKey("url"))
         assertTrue(itemForm.errors(values.withText("url", "https://mcp.asana.example/sse")).isEmpty())
     }
@@ -376,7 +409,7 @@ class McpServerEditorTest {
         vm.openById(MCP_HOST, DirectEdit(add = true, preset = "canvas", label = "Canvas"))
         val editor = vm.state.value.editor!!
         assertTrue(editor.isNew)
-        assertEquals("canvas-mcp-example", editor.values.text("package"))
+        assertEquals("canvas-mcp", editor.values.text("package"))
         assertEquals(listOf("canvas.example.edu"), editor.values.list("allowHosts"))
 
         vm.onItemValueChanged("secret", "canvas-token")
@@ -425,6 +458,13 @@ class McpServerEditorTest {
         vm.removeItem("servers", "gh0000000001")
         assertTrue(repo.saved.single().items("servers").isEmpty())
         assertTrue(vm.state.value.saved)
+    }
+
+    @Test fun aHostThatIsNotRunningPointsAtTheMcpProfile() = withMain {
+        val vm = vm(StoredConnectors(listOf(hostSummary(running = false))))
+        vm.openById(MCP_HOST)
+        assertTrue(vm.state.value.notRunning)
+        assertTrue("“mcp” profile" in vm.state.value.adminHint.orEmpty(), vm.state.value.adminHint)
     }
 
     @Test fun theHostIsNotAnOnboardingStep() = withMain {

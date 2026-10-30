@@ -244,7 +244,7 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
             problem?.let { ErrorBox(it) }
         }
         val errors = state.errors
-        state.form.fields.forEach { field ->
+        state.form.visibleFields(state.values).forEach { field ->
             FieldInput(
                 field = field,
                 values = state.values,
@@ -350,7 +350,7 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     ) {
         if (state.direct) state.problem?.let { ErrorBox(it.message()) }
         editor.hint?.let { InfoBox { Hint(it) } }
-        form.fields.forEach { f ->
+        form.visibleFields(editor.values).forEach { f ->
             FieldInput(f, editor.values, errors[f.key], actions.onItemValueChanged, actions.onItemListChanged)
         }
     }

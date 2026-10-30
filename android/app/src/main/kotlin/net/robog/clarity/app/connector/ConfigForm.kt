@@ -61,6 +61,11 @@ data class FormField(
     val options: List<EnumOption> = emptyList(),
     /** Only for [FieldKind.COLLECTION]. */
     val collection: CollectionSpec? = null,
+    /**
+     * `x-visible-when`: shown only while each named property has one of its values (for example
+     * `{"kind": ["remote"]}`). A hidden field is not validated and not sent. Null: always shown.
+     */
+    val visibleWhen: Map<String, Set<String>>? = null,
 ) {
     val secret: Boolean get() = kind == FieldKind.PASSWORD
 
@@ -147,6 +152,16 @@ object ItemIds {
 }
 
 data class ConfigForm(val fields: List<FormField>) {
+    /** Whether [field] is shown for [values] (see [FormField.visibleWhen]). */
+    fun isVisible(field: FormField, values: FormValues): Boolean = field.visibleWhen?.all { (key, allowed) ->
+        // An unset choice counts as its default, which is what the connector uses.
+        val current = values.text(key).ifEmpty { fields.firstOrNull { it.key == key }?.default.orEmpty() }
+        current in allowed
+    } ?: true
+
+    /** The fields shown for [values], in order. */
+    fun visibleFields(values: FormValues): List<FormField> = fields.filter { isVisible(it, values) }
+
     /** Initial values: schema defaults. Booleans always have a value. */
     fun initialValues(): FormValues {
         val texts = linkedMapOf<String, String>()
@@ -164,7 +179,7 @@ data class ConfigForm(val fields: List<FormField>) {
 
     /** Errors for every field that is not acceptable yet. A stored secret counts as filled in. */
     fun errors(values: FormValues): Map<String, FieldError> =
-        fields.mapNotNull { f -> fieldError(f, values)?.let { f.key to it } }.toMap()
+        visibleFields(values).mapNotNull { f -> fieldError(f, values)?.let { f.key to it } }.toMap()
 
     private fun fieldError(f: FormField, values: FormValues): FieldError? = when (f.kind) {
         FieldKind.BOOLEAN -> null
@@ -186,7 +201,7 @@ data class ConfigForm(val fields: List<FormField>) {
     }
 
     /** True if the person typed a new secret anywhere (so a sealing key is needed). */
-    fun hasTypedSecrets(values: FormValues): Boolean = fields.any { f ->
+    fun hasTypedSecrets(values: FormValues): Boolean = visibleFields(values).any { f ->
         when (f.kind) {
             FieldKind.PASSWORD -> values.text(f.key).isNotBlank()
             FieldKind.COLLECTION -> values.items(f.key).any { f.collection!!.itemForm.hasTypedSecrets(it.values) }
@@ -206,7 +221,7 @@ data class ConfigForm(val fields: List<FormField>) {
 
     private fun build(values: FormValues, infoField: (String) -> String, seal: (String, String) -> SealedValue): JsonObject {
         val out = linkedMapOf<String, JsonElement>()
-        for (f in fields) {
+        for (f in visibleFields(values)) {
             when (f.kind) {
                 FieldKind.BOOLEAN -> out[f.key] = JsonPrimitive(values.text(f.key) == "true")
                 FieldKind.STRING_LIST -> {
@@ -366,6 +381,9 @@ object ConfigForms {
                 placeholder = ((p["examples"] as? JsonArray)?.firstOrNull() as? JsonPrimitive)?.takeIf { it !is JsonNull }?.content,
                 options = options,
                 collection = collection,
+                visibleWhen = (p["x-visible-when"] as? JsonObject)?.mapNotNull { (k, v) ->
+                    (v as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.toSet()?.let { k to it }
+                }?.toMap()?.takeIf { it.isNotEmpty() },
             )
         }
         return ConfigForm(fields)

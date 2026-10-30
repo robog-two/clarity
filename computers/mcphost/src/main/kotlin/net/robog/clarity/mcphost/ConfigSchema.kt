@@ -14,11 +14,30 @@ private typealias JsonObjectBuilderScope = kotlinx.serialization.json.JsonObject
 
 private fun strings(vararg values: String) = JsonArray(values.map(::JsonPrimitive))
 
-private fun JsonObjectBuilderScope.text(name: String, title: String, description: String? = null, example: String? = null) =
+/**
+ * `x-visible-when`: the app shows (validates and sends) the property only while `kind` is one of
+ * [kinds]. Only a hint for the form; the host validates every item the same way regardless.
+ */
+private fun JsonObjectBuilderScope.visibleWhenKind(kinds: List<ServerKind>?) {
+    kinds ?: return
+    putJsonObject("x-visible-when") { put("kind", JsonArray(kinds.map { JsonPrimitive(it.wire) })) }
+}
+
+/** Kinds that install and run a program here (everything but a remote URL). */
+private val installed = ServerKind.offered - ServerKind.REMOTE
+
+private fun JsonObjectBuilderScope.text(
+    name: String,
+    title: String,
+    description: String? = null,
+    example: String? = null,
+    visibleWhen: List<ServerKind>? = null,
+) =
     putJsonObject(name) {
         put("type", "string"); put("title", title)
         description?.let { put("description", it) }
         example?.let { put("examples", strings(it)) }
+        visibleWhenKind(visibleWhen)
     }
 
 private fun JsonObjectBuilderScope.list(name: String, title: String, description: String, example: String? = null) =
@@ -28,10 +47,11 @@ private fun JsonObjectBuilderScope.list(name: String, title: String, description
         example?.let { put("examples", strings(it)) }
     }
 
-private fun JsonObjectBuilderScope.secret(name: String, title: String, description: String) =
+private fun JsonObjectBuilderScope.secret(name: String, title: String, description: String, visibleWhen: List<ServerKind>? = null) =
     putJsonObject(name) {
         put("type", "string"); put("title", title); put("description", description)
         put("format", "password"); put("writeOnly", true); put("x-secret", true)
+        visibleWhenKind(visibleWhen)
     }
 
 /** One server, in the property order of the contract. */
@@ -49,21 +69,22 @@ private val serverItem = buildJsonObject {
             put("x-enum-titles", JsonArray(ServerKind.offered.map { JsonPrimitive(it.title) }))
             put("default", ServerKind.NPM.wire)
         }
-        text("package", "Package", "npm or Python package name, or owner/repo for a GitHub release.", "@scope/some-mcp-server")
-        text("version", "Version", "An exact version or release tag. Ranges and \"latest\" are not accepted, so nothing changes on its own.", "1.2.3")
-        text("asset", "Release file", "GitHub release only: the file to download.", "server_Linux_x86_64.tar.gz")
-        text("sha256", "SHA-256 of the release file", "GitHub release only: the file is checked against it before it is kept.")
-        text("command", "Command", "The command to run, when the package has more than one (for a release: the file inside the archive).")
+        text("package", "Package", "npm or Python package name, or owner/repo for a GitHub release.", "@scope/some-mcp-server", installed)
+        text("version", "Version", "An exact version or release tag. Ranges and \"latest\" are not accepted, so nothing changes on its own.", "1.2.3", installed)
+        text("asset", "Release file", "GitHub release only: the file to download.", "server_Linux_x86_64.tar.gz", listOf(ServerKind.GITHUB_RELEASE))
+        text("sha256", "SHA-256 of the release file", "GitHub release only: the file is checked against it before it is kept.", visibleWhen = listOf(ServerKind.GITHUB_RELEASE))
+        text("command", "Command", "The command to run, when the package has more than one (for a release: the file inside the archive).", visibleWhen = installed)
         list("args", "Arguments", "Passed to the command, one per entry.", "stdio")
         list("env", "Settings", "KEY=value entries for the server's environment. Not for secrets.", "LOG_LEVEL=info")
-        text("secretEnv", "Token variable", "The environment variable that receives the token.", "API_TOKEN")
+        text("secretEnv", "Token variable", "The environment variable that receives the token.", "API_TOKEN", installed)
         secret("secret", "Token", "Kept sealed on your server; only this server sees it. For a remote URL it is sent as a bearer token.")
-        text("secretEnv2", "Second secret variable", "Only if the server needs a second secret.")
-        secret("secret2", "Second secret", "Kept sealed like the token.")
+        text("secretEnv2", "Second secret variable", "Only if the server needs a second secret.", visibleWhen = installed)
+        secret("secret2", "Second secret", "Kept sealed like the token.", installed)
         putJsonObject("url") {
             put("type", "string"); put("format", "uri"); put("title", "Server URL")
             put("description", "Remote URL only: the server's streamable HTTP address (https).")
             put("examples", strings("https://mcp.example.com/mcp"))
+            visibleWhenKind(listOf(ServerKind.REMOTE))
         }
         list("allowHosts", "Hosts it may reach", "The only internet hosts this server can connect to. A leading dot allows subdomains.", "api.example.com")
     }

@@ -61,6 +61,12 @@ Top level: `{ "servers": <collection> }`, `minItems: 0`, `x-item-title: "label"`
 | `url` | string, `format: uri` | `remote` only, https only |
 | `allowHosts` | string array | Hosts the server may reach (`api.github.com`). For `remote`, the URL's host is added |
 
+The schema marks fields that only apply to some kinds with `x-visible-when` (see
+`connector-accounts.md`), so the app shows a short form per kind: `package`, `version`, `command`,
+`secretEnv`, `secretEnv2` and `secret2` for `npm`, `pypi` and `github-release`; `asset` and
+`sha256` for `github-release`; `url` for `remote`. Every other field (including `secret`) is shown
+for all kinds. `kind` is required. The host's validation does not depend on these hints.
+
 The host validates each item and reports problems per server with a clear `ConfigIncomplete`
 style message ("Canvas: version must be exact, not ^1.2"). One bad item never stops the others.
 

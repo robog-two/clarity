@@ -114,8 +114,11 @@ data class ConnectorSetupState(
 fun notRunningState(key: String, title: String): ConnectorSetupState = ConnectorSetupState(
     key = key, title = title, proto = NOT_RUNNING, notRunning = true,
     blurb = "$title hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.",
-    adminHint = "Whoever runs your server can start it: it’s the “$key” profile in the server’s compose setup.",
+    adminHint = "Whoever runs your server can start it: it’s the “${composeProfile(key)}” profile in the server’s compose setup.",
 )
+
+/** The compose profile that starts a connector: its id, except the MCP host's (`mcp`). */
+fun composeProfile(connectorKey: String): String = if (connectorKey == MCP_HOST) "mcp" else connectorKey
 
 /** Pure: whether one account's line of a failed test still reads as fine ("Work · 4,218 messages"). */
 fun accountLineOk(line: String): Boolean =

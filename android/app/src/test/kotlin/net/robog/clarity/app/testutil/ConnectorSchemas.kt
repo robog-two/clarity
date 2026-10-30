@@ -101,61 +101,281 @@ val MAIL_ACCOUNTS_SCHEMA: JsonObject get() = Json.parseToJsonElement(MAIL_ACCOUN
 val DAV_ACCOUNTS_SCHEMA: JsonObject get() = Json.parseToJsonElement(DAV_ACCOUNTS_SCHEMA_JSON).jsonObject
 
 /**
- * The `mcp-host` config schema as contract 1 of docs/workstreams/mcp.md describes it. The preset
- * values are made up for the tests (the host lane verifies the real ones).
+ * The `mcp-host` config schema exactly as the host sends it: `hostConfigSchema` in
+ * computers/mcphost/.../ConfigSchema.kt, serialized. Keep it in step with that file.
  */
 val MCP_HOST_SCHEMA_JSON = """
 {
-  "type": "object",
-  "description": "MCP servers run on your server, each with its own token.",
-  "properties": {
-    "servers": {
-      "type": "array",
-      "title": "Servers",
-      "minItems": 0,
-      "x-item-title": "label",
-      "x-item-subtitle": "package",
-      "x-presets": [
-        {"title": "GitHub",
-         "description": "Create a fine-grained token at github.com/settings/tokens with read access to issues and pull requests.",
-         "values": {"label": "GitHub", "description": "Your GitHub repos, issues and PRs", "kind": "github-release",
-                    "package": "github/github-mcp-server", "version": "v1.0.0", "asset": "github-mcp-server_Linux_x86_64.tar.gz",
-                    "sha256": "0000000000000000000000000000000000000000000000000000000000000000", "command": "github-mcp-server",
-                    "args": ["stdio"], "env": ["GITHUB_TOOLSETS=repos,issues,pull_requests,notifications"],
-                    "secretEnv": "GITHUB_PERSONAL_ACCESS_TOKEN", "allowHosts": ["api.github.com"]}},
-        {"title": "Canvas",
-         "description": "Create an access token under Account → Settings in Canvas.",
-         "values": {"label": "Canvas", "description": "Your courses, assignments and grades", "kind": "npm",
-                    "package": "canvas-mcp-example", "version": "1.2.3", "secretEnv": "CANVAS_API_TOKEN",
-                    "env": ["CANVAS_BASE_URL=https://canvas.example.edu"], "allowHosts": ["canvas.example.edu"]}}
-      ],
-      "items": {
-        "type": "object",
-        "required": ["label"],
-        "properties": {
-          "id": {"type": "string", "readOnly": true},
-          "label": {"type": "string", "title": "Name", "description": "Also the name of its tools and notes", "examples": ["GitHub"]},
-          "description": {"type": "string", "title": "Description", "examples": ["Your GitHub repos, issues and PRs"]},
-          "enabled": {"type": "boolean", "title": "Enabled", "default": true},
-          "kind": {"type": "string", "title": "Kind", "enum": ["npm", "pypi", "github-release", "remote"],
-                   "x-enum-titles": ["npm package", "Python package", "GitHub release binary", "Remote URL"]},
-          "package": {"type": "string", "title": "Package", "examples": ["@scope/server"]},
-          "version": {"type": "string", "title": "Version", "description": "An exact version or tag"},
-          "asset": {"type": "string", "title": "Release asset"},
-          "sha256": {"type": "string", "title": "SHA-256"},
-          "command": {"type": "string", "title": "Command"},
-          "args": {"type": "array", "title": "Arguments", "items": {"type": "string"}},
-          "env": {"type": "array", "title": "Environment", "items": {"type": "string"}, "examples": ["KEY=value"]},
-          "secretEnv": {"type": "string", "title": "Token variable", "examples": ["GITHUB_PERSONAL_ACCESS_TOKEN"]},
-          "secret": {"type": "string", "title": "Token", "x-secret": true},
-          "secretEnv2": {"type": "string", "title": "Second secret variable"},
-          "secret2": {"type": "string", "title": "Second secret", "x-secret": true},
-          "url": {"type": "string", "title": "URL", "format": "uri"},
-          "allowHosts": {"type": "array", "title": "Allowed hosts", "items": {"type": "string"}, "examples": ["api.github.com"]}
+    "type": "object",
+    "properties": {
+        "servers": {
+            "type": "array",
+            "title": "MCP servers",
+            "description": "Servers that give Clarity tools for your other accounts. Each runs on your server, alone, and reaches only the hosts you list.",
+            "minItems": 0,
+            "x-item-title": "label",
+            "x-item-subtitle": "package",
+            "x-presets": [
+                {
+                    "title": "GitHub",
+                    "description": "GitHub's own MCP server (release v2.0.3, Linux x86_64). Create a fine-grained token at github.com/settings/personal-access-tokens with read-only access to Contents, Issues, Pull requests and Metadata for the repositories you choose; give write access only if you want Clarity to change things (each change still waits for your OK). Notifications need a classic token with the notifications scope.",
+                    "values": {
+                        "label": "GitHub",
+                        "description": "Your GitHub repos, issues and pull requests",
+                        "kind": "github-release",
+                        "package": "github/github-mcp-server",
+                        "version": "v2.0.3",
+                        "asset": "github-mcp-server_Linux_x86_64.tar.gz",
+                        "sha256": "f797c20fe02a755865d0e2d46184ab47e31bf1619b0855b8d89c531e45a651c2",
+                        "command": "github-mcp-server",
+                        "args": [
+                            "stdio"
+                        ],
+                        "env": [
+                            "GITHUB_TOOLSETS=context,repos,issues,pull_requests,notifications"
+                        ],
+                        "secretEnv": "GITHUB_PERSONAL_ACCESS_TOKEN",
+                        "allowHosts": [
+                            "api.github.com",
+                            "raw.githubusercontent.com"
+                        ]
+                    }
+                },
+                {
+                    "title": "Canvas",
+                    "description": "Canvas LMS (canvas-mcp 1.16.0). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request). Canvas tokens carry your whole account's access; Clarity asks before anything that changes. Set CANVAS_API_URL to your school's address ending in /api/v1, and add that host to the hosts it may reach.",
+                    "values": {
+                        "label": "Canvas",
+                        "description": "Your courses, assignments and due dates in Canvas",
+                        "kind": "pypi",
+                        "package": "canvas-mcp",
+                        "version": "1.16.0",
+                        "command": "canvas-mcp-server",
+                        "env": [
+                            "CANVAS_API_URL=https://canvas.example.edu/api/v1"
+                        ],
+                        "secretEnv": "CANVAS_API_TOKEN",
+                        "allowHosts": [
+                            "canvas.example.edu"
+                        ]
+                    }
+                }
+            ],
+            "items": {
+                "type": "object",
+                "required": [
+                    "label",
+                    "kind"
+                ],
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "label": {
+                        "type": "string",
+                        "title": "Name",
+                        "description": "What you call it. Clarity's tools for it start with this name.",
+                        "examples": [
+                            "GitHub"
+                        ]
+                    },
+                    "description": {
+                        "type": "string",
+                        "title": "What it is for",
+                        "description": "One line Clarity reads to know when to use it.",
+                        "examples": [
+                            "Your GitHub repos, issues and pull requests"
+                        ]
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "title": "On",
+                        "default": true
+                    },
+                    "kind": {
+                        "type": "string",
+                        "title": "Where it comes from",
+                        "enum": [
+                            "npm",
+                            "pypi",
+                            "github-release",
+                            "remote"
+                        ],
+                        "x-enum-titles": [
+                            "npm package",
+                            "Python package",
+                            "GitHub release binary",
+                            "Remote URL"
+                        ],
+                        "default": "npm"
+                    },
+                    "package": {
+                        "type": "string",
+                        "title": "Package",
+                        "description": "npm or Python package name, or owner/repo for a GitHub release.",
+                        "examples": [
+                            "@scope/some-mcp-server"
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "version": {
+                        "type": "string",
+                        "title": "Version",
+                        "description": "An exact version or release tag. Ranges and \"latest\" are not accepted, so nothing changes on its own.",
+                        "examples": [
+                            "1.2.3"
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "asset": {
+                        "type": "string",
+                        "title": "Release file",
+                        "description": "GitHub release only: the file to download.",
+                        "examples": [
+                            "server_Linux_x86_64.tar.gz"
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "sha256": {
+                        "type": "string",
+                        "title": "SHA-256 of the release file",
+                        "description": "GitHub release only: the file is checked against it before it is kept.",
+                        "x-visible-when": {
+                            "kind": [
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "command": {
+                        "type": "string",
+                        "title": "Command",
+                        "description": "The command to run, when the package has more than one (for a release: the file inside the archive).",
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "args": {
+                        "type": "array",
+                        "title": "Arguments",
+                        "description": "Passed to the command, one per entry.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "examples": [
+                            "stdio"
+                        ]
+                    },
+                    "env": {
+                        "type": "array",
+                        "title": "Settings",
+                        "description": "KEY=value entries for the server's environment. Not for secrets.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "examples": [
+                            "LOG_LEVEL=info"
+                        ]
+                    },
+                    "secretEnv": {
+                        "type": "string",
+                        "title": "Token variable",
+                        "description": "The environment variable that receives the token.",
+                        "examples": [
+                            "API_TOKEN"
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "secret": {
+                        "type": "string",
+                        "title": "Token",
+                        "description": "Kept sealed on your server; only this server sees it. For a remote URL it is sent as a bearer token.",
+                        "format": "password",
+                        "writeOnly": true,
+                        "x-secret": true
+                    },
+                    "secretEnv2": {
+                        "type": "string",
+                        "title": "Second secret variable",
+                        "description": "Only if the server needs a second secret.",
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "secret2": {
+                        "type": "string",
+                        "title": "Second secret",
+                        "description": "Kept sealed like the token.",
+                        "format": "password",
+                        "writeOnly": true,
+                        "x-secret": true,
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
+                    },
+                    "url": {
+                        "type": "string",
+                        "format": "uri",
+                        "title": "Server URL",
+                        "description": "Remote URL only: the server's streamable HTTP address (https).",
+                        "examples": [
+                            "https://mcp.example.com/mcp"
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "remote"
+                            ]
+                        }
+                    },
+                    "allowHosts": {
+                        "type": "array",
+                        "title": "Hosts it may reach",
+                        "description": "The only internet hosts this server can connect to. A leading dot allows subdomains.",
+                        "items": {
+                            "type": "string"
+                        },
+                        "examples": [
+                            "api.example.com"
+                        ]
+                    }
+                }
+            }
         }
-      }
     }
-  }
 }
 """
 

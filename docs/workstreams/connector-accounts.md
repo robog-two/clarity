@@ -41,6 +41,10 @@ On every property:
 - `default` is the initial value.
 - `required` on the containing object marks the field as required.
 - Fields render in the order of `properties`.
+- `x-visible-when: {"<property>": ["value", ...]}` shows the field only while each named sibling
+  property has one of the listed values (an unset choice counts as its `default`). A hidden field
+  is not validated and not sent, even if a value was typed before. It is a form hint only: the
+  connector validates what it receives as usual.
 
 ### Collections (one item per account)
 
