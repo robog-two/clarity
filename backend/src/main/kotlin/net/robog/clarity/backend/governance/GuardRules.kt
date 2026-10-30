@@ -17,8 +17,18 @@ val VAULT_KINDS: Set<ActionKind> = setOf(ActionKind.USE_CREDENTIAL, ActionKind.T
 /** The server name browser tools are exposed under (`clarity.agent.mcpServers[].name`), and the `server` of their proposals. */
 const val BROWSER_SERVER = "browser"
 
-/** True for effects the backend performs itself once approved (browser actions): approval only records the yes. */
-fun isLocalAction(action: ProposedAction): Boolean = action is ProposedAction.ExternalTool && action.server == BROWSER_SERVER
+/** How the `server` of a third-party MCP tool call starts: `mcp:<server id>`. */
+const val MCP_SERVER_PREFIX = "mcp:"
+
+/** True when [action] is a call to one of the person's third-party MCP servers. */
+fun isMcpCall(action: ProposedAction): Boolean = action is ProposedAction.ExternalTool && action.server.startsWith(MCP_SERVER_PREFIX)
+
+/**
+ * True for effects the backend performs itself once approved (browser actions, third-party MCP
+ * calls): approval only records the yes.
+ */
+fun isLocalAction(action: ProposedAction): Boolean =
+    action is ProposedAction.ExternalTool && (action.server == BROWSER_SERVER || isMcpCall(action))
 
 /** Human spelling of a kind for rationales, e.g. "send email". */
 fun ActionKind.label(): String = wire().replace('_', ' ')

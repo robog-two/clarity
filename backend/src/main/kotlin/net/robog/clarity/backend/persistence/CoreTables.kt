@@ -102,5 +102,9 @@ object AgentRuns : Table("agent_run") {
 
     // V35: how many times a helper run was started (first start and each resume)
     val starts = integer("starts").default(0)
+
+    // V44: the MCP servers a helper was given, and a fixed helper's profile (the morning sweep)
+    val mcpServers = jsonb<JsonElement>("mcp_servers", ClarityJson).nullable()
+    val profile = text("profile").nullable()
     override val primaryKey = PrimaryKey(id)
 }

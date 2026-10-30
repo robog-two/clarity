@@ -1,6 +1,10 @@
 package net.robog.clarity.backend.agent
 
+import arrow.core.Either
+import arrow.core.left
+import arrow.core.right
 import dev.zacsweers.metro.AppScope
+import net.robog.clarity.backend.mcpservers.McpToolKit
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlinx.serialization.Serializable
@@ -80,6 +84,8 @@ class HelperTools(
         val title: String? = null,
         @Description("Only to run again a task a helper already did or failed in the last hours: why it is worth another run.")
         val retryReason: String? = null,
+        @Description("Labels of the person's MCP servers (from [mcp servers]) whose tools the helper gets, e.g. [\"GitHub\"], on top of its other tools. A helper gets no MCP server unless it is named here. Not with web_search.")
+        val servers: List<String>? = null,
     )
 
     @Serializable
@@ -153,7 +159,7 @@ class HelperTools(
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
-                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason).fold({ ToolResult.Error(it) }) { started ->
+                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason, servers = input.servers.orEmpty()).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
                 }
@@ -209,6 +215,7 @@ class AgentToolbox(
     private val browser: BrowserPilot,
     private val nudges: NudgeTools,
     private val reports: ReportTools,
+    private val thirdParty: McpToolKit,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -234,27 +241,42 @@ class AgentToolbox(
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
         if (forLead) addAll(nudges.all())
+        if (forLead) add(thirdParty.suggestTool())
     }.let { guarded(scope, it) }
 
     /**
      * The lead's tools, all sent with every request. The lead gets no MCP tools (the browser, the
-     * sandbox): it hands that work to a helper on a cheaper model.
+     * sandbox, the person's servers): it hands that work to a helper on a cheaper model.
      */
     fun leadTools(scope: RunScope): ToolSet = ToolSet(everything(scope, forLead = true).sortedBy { it.name })
 
     /**
-     * A helper's tools: [requested] (or [HELPER_BASE] plus every MCP tool) that exist, never
-     * `send_to_user` and never helper controls. [unknown] lists requested names that matched nothing.
+     * A helper's tools: [requested] (or [HELPER_BASE] plus every tool of the static MCP servers) that
+     * exist, never `send_to_user` and never helper controls. [unknown] lists requested names that
+     * matched nothing. The person's own MCP servers come only when named ([servers], their ids): their
+     * tools not switched off, with `open_collection`, `search_memory` and `save_note` limited to their
+     * collections.
      */
-    suspend fun helperTools(scope: RunScope, requested: List<String>?): HelperToolSet {
+    suspend fun helperTools(scope: RunScope, requested: List<String>?, servers: List<String> = emptyList()): HelperToolSet {
         val mcpAll = mcpTools(scope)
         val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS || it.name == CITE_SOURCES } + gcOnly(scope) + mcpAll)
             .distinctBy { it.name }
         val chosen = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }
         else candidates.filter { it.name in requested }
         val unknown = requested.orEmpty().filter { name -> candidates.none { it.name == name } }
-        return HelperToolSet(ToolSet(chosen.sortedBy { it.name }), unknown)
+        val given = if (servers.isEmpty()) emptyList() else thirdParty.byIds(servers)
+        val extra = if (given.isEmpty()) emptyList() else thirdParty.serverTools(scope, given) + thirdParty.noteTools(scope, given)
+        return HelperToolSet(ToolSet((chosen + extra).distinctBy { it.name }.sortedBy { it.name }), unknown)
+    }
 
+    /** The morning sweep's tools over [servers] (ids); [used] tool calls it already made (a resume). */
+    suspend fun sweepTools(scope: RunScope, servers: List<String>, used: Int): ToolSet =
+        ToolSet(thirdParty.sweepTools(scope, thirdParty.byIds(servers), used).sortedBy { it.name })
+
+    /** The person's servers named [labels], as ids, or why one cannot be used. */
+    suspend fun resolveServers(labels: List<String>): Either<String, List<String>> {
+        val (servers, problem) = thirdParty.resolve(labels)
+        return problem?.left() ?: servers.map { it.id }.right()
     }
 
     /** A helper run finished, failed or was cancelled: it lets go of the browser, and a task made for it follows its outcome. */

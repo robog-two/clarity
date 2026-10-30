@@ -1,6 +1,8 @@
 package net.robog.clarity.backend.agent
 
 import net.robog.clarity.backend.governance.MailAccounts
+import net.robog.clarity.backend.mcpservers.MCP_INDEX_PREFIX
+import net.robog.clarity.backend.mcpservers.NO_MCP_SERVERS
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
@@ -187,6 +189,8 @@ class LeadAgent(
     private val clock: Clock,
     private val effortOverride: EffortOverride,
     private val mailAccounts: MailAccounts,
+    /** The index of the person's MCP servers. */
+    private val mcpIndex: McpIndex,
 ) : BackgroundService {
     override val name = "lead-agent"
 
@@ -354,7 +358,11 @@ class LeadAgent(
         val lastIndex = lastSystemText(visible, COLLECTION_INDEX_PREFIX)
         val indexText = renderCollectionIndex(collections.collections())
             ?: if (lastIndex != null && lastIndex != NO_COLLECTIONS) NO_COLLECTIONS else null
-        return listOfNotNull(memoryText.takeIf { it != lastMemory }, indexText.takeIf { it != lastIndex })
+        // The person's MCP servers, like the collection index: only when it changed.
+        val lastServers = lastSystemText(visible, MCP_INDEX_PREFIX)
+        val serversText = mcpIndex.leadIndex()
+            ?: if (lastServers != null && lastServers != NO_MCP_SERVERS) NO_MCP_SERVERS else null
+        return listOfNotNull(memoryText.takeIf { it != lastMemory }, indexText.takeIf { it != lastIndex }, serversText.takeIf { it != lastServers })
             .map { Delivery(emptyList(), Message(Role.SYSTEM, listOf(Block.Text(it)))) }
     }
 

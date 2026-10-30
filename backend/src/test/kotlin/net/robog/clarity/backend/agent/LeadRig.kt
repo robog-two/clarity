@@ -136,6 +136,10 @@ class LeadRig(
     ledger: net.robog.clarity.harness.ToolLedger = net.robog.clarity.harness.ToolLedger.NONE,
     /** Further agent settings over the rig's. */
     configure: (AgentConfig) -> AgentConfig = { it },
+    /** The person's third-party MCP servers (a fake host); by default none. */
+    mcpHost: net.robog.clarity.backend.mcpservers.McpHost = net.robog.clarity.backend.mcpservers.McpHost.None,
+    /** How long a helper waits for the person on a held MCP call. */
+    mcpWait: Duration = Duration.ZERO,
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -204,17 +208,22 @@ class LeadRig(
     val reportStore = net.robog.clarity.backend.reports.ExposedReportStore(database, clock)
     val reportTools = net.robog.clarity.backend.reports.ReportTools(reportStore, own, journal, settingsProvider, clock)
 
+    val mcpStore = net.robog.clarity.backend.mcpservers.ExposedMcpStore(database)
+    val mcpCatalog = net.robog.clarity.backend.mcpservers.McpCatalog(mcpHost, mcpStore, collections, clock, refreshEvery = Duration.ZERO)
+    val mcpCalls = net.robog.clarity.backend.mcpservers.McpCalls(mcpCatalog, gate, heldStore, events, heldWaiters, clock, mcpWait)
+    val mcpKit = net.robog.clarity.backend.mcpservers.McpToolKit(mcpCatalog, mcpCalls, memoryTools, memory, mcpStore, failureGate, clock)
+
     lateinit var helpers: HelperManager
     val toolbox: AgentToolbox
     val lead: LeadAgent
 
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
-            effortOverride ?: CallEffortOverride(sessionService), mail,
+            effortOverride ?: CallEffortOverride(sessionService), mail, mcpCatalog,
         )
     }
 
@@ -224,7 +233,8 @@ class LeadRig(
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
-                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, tool_call_ledger, spend_notice, agent_trigger, job_slot_claim, browser_run_state " +
+                    "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, tool_call_ledger, spend_notice, agent_trigger, job_slot_claim, browser_run_state, " +
+                    "mcp_tool_policy, mcp_server_seen, mcp_suggestion, mcp_suggestion_made " +
                     "RESTART IDENTITY CASCADE",
             )
         }

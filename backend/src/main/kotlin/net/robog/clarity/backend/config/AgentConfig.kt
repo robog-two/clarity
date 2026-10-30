@@ -25,6 +25,8 @@ data class AgentConfig(
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
+    /** `CLARITY_MCP_HOST`: the `mcp-host` container serving the person's third-party MCP servers; null: none. */
+    val mcpHost: McpHostConfig? = null,
     val roles: AgentRoles = AgentRoles(),
     /** `OPENROUTER_BASE_URL`; a fake endpoint in tests. */
     val openRouterBaseUrl: String = DEFAULT_OPENROUTER_BASE_URL,
@@ -56,6 +58,9 @@ data class AgentConfig(
  * (e.g. a Podman secret mounted at /run/secrets/sandbox_key).
  */
 data class McpServerConfig(val name: String, val url: String, val keyFile: String? = null)
+
+/** The MCP host: `GET [url]/servers` and `[url]/s/{id}/mcp`, with the bearer key in [keyFile]. */
+data class McpHostConfig(val url: String, val keyFile: String? = null)
 
 const val DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 

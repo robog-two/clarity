@@ -149,3 +149,8 @@ class McpClientLifecycle(private val sources: McpToolSources) : BackgroundServic
         }
     }
 }
+
+/** The lead's index of the person's third-party MCP servers, or null when there are none ([net.robog.clarity.backend.mcpservers.McpCatalog]). */
+fun interface McpIndex {
+    suspend fun leadIndex(): String?
+}

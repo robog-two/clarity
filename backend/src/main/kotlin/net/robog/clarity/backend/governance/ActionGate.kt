@@ -124,6 +124,7 @@ class ActionGate(
      * Like [propose] for effects the backend performs itself (browser actions, vault releases):
      * the guard decides; ALLOW returns [LocalOutcome.Cleared] for the caller to act on, anything else
      * is held for the person and nothing reaches a connector. [action] must carry a fresh key per attempt.
+     * [alwaysAsk] (the reason) holds what the guard would allow alone: the person asked to approve every one.
      */
     suspend fun gateLocal(
         action: ProposedAction,
@@ -131,9 +132,11 @@ class ActionGate(
         context: List<ContextItem>,
         provenance: Provenance,
         urgency: Urgency,
+        alwaysAsk: String? = null,
     ): LocalOutcome {
         val constitution = constitutions.current() ?: emptyConstitution(clock.now())
-        val verdict = guard.check(action, constitution, provenance, agentReason = agentView, zone = zone.zone())
+        val checked = guard.check(action, constitution, provenance, agentReason = agentView, zone = zone.zone())
+        val verdict = if (alwaysAsk != null && checked.decision == Decision.ALLOW) checked.copy(decision = Decision.ASK, rationale = alwaysAsk) else checked
         if (verdict.decision == Decision.ALLOW) return LocalOutcome.Cleared("Allowed alone: ${action.summary}.")
         val status = if (verdict.decision == Decision.DENY) HeldAction.Status.BLOCKED else HeldAction.Status.HELD
         val stored = held.insert(action, verdict, agentView, context, urgency, status)
@@ -281,9 +284,12 @@ class HeldActionService(
     private suspend fun approve(current: HeldAction, edited: ProposedAction?) {
         val id = current.id
         val action = edited ?: current.action
-        // Browser actions are done by the backend itself when the agent repeats the call: approving only records the yes.
+        // Browser actions and MCP calls are done by the backend itself (the waiting helper, or the MCP
+        // approvals service): approving only records the yes.
         if (isLocalAction(action)) {
-            ensure(edited == null) { GovernanceError.InvalidEdit("a browser action cannot be edited") }
+            ensure(edited == null) {
+                GovernanceError.InvalidEdit(if (isMcpCall(action)) "an MCP tool call cannot be edited" else "a browser action cannot be edited")
+            }
             val constitution = constitutions.current() ?: emptyConstitution(clock.now())
             hardLineViolation(action, current.verdict, constitution)?.let { raise(GovernanceError.HardLine(it)) }
             ensure(store.transition(id, PENDING_STATUSES, HeldAction.Status.APPROVED)) { GovernanceError.HeldNotPending(id.value, "decided") }

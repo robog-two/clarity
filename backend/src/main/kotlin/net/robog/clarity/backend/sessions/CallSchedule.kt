@@ -32,5 +32,12 @@ fun nextCallAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): I
 fun nextPrepAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): Instant? =
     firstAfter(call, after, zone, prepLead(call))
 
+/** How long before the call prep the MCP sweep runs. */
+val MCP_SWEEP_LEAD: Duration = 30.minutes
+
+/** Pure: the first MCP sweep time strictly after [after]: [MCP_SWEEP_LEAD] before a prep on one of the call's days. */
+fun nextSweepAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone): Instant? =
+    firstAfter(call, after, zone, prepLead(call) + MCP_SWEEP_LEAD)
+
 private fun firstAfter(call: Settings.MorningCall, after: Instant, zone: TimeZone, lead: Duration): Instant? =
     if (!call.enabled) null else ScheduleClock.nextOccurrence(WeeklyTime(call.at, call.days), zone, after, lead)
