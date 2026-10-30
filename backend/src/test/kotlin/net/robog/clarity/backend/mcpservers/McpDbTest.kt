@@ -435,6 +435,27 @@ class McpDbTest : FunSpec({
         }
     }
 
+    test("the sweep uses only read-only auto tools and never holds: what the person's limits would hold is skipped") {
+        val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_y","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
+        val host = FakeMcpHost(listOf(hostServer("gh", "GitHub", readTool("list_a"), writeTool("create_x"), faked), hostServer("w", "Writer", writeTool("post_z"))))
+        val r = rig(host)
+        r.mcpCatalog.setMode("gh", "create_x", McpToolMode.AUTO)
+        r.mcpCatalog.setMode("gh", "delete_y", McpToolMode.AUTO)
+        r.mcpCatalog.setMode("w", "post_z", McpToolMode.AUTO)
+        // a server whose only auto tool writes is not swept
+        r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
+        val scope = helperScope()
+        val tools = r.toolbox.sweepTools(scope, listOf("gh", "w"), 0).tools
+        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
+        val list = tools.first { it.name == "mcp_github__list_a" }
+        ok(list.call()) shouldContain "list_a done"
+        // never alone: skipped, with no approval request and no wait
+        r.constitutions.create(Constitution(version = 1, lines = emptyList(), autonomy = mapOf(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE), updatedAt = Clock.System.now()))
+        err(list.call()) shouldContain "Skipped: needs approval"
+        r.heldStore.list().shouldBeEmpty()
+        host.calls shouldHaveSize 1
+    }
+
     test("the sweep stops at its spend cap, and is skipped when no server has a tool that runs without asking") {
         val host = FakeMcpHost(listOf(github()))
         val r = rig(host)

@@ -641,8 +641,9 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   and a `save_note` limited to their collections (same secret and failure checks). The memory tidy
   keeps those collections' names and their "Sweep recipe:" notes.
 - **Morning sweep** (`mcp-sweep`): 30 minutes before the call prep on call days, when an enabled
-  server has an `auto` tool, one helper (helper model, `profile = mcp-sweep`) gets only the `auto`
-  tools of the enabled servers, `open_collection`, the limited `save_note` and a `set_scratch` that
+  server has a read-only `auto` tool, one helper (helper model, `profile = mcp-sweep`) gets only the
+  read-only `auto` tools of the enabled servers (a call the person's hard limits would hold is
+  skipped with an error: the sweep never asks or waits), `open_collection`, the limited `save_note` and a `set_scratch` that
   writes the keyed note `coming-up` (20 h, at most 1,200 characters, every line starting with its
   server). Caps: $0.03 and 12 tool calls (counted from its journal on a resume), 16 steps. It follows
   and updates each collection's "Sweep recipe:" note. It posts nothing and wakes no one: its result

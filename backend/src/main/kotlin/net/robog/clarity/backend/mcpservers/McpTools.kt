@@ -191,6 +191,17 @@ class McpCalls(
     suspend fun auto(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject): ToolResult =
         gated(scope, server, tool, input, if (tool.readOnly) McpGate.HARD_LINES else McpGate.GUARD)
 
+    /**
+     * A sweep read: runs within the person's hard limits; anything they would hold or block is
+     * skipped with an error, so the sweep never asks the person or waits.
+     */
+    suspend fun sweep(server: McpServer, tool: HostTool, input: JsonObject): ToolResult {
+        val action = ProposedAction.ExternalTool("sweep", mcpCallSummary(server.label, tool.name, input), MCP_SERVER_PREFIX + server.id, tool.name, input)
+        val limits = gate.hardLines(action)
+        return if (limits.decision == Decision.ALLOW) run(server, tool.name, input)
+        else ToolResult.Error("Skipped: needs approval (${limits.rationale}) Leave it out of the sweep.")
+    }
+
     private suspend fun gated(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject, how: McpGate): ToolResult {
         if (scope.isLead) return ToolResult.Error("The lead never calls MCP tools: delegate to a helper with servers=[\"${server.label}\"].")
         val action = ProposedAction.ExternalTool(
@@ -388,6 +399,9 @@ class McpApprovals(
     }
 }
 
+/** Pure: whether the sweep may use [view]: `auto` and read-only (a write-named tool never is, [looksLikeWrite]). */
+fun sweepRead(view: McpToolView): Boolean = view.mode == McpToolMode.AUTO && view.tool.readOnly
+
 /** A tool-call allowance shared by a run's tools. */
 class CallBudget(private val max: Int, used: Int = 0) {
     private val count = AtomicInteger(used)
@@ -441,12 +455,15 @@ class McpToolKit(
     suspend fun resolve(labels: List<String>): Pair<List<McpServer>, String?> = catalog.resolve(labels)
 
     /** Enabled servers that have a tool which runs without asking (what the sweep can use). */
-    suspend fun sweepable(): List<McpServer> = catalog.servers().filter { s -> s.enabled && s.tools.any { it.mode == McpToolMode.AUTO } }
+    suspend fun sweepable(): List<McpServer> = catalog.servers().filter { s -> s.enabled && s.tools.any(::sweepRead) }
 
-    /** The tools of [servers] for [scope]: `off` never, `ask` only when not [autoOnly]. */
-    fun serverTools(scope: RunScope, servers: List<McpServer>, autoOnly: Boolean = false): List<Tool> =
+    /**
+     * The tools of [servers] for [scope], `off` never. For the [sweep] only read-only `auto` tools,
+     * which never hold: what the person's limits would hold is skipped instead.
+     */
+    fun serverTools(scope: RunScope, servers: List<McpServer>, sweep: Boolean = false): List<Tool> =
         servers.flatMap { server ->
-            server.usable.filter { !autoOnly || it.mode == McpToolMode.AUTO }.map { ServerTool(scope, server, it) }
+            server.usable.filter { !sweep || sweepRead(it) }.map { ServerTool(scope, server, it, sweep) }
         }.distinctBy { it.name }
 
     /** What a helper given [servers] keeps notes with: reading, search, and `save_note` limited to the servers' collections. */
@@ -460,7 +477,7 @@ class McpToolKit(
     fun sweepTools(scope: RunScope, servers: List<McpServer>, used: Int): List<Tool> {
         val budget = CallBudget(MCP_SWEEP_MAX_TOOL_CALLS, used)
         val spent = "You have used your $MCP_SWEEP_MAX_TOOL_CALLS tool calls. Write what you found now with set_scratch, then finish."
-        val reads = serverTools(scope, servers, autoOnly = true) + listOf(
+        val reads = serverTools(scope, servers, sweep = true) + listOf(
             memoryTools.openCollection(),
             memoryTools.saveNoteIn(servers.associate { collectionOf(it) to serverCollectionDescription(it.label) }),
         )
@@ -535,7 +552,12 @@ class McpToolKit(
 
     private fun collectionOf(server: McpServer): String = server.collection ?: serverCollectionName(server.host)
 
-    private inner class ServerTool(private val scope: RunScope, private val server: McpServer, private val view: McpToolView) : Tool {
+    private inner class ServerTool(
+        private val scope: RunScope,
+        private val server: McpServer,
+        private val view: McpToolView,
+        private val sweep: Boolean,
+    ) : Tool {
         private val ask = view.mode == McpToolMode.ASK
         override val name = mcpToolName(server.label, view.tool.name)
         override val description: String = buildString {
@@ -548,7 +570,11 @@ class McpToolKit(
         override val effect = if (view.tool.readOnly) ToolEffect.READ else ToolEffect.EXTERNAL
 
         override suspend fun invoke(input: JsonObject): ToolResult {
-            val result = if (ask) calls.ask(scope, server, view.tool, input) else calls.auto(scope, server, view.tool, input)
+            val result = when {
+                sweep -> calls.sweep(server, view.tool, input)
+                ask -> calls.ask(scope, server, view.tool, input)
+                else -> calls.auto(scope, server, view.tool, input)
+            }
             // Third-party output, like a web page.
             scope.taint()
             return result
