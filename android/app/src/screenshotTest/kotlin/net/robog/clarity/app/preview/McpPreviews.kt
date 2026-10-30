@@ -292,7 +292,14 @@ private val SCHEMA = Json.parseToJsonElement(
                         },
                         "examples": [
                             "stdio"
-                        ]
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
                     },
                     "env": {
                         "type": "array",
@@ -303,7 +310,14 @@ private val SCHEMA = Json.parseToJsonElement(
                         },
                         "examples": [
                             "LOG_LEVEL=info"
-                        ]
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
                     },
                     "secretEnv": {
                         "type": "string",
