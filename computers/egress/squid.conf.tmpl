@@ -5,11 +5,26 @@
 http_port @BROWSER_IP@:3128 name=browser
 http_port @BACKEND_IP@:3128 name=backend
 http_port @SANDBOX_IP@:3128 name=sandbox
+http_port @MCP_IP@:3128 name=mcphost
 http_port 127.0.0.1:3130 name=health
 
 acl browser_port myportname browser
 acl backend_port myportname backend
 acl sandbox_port myportname sandbox
+acl mcp_port myportname mcphost
+
+# mcp-host: every MCP server (and every install) logs in as its own proxy user and may reach only the
+# hosts in its allow-list. Both are files mcp-host writes into @MCP_DIR@ (read-only here); the helpers
+# read them on every lookup, so there is nothing to reload. Answers are cached briefly: a removed
+# login or host stops working within 30 seconds (logins) or 10 seconds (hosts).
+auth_param basic program /usr/local/bin/egress-mcp-auth @MCP_DIR@
+auth_param basic children 4 startup=1 idle=1
+auth_param basic realm clarity-egress
+auth_param basic credentialsttl 30 seconds
+auth_param basic casesensitive on
+acl mcp_login proxy_auth REQUIRED
+external_acl_type mcp_allow ttl=10 negative_ttl=0 children-max=4 children-startup=1 %LOGIN %DST /usr/local/bin/egress-mcp-allow @MCP_DIR@
+acl mcp_allowed external mcp_allow
 
 # Never reachable, however the name is spelled or resolved. (IPv4-mapped IPv6 such as ::ffff:10.0.0.1
 # is normalised to IPv4 by Squid, so the IPv4 ranges cover it; listing ::ffff:0:0/96 would match all IPv4.)
@@ -24,12 +39,16 @@ acl tls_port port 443
 acl CONNECT method CONNECT
 acl backend_hosts dstdomain @BACKEND_ALLOW@
 
-http_access deny !browser_port !backend_port !sandbox_port
+http_access deny !browser_port !backend_port !sandbox_port !mcp_port
 http_access deny private_dst
 http_access deny private_name
 http_access deny private_regex
 http_access deny !web_ports
 http_access deny CONNECT !tls_port
+# no login (or a wrong one) gets a 407 challenge; a login only its own hosts
+http_access deny mcp_port !mcp_login
+http_access allow mcp_port mcp_allowed
+http_access deny mcp_port
 http_access allow backend_port backend_hosts
 http_access deny backend_port
 http_access allow browser_port
