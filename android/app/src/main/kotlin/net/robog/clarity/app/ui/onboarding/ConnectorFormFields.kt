@@ -36,6 +36,40 @@ import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.components.ToggleRow
+import net.robog.clarity.app.ui.mcp.MCP_HOST
+
+/** What one collection item is called on screen: a mail account, an MCP server. */
+data class ItemNoun(
+    val one: String,
+    val many: String,
+    val chooserTitle: String,
+    val chooserHint: String,
+    val otherTitle: String,
+    val otherCaption: String,
+    val removeText: String,
+    /** The same, for a removal that is saved at once. */
+    val removeNowText: String,
+) {
+    companion object {
+        val Account = ItemNoun(
+            one = "account", many = "accounts", chooserTitle = "Which kind?",
+            chooserHint = "Pick a provider and I’ll fill in its server settings. You can change anything.",
+            otherTitle = "Other provider", otherCaption = "Enter the server settings yourself",
+            removeText = "It stops syncing once you save. Its saved password is deleted with it.",
+            removeNowText = "It stops syncing. Its saved password is deleted with it.",
+        )
+        val Server = ItemNoun(
+            one = "server", many = "servers", chooserTitle = "Which server?",
+            chooserHint = "Pick one to fill in its package, version and hosts. You can change anything.",
+            otherTitle = "Another server", otherCaption = "Enter its package or address yourself",
+            removeText = "Clarity stops using it once you save. Its saved tokens are deleted with it.",
+            removeNowText = "Clarity stops using it. Its saved tokens are deleted with it.",
+        )
+    }
+}
+
+/** The items of `mcp-host` are servers; every other connector's are accounts. */
+fun itemNounFor(connectorKey: String): ItemNoun = if (connectorKey == MCP_HOST) ItemNoun.Server else ItemNoun.Account
 
 /** What a collection (the accounts) can do on screen. */
 data class CollectionActions(
@@ -158,6 +192,7 @@ fun CollectionSection(
     error: FieldError?,
     actions: CollectionActions,
     testLineFor: (String) -> TestLine?,
+    noun: ItemNoun = ItemNoun.Account,
 ) {
     val items = values.items(field.key)
     var removing by remember { mutableStateOf<ItemValues?>(null) }
@@ -174,15 +209,15 @@ fun CollectionSection(
                 onRemove = { removing = item },
             )
         }
-        error?.let { Hint(it.message(), color = MaterialTheme.colorScheme.error) }
-        SecondaryButton("add account", { actions.onAdd(field.key) }, Modifier.fillMaxWidth())
+        error?.let { Hint(it.message(noun), color = MaterialTheme.colorScheme.error) }
+        SecondaryButton("add ${noun.one}", { actions.onAdd(field.key) }, Modifier.fillMaxWidth())
     }
     removing?.let { item ->
         val title = form.itemTitle(field, item)
         AlertDialog(
             onDismissRequest = { removing = null },
             title = { Text("Remove $title?") },
-            text = { Text("It stops syncing once you save. Its saved password is deleted with it.") },
+            text = { Text(noun.removeText) },
             confirmButton = {
                 TextButton(onClick = { removing = null; actions.onRemove(field.key, item.id) }) { Text("Remove") }
             },
@@ -213,7 +248,7 @@ fun AccountCard(
     }
 }
 
-fun FieldError.message(): String = when (this) {
+fun FieldError.message(noun: ItemNoun = ItemNoun.Account): String = when (this) {
     FieldError.Required -> "Required."
     FieldError.InvalidUrl -> "Enter a full address, like https://example.com."
     FieldError.InvalidEmail -> "Enter an email address."
@@ -222,8 +257,8 @@ fun FieldError.message(): String = when (this) {
     FieldError.NotAWholeNumber -> "Enter a whole number."
     is FieldError.TooSmall -> "At least ${trim(minimum)}."
     is FieldError.TooLarge -> "At most ${trim(maximum)}."
-    is FieldError.TooFewItems -> if (minimum <= 1) "Add at least one account." else "Add at least $minimum accounts."
-    FieldError.ItemInvalid -> "One of the accounts is incomplete. Open it to fix it."
+    is FieldError.TooFewItems -> if (minimum <= 1) "Add at least one ${noun.one}." else "Add at least $minimum ${noun.many}."
+    FieldError.ItemInvalid -> "One of the ${noun.many} is incomplete. Open it to fix it."
 }
 
 private fun trim(d: Double): String = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()

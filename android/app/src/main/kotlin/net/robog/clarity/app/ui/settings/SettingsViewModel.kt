@@ -33,6 +33,7 @@ import net.robog.clarity.app.ui.onboarding.withHeadsUp
 import net.robog.clarity.app.ui.onboarding.NOT_RUNNING
 import net.robog.clarity.app.ui.onboarding.isDeviceConnector
 import net.robog.clarity.app.ui.sentence
+import net.robog.clarity.app.ui.mcp.isMcpHost
 import net.robog.clarity.shared.session.Settings
 
 /** One line of "Sources": a name, where it comes from, and when it last synced. */
@@ -66,6 +67,8 @@ data class SettingsUiState(
     val pushOn: Boolean = true,
     /** The system does not restrict background work, so pushes are not delayed. */
     val batteryUnrestricted: Boolean = true,
+    /** Whether the `mcp-host` connector is running on the server; null until the sources are listed. */
+    val mcpRunning: Boolean? = null,
 )
 
 /**
@@ -143,8 +146,10 @@ class SettingsViewModel(
                 val now = clock.now()
                 _state.update {
                     it.copy(
+                        // MCP servers have their own row, so the host is not listed as a source.
+                        mcpRunning = list.firstOrNull(::isMcpHost)?.manifest != null,
                         serverSources = list
-                            .filterNot { c -> isDeviceConnector(c.id) }
+                            .filterNot { c -> isDeviceConnector(c.id) || isMcpHost(c) }
                             .map { c ->
                                 val m = c.manifest
                                 if (m == null) {
