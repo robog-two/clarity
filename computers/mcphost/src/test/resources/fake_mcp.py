@@ -6,6 +6,7 @@ Settings (env): FAKE_CRASH_ON_START=1 exits at once; FAKE_PAGED=1 lists tools in
 FAKE_SAY names an env variable whose value it prints to stderr at start (to test log redaction);
 FAKE_ASK=1 asks its client for roots once (the host must answer "not supported").
 """
+import hashlib
 import json
 import os
 import sys
@@ -37,6 +38,18 @@ TOOLS = [
     {"name": "sleep", "description": "Sleeps.", "inputSchema": {"type": "object", "properties": {"seconds": {"type": "number"}}}},
 ]
 
+# FAKE_TOOLS=pair: just one read and one write, as a person's real server might have (e2e/mcp/run.sh).
+PAIR = [
+    {"name": "lookup", "title": "Look up", "description": "Looks something up (or GETs url through the proxy).",
+     "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}, "url": {"type": "string"}}},
+     "annotations": {"readOnlyHint": True}},
+    {"name": "create_note", "title": "Create note", "description": "Adds a note to the server's notebook.",
+     "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]},
+     "annotations": {"readOnlyHint": False, "destructiveHint": False}},
+]
+if os.environ.get("FAKE_TOOLS") == "pair":
+    TOOLS = PAIR
+
 
 def send(msg):
     sys.stdout.write(json.dumps(msg) + "\n")
@@ -50,8 +63,31 @@ def text(t, error=False):
     return r
 
 
+def fetch(url):
+    try:
+        with urllib.request.urlopen(url, timeout=20) as r:
+            return text(f"status {r.status}")
+    except urllib.error.HTTPError as e:
+        return text(f"status {e.code}")
+
+
 def call(name, args):
     try:
+        if name not in {t["name"] for t in TOOLS}:
+            return None
+        if name == "lookup":
+            if args.get("url"):
+                return fetch(args["url"])
+            token = os.environ.get("FAKE_TOKEN")
+            seen = f"token {hashlib.sha256(token.encode()).hexdigest()[:12]}" if token else "no token"
+            return text(f"lookup result for {args.get('q', '')}: three things are due this week ({seen})")
+        if name == "create_note":
+            path = os.path.join(os.environ["HOME"], "notes.log")
+            with open(path, "a") as f:
+                f.write(args["text"] + "\n")
+            with open(path) as f:
+                count = sum(1 for _ in f)
+            return text(f"note saved ({count} in the notebook)")
         if name == "echo":
             return text(args.get("text", ""))
         if name == "pid":
@@ -71,11 +107,7 @@ def call(name, args):
             with open(f"/proc/{int(args['pid'])}/environ", "rb") as f:
                 return text(f.read().replace(b"\0", b"\n").decode(errors="replace"))
         if name == "fetch":
-            try:
-                with urllib.request.urlopen(args["url"], timeout=20) as r:
-                    return text(f"status {r.status}")
-            except urllib.error.HTTPError as e:
-                return text(f"status {e.code}")
+            return fetch(args["url"])
         if name == "direct":
             import socket
             s = socket.create_connection((args["host"], int(args.get("port", 443))), timeout=5)
