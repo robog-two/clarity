@@ -5,13 +5,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -170,7 +171,7 @@ private fun SuggestionCard(suggestion: McpSuggestion, actions: McpActions) {
             Text(suggestion.why, Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyMedium)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                 TextButton(onClick = { actions.onDismiss(suggestion.id) }) { Text(stringResource(R.string.mcp_dismiss)) }
-                FilledTonalButton(onClick = { actions.onAdd(suggestion) }) { Text(sentenceCase(stringResource(R.string.mcp_set_up))) }
+                Button(onClick = { actions.onAdd(suggestion) }) { Text(sentenceCase(stringResource(R.string.mcp_set_up))) }
             }
         }
     }
@@ -191,11 +192,17 @@ private fun ServerCard(server: McpServerStatus, onClick: () -> Unit) {
                 StateChip(server.state)
             }
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyMedium)
-            if (server.source.isNotBlank()) Kicker(server.source)
+            if (server.source.isNotBlank()) SourceLine(server.source)
             Text(toolCountLine(server), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             server.failure()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         }
     }
+}
+
+/** Where a server comes from ("npm @scope/pkg@1.2.3"), as the server wrote it: never re-cased. */
+@Composable
+private fun SourceLine(text: String) {
+    Text(text, style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
 /** The error of a failed server, the only state that has one worth showing. */
@@ -205,10 +212,10 @@ private fun McpServerStatus.failure(): String? = error?.takeIf { state == McpSer
 private fun toolCountLine(server: McpServerStatus): String {
     val counts = server.toolCounts()
     if (counts.total == 0) return stringResource(R.string.mcp_tools_none)
-    return listOf(
+    return listOfNotNull(
         pluralStringResource(R.plurals.mcp_tools_count, counts.total, counts.total),
-        stringResource(R.string.mcp_tools_read, counts.reads),
-        pluralStringResource(R.plurals.mcp_tools_change, counts.changes, counts.changes),
+        if (counts.reads > 0) stringResource(R.string.mcp_tools_read, counts.reads) else null,
+        if (counts.changes > 0) pluralStringResource(R.plurals.mcp_tools_change, counts.changes, counts.changes) else null,
     ).joinToString(" · ")
 }
 
@@ -251,7 +258,7 @@ private fun ServerDetail(server: McpServerStatus, state: McpUiState, actions: Mc
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             StateChip(server.state)
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyLarge)
-            if (server.source.isNotBlank()) Kicker(server.source)
+            if (server.source.isNotBlank()) SourceLine(server.source)
             if (server.allowHosts.isNotEmpty()) Kicker(stringResource(R.string.mcp_reaches, server.allowHosts.joinToString(", ")))
             server.collection?.let { Hint(stringResource(R.string.mcp_notes, it)) }
         }
@@ -282,8 +289,8 @@ private fun ToolRow(serverId: String, tool: McpToolStatus, actions: McpActions) 
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (tool.destructive) {
                     Icon(
                         Icons.Outlined.WarningAmber,
@@ -292,21 +299,20 @@ private fun ToolRow(serverId: String, tool: McpToolStatus, actions: McpActions) 
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
-                Text(tool.title ?: tool.name, style = MaterialTheme.typography.titleMedium)
+                Text(tool.title ?: tool.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                // Not changed: a quiet "default". Changed: what the default is, and the way back to it.
+                if (tool.overridden) {
+                    TextButton(onClick = { actions.onReset(serverId, tool.name) }) { Text(stringResource(R.string.mcp_reset)) }
+                } else {
+                    Kicker(stringResource(R.string.mcp_default), Modifier.padding(end = 8.dp))
+                }
             }
             if (tool.title != null) {
                 Text(tool.name, style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            if (tool.description.isNotBlank()) Hint(tool.description)
-            ModeControl(tool) { actions.onMode(serverId, tool.name, it) }
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                if (tool.overridden) {
-                    Kicker(stringResource(R.string.mcp_default_is, modeLabel(defaultMode(tool))), Modifier.weight(1f))
-                    TextButton(onClick = { actions.onReset(serverId, tool.name) }) { Text(stringResource(R.string.mcp_reset)) }
-                } else {
-                    Kicker(stringResource(R.string.mcp_default), Modifier.padding(vertical = 12.dp))
-                }
-            }
+            if (tool.description.isNotBlank()) Hint(tool.description, Modifier.padding(end = 8.dp))
+            if (tool.overridden) Kicker(stringResource(R.string.mcp_default_is, modeLabel(defaultMode(tool))))
+            Column(Modifier.padding(end = 8.dp)) { ModeControl(tool) { actions.onMode(serverId, tool.name, it) } }
         }
     }
 }
