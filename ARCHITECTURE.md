@@ -607,8 +607,9 @@ under ZDR) is not offered.
 Any MCP server the person adds from the phone (GitHub, Canvas, Asana, ...) runs in the `mcp-host`
 container (`computers/mcphost`, connector kind `mcp-host`; see "The agent's computers"). The backend
 reads `CLARITY_MCP_HOST` (`http://mcp-host:8950;keyFile=/run/secrets/mcphost_key`; unset: no such
-servers, nothing else changes) and lists `GET /servers` at most every 60 s, keeping the last good
-listing while the host is down (`McpCatalog`). The listing is the host's cached `tools/list`, so
+servers, nothing else changes). A background service (`McpRefresher`) lists `GET /servers` at boot
+(retrying until the host answers) and every 60 s; lead turns, helper starts and routes only read
+that cached listing (`McpCatalog`), which keeps the last good one while the host is down. The listing is the host's cached `tools/list`, so
 listing never starts a server; a call goes through one `McpToolProvider` per server at `/s/{id}/mcp`.
 The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
 
@@ -624,7 +625,9 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   (`isLocalAction`); the helper waits up to 15 minutes (`HeldWaiters`, so the lead is not woken) and
   runs the call itself, moving the item to `executed`. A yes that comes after the helper stopped
   waiting is run once by `McpApprovals` and its result goes to that helper if it is still running,
-  else to the lead (`InboxItem.McpCallResult`). Each yes is one call; an edit is refused.
+  else to the lead (`InboxItem.McpCallResult`). Each yes is one call; an edit is refused. At boot,
+  approved calls nobody ran are run once into the lead's inbox when approved in the last 30 minutes,
+  and expire unrun when older.
 - **Untrusted results.** Every result (and error) is quoted `<untrusted source="mcp:<label>">` and
   taints the run; oversized ones go through the usual large-result handling.
 - **Memory per server.** A server listed for the first time gets a collection named after its label

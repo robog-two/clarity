@@ -36,6 +36,7 @@ import io.ktor.server.testing.testApplication
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -65,6 +66,7 @@ import net.robog.clarity.backend.governance.HeldActionService
 import net.robog.clarity.backend.governance.NoConnectorPreferences
 import net.robog.clarity.backend.integration.ContainerRuntimeAvailable
 import net.robog.clarity.backend.persistence.DatabaseFactory
+import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.scheduler.FireContext
 import net.robog.clarity.backend.scheduler.JobSlots
 import net.robog.clarity.harness.Block
@@ -442,6 +444,68 @@ class McpDbTest : FunSpec({
         r.feedStore.page(0, 100).items.shouldBeEmpty()
     }
 
+    test("in production only the refresher lists the host: reads never wait on it; at boot it retries until the host answers") {
+        val host = FakeMcpHost(listOf(github()))
+        host.reachable = false
+        val r = LeadRig(database, mcpHost = host, mcpRefreshOnRead = false).also { it.reset() }
+        r.mcpCatalog.servers().shouldBeEmpty()
+        r.mcpCatalog.list() shouldBe null
+        r.mcpCatalog.leadIndex() shouldBe null
+        host.listings shouldBe 0
+        val refresher = McpRefresher(r.mcpCatalog, every = 100.milliseconds, bootAttempts = 50, bootPause = 20.milliseconds)
+        val job = background.launch { refresher.run() }
+        try {
+            delay(100)
+            r.mcpCatalog.servers().shouldBeEmpty()
+            host.reachable = true
+            withTimeout(5.seconds) { while (r.mcpCatalog.servers().isEmpty()) delay(20) }
+            r.mcpCatalog.servers().single().label shouldBe "GitHub"
+            // a later change arrives with the next refresh, never with a read
+            host.servers = listOf(github(), canvas())
+            val before = host.listings
+            r.mcpCatalog.servers() shouldHaveSize 1
+            host.listings shouldBe before
+            withTimeout(5.seconds) { while (r.mcpCatalog.servers().size < 2) delay(20) }
+            // the host goes down: the last listing stays
+            host.reachable = false
+            delay(300)
+            r.mcpCatalog.servers() shouldHaveSize 2
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    test("after a restart: a recent approval runs once into the lead's inbox; an old one expires and never runs") {
+        val host = FakeMcpHost(listOf(github()))
+        host.answer = { ToolResult.Ok("created #${it.input["title"]}") }
+        val r = rig(host)
+        val scope = helperScope()
+        val create = r.toolbox.helperTools(scope, null, listOf("gh")).tools.tools.first { it.name == "mcp_github__create_issue" }
+        ok(create.call("repo" to "clarity", "title" to "recent")) shouldContain "has not answered"
+        ok(create.call("repo" to "clarity", "title" to "old")) shouldContain "has not answered"
+        val heldItems = r.heldStore.list(setOf(HeldAction.Status.HELD))
+        val recent = heldItems.single { it.action.summary.contains("recent") }
+        val old = heldItems.single { it.action.summary.contains("old") }
+        // both approved while the backend was down for the calls (nothing listening)
+        r.decisions().decide(recent.id, HeldDecision.Approve()).isRight() shouldBe true
+        r.decisions().decide(old.id, HeldDecision.Approve()).isRight() shouldBe true
+        database.tx { exec("UPDATE held_action SET decided_at = now() - interval '2 hours' WHERE id = '${old.id.value}'") }
+        host.calls.shouldBeEmpty()
+        // the restart: a fresh service over the same database
+        val approvals = McpApprovals(r.events, r.mcpCalls, lazy { r.helpers }, r.inbox)
+        approvals.recoverAtBoot()
+        host.calls.map { it.input["title"].toString() } shouldContainExactly listOf("\"recent\"")
+        r.heldStore.get(recent.id)?.status shouldBe HeldAction.Status.EXECUTED
+        r.heldStore.get(old.id)?.status shouldBe HeldAction.Status.EXPIRED
+        val item = r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.McpCallResult>().single()
+        item.heldId shouldBe recent.id.value
+        item.untrusted.single().content shouldContain "created #\"recent\""
+        // a second boot runs nothing
+        approvals.recoverAtBoot()
+        host.calls shouldHaveSize 1
+        r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.McpCallResult>() shouldHaveSize 1
+    }
+
     test("routes: servers with modes, a tool's mode set and reset, suggestions listed and dismissed; all need a device") {
         val r = rig(FakeMcpHost(listOf(github())))
         r.mcpStore.addSuggestion("Canvas", "Your assignments.", null, Clock.System.now())
@@ -470,6 +534,21 @@ class McpDbTest : FunSpec({
             r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.AUTO))
             put("create_issue", null).body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe false }
             r.mcpStore.policies() shouldBe emptyMap()
+            // the app's reset: ClarityJson leaves the null out, so the body is `{}`; an explicit null works too
+            suspend fun putRaw(body: String) = client.put(McpPaths.toolPolicy("gh", "create_issue")) {
+                header(HttpHeaders.Authorization, DEVICE)
+                contentType(ContentType.Application.Json)
+                setBody(body)
+            }
+            ClarityJson.encodeToString(McpToolPolicyUpdate.serializer(), McpToolPolicyUpdate(null)) shouldBe "{}"
+            for (reset in listOf("{}", """{"mode":null}""")) {
+                put("create_issue", McpToolMode.OFF).status shouldBe HttpStatusCode.OK
+                r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.OFF))
+                val cleared = putRaw(reset)
+                cleared.status shouldBe HttpStatusCode.OK
+                cleared.body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe false }
+                r.mcpStore.policies() shouldBe emptyMap()
+            }
             put("nope", McpToolMode.OFF).status shouldBe HttpStatusCode.NotFound
             client.put(McpPaths.toolPolicy("zz", "x")) {
                 header(HttpHeaders.Authorization, DEVICE); contentType(ContentType.Application.Json); setBody(McpToolPolicyUpdate(McpToolMode.OFF))

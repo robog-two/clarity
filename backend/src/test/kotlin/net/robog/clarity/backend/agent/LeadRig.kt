@@ -140,6 +140,8 @@ class LeadRig(
     mcpHost: net.robog.clarity.backend.mcpservers.McpHost = net.robog.clarity.backend.mcpservers.McpHost.None,
     /** How long a helper waits for the person on a held MCP call. */
     mcpWait: Duration = Duration.ZERO,
+    /** Tests list the host on every read; false is the production path (only a refresh lists it). */
+    mcpRefreshOnRead: Boolean = true,
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -209,7 +211,7 @@ class LeadRig(
     val reportTools = net.robog.clarity.backend.reports.ReportTools(reportStore, own, journal, settingsProvider, clock)
 
     val mcpStore = net.robog.clarity.backend.mcpservers.ExposedMcpStore(database)
-    val mcpCatalog = net.robog.clarity.backend.mcpservers.McpCatalog(mcpHost, mcpStore, collections, clock, refreshEvery = Duration.ZERO)
+    val mcpCatalog = net.robog.clarity.backend.mcpservers.McpCatalog(mcpHost, mcpStore, collections, clock, refreshOnRead = mcpRefreshOnRead)
     val mcpCalls = net.robog.clarity.backend.mcpservers.McpCalls(mcpCatalog, gate, heldStore, events, heldWaiters, clock, mcpWait)
     val mcpKit = net.robog.clarity.backend.mcpservers.McpToolKit(mcpCatalog, mcpCalls, memoryTools, memory, mcpStore, failureGate, clock)
 

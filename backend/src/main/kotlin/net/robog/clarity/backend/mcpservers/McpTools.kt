@@ -14,6 +14,7 @@ import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
@@ -263,6 +264,22 @@ class McpCalls(
     }
 
     /**
+     * Approved calls nobody ran, found at boot: those approved within [APPROVAL_LASTS] are returned to
+     * be run; older ones expire unrun, so a yes from hours ago never fires on its own.
+     */
+    suspend fun leftApproved(): List<HeldAction> {
+        val now = clock.now()
+        val approved = held.list(setOf(HeldAction.Status.APPROVED), limit = 500).filter { isMcpCall(it.action) && !isAwaited(it.id) }
+        val (fresh, stale) = approved.partition { (it.decidedAt ?: Instant.DISTANT_PAST) > now - APPROVAL_LASTS }
+        stale.forEach {
+            if (held.transition(it.id, setOf(HeldAction.Status.APPROVED), HeldAction.Status.EXPIRED, failure = "Approved over ${APPROVAL_LASTS.inWholeMinutes} minutes before a restart; not run.")) {
+                log.info { "approved MCP call ${it.id.value} expired unrun after a restart" }
+            }
+        }
+        return fresh
+    }
+
+    /**
      * Runs an approved call nobody is waiting for, once: null when it was already taken (or is not an
      * MCP call). The label names the server in the quote.
      */
@@ -291,15 +308,29 @@ class McpApprovals(
     override val name = "mcp-approvals"
 
     override suspend fun run() = coroutineScope {
-        events.events.collect { e ->
-            val h = (e as? GovernanceEvent.HeldChanged)?.held ?: return@collect
-            if (h.status != HeldAction.Status.APPROVED || !isMcpCall(h.action) || calls.isAwaited(h.id)) return@collect
-            launch { deliver(h) }
+        launch {
+            events.events.collect { e ->
+                val h = (e as? GovernanceEvent.HeldChanged)?.held ?: return@collect
+                if (h.status != HeldAction.Status.APPROVED || !isMcpCall(h.action) || calls.isAwaited(h.id)) return@collect
+                launch { deliver(h) }
+            }
+        }
+        recoverAtBoot()
+    }
+
+    /** Approvals left from before a restart: recent ones run once, to the lead's inbox; older ones expire ([McpCalls.leftApproved]). */
+    suspend fun recoverAtBoot() {
+        try {
+            calls.leftApproved().forEach { deliver(it, toHelper = false) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            log.error(e) { "approved MCP calls from before the restart could not be checked" }
         }
     }
 
-    /** Runs [h] and reports it; one approval at most once. */
-    suspend fun deliver(h: HeldAction) {
+    /** Runs [h] and reports it (to its helper while that one runs, when [toHelper]); one approval at most once. */
+    suspend fun deliver(h: HeldAction, toHelper: Boolean = true) {
         try {
             val (label, result) = calls.runApproved(h) ?: return
             val ok = result is ToolResult.Ok
@@ -308,11 +339,11 @@ class McpApprovals(
                 is ToolResult.Error -> result.message
             }
             val runId = runOfMcpCall(h.action.idempotencyKey)
-            val toHelper = runId?.let {
+            val sent = runId?.takeIf { toHelper }?.let {
                 helpers.value.message(it, "The person approved \"${h.action.summary}\" (${h.id.value}) and Clarity ran it. " +
                     (if (ok) "Result:" else "It failed:") + "\n$text").isRight()
             } ?: false
-            if (!toHelper) inbox.enqueue(InboxItem.McpCallResult(h.id.value, label, h.action.summary, ok, text), dedupKey = "mcp:${h.id.value}")
+            if (!sent) inbox.enqueue(InboxItem.McpCallResult(h.id.value, label, h.action.summary, ok, text), dedupKey = "mcp:${h.id.value}")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

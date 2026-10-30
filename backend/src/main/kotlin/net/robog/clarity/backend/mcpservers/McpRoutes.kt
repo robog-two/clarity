@@ -12,7 +12,14 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.auth.AuthProviders
+import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.http.EdgeProblem
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.respondProblem
@@ -61,17 +68,36 @@ class McpRoutes(private val catalog: McpCatalog, private val store: McpStore) : 
     }
 }
 
-/** Closes the host's MCP sessions at shutdown. */
-@Inject
+/**
+ * Keeps the host's listing fresh in the background, so lead turns, helper starts and routes only
+ * read the cache: at boot until the host answers (it may still be starting), then every [every].
+ * Closes the host's MCP sessions at shutdown.
+ */
 @ContributesIntoSet(AppScope::class)
-class McpHostLifecycle(private val catalog: McpCatalog) : net.robog.clarity.backend.lifecycle.BackgroundService {
+class McpRefresher(
+    private val catalog: McpCatalog,
+    private val every: Duration = 60.seconds,
+    private val bootAttempts: Int = 10,
+    private val bootPause: Duration = 3.seconds,
+) : BackgroundService {
+    @Inject
+    constructor(catalog: McpCatalog) : this(catalog, 60.seconds)
+
     override val name = "mcp-host"
 
     override suspend fun run() {
         try {
-            kotlinx.coroutines.awaitCancellation()
+            if (!catalog.configured) awaitCancellation()
+            for (attempt in 1..bootAttempts) {
+                if (catalog.refresh()) break
+                if (attempt < bootAttempts) delay(bootPause)
+            }
+            while (true) {
+                delay(every)
+                catalog.refresh()
+            }
         } finally {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { catalog.close() }
+            withContext(NonCancellable) { catalog.close() }
         }
     }
 }

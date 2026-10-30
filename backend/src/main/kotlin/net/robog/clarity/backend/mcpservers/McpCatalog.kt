@@ -123,9 +123,9 @@ fun renderMcpIndex(servers: List<McpServer>, maxDescription: Int = 120): String?
 }
 
 /**
- * The person's third-party servers: the host's listing (fetched at most every [refreshEvery]; the
- * last good one is kept while the host is unreachable), the tool modes from Postgres, and a memory
- * collection per server, created the first time it is listed.
+ * The person's third-party servers: the host's listing (kept fresh by [McpRefresher]; readers only
+ * see the cache, and the last good listing stays while the host is unreachable), the tool modes
+ * from Postgres, and a memory collection per server, created the first time it is listed.
  */
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
@@ -134,39 +134,49 @@ class McpCatalog(
     private val store: McpStore,
     private val collections: CollectionStore,
     private val clock: Clock,
-    private val refreshEvery: Duration = 60.seconds,
+    /** Tests only: every read lists the host first. In production [McpRefresher] keeps the listing fresh. */
+    private val refreshOnRead: Boolean = false,
 ) : McpIndex {
     @Inject
     constructor(config: AgentConfig, store: McpStore, collections: CollectionStore, clock: Clock) :
         this(McpHost.of(config.mcpHost), store, collections, clock)
 
-    private val lock = Mutex()
-    private var listing: List<HostServer>? = null
-    private var triedAt: Instant? = null
+    private val refreshing = Mutex()
+
+    @Volatile private var listing: List<HostServer>? = null
     private var failing = false
 
     val configured: Boolean get() = host.configured
 
-    /** The host's servers, or null when it has not been reachable yet. */
-    suspend fun hostServers(): List<HostServer>? = lock.withLock {
-        val now = clock.now()
-        val last = triedAt
-        if (host.configured && (last == null || now - last >= refreshEvery)) {
-            triedAt = now
+    /**
+     * Lists the host once and keeps the result (the last good listing stays while the host is
+     * unreachable); true when it answered. Only [McpRefresher] calls it in production.
+     */
+    suspend fun refresh(): Boolean {
+        if (!host.configured) return true
+        return refreshing.withLock {
             try {
                 val fresh = host.servers()
-                ensureCollections(fresh, now)
+                ensureCollections(fresh, clock.now())
                 listing = fresh
                 if (failing) log.info { "MCP host reachable again: ${fresh.size} servers" }
                 failing = false
+                true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (!failing) log.warn { "MCP host unreachable, keeping the last listing: ${e.message}" }
                 failing = true
+                false
             }
         }
-        if (host.configured) listing else emptyList()
+    }
+
+    /** The last listing, or null when the host has not answered yet. Never waits on the host. */
+    suspend fun hostServers(): List<HostServer>? {
+        if (!host.configured) return emptyList()
+        if (refreshOnRead) refresh()
+        return listing
     }
 
     /** Every server with its tools' modes; empty when there are none or the host was never reachable. */
