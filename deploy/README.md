@@ -138,7 +138,7 @@ everything else works as before.
   sees only its own token, in its own environment; it cannot read another server's files or environment, the
   host's keys or its state. The supervisor runs as root inside the rootless container with only `SETUID`, `SETGID`,
   `CHOWN` and `KILL`; children start through `setpriv --no-new-privs --clear-groups` with no capabilities.
-- **Egress per server**: `mcp-host` is on `tools` (the backend reaches it), `ingest` (it is a connector) and
+- **Egress per server**: `mcp-host` is on `mcphost` (shared only with the backend), `ingest` (it is a connector) and
   `mcphost-proxy`, never `db` or your LAN. Each server reaches the internet only through `egress`, logged in as its
   own proxy user, and only to the hosts in its "Hosts it may reach" list (installs get the registry's hosts for the
   install only). The logins (SHA-256 only) and allow-lists are files in the `mcphost-egress` volume, which `egress`
@@ -311,12 +311,13 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 
 ## Security model
 
-- Networks: `db`, `ingest`, `tools`, `render`, `proxy`, `browser-proxy`, `backend-proxy`, `sandbox-proxy`, `mcphost-proxy` are `internal` (no route off the
+- Networks: `db`, `ingest`, `tools`, `mcphost`, `render`, `proxy`, `browser-proxy`, `backend-proxy`, `sandbox-proxy`, `mcphost-proxy` are `internal` (no route off the
   host). `render` joins only the backend and the report renderer, which has no other network. The browser and the backend reach the internet only through the `egress` proxy; the other services that
   need it (caddy, connectors) get their own egress network. Postgres is only on `db`; connectors only on `ingest` plus
   their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` and `sandbox-proxy` (its door to `egress`).
-  `mcp-host` sits on `tools`, `ingest` and `mcphost-proxy`; its servers can open connections on those networks
-  (the backend, the sandbox and the browser listen there), but every one of those needs a key they do not have.
+  `mcp-host` sits on `mcphost` (only the backend is there), `ingest` and `mcphost-proxy`, so its servers cannot reach
+  the sandbox or the browser. They can open connections to the backend's API and ingest ports, which need a device or
+  connector key they do not have.
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and
   their data volume), `cap_drop: ALL` and `no-new-privileges`. Two exceptions keep one capability set each:
   `caddy` (`NET_BIND_SERVICE`) and `mcp-host` (root in its user namespace with `SETUID`, `SETGID`, `CHOWN`, `KILL`,

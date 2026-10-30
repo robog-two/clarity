@@ -75,7 +75,7 @@ to give it (read-only scopes when the service has them).
 
 ## Contract 2: host ↔ backend
 
-The host listens on `:8950` on the internal `tools` network. Every request needs
+The host listens on `:8950` on the internal `mcphost` network (backend and host only). Every request needs
 `Authorization: Bearer <key>` (`/run/secrets/mcphost_key`, created by `init-secrets.sh`). Compare in
 constant time. The backend reads `CLARITY_MCP_HOST` = `http://mcp-host:8950;keyFile=/run/secrets/mcphost_key`
 (unset means no third-party servers; everything else keeps working).
@@ -109,7 +109,7 @@ constant time. The backend reads `CLARITY_MCP_HOST` = `http://mcp-host:8950;keyF
   `NODE_USE_ENV_PROXY=1` and use a Node version that honours it.
 - **Pinned installs.** Exact versions only; npm always with `--ignore-scripts`; PyPI into a per-server venv with `uv` or `pip` pinned;
   release binaries checked against `sha256`. Nothing updates on its own; changing `version` reinstalls.
-- **No other reach.** The host is on `tools` (backend reaches it), `ingest` (connector-sdk) and
+- **No other reach.** The host is on `mcphost` (only the backend is there), `ingest` (connector-sdk) and
   `mcphost-proxy`. Not on `db`, never the LAN.
 - **Container limits.** Read-only root filesystem, tmpfs for /tmp, a `/data` volume,
   `mem_limit: 640m` for the whole container, `pids_limit`. The supervisor's JVM is tuned small

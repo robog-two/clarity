@@ -137,7 +137,7 @@ expect_has "Alpha cannot reach a private address" "403" "$(call smokea01 fetch '
 expect_has "Alpha cannot reach a name resolving to a private address" "403" "$(call smokea01 fetch '{"url":"https://private.test/"}')"
 expect_has "Alpha cannot reach the host gateway" "403" "$(call smokea01 fetch '{"url":"http://host.containers.internal/"}')"
 expect_has "Alpha has no route around the proxy" "error" "$(call smokea01 direct '{"host":"1.1.1.1","port":443}')"
-# (mcp-host shares the `tools` and `ingest` networks with the backend, so a server can open a
+# (mcp-host shares the `ingest` network (and in production `mcphost`) with the backend, so a server can open a
 # connection to the backend's port; everything there needs a key it does not have.)
 echo "note a server's direct connection to the backend's port: $(call smokea01 direct '{"host":"backend","port":8080}')"
 

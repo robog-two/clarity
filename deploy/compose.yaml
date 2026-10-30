@@ -150,7 +150,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    networks: [db, ingest, tools, proxy, backend-proxy, render]
+    networks: [db, ingest, tools, mcphost, proxy, backend-proxy, render]
     mem_limit: 1g
     cpus: 2.0
 
@@ -341,7 +341,7 @@ services:
     <<: *hardened
     profiles: [mcp]
     # mcp-host (computers/mcphost): installs and runs the MCP servers added in the app, each as its
-    # own uid with its own home, and serves each to the backend at /s/{id}/mcp on the internal `tools`
+    # own uid with its own home, and serves each to the backend at /s/{id}/mcp on the internal `mcphost`
     # network. Servers reach the internet only through the egress proxy (`mcphost-proxy`), each with
     # its own login and only the hosts listed for it. Not on `db`, never the LAN.
     image: ghcr.io/robog-two/clarity-mcphost:${CLARITY_TAG:-latest}
@@ -384,7 +384,8 @@ services:
     depends_on:
       backend: { condition: service_healthy }
       egress: { condition: service_healthy }
-    networks: [tools, ingest, mcphost-proxy]
+    # Its own network with the backend (not `tools`), so a third-party server cannot reach the sandbox or browser.
+    networks: [mcphost, ingest, mcphost-proxy]
     mem_limit: 640m
     cpus: 1.5
     pids_limit: 512
@@ -470,6 +471,7 @@ networks:
   db:       { internal: true }   # postgres <-> backend
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
+  mcphost:  { internal: true }   # backend <-> mcp-host only
   render:   { internal: true }   # backend <-> render (pandoc); the renderer reaches nothing else
   proxy:    { internal: true }   # caddy <-> backend
   # The proxy's client networks: browser, sandbox, backend and mcp-host, each <-> egress.
