@@ -22,6 +22,8 @@ import net.robog.clarity.app.ui.onboarding.ConnectorSetupScreen
 import net.robog.clarity.app.ui.onboarding.ConnectorSetupViewModel
 import net.robog.clarity.app.ui.held.DraftReviewScreen
 import net.robog.clarity.app.ui.main.MainScaffold
+import net.robog.clarity.app.ui.mcp.MCP_HOST
+import net.robog.clarity.app.ui.mcp.McpScreen
 import net.robog.clarity.app.ui.onboarding.OnboardingFlow
 import net.robog.clarity.app.ui.path.RunPathScreen
 import net.robog.clarity.app.ui.path.TaskThreadScreen
@@ -96,6 +98,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onOpenHeldItem = { push(DraftReview(it.value)) },
                     onOpenConstitution = { push(ConstitutionView) },
                     onOpenConnector = { push(ConnectorView(it)) },
+                    onOpenMcp = { push(McpServersView) },
                     onOpenReport = { id, back -> push(ReportView(id, back)) },
                 )
             }
@@ -117,13 +120,21 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
             }
             entry<ConnectorView> { key ->
                 val vm: ConnectorSetupViewModel = metroViewModel()
-                LaunchedEffect(key.connectorId) { vm.openById(key.connectorId) }
+                LaunchedEffect(key) { vm.openById(key.connectorId, key.direct) }
                 ConnectorSetupScreen(
                     viewModel = vm,
                     onSaved = { backStack.removeLastOrNull() },
                     onBack = { backStack.removeLastOrNull() },
                     step = null,
                     backLabel = "← settings",
+                )
+            }
+            entry<McpServersView> {
+                McpScreen(
+                    viewModel = metroViewModel(),
+                    onBack = { backStack.removeLastOrNull() },
+                    onAdd = { s -> push(ConnectorView(MCP_HOST, add = true, preset = s?.preset, label = s?.label)) },
+                    onEdit = { id -> push(ConnectorView(MCP_HOST, itemId = id)) },
                 )
             }
             entry<TaskThread> { key ->
