@@ -239,4 +239,21 @@ class McpPureTest : FunSpec({
         task shouldContain SWEEP_RECIPE
         task shouldContain "set_scratch"
     }
+
+    test("a tainted call to the person's own server is held with a reason that fits it; a browser step keeps the general one") {
+        val call = ProposedAction.ExternalTool("r:mcp:1", "GitHub: create_issue (title: x)", "mcp:gh", "create_issue", buildJsonObject { put("title", "x") })
+        val tainted = net.robog.clarity.shared.governance.Provenance("r", untrustedInput = true, requestedByUser = false)
+        fun constitution(vararg tiers: Pair<ActionKind, AutonomyTier>) =
+            Constitution(version = 1, lines = emptyList(), autonomy = tiers.toMap(), updatedAt = Instant.parse("2026-10-30T07:00:00Z"))
+        val verdict = net.robog.clarity.backend.governance.deterministicVerdict(call, constitution(), tainted)
+        verdict.decision shouldBe Decision.ASK
+        verdict.rationale shouldBe "I want to use create_issue on GitHub. It changes something there, and what I'm sending was shaped by outside content (results from GitHub or a web page)."
+        // another reason that matters is kept
+        net.robog.clarity.backend.governance.deterministicVerdict(call, constitution(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE), tainted)
+            .rationale shouldContain "I'm also asking because you said \"external tool\" is never done alone."
+        val step = call.copy(server = "browser", summary = "Click Submit")
+        net.robog.clarity.backend.governance.deterministicVerdict(step, constitution(), tainted).rationale shouldContain "reaches other people"
+        // not tainted: the usual ask-first wording
+        net.robog.clarity.backend.governance.deterministicVerdict(call, constitution(), tainted.copy(untrustedInput = false)).rationale shouldContain "you want to be asked"
+    }
 })

@@ -131,7 +131,7 @@ fun deterministicVerdict(
             if (kind in VAULT_KINDS) "$kindName always needs you on your phone (with your fingerprint or face)"
             else "you said \"$kindName\" is never done alone",
         )
-        AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, "you want to be asked before I do \"$kindName\"")
+        AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, askFirstReason(kindName))
         AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you let me do \"$kindName\" and tell you after")
     }
     val recipients = recipientCount(action)
@@ -139,9 +139,9 @@ fun deterministicVerdict(
     if (action is ProposedAction.MoveEvent && action.notifyAttendees) {
         findings += Finding(Decision.ASK, "it changes an event other people are on and tells them")
     }
-    if (provenance.untrustedInput && isExternal(action)) {
-        findings += Finding(Decision.ASK, "it was shaped by outside content (a mail, page or document) and reaches other people")
-    }
+    val taint = if (provenance.untrustedInput && isExternal(action)) {
+        Finding(Decision.ASK, "it was shaped by outside content (a mail, page or document) and reaches other people").also { findings += it }
+    } else null
     protectedOverlapOf(action, constitution, zone)?.let { block ->
         findings += Finding(Decision.ASK, "it lands in your protected time (${block.label})")
     }
@@ -155,8 +155,23 @@ fun deterministicVerdict(
         return GuardVerdict(Decision.ALLOW, emptyList(), "Within what you let me do on my own.")
     }
     val lead = if (strictest == Decision.DENY) "Blocked because " else "I'm asking because "
+    if (strictest == Decision.ASK && taint != null && action is ProposedAction.ExternalTool && isMcpCall(action)) {
+        // A call to the person's own server reaches no one else: say what the taint means there.
+        val others = findings.filter { it.decision == Decision.ASK && it !== taint && it.reason != askFirstReason(kindName) }
+        val also = if (others.isEmpty()) "" else " I'm also asking because ${others.joinToString("; ") { it.reason }}."
+        return GuardVerdict(Decision.ASK, emptyList<LineId>(), mcpTaintRationale(action) + also)
+    }
     val reasons = findings.filter { it.decision == strictest }.joinToString("; ") { it.reason }
     return GuardVerdict(strictest, emptyList<LineId>(), "$lead$reasons.")
+}
+
+private fun askFirstReason(kindName: String) = "you want to be asked before I do \"$kindName\""
+
+/** Pure: why a call to one of the person's MCP servers is held when the run read outside content. */
+fun mcpTaintRationale(action: ProposedAction.ExternalTool): String {
+    val label = action.summary.substringBefore(':').trim().ifEmpty { action.server.removePrefix(MCP_SERVER_PREFIX) }
+    return "I want to use ${action.tool} on $label. It changes something there, and what I'm sending was shaped by outside content " +
+        "(results from $label or a web page)."
 }
 
 /**

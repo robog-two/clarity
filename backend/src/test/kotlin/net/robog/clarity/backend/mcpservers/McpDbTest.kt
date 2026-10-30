@@ -266,6 +266,18 @@ class McpDbTest : FunSpec({
         r2.mcpCatalog.servers().single().tools.single().mode shouldBe McpToolMode.ASK
     }
 
+    test("a call held because the run read outside content says so in terms of the person's own server") {
+        val r = rig(FakeMcpHost(listOf(github())))
+        r.letToolsRunAlone()
+        val scope = helperScope()
+        val tools = r.toolbox.helperTools(scope, null, listOf("gh")).tools.tools
+        ok(tools.first { it.name == "mcp_github__list_issues" }.call("repo" to "clarity"))
+        scope.untrusted shouldBe true
+        ok(tools.first { it.name == "mcp_github__create_issue" }.call("title" to "From the list")) shouldContain "has not answered"
+        r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.rationale shouldBe
+            "I want to use create_issue on GitHub. It changes something there, and what I'm sending was shaped by outside content (results from GitHub or a web page)."
+    }
+
     test("an ask tool is held even when the person's rules would allow it; it runs once on approval, and the next call asks again") {
         val host = FakeMcpHost(listOf(github()))
         host.answer = { ToolResult.Ok("created #7") }
