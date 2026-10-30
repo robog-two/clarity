@@ -30,5 +30,6 @@ include(
     ":connectors:mail",
     ":connectors:dav",
     ":computers:sandbox",
+    ":computers:mcphost",
 )
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
