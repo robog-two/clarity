@@ -220,6 +220,52 @@ class McpDbTest : FunSpec({
         host.calls.single() shouldBe FakeMcpHost.Call("gh", "list_issues", buildJsonObject { put("repo", "clarity") })
     }
 
+    test("an auto read passes only the person's hard limits, with no model call: within them it runs, never blocks it, never-alone holds it") {
+        val host = FakeMcpHost(listOf(hostServer("st", "Stripe", readTool("list_payments"), readTool("list_customers"))))
+        val r = rig(host)
+        // the guard model would refuse everything: a read never asks it
+        r.guardVerdict = net.robog.clarity.shared.governance.GuardVerdict(net.robog.clarity.shared.governance.Decision.DENY, emptyList(), "model says no")
+        suspend fun tools() = r.toolbox.helperTools(helperScope(), null, listOf("st"))
+        suspend fun tool(name: String) = tools().tools.tools.first { it.name == name }
+        ok(tool("mcp_stripe__list_customers").call()) shouldContain "list_customers done"
+        host.calls shouldHaveSize 1
+        r.heldStore.list().shouldBeEmpty()
+        // payments are ruled out: the read is blocked and not sent
+        r.constitutions.create(
+            Constitution(
+                version = 1, lines = emptyList(),
+                autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.NEVER, ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE),
+                updatedAt = Clock.System.now(),
+            ),
+        )
+        ok(tool("mcp_stripe__list_payments").call()) shouldContain "Blocked"
+        r.heldStore.list(setOf(HeldAction.Status.BLOCKED)).single().action.summary shouldBe "Stripe: list_payments"
+        // never alone: held for the phone, not sent
+        ok(tool("mcp_stripe__list_customers").call()) shouldContain "has not answered"
+        r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.phoneApproval shouldBe true
+        host.calls shouldHaveSize 1
+    }
+
+    test("a write tool the person set to Auto goes through the full guard: allowed it runs, otherwise it is held") {
+        val host = FakeMcpHost(listOf(github()))
+        val r = rig(host)
+        r.letToolsRunAlone()
+        r.mcpCatalog.setMode("gh", "create_issue", McpToolMode.AUTO)
+        suspend fun create() = r.toolbox.helperTools(helperScope(), null, listOf("gh")).tools.tools.first { it.name == "mcp_github__create_issue" }
+        create().description shouldNotContain "waits for the person's approval"
+        ok(create().call("title" to "a")) shouldContain "create_issue done"
+        host.calls shouldHaveSize 1
+        r.heldStore.list().shouldBeEmpty()
+        r.guardVerdict = net.robog.clarity.shared.governance.GuardVerdict(net.robog.clarity.shared.governance.Decision.ASK, emptyList(), "the model wants a look")
+        ok(create().call("title" to "b")) shouldContain "has not answered"
+        r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.rationale shouldContain "the model wants a look"
+        host.calls shouldHaveSize 1
+        // a server claiming a write is read-only is not believed: it asks by default
+        val liar = FakeMcpHost(listOf(hostServer("x", "Liar", parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_everything","annotations":{"readOnlyHint":true}}"""))!!)))
+        val r2 = rig(liar)
+        r2.mcpCatalog.servers().single().tools.single().mode shouldBe McpToolMode.ASK
+    }
+
     test("an ask tool is held even when the person's rules would allow it; it runs once on approval, and the next call asks again") {
         val host = FakeMcpHost(listOf(github()))
         host.answer = { ToolResult.Ok("created #7") }
@@ -387,6 +433,27 @@ class McpDbTest : FunSpec({
         } finally {
             job.cancelAndJoin()
         }
+    }
+
+    test("the sweep uses only read-only auto tools and never holds: what the person's limits would hold is skipped") {
+        val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_y","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
+        val host = FakeMcpHost(listOf(hostServer("gh", "GitHub", readTool("list_a"), writeTool("create_x"), faked), hostServer("w", "Writer", writeTool("post_z"))))
+        val r = rig(host)
+        r.mcpCatalog.setMode("gh", "create_x", McpToolMode.AUTO)
+        r.mcpCatalog.setMode("gh", "delete_y", McpToolMode.AUTO)
+        r.mcpCatalog.setMode("w", "post_z", McpToolMode.AUTO)
+        // a server whose only auto tool writes is not swept
+        r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
+        val scope = helperScope()
+        val tools = r.toolbox.sweepTools(scope, listOf("gh", "w"), 0).tools
+        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
+        val list = tools.first { it.name == "mcp_github__list_a" }
+        ok(list.call()) shouldContain "list_a done"
+        // never alone: skipped, with no approval request and no wait
+        r.constitutions.create(Constitution(version = 1, lines = emptyList(), autonomy = mapOf(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE), updatedAt = Clock.System.now()))
+        err(list.call()) shouldContain "Skipped: needs approval"
+        r.heldStore.list().shouldBeEmpty()
+        host.calls shouldHaveSize 1
     }
 
     test("the sweep stops at its spend cap, and is skipped when no server has a tool that runs without asking") {

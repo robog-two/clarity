@@ -22,6 +22,7 @@ import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.governance.ActivityEntry
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.Decision
+import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
@@ -137,6 +138,21 @@ class ActionGate(
         val constitution = constitutions.current() ?: emptyConstitution(clock.now())
         val checked = guard.check(action, constitution, provenance, agentReason = agentView, zone = zone.zone())
         val verdict = if (alwaysAsk != null && checked.decision == Decision.ALLOW) checked.copy(decision = Decision.ASK, rationale = alwaysAsk) else checked
+        return holdLocal(action, verdict, agentView, context, urgency)
+    }
+
+    /** The person's hard limits alone for [action] ([hardLineVerdict]): no model call. */
+    suspend fun hardLines(action: ProposedAction): GuardVerdict =
+        hardLineVerdict(action, constitutions.current() ?: emptyConstitution(clock.now()))
+
+    /** Acts on a [verdict] already reached for a local effect: ALLOW clears it, ASK holds it, DENY blocks it. */
+    suspend fun holdLocal(
+        action: ProposedAction,
+        verdict: net.robog.clarity.shared.governance.GuardVerdict,
+        agentView: String,
+        context: List<ContextItem>,
+        urgency: Urgency,
+    ): LocalOutcome {
         if (verdict.decision == Decision.ALLOW) return LocalOutcome.Cleared("Allowed alone: ${action.summary}.")
         val status = if (verdict.decision == Decision.DENY) HeldAction.Status.BLOCKED else HeldAction.Status.HELD
         val stored = held.insert(action, verdict, agentView, context, urgency, status)

@@ -56,6 +56,8 @@ import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.ContextItem
+import net.robog.clarity.shared.governance.Decision
+import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.ProposedAction
@@ -123,6 +125,18 @@ fun quotedResult(label: String, result: ToolResult): ToolResult = when (result) 
     is ToolResult.Error -> ToolResult.Error(quoteUntrusted(UntrustedPart("mcp:$label", result.message)))
 }
 
+/** How a call is checked before it runs. */
+private enum class McpGate {
+    /** An `ask` tool: always held for the person. */
+    ALWAYS_ASK,
+
+    /** An `auto` tool that may change things: the full guard decides. */
+    GUARD,
+
+    /** An `auto` read: only the person's hard limits ([net.robog.clarity.backend.governance.hardLineVerdict]). */
+    HARD_LINES,
+}
+
 /** What came of proposing a held call. */
 private sealed interface Proposal {
     /** An earlier yes to exactly this call, now used up: run it. */
@@ -160,12 +174,35 @@ class McpCalls(
 
     fun isAwaited(id: HeldActionId): Boolean = id.value in awaited
 
-    /** Runs an `auto` tool. */
+    /** Sends a call to the server, ungated: only once governance has let it through. */
     suspend fun run(server: McpServer, tool: String, input: JsonObject): ToolResult =
         quotedResult(server.label, catalog.call(server.id, tool, input))
 
     /** Runs an `ask` tool: held for the person, then run once on their yes. */
-    suspend fun ask(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject): ToolResult {
+    suspend fun ask(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject): ToolResult =
+        gated(scope, server, tool, input, McpGate.ALWAYS_ASK)
+
+    /**
+     * Runs an `auto` tool. One the server marks read-only (and whose name does not look like a write)
+     * passes the person's hard limits only, without a model call; any other (the person set a write
+     * tool to Auto) goes through the full guard. Whatever they do not allow is held or blocked like
+     * an `ask` call.
+     */
+    suspend fun auto(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject): ToolResult =
+        gated(scope, server, tool, input, if (tool.readOnly) McpGate.HARD_LINES else McpGate.GUARD)
+
+    /**
+     * A sweep read: runs within the person's hard limits; anything they would hold or block is
+     * skipped with an error, so the sweep never asks the person or waits.
+     */
+    suspend fun sweep(server: McpServer, tool: HostTool, input: JsonObject): ToolResult {
+        val action = ProposedAction.ExternalTool("sweep", mcpCallSummary(server.label, tool.name, input), MCP_SERVER_PREFIX + server.id, tool.name, input)
+        val limits = gate.hardLines(action)
+        return if (limits.decision == Decision.ALLOW) run(server, tool.name, input)
+        else ToolResult.Error("Skipped: needs approval (${limits.rationale}) Leave it out of the sweep.")
+    }
+
+    private suspend fun gated(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject, how: McpGate): ToolResult {
         if (scope.isLead) return ToolResult.Error("The lead never calls MCP tools: delegate to a helper with servers=[\"${server.label}\"].")
         val action = ProposedAction.ExternalTool(
             idempotencyKey = "${scope.runId}$KEY_INFIX${Uuid.random()}",
@@ -174,14 +211,24 @@ class McpCalls(
             tool = tool.name,
             input = input,
         )
-        return when (val proposal = proposing.withLock { propose(scope, server, tool, action) }) {
+        // A read within the person's limits runs at once, with no lookup of earlier proposals.
+        val limits = if (how == McpGate.HARD_LINES) gate.hardLines(action) else null
+        if (limits?.decision == Decision.ALLOW) return run(server, tool.name, input)
+        return when (val proposal = proposing.withLock { propose(scope, server, tool, action, how, limits) }) {
             Proposal.Run -> run(server, tool.name, input)
             is Proposal.Stop -> ToolResult.Ok(proposal.text)
             is Proposal.Wait -> await(scope, server, proposal)
         }
     }
 
-    private suspend fun propose(scope: RunScope, server: McpServer, tool: HostTool, action: ProposedAction.ExternalTool): Proposal {
+    private suspend fun propose(
+        scope: RunScope,
+        server: McpServer,
+        tool: HostTool,
+        action: ProposedAction.ExternalTool,
+        how: McpGate,
+        limits: GuardVerdict?,
+    ): Proposal {
         val same = { a: ProposedAction ->
             a is ProposedAction.ExternalTool && a.server == action.server && a.tool == action.tool && a.input == action.input &&
                 runOfMcpCall(a.idempotencyKey) == scope.runId
@@ -202,17 +249,17 @@ class McpCalls(
             ContextItem("tool", listOfNotNull(tool.title ?: tool.name, firstSentence(tool.description).ifEmpty { null }).joinToString(" · ")),
             ContextItem("input", ClarityJson.encodeToString(JsonObject.serializer(), action.input).let { if (it.length > 600) it.take(599) + "…" else it }),
         )
-        return when (
-            val outcome = gate.gateLocal(
-                action,
-                agentView = "I want to call ${tool.name} on ${server.label}.",
-                context = context,
-                provenance = scope.provenance(),
-                urgency = Urgency.URGENT,
+        val agentView = "I want to call ${tool.name} on ${server.label}."
+        val outcome = when (how) {
+            McpGate.ALWAYS_ASK -> gate.gateLocal(
+                action, agentView, context, scope.provenance(), Urgency.URGENT,
                 alwaysAsk = "I'm asking because you approve every call of ${tool.name} on ${server.label} (Settings → MCP servers can set it to Auto).",
             )
-        ) {
-            // Never alone for an ask tool; kept for completeness.
+            McpGate.GUARD -> gate.gateLocal(action, agentView, context, scope.provenance(), Urgency.URGENT)
+            McpGate.HARD_LINES -> gate.holdLocal(action, requireNotNull(limits), agentView, context, Urgency.URGENT)
+        }
+        return when (outcome) {
+            // An ask call is never cleared alone; a guarded auto call is when the guard allows it.
             is LocalOutcome.Cleared -> Proposal.Run
             is LocalOutcome.Held -> Proposal.Wait(outcome.heldId, outcome.text)
             is LocalOutcome.Blocked -> Proposal.Stop("${outcome.text} Do not retry; report what you could not do.")
@@ -352,6 +399,9 @@ class McpApprovals(
     }
 }
 
+/** Pure: whether the sweep may use [view]: `auto` and read-only (a write-named tool never is, [looksLikeWrite]). */
+fun sweepRead(view: McpToolView): Boolean = view.mode == McpToolMode.AUTO && view.tool.readOnly
+
 /** A tool-call allowance shared by a run's tools. */
 class CallBudget(private val max: Int, used: Int = 0) {
     private val count = AtomicInteger(used)
@@ -405,12 +455,15 @@ class McpToolKit(
     suspend fun resolve(labels: List<String>): Pair<List<McpServer>, String?> = catalog.resolve(labels)
 
     /** Enabled servers that have a tool which runs without asking (what the sweep can use). */
-    suspend fun sweepable(): List<McpServer> = catalog.servers().filter { s -> s.enabled && s.tools.any { it.mode == McpToolMode.AUTO } }
+    suspend fun sweepable(): List<McpServer> = catalog.servers().filter { s -> s.enabled && s.tools.any(::sweepRead) }
 
-    /** The tools of [servers] for [scope]: `off` never, `ask` only when not [autoOnly]. */
-    fun serverTools(scope: RunScope, servers: List<McpServer>, autoOnly: Boolean = false): List<Tool> =
+    /**
+     * The tools of [servers] for [scope], `off` never. For the [sweep] only read-only `auto` tools,
+     * which never hold: what the person's limits would hold is skipped instead.
+     */
+    fun serverTools(scope: RunScope, servers: List<McpServer>, sweep: Boolean = false): List<Tool> =
         servers.flatMap { server ->
-            server.usable.filter { !autoOnly || it.mode == McpToolMode.AUTO }.map { ServerTool(scope, server, it) }
+            server.usable.filter { !sweep || sweepRead(it) }.map { ServerTool(scope, server, it, sweep) }
         }.distinctBy { it.name }
 
     /** What a helper given [servers] keeps notes with: reading, search, and `save_note` limited to the servers' collections. */
@@ -424,7 +477,7 @@ class McpToolKit(
     fun sweepTools(scope: RunScope, servers: List<McpServer>, used: Int): List<Tool> {
         val budget = CallBudget(MCP_SWEEP_MAX_TOOL_CALLS, used)
         val spent = "You have used your $MCP_SWEEP_MAX_TOOL_CALLS tool calls. Write what you found now with set_scratch, then finish."
-        val reads = serverTools(scope, servers, autoOnly = true) + listOf(
+        val reads = serverTools(scope, servers, sweep = true) + listOf(
             memoryTools.openCollection(),
             memoryTools.saveNoteIn(servers.associate { collectionOf(it) to serverCollectionDescription(it.label) }),
         )
@@ -499,7 +552,12 @@ class McpToolKit(
 
     private fun collectionOf(server: McpServer): String = server.collection ?: serverCollectionName(server.host)
 
-    private inner class ServerTool(private val scope: RunScope, private val server: McpServer, private val view: McpToolView) : Tool {
+    private inner class ServerTool(
+        private val scope: RunScope,
+        private val server: McpServer,
+        private val view: McpToolView,
+        private val sweep: Boolean,
+    ) : Tool {
         private val ask = view.mode == McpToolMode.ASK
         override val name = mcpToolName(server.label, view.tool.name)
         override val description: String = buildString {
@@ -512,7 +570,11 @@ class McpToolKit(
         override val effect = if (view.tool.readOnly) ToolEffect.READ else ToolEffect.EXTERNAL
 
         override suspend fun invoke(input: JsonObject): ToolResult {
-            val result = if (ask) calls.ask(scope, server, view.tool, input) else calls.run(server, view.tool.name, input)
+            val result = when {
+                sweep -> calls.sweep(server, view.tool, input)
+                ask -> calls.ask(scope, server, view.tool, input)
+                else -> calls.auto(scope, server, view.tool, input)
+            }
             // Third-party output, like a web page.
             scope.taint()
             return result

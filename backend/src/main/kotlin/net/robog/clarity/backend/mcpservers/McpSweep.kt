@@ -16,7 +16,6 @@ import net.robog.clarity.backend.scheduler.Schedule
 import net.robog.clarity.backend.scheduler.ScheduledJob
 import net.robog.clarity.backend.sessions.localDate
 import net.robog.clarity.backend.sessions.nextSweepAfter
-import net.robog.clarity.shared.mcp.McpToolMode
 import net.robog.clarity.shared.session.Settings
 
 private val log = KotlinLogging.logger {}
@@ -28,7 +27,7 @@ const val SWEEP_RECIPE = "Sweep recipe:"
 fun sweepTask(servers: List<McpServer>, from: LocalDate): String {
     val until = from.plus(DatePeriod(days = 7))
     val list = servers.sortedBy { it.label.lowercase() }.joinToString("; ") { s ->
-        val reads = s.tools.count { it.mode == McpToolMode.AUTO }
+        val reads = s.tools.count(::sweepRead)
         "${s.label} (notes: collection ${s.collection ?: serverCollectionName(s.host)}; $reads read tools)"
     }
     return "Find what is coming up for the person from $from to $until in their MCP servers: $list. " +
