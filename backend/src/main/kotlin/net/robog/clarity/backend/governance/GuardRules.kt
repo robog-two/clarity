@@ -159,6 +159,27 @@ fun deterministicVerdict(
     return GuardVerdict(strictest, emptyList<LineId>(), "$lead$reasons.")
 }
 
+/**
+ * Pure: the person's hard limits alone, for a call that otherwise runs without asking (an MCP tool
+ * the server marks read-only): a kind they ruled out ("never", e.g. a payment) -> DENY; a kind they
+ * set to "never alone" -> ASK on the phone; a `neverStore` topic -> ASK. "Ask first" (the default)
+ * and untrusted provenance do not hold it: reading is what the tool is for. No model call.
+ */
+fun hardLineVerdict(action: ProposedAction, constitution: Constitution): GuardVerdict {
+    val kind = effectiveKind(action)
+    val name = kind.label()
+    return when (tierOf(kind, constitution)) {
+        AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you said I never do \"$name\".")
+        AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "I'm asking because you said \"$name\" is never done alone.", phoneApproval = true)
+        else -> {
+            val text = textOf(action)
+            constitution.neverStore.firstOrNull { it.isNotBlank() && text.contains(it.trim().lowercase()) }
+                ?.let { GuardVerdict(Decision.ASK, emptyList(), "I'm asking because it mentions \"$it\", which you asked me never to store.") }
+                ?: GuardVerdict(Decision.ALLOW, emptyList(), "A read; none of your limits applies.")
+        }
+    }
+}
+
 private fun protectedOverlapOf(action: ProposedAction, constitution: Constitution, zone: TimeZone) =
     when (action) {
         // a private hold without attendees *protects* time; anything else intrudes on it

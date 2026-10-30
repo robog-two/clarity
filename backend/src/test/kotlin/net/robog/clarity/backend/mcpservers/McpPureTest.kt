@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.mcpservers
 
+import io.kotest.assertions.withClue
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
@@ -21,6 +22,7 @@ import net.robog.clarity.backend.agent.inboxFor
 import net.robog.clarity.backend.config.McpHostConfig
 import net.robog.clarity.backend.config.parseMcpHost
 import net.robog.clarity.backend.governance.GovernanceEvent
+import net.robog.clarity.backend.governance.hardLineVerdict
 import net.robog.clarity.backend.governance.isLocalAction
 import net.robog.clarity.backend.governance.isMcpCall
 import net.robog.clarity.backend.scheduler.memoryGcTask
@@ -29,6 +31,9 @@ import net.robog.clarity.backend.sessions.nextSweepAfter
 import net.robog.clarity.backend.sessions.prepInstruction
 import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.governance.ActionKind
+import net.robog.clarity.shared.governance.AutonomyTier
+import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.Decision
 import net.robog.clarity.shared.governance.GuardVerdict
 import net.robog.clarity.shared.governance.HeldAction
@@ -53,6 +58,36 @@ fun readTool(name: String, description: String = "Reads $name.") = HostTool(name
 fun writeTool(name: String, description: String = "Changes $name.") = HostTool(name, description = description)
 
 class McpPureTest : FunSpec({
+    test("a tool whose name has a write verb as a word is never believed read-only") {
+        listOf("create_issue", "addLabel", "send-message", "MergePullRequest", "issue_comment", "pay", "set_status", "upload_file")
+            .forEach { withClue(it) { looksLikeWrite(it) shouldBe true } }
+        listOf("list_issues", "listIssues", "address_book", "get_settings", "search_posts", "read_file", "closest_store", "added_since")
+            .forEach { withClue(it) { looksLikeWrite(it) shouldBe false } }
+        toolNameWords("getHTTPStatus_for-repo") shouldContainExactly listOf("get", "http", "status", "for", "repo")
+        val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_repo","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
+        faked.readOnly shouldBe false
+        faked.destructive shouldBe true
+        defaultMode(faked) shouldBe McpToolMode.ASK
+        toolStatusOf(withModes(listOf(faked), emptyMap()).single()).readOnly shouldBe false
+        parseHostTool(ClarityJson.parseToJsonElement("""{"name":"list_repos","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull().readOnly shouldBe true
+    }
+
+    test("hard limits alone: never blocks, never-alone asks on the phone, a never-store topic asks, ask-first does not hold a read") {
+        val read = ProposedAction.ExternalTool("r:mcp:1", "GitHub: list_issues (repo: clarity)", "mcp:gh", "list_issues", buildJsonObject { put("repo", "clarity") })
+        fun constitution(vararg tiers: Pair<ActionKind, AutonomyTier>, neverStore: List<String> = emptyList()) =
+            Constitution(version = 1, lines = emptyList(), autonomy = tiers.toMap(), neverStore = neverStore, updatedAt = Instant.parse("2026-10-30T07:00:00Z"))
+        hardLineVerdict(read, constitution()).decision shouldBe Decision.ALLOW
+        hardLineVerdict(read, constitution(ActionKind.EXTERNAL_TOOL to AutonomyTier.ASK_FIRST)).decision shouldBe Decision.ALLOW
+        hardLineVerdict(read, constitution(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER)).decision shouldBe Decision.DENY
+        hardLineVerdict(read, constitution(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE)).let {
+            it.decision shouldBe Decision.ASK
+            it.phoneApproval shouldBe true
+        }
+        val payments = read.copy(tool = "list_payments", summary = "Stripe: list_payments")
+        hardLineVerdict(payments, constitution(ActionKind.PAYMENT to AutonomyTier.NEVER)).decision shouldBe Decision.DENY
+        hardLineVerdict(read, constitution(neverStore = listOf("clarity"))).decision shouldBe Decision.ASK
+    }
+
     test("the host's listing: annotations decide read-only and destructive, a bad item is left out, an unknown state is failed") {
         val body = ClarityJson.parseToJsonElement(
             """

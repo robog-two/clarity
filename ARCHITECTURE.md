@@ -618,7 +618,13 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   tool counts are left out so it rarely does). A helper gets a server's tools only when `delegate`
   names it: `mcp_<slug(label)>__<tool>`, descriptions headed `[label]`.
 - **Modes** (`McpToolMode`, `mcp_tool_policy`): `auto` by default only when `readOnlyHint` is true,
-  else `ask`; the person changes them per tool in Settings. `off` tools are never built.
+  else `ask`; the person changes them per tool in Settings. `off` tools are never built. The hint is
+  not believed for a tool whose name has a write verb as a word (`create_issue`, `addLabel`:
+  `looksLikeWrite`); that tool counts as not read-only everywhere (default mode, `McpToolStatus`, gate).
+- **`auto`** calls still pass governance. A read-only tool gets only the person's hard limits
+  (`hardLineVerdict`, no model call: a "never" kind such as payments blocks it, "never alone" holds it
+  for the phone, a never-store topic holds it). A write tool the person set to Auto goes through
+  `gateLocal` with the full guard; what it does not allow is held or blocked like an `ask` call.
 - **`ask`** calls become `ProposedAction.ExternalTool(server = "mcp:<id>")` through
   `ActionGate.gateLocal(alwaysAsk = …)`: held even when the guard would allow it (a guard DENY still
   blocks), with a summary naming the server, tool and key inputs. Approving only records the yes

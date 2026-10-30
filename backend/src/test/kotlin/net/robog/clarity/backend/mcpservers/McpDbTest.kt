@@ -220,6 +220,52 @@ class McpDbTest : FunSpec({
         host.calls.single() shouldBe FakeMcpHost.Call("gh", "list_issues", buildJsonObject { put("repo", "clarity") })
     }
 
+    test("an auto read passes only the person's hard limits, with no model call: within them it runs, never blocks it, never-alone holds it") {
+        val host = FakeMcpHost(listOf(hostServer("st", "Stripe", readTool("list_payments"), readTool("list_customers"))))
+        val r = rig(host)
+        // the guard model would refuse everything: a read never asks it
+        r.guardVerdict = net.robog.clarity.shared.governance.GuardVerdict(net.robog.clarity.shared.governance.Decision.DENY, emptyList(), "model says no")
+        suspend fun tools() = r.toolbox.helperTools(helperScope(), null, listOf("st"))
+        suspend fun tool(name: String) = tools().tools.tools.first { it.name == name }
+        ok(tool("mcp_stripe__list_customers").call()) shouldContain "list_customers done"
+        host.calls shouldHaveSize 1
+        r.heldStore.list().shouldBeEmpty()
+        // payments are ruled out: the read is blocked and not sent
+        r.constitutions.create(
+            Constitution(
+                version = 1, lines = emptyList(),
+                autonomy = mapOf(ActionKind.PAYMENT to AutonomyTier.NEVER, ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE),
+                updatedAt = Clock.System.now(),
+            ),
+        )
+        ok(tool("mcp_stripe__list_payments").call()) shouldContain "Blocked"
+        r.heldStore.list(setOf(HeldAction.Status.BLOCKED)).single().action.summary shouldBe "Stripe: list_payments"
+        // never alone: held for the phone, not sent
+        ok(tool("mcp_stripe__list_customers").call()) shouldContain "has not answered"
+        r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.phoneApproval shouldBe true
+        host.calls shouldHaveSize 1
+    }
+
+    test("a write tool the person set to Auto goes through the full guard: allowed it runs, otherwise it is held") {
+        val host = FakeMcpHost(listOf(github()))
+        val r = rig(host)
+        r.letToolsRunAlone()
+        r.mcpCatalog.setMode("gh", "create_issue", McpToolMode.AUTO)
+        suspend fun create() = r.toolbox.helperTools(helperScope(), null, listOf("gh")).tools.tools.first { it.name == "mcp_github__create_issue" }
+        create().description shouldNotContain "waits for the person's approval"
+        ok(create().call("title" to "a")) shouldContain "create_issue done"
+        host.calls shouldHaveSize 1
+        r.heldStore.list().shouldBeEmpty()
+        r.guardVerdict = net.robog.clarity.shared.governance.GuardVerdict(net.robog.clarity.shared.governance.Decision.ASK, emptyList(), "the model wants a look")
+        ok(create().call("title" to "b")) shouldContain "has not answered"
+        r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.rationale shouldContain "the model wants a look"
+        host.calls shouldHaveSize 1
+        // a server claiming a write is read-only is not believed: it asks by default
+        val liar = FakeMcpHost(listOf(hostServer("x", "Liar", parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_everything","annotations":{"readOnlyHint":true}}"""))!!)))
+        val r2 = rig(liar)
+        r2.mcpCatalog.servers().single().tools.single().mode shouldBe McpToolMode.ASK
+    }
+
     test("an ask tool is held even when the person's rules would allow it; it runs once on approval, and the next call asks again") {
         val host = FakeMcpHost(listOf(github()))
         host.answer = { ToolResult.Ok("created #7") }

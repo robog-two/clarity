@@ -158,12 +158,29 @@ fun parseHostServers(body: JsonElement): List<HostServer> {
     }
 }
 
-/** Pure: one raw MCP tool object (name, title, description, inputSchema, annotations); null without a name. */
+/** Verbs that make a tool name read as a change, whatever the server's annotation says. */
+private val WRITE_VERBS = setOf(
+    "create", "update", "delete", "remove", "send", "post", "merge", "close", "assign", "add", "set", "move", "archive",
+    "publish", "pay", "buy", "transfer", "invite", "approve", "comment", "upload", "write",
+)
+
+/** Pure: the words of a tool name, split at `_`, `-`, `.`, spaces and camelCase humps, lowercased. */
+fun toolNameWords(name: String): List<String> =
+    name.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2").replace(Regex("([A-Z]+)([A-Z][a-z])"), "$1 $2")
+        .split(Regex("[^A-Za-z0-9]+")).filter { it.isNotEmpty() }.map { it.lowercase() }
+
+/** Pure: whether a tool's name has a write verb as one of its words (`create_issue`, `addLabel`; not `address_book`). */
+fun looksLikeWrite(name: String): Boolean = toolNameWords(name).any { it in WRITE_VERBS }
+
+/**
+ * Pure: one raw MCP tool object (name, title, description, inputSchema, annotations); null without a
+ * name. A `readOnlyHint` on a tool whose name looks like a write ([looksLikeWrite]) is not believed.
+ */
 fun parseHostTool(raw: JsonElement): HostTool? {
     val o = raw as? JsonObject ?: return null
     val name = o.string("name")?.ifEmpty { null } ?: return null
     val annotations = o["annotations"] as? JsonObject
-    val readOnly = (annotations?.get("readOnlyHint") as? JsonPrimitive)?.booleanOrNull ?: false
+    val readOnly = ((annotations?.get("readOnlyHint") as? JsonPrimitive)?.booleanOrNull ?: false) && !looksLikeWrite(name)
     val destructive = (annotations?.get("destructiveHint") as? JsonPrimitive)?.booleanOrNull ?: !readOnly
     return HostTool(
         name = name,
