@@ -66,7 +66,8 @@ class PureTest : FunSpec({
     test("per-uid argv: setpriv drops groups, capabilities and new privileges; no secret in it") {
         val home = ServerHome("s1", java.nio.file.Path.of("/data/servers/s1"), 20001)
         isolatedArgv(Isolation.PerUid(), home, listOf("/data/servers/s1/app/server", "stdio")) shouldContainExactly listOf(
-            "/usr/bin/setpriv", "--reuid=20001", "--regid=20001", "--clear-groups", "--inh-caps=-all", "--no-new-privs", "--",
+            "/bin/setpriv", "--reuid=20001", "--regid=20001", "--clear-groups", "--inh-caps=-all", "--no-new-privs", "--",
+            "/bin/sh", "-c", "cd -- \"$1\" || exit 126; shift; exec \"$@\"", "mcphost-cd", "/data/servers/s1",
             "/data/servers/s1/app/server", "stdio",
         )
         isolatedArgv(Isolation.SameUser, home, listOf("x")) shouldContainExactly listOf("x")
@@ -143,7 +144,7 @@ class PureTest : FunSpec({
         props["secret"]!!.jsonObject["x-secret"]!!.jsonPrimitive.content shouldBe "true"
         props["url"]!!.jsonObject["format"]!!.jsonPrimitive.content shouldBe "uri"
         val presets = servers["x-presets"]!!.jsonArray
-        presets.map { it.jsonObject["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas", "Asana")
+        presets.map { it.jsonObject["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas")
         for (preset in presets) {
             val values = preset.jsonObject["values"]!!.jsonObject
             val result = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(values + ("id" to JsonPrimitive("preset1")))), { if (it == "secret") "token-value" else null })

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Creates the secrets the compose stack mounts. Idempotent: existing values are never overwritten.
 #
-#   ./deploy/init-secrets.sh [connector-id ...]     (the example, mail and dav connector keys are always created)
+#   ./deploy/init-secrets.sh [connector-id ...]     (the example, mail, dav and mcphost connector keys are always created)
 #
 # 1. Values live as 0600 files in deploy/secrets/ (gitignored): the source of truth you can back up.
 # 2. They are loaded into Podman's secret store under the same name; compose references them as
@@ -50,7 +50,8 @@ ensure_file postgres_password
 ensure_file sandbox_key   # bearer keys for the agent computers (sandbox, browser)
 ensure_file browser_key
 ensure_file render_key    # bearer key for the render service (reports)
-for id in example mail dav "$@"; do ensure_file "connector_${id}_key"; done
+ensure_file mcphost_key   # bearer key for mcp-host (the MCP servers added in the app)
+for id in example mail dav mcphost "$@"; do ensure_file "connector_${id}_key"; done
 
 # Provided by you: OpenRouter runs every model, and the backend does not start until this holds a key
 # (or OPENROUTER_API_KEY is set in deploy/.env).

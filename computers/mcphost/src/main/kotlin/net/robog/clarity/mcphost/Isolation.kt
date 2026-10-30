@@ -36,7 +36,7 @@ private val log = KotlinLogging.logger {}
  * [SameUser] runs children as the supervisor's own user: only for tests and local development.
  */
 sealed interface Isolation {
-    data class PerUid(val setpriv: String = "/usr/bin/setpriv") : Isolation
+    data class PerUid(val setpriv: String = "/bin/setpriv") : Isolation
     data object SameUser : Isolation
 }
 
@@ -74,16 +74,25 @@ fun childEnv(home: ServerHome, proxyUrl: String?, extra: Map<String, String>, pa
 fun isolatedArgv(isolation: Isolation, home: ServerHome, command: List<String>): List<String> = when (isolation) {
     is Isolation.PerUid -> {
         val uid = requireNotNull(home.uid) { "no uid for ${home.id}" }
-        listOf(isolation.setpriv, "--reuid=$uid", "--regid=$uid", "--clear-groups", "--inh-caps=-all", "--no-new-privs", "--") + command
+        // The supervisor cannot enter a home (0700, another uid), so the child changes into it after the switch.
+        listOf(isolation.setpriv, "--reuid=$uid", "--regid=$uid", "--clear-groups", "--inh-caps=-all", "--no-new-privs", "--") +
+            listOf("/bin/sh", "-c", CD_AND_EXEC, "mcphost-cd", home.dir.toString()) + command
     }
     Isolation.SameUser -> command
 }
+
+/** `sh -c` script: change into the first argument, then exec the rest. */
+const val CD_AND_EXEC = "cd -- \"$1\" || exit 126; shift; exec \"$@\""
+
+/** Where a child process starts: its home when the supervisor may enter it, else `/`. */
+private fun startDir(isolation: Isolation, home: ServerHome): java.io.File =
+    if (isolation is Isolation.PerUid) java.io.File("/") else home.dir.toFile()
 
 /** Starts and runs child processes for servers, each as its own uid (see [Isolation]). */
 class ProcessRunner(val isolation: Isolation, private val path: String = SYSTEM_PATH) {
     /** Starts [command] in [home] with exactly [env]. stdout and stderr are separate pipes. */
     fun spawn(home: ServerHome, command: List<String>, env: Map<String, String>): Process {
-        val pb = ProcessBuilder(isolatedArgv(isolation, home, command)).directory(home.dir.toFile())
+        val pb = ProcessBuilder(isolatedArgv(isolation, home, command)).directory(startDir(isolation, home))
         pb.environment().clear()
         pb.environment().putAll(env)
         return pb.start()
@@ -101,7 +110,7 @@ class ProcessRunner(val isolation: Isolation, private val path: String = SYSTEM_
         timeout: Duration = 5.minutes,
         outputLimit: Int = 64 * 1024,
     ): RunResult = withContext(Dispatchers.IO) {
-        val pb = ProcessBuilder(isolatedArgv(isolation, home, command)).directory(home.dir.toFile()).redirectErrorStream(true)
+        val pb = ProcessBuilder(isolatedArgv(isolation, home, command)).directory(startDir(isolation, home)).redirectErrorStream(true)
         pb.environment().clear()
         pb.environment().putAll(env)
         if (stdin == null) pb.redirectInput(ProcessBuilder.Redirect.from(java.io.File("/dev/null")))
@@ -128,7 +137,7 @@ class ProcessRunner(val isolation: Isolation, private val path: String = SYSTEM_
     suspend fun killAll(home: ServerHome, main: Process? = null) {
         main?.let { p -> p.descendants().forEach { it.destroyForcibly() }; p.destroyForcibly() }
         when (isolation) {
-            is Isolation.PerUid -> runCatching { run(home, listOf("kill", "-KILL", "-1"), timeout = 1.minutes) }
+            is Isolation.PerUid -> runCatching { run(home, listOf("kill", "-9", "-1"), timeout = 1.minutes) }
             Isolation.SameUser -> Unit
         }
         main?.let { withContext(Dispatchers.IO) { runInterruptible { it.waitFor(10, TimeUnit.SECONDS) } } }
@@ -163,10 +172,15 @@ class Homes(private val root: Path, private val runner: ProcessRunner, private v
         val home = home(id)
         Files.createDirectories(root)
         if (!home.dir.exists()) Files.createDirectory(home.dir)
-        Files.setPosixFilePermissions(home.dir, PosixFilePermissions.fromString("rwx------"))
-        home.uid?.let { uid ->
-            Files.setAttribute(home.dir, "unix:uid", uid)
-            Files.setAttribute(home.dir, "unix:gid", uid)
+        // Only a directory the supervisor still owns (new, or left by an interrupted start) is set up;
+        // once it belongs to the server it is the server's (and without FOWNER the supervisor may not chmod it).
+        val owner = Files.getAttribute(home.dir, "unix:uid") as Int
+        if (home.uid == null || owner != home.uid) {
+            Files.setPosixFilePermissions(home.dir, PosixFilePermissions.fromString("rwx------"))
+            home.uid?.let { uid ->
+                Files.setAttribute(home.dir, "unix:gid", uid)
+                Files.setAttribute(home.dir, "unix:uid", uid)
+            }
         }
         val made = runner.run(home, listOf("mkdir", "-p", "-m", "700", home.tmp.toString()), timeout = 1.minutes)
         check(made.ok) { "could not prepare the home of $id: ${made.output.take(200)}" }

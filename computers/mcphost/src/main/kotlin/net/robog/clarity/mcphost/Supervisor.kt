@@ -12,6 +12,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -62,6 +63,9 @@ class Unavailable(val status: Int, message: String) : Exception(message)
  *
  * Locking: [lock] guards the entries and their fields and is held only briefly. Starting a server
  * holds that server's own `startLock`; stopping never waits for another server's `startLock`.
+ * Stopping ends every process of the server's uid (`kill -1` as that uid), so a start or install of
+ * the same server first waits for its pending stops ([awaitStops]); otherwise a late stop would kill
+ * the new process.
  */
 class Supervisor(
     private val state: HostState,
@@ -95,6 +99,8 @@ class Supervisor(
         var retryAt: Instant? = null
         var error: String? = null
         val startLock = Mutex()
+        /** Stops (and crash clean-ups) still running for this server; a start or install waits for them. */
+        val stopping = mutableListOf<Job>()
     }
 
     private val lock = Mutex()
@@ -141,13 +147,13 @@ class Supervisor(
         entry.spec = spec
         if (spec == null || !spec.enabled) {
             entry.installing?.cancel(); entry.installing = null; entry.installingKey = null
-            detachRunning(entry)?.let { stopLater(it, entry.id) }
+            stopEntry(entry, "switched off or invalid")
             closeRemote(entry)
             return
         }
         if (old != null && old.runKey != spec.runKey) {
             // a new version, token or setting: start fresh, and forget the old failures
-            detachRunning(entry)?.let { stopLater(it, entry.id) }
+            stopEntry(entry, "settings changed")
             entry.failures = 0; entry.retryAt = null; entry.error = null; entry.failedKey = null
         }
         if (spec.kind == ServerKind.REMOTE) {
@@ -161,10 +167,10 @@ class Supervisor(
         }
         val installed = state.current.installed[spec.id]
         when {
+            entry.installingKey == spec.installKey -> Unit // already on it (its first listing too)
             installed?.installKey == spec.installKey -> {
                 if (state.listing(spec.id)?.runKey != spec.runKey && canRetry(entry, spec)) listLater(entry, spec)
             }
-            entry.installingKey == spec.installKey -> Unit // already on it
             canRetry(entry, spec) -> installLater(entry, spec)
         }
     }
@@ -179,9 +185,10 @@ class Supervisor(
     private fun installLater(entry: Entry, spec: ServerSpec) {
         entry.installing?.cancel()
         entry.installingKey = spec.installKey
-        detachRunning(entry)?.let { stopLater(it, entry.id) }
+        stopEntry(entry, "reinstalling")
         entry.installing = scope.launch {
             try {
+                awaitStops(entry)
                 log.info { "installing ${spec.label}: ${spec.source}" }
                 val home = homes.prepare(spec.id)
                 val installed = installer.install(spec, home)
@@ -220,7 +227,7 @@ class Supervisor(
             val wasRunning = lock.withLock { entry.running?.runKey == spec.runKey }
             ensureRunning(entry, spec) // lists on start
             if (!wasRunning) {
-                lock.withLock { if (entry.inFlight == 0) detachRunning(entry) else null }?.let { stop(it, entry.id) }
+                lock.withLock { if (entry.inFlight == 0) stopEntry(entry, "listed") else null }?.join()
             }
         } catch (e: CancellationException) {
             throw e
@@ -247,7 +254,8 @@ class Supervisor(
     private suspend fun forget(entry: Entry) {
         entry.installing?.cancel()
         entry.listing?.cancel()
-        lock.withLock { detachRunning(entry) }?.let { stop(it, entry.id) }
+        lock.withLock { stopEntry(entry, "removed") }?.join()
+        awaitStops(entry)
         closeRemote(entry)
         state.dropListing(entry.id)
         state.update { it.copy(installed = it.installed - entry.id) }
@@ -265,18 +273,30 @@ class Supervisor(
 
     // ---- running -----------------------------------------------------------------------------
 
-    /** Called under [lock]: takes the running process off the entry, so its exit is not a crash. */
-    private fun detachRunning(entry: Entry): Running? = entry.running.also { entry.running = null }
-
-    private fun stopLater(running: Running, id: String) {
-        scope.launch { stop(running, id) }
+    /**
+     * Called under [lock]: takes the running process off the entry (so its exit is not a crash) and
+     * stops it in the background; the returned job ends when it is gone. Null when nothing runs.
+     */
+    private fun stopEntry(entry: Entry, why: String): Job? {
+        val running = entry.running ?: return null
+        entry.running = null
+        return track(entry) {
+            running.server.destroy()
+            runner.killAll(running.home, running.server.process)
+            egress.revoke(runUser(entry.id))
+            log.info { "stopped ${entry.spec?.label ?: entry.id}: $why" }
+        }
     }
 
-    private suspend fun stop(running: Running, id: String) = withContext(NonCancellable) {
-        running.server.destroy()
-        runner.killAll(running.home, running.server.process)
-        egress.revoke(runUser(id))
-        log.info { "stopped server $id" }
+    /** Called under [lock]: runs [block] in the background as one of [entry]'s pending stops. */
+    private fun track(entry: Entry, block: suspend () -> Unit): Job {
+        entry.stopping.removeAll { !it.isActive }
+        return scope.launch { withContext(NonCancellable) { block() } }.also { entry.stopping += it }
+    }
+
+    /** Waits until no stop of [entry] is pending. */
+    private suspend fun awaitStops(entry: Entry) {
+        lock.withLock { entry.stopping.filter { it.isActive } }.joinAll()
     }
 
     /** The running stdio server for [entry], started (and listed) if needed. */
@@ -293,9 +313,10 @@ class Supervisor(
         // room for one more
         val victim = lock.withLock {
             val views = entries.values.mapNotNull { e -> e.running?.let { RunningView(e.id, e.lastUsed, e.inFlight) } }
-            evictionVictim(views, spec.id, policy)?.let { id -> entries[id]?.let { e -> detachRunning(e)?.let { e.id to it } } }
+            evictionVictim(views, spec.id, policy)?.let { id -> entries[id]?.let { e -> stopEntry(e, "making room for ${spec.label}") } }
         }
-        victim?.let { (id, running) -> log.info { "stopping $id to make room for ${spec.label}" }; stop(running, id) }
+        victim?.join()
+        awaitStops(entry)
 
         val home = homes.prepare(spec.id)
         val credential = egress.grant(runUser(spec.id), spec.allowHosts)
@@ -352,15 +373,13 @@ class Supervisor(
     /** A process that ends while still attached to its entry crashed: mark it failed and back off. */
     private suspend fun watchExit(entry: Entry, spec: ServerSpec, running: Running) {
         val code = running.server.exited.await()
-        val crashed = lock.withLock {
-            if (entry.running !== running) return@withLock false
+        lock.withLock {
+            if (entry.running !== running) return
             entry.running = null
             fail(entry, spec, running.server.exitMessage(code))
-            true
-        }
-        if (crashed) {
             log.warn { "${spec.label} crashed: ${running.server.exitMessage(code)}" }
-            withContext(NonCancellable) { runner.killAll(running.home); egress.revoke(runUser(spec.id)) }
+            // whatever it left behind goes too, before it may start again
+            track(entry) { runner.killAll(running.home); egress.revoke(runUser(spec.id)) }
         }
     }
 
@@ -373,20 +392,15 @@ class Supervisor(
     }
 
     suspend fun stopIdle() {
-        val idle = lock.withLock {
+        lock.withLock {
             val views = entries.values.mapNotNull { e -> e.running?.let { RunningView(e.id, e.lastUsed, e.inFlight) } }
-            idleServers(views, clock.now(), policy).mapNotNull { id -> entries[id]?.let { e -> detachRunning(e)?.let { id to it } } }
-        }
-        for ((id, running) in idle) {
-            log.info { "stopping $id: idle" }
-            stop(running, id)
-        }
+            idleServers(views, clock.now(), policy).mapNotNull { id -> entries[id]?.let { stopEntry(it, "idle") } }
+        }.joinAll()
     }
 
     /** Stops every server (shutdown). */
     suspend fun stopAll() {
-        val all = lock.withLock { entries.values.mapNotNull { e -> detachRunning(e)?.let { e.id to it } } }
-        for ((id, running) in all) stop(running, id)
+        lock.withLock { entries.values.mapNotNull { stopEntry(it, "shutting down") } }.joinAll()
     }
 
     // ---- requests ----------------------------------------------------------------------------

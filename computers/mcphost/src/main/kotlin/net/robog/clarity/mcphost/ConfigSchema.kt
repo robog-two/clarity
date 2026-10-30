@@ -70,8 +70,10 @@ private val serverItem = buildJsonObject {
 }
 
 /**
- * Presets: only packages checked against their registry at exactly this version (see the report in
- * `docs/workstreams/mcp.md`), with what the person needs to create the token.
+ * Presets: only packages checked against their registry at exactly this version and seen working
+ * through the egress proxy (`SMOKE_PRESETS=1 computers/mcphost/smoke.sh`), with what the person needs
+ * to create the token. GitHub: the release's own checksums file and the GitHub API's asset digest
+ * agree on the sha256. Canvas: PyPI's JSON API, a pure-Python wheel.
  */
 val serverPresets: JsonArray = JsonArray(listOf(
     buildJsonObject {
@@ -117,26 +119,8 @@ val serverPresets: JsonArray = JsonArray(listOf(
             put("allowHosts", strings("canvas.example.edu"))
         }
     },
-    buildJsonObject {
-        put("title", "Asana")
-        put(
-            "description",
-            "Asana (@roychri/mcp-server-asana 1.8.0, a community server you run here). Create a personal access token in Asana's developer " +
-                "console (app.asana.com/0/my-apps). Asana tokens have your full access, so the preset starts in read-only mode; remove " +
-                "READ_ONLY_MODE=true to let Clarity propose changes.",
-        )
-        putJsonObject("values") {
-            put("label", "Asana")
-            put("description", "Your Asana tasks and projects")
-            put("kind", ServerKind.NPM.wire)
-            put("package", "@roychri/mcp-server-asana")
-            put("version", "1.8.0")
-            put("command", "mcp-server-asana")
-            put("env", strings("READ_ONLY_MODE=true"))
-            put("secretEnv", "ASANA_ACCESS_TOKEN")
-            put("allowHosts", strings("app.asana.com"))
-        }
-    },
+    // No Asana preset: the maintained self-run server (@roychri/mcp-server-asana 1.8.0) resolves
+    // app.asana.com itself instead of going through HTTPS_PROXY, so it cannot work here.
 ))
 
 /** The `mcp-host` config schema (contract 1). */

@@ -159,7 +159,7 @@ class RegistryInstaller(
         val command = spec.command ?: spec.pkg!!.substringAfter('/')
         when {
             asset.endsWith(".tar.gz") || asset.endsWith(".tgz") ->
-                step(home, "unpacking", listOf("tar", "-xzf", file, "-C", app, "--no-same-owner"), env, redactor)
+                step(home, "unpacking", listOf("tar", "-xzof", file, "-C", app), env, redactor)
             asset.endsWith(".zip") -> step(home, "unpacking", listOf("unzip", "-q", "-o", file, "-d", app), env, redactor)
             else -> step(home, "placing the binary", listOf("cp", file, "$app/$command"), env, redactor)
         }
