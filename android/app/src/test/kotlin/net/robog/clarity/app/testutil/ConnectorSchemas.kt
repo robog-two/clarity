@@ -284,7 +284,14 @@ val MCP_HOST_SCHEMA_JSON = """
                         },
                         "examples": [
                             "stdio"
-                        ]
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
                     },
                     "env": {
                         "type": "array",
@@ -295,7 +302,14 @@ val MCP_HOST_SCHEMA_JSON = """
                         },
                         "examples": [
                             "LOG_LEVEL=info"
-                        ]
+                        ],
+                        "x-visible-when": {
+                            "kind": [
+                                "npm",
+                                "pypi",
+                                "github-release"
+                            ]
+                        }
                     },
                     "secretEnv": {
                         "type": "string",

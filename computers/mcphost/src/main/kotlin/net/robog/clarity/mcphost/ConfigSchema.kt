@@ -40,11 +40,12 @@ private fun JsonObjectBuilderScope.text(
         visibleWhenKind(visibleWhen)
     }
 
-private fun JsonObjectBuilderScope.list(name: String, title: String, description: String, example: String? = null) =
+private fun JsonObjectBuilderScope.list(name: String, title: String, description: String, example: String? = null, visibleWhen: List<ServerKind>? = null) =
     putJsonObject(name) {
         put("type", "array"); put("title", title); put("description", description)
         putJsonObject("items") { put("type", "string") }
         example?.let { put("examples", strings(it)) }
+        visibleWhenKind(visibleWhen)
     }
 
 private fun JsonObjectBuilderScope.secret(name: String, title: String, description: String, visibleWhen: List<ServerKind>? = null) =
@@ -74,8 +75,8 @@ private val serverItem = buildJsonObject {
         text("asset", "Release file", "GitHub release only: the file to download.", "server_Linux_x86_64.tar.gz", listOf(ServerKind.GITHUB_RELEASE))
         text("sha256", "SHA-256 of the release file", "GitHub release only: the file is checked against it before it is kept.", visibleWhen = listOf(ServerKind.GITHUB_RELEASE))
         text("command", "Command", "The command to run, when the package has more than one (for a release: the file inside the archive).", visibleWhen = installed)
-        list("args", "Arguments", "Passed to the command, one per entry.", "stdio")
-        list("env", "Settings", "KEY=value entries for the server's environment. Not for secrets.", "LOG_LEVEL=info")
+        list("args", "Arguments", "Passed to the command, one per entry.", "stdio", installed)
+        list("env", "Settings", "KEY=value entries for the server's environment. Not for secrets.", "LOG_LEVEL=info", installed)
         text("secretEnv", "Token variable", "The environment variable that receives the token.", "API_TOKEN", installed)
         secret("secret", "Token", "Kept sealed on your server; only this server sees it. For a remote URL it is sent as a bearer token.")
         text("secretEnv2", "Second secret variable", "Only if the server needs a second secret.", visibleWhen = installed)

@@ -167,8 +167,8 @@ class McpHostSchemaTest {
     private fun shown(kind: String) = itemForm.visibleFields(itemForm.initialValues().withText("kind", kind)).map { it.key }.toSet()
 
     @Test fun eachKindShowsOnlyItsFields() {
-        val always = setOf("label", "description", "enabled", "kind", "args", "env", "secret", "allowHosts")
-        val packaged = always + setOf("package", "version", "command", "secretEnv", "secretEnv2", "secret2")
+        val always = setOf("label", "description", "enabled", "kind", "secret", "allowHosts")
+        val packaged = always + setOf("package", "version", "command", "args", "env", "secretEnv", "secretEnv2", "secret2")
         assertEquals(packaged, shown("npm"))
         assertEquals(packaged, shown("pypi"))
         assertEquals(packaged + setOf("asset", "sha256"), shown("github-release"))
