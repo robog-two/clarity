@@ -84,7 +84,8 @@ to give it (read-only scopes when the service has them).
 The host listens on `:8950` on the internal `mcphost` network (backend and host only). Every request needs
 `Authorization: Bearer <key>` (`/run/secrets/mcphost_key`, created by `init-secrets.sh`). Compare in
 constant time. The backend reads `CLARITY_MCP_HOST` = `http://mcp-host:8950;keyFile=/run/secrets/mcphost_key`
-(unset means no third-party servers; everything else keeps working).
+(the compose default, so a fresh deploy has it; `off` or blank means no third-party servers and
+everything else keeps working).
 
 - `GET /servers` → `[{id, label, description, state, error, source, allowHosts, tools, listedAt}]`.
   `state` uses `McpServerState` spellings. `tools` is the host's **cached listing**: right after a

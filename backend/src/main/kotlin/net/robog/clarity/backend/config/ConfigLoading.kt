@@ -375,8 +375,9 @@ fun parseMcpServers(raw: String): List<McpServerConfig> =
             if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url, keyFile)
         }
 
-/** Parses `url[;keyFile=/path]` (the `CLARITY_MCP_HOST` format); null when blank. A trailing `/` is dropped. */
+/** Parses `url[;keyFile=/path]` (the `CLARITY_MCP_HOST` format); null when blank or `off`. A trailing `/` is dropped. */
 fun parseMcpHost(raw: String?): McpHostConfig? {
+    if (raw?.trim().equals("off", ignoreCase = true)) return null
     val parts = raw?.split(';')?.map { it.trim() } ?: return null
     val url = parts.first().trimEnd('/').ifEmpty { return null }
     val keyFile = parts.drop(1).firstOrNull { it.startsWith("keyFile=") }?.substringAfter('=')?.trim()?.ifEmpty { null }

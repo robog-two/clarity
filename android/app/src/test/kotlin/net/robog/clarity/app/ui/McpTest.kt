@@ -460,11 +460,12 @@ class McpServerEditorTest {
         assertTrue(vm.state.value.saved)
     }
 
-    @Test fun aHostThatIsNotRunningPointsAtTheMcpProfile() = withMain {
+    @Test fun aHostThatIsNotRunningSaysItStartsOnItsOwn() = withMain {
         val vm = vm(StoredConnectors(listOf(hostSummary(running = false))))
         vm.openById(MCP_HOST)
         assertTrue(vm.state.value.notRunning)
-        assertTrue("“mcp” profile" in vm.state.value.adminHint.orEmpty(), vm.state.value.adminHint)
+        val hint = vm.state.value.adminHint.orEmpty()
+        assertTrue("starts on its own" in hint && "profile" !in hint, hint)
     }
 
     @Test fun theHostIsNotAnOnboardingStep() = withMain {

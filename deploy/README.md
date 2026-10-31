@@ -50,12 +50,11 @@ the next time they start.
 
 | Profile | Adds | Enable |
 |---|---|---|
-| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS), `render` (reports: pandoc + Typst) | |
+| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS), `render` (reports: pandoc + Typst), `mcp-host` (the MCP servers you add in the app) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
 | `mail` | `connector-mail` (IMAP sync, SMTP send, drafts) | `--profile mail` |
 | `dav` | `connector-dav` (CalDAV events and reminders, CardDAV contacts, WebDAV files) | `--profile dav` |
 | `computers` | `sandbox` (Linux workspace) and `browser` (Firefox), the agent's tools | `--profile computers`, and set `CLARITY_MCP_SERVERS` (see below) |
-| `mcp` | `mcp-host`: the MCP servers (GitHub, Canvas, ...) you add in the app | `--profile mcp`, and set `CLARITY_MCP_HOST` (see below) |
 
 ### Mail and calendar accounts
 
@@ -118,17 +117,15 @@ Things worth knowing:
   (`up -d --build`). The browser build runs Firefox once for about 80 s to pre-warm the profile.
   Smoke tests: `computers/sandbox/smoke.sh` and `computers/browser/smoke.sh` (they need podman and curl).
 
-## MCP servers (`--profile mcp`)
+## MCP servers
 
 `mcp-host` installs and runs the MCP servers you add in the app (Settings → MCP servers, presets first) and serves
-each one to the backend. In `deploy/.env`:
+each one to the backend. It is part of the default stack and needs no setup: `init-secrets.sh` creates its two keys
+(`mcphost_key`, `connector_mcphost_key`) and the backend's `CLARITY_MCP_HOST` points at it by default. With no servers
+added it idles at about 70–100 MB and makes no outbound requests.
 
-```sh
-CLARITY_MCP_HOST=http://mcp-host:8950;keyFile=/run/secrets/mcphost_key
-```
-
-then `podman compose -f deploy/compose.yaml --profile mcp up -d`. Unset, there are no third-party servers and
-everything else works as before.
+To turn it off, set `CLARITY_MCP_HOST=off` in `deploy/.env` (the backend then lists no third-party servers) and,
+to skip the container too, stop it after each `up` with `podman compose -f deploy/compose.yaml stop mcp-host`.
 
 - **Kinds**: an npm package, a Python package, a GitHub release binary (checked against its `sha256` before it is
   kept), or a remote URL (https; the host forwards to it with the token as `Authorization: Bearer`). Versions are
@@ -174,8 +171,8 @@ the file under `/data/reports` (the `backend-data` volume).
   `/data/reports` is always safe.
 - **Settings**: `CLARITY_RENDER_URL` (`http://render:8950`), `CLARITY_RENDER_KEY_FILE` (`/run/secrets/render_key`),
   `CLARITY_RENDER_TIMEOUT` (60s; the backend waits 10 s longer than that).
-- **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates `render_key`, which the backend
-  now mounts, so the backend does not start without it.
+- **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates any key the new version
+  mounts (`render_key`, `mcphost_key`, `connector_mcphost_key`), and the backend does not start without them.
 - **Fonts**: the image bundles Libre Caslon Text (OFL, `computers/render/fonts/`; static faces are cut at build with
   fonttools) for the default title and headings. Word and OpenDocument downloads embed it (about 200 KB per file).
 - **Secret links**: each Good can have one public download page, `https://<your domain>/g/<token>`, made when the

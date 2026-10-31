@@ -1,11 +1,10 @@
 # Clarity: single-tenant stack for Podman (rootless works).
 #
 #   ./deploy/init-secrets.sh
-#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS) + render (reports)
+#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS) + render (reports) + mcp-host (MCP servers you add in the app)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
 #   podman compose -f deploy/compose.yaml --profile mail --profile dav up -d   # + email (IMAP/SMTP), calendar/contacts/files (DAV)
 #   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
-#   podman compose -f deploy/compose.yaml --profile mcp up -d        # + mcp-host (MCP servers you add in the app)
 #
 # Settings come from deploy/.env (copy .env.example; pass --env-file deploy/.env).
 name: clarity
@@ -109,9 +108,8 @@ services:
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}
-      # With the `mcp` profile: the MCP servers added in the app, run by mcp-host.
-      #   http://mcp-host:8950;keyFile=/run/secrets/mcphost_key
-      CLARITY_MCP_HOST: ${CLARITY_MCP_HOST:-}
+      # The MCP servers added in the app, run by mcp-host (on by default; `off` turns them off).
+      CLARITY_MCP_HOST: ${CLARITY_MCP_HOST:-http://mcp-host:8950;keyFile=/run/secrets/mcphost_key}
       # Reports: the render service (pandoc + Typst) on the internal `render` network, and the size cap
       # of the rendered-file cache under /data/reports (rebuildable; revisions are never swept).
       CLARITY_RENDER_URL: http://render:8950
@@ -339,7 +337,6 @@ services:
 
   mcp-host:
     <<: *hardened
-    profiles: [mcp]
     # mcp-host (computers/mcphost): installs and runs the MCP servers added in the app, each as its
     # own uid with its own home, and serves each to the backend at /s/{id}/mcp on the internal `mcphost`
     # network. Servers reach the internet only through the egress proxy (`mcphost-proxy`), each with

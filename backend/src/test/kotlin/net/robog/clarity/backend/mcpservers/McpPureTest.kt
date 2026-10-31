@@ -224,11 +224,13 @@ class McpPureTest : FunSpec({
         memoryGcTask(LocalDate(2026, 10, 1), LocalDate(2026, 10, 8)) shouldNotContain "MCP"
     }
 
-    test("CLARITY_MCP_HOST: url and key file; blank is none") {
+    test("CLARITY_MCP_HOST: url and key file; blank or off is none") {
         parseMcpHost("http://mcp-host:8950;keyFile=/run/secrets/mcphost_key") shouldBe McpHostConfig("http://mcp-host:8950", "/run/secrets/mcphost_key")
         parseMcpHost("http://mcp-host:8950/") shouldBe McpHostConfig("http://mcp-host:8950", null)
         parseMcpHost("").shouldBeNull()
         parseMcpHost(null).shouldBeNull()
+        parseMcpHost("off").shouldBeNull()
+        parseMcpHost(" OFF ").shouldBeNull()
     }
 
     test("the sweep's task names the servers, the window, the recipe and the scratch format") {
