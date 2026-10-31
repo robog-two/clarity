@@ -27,12 +27,18 @@ import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.vault.GrantStore
+import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.FinishReason
 import net.robog.clarity.harness.HarnessEvent
 import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OutOfSteps
 import net.robog.clarity.harness.RunJournal
+import net.robog.clarity.harness.SpendCap
+import net.robog.clarity.harness.ToolCallContext
+import kotlin.coroutines.coroutineContext
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import net.robog.clarity.harness.WebSearchTool
 import net.robog.clarity.harness.searchFor
 import net.robog.clarity.shared.time.LocalTimes
@@ -57,11 +63,54 @@ const val HELPER_RESULT_NUDGE: String =
 fun helperOwesResult(event: HarnessEvent.Terminal?): Boolean =
     event is HarnessEvent.Finished && event.reason == FinishReason.END_TURN && event.result.finalText.isBlank()
 
+/** Appended once when a report helper wrote its document as its reply instead of saving it. */
+const val HELPER_SAVE_NUDGE: String =
+    "You wrote the document in your reply instead of saving it. Save it now with create_report (the text you wrote, as is, " +
+        "with the style you were given), then reply with only the report id and a line about it."
+
+/** How long a reply must be to count as a whole document ([looksLikeDocument]). */
+const val DOCUMENT_MIN_CHARS: Int = 1500
+
+private val MARKDOWN_HEADING = Regex("^#{1,6}\\s+\\S")
+
+/** Pure: whether [text] reads like a whole document: long, with a Markdown heading line. */
+fun looksLikeDocument(text: String): Boolean =
+    text.length >= DOCUMENT_MIN_CHARS && text.lineSequence().any { MARKDOWN_HEADING.containsMatchIn(it.trimStart()) }
+
+/** The tools whose success means a report was saved. */
+private val SAVING_TOOLS = setOf("create_report", "edit_report")
+
+/** Pure: whether [transcript] holds a create_report or edit_report call that succeeded. */
+fun savedReportIn(transcript: List<Message>): Boolean {
+    val blocks = transcript.flatMap(Message::content)
+    val saving = blocks.filterIsInstance<Block.ToolUse>().filter { it.name in SAVING_TOOLS }.map { it.id }.toSet()
+    return blocks.filterIsInstance<Block.Result>().any { it.toolUseId in saving && !it.isError }
+}
+
+/**
+ * Pure: a helper that can create reports, finished on its own with a document as its reply and
+ * never saved a report in the run gets one more turn to save it.
+ */
+fun helperOwesReport(event: HarnessEvent.Terminal?, tools: Collection<String>): Boolean =
+    "create_report" in tools && event is HarnessEvent.Finished && event.reason == FinishReason.END_TURN &&
+        looksLikeDocument(event.result.finalText) && !savedReportIn(event.transcript)
+
+/** Pure: the one nudge a finished helper gets ([HELPER_RESULT_NUDGE] or [HELPER_SAVE_NUDGE]), or null. */
+fun helperNudge(event: HarnessEvent.Terminal?, tools: Collection<String>): String? = when {
+    helperOwesResult(event) -> HELPER_RESULT_NUDGE
+    helperOwesReport(event, tools) -> HELPER_SAVE_NUDGE
+    else -> null
+}
+
+/** Pure: [usd] in millionths of a dollar. */
+fun dollarsToMicros(usd: Double): Long = Math.round(usd * 1_000_000)
+
 /** Pure: what a finished helper reports back to the lead. */
 fun helperOutcome(event: HarnessEvent.Terminal?): Pair<Boolean, String> = when (event) {
     is HarnessEvent.Finished -> when (event.reason) {
         FinishReason.END_TURN -> true to event.result.finalText.ifBlank { "(the helper finished without a result)" }
         FinishReason.MAX_TURNS -> false to "The helper ran out of steps. Its report: ${event.result.finalText.ifBlank { "(none)" }}"
+        FinishReason.SPEND_LIMIT -> false to "The helper hit its spend limit for one task and was stopped. Its report: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.MAX_TOKENS -> false to "The helper's answer was cut off: ${event.result.finalText.ifBlank { "(none)" }}"
         FinishReason.REFUSAL -> false to "The model declined to do this task."
         FinishReason.OTHER -> false to "The helper stopped unexpectedly. Last words: ${event.result.finalText.ifBlank { "(none)" }}"
@@ -112,10 +161,20 @@ class HelperManager(
     suspend fun delegate(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, String> =
         start(task, tools, role, parent).map { it.text }
 
-    /** Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not start. */
-    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope): Either<String, Delegated> {
+    /**
+     * Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not
+     * start. At most [AgentConfig.helperMaxPerDay] in 24 hours, and not the same task again within
+     * [REPEAT_WINDOW] of one that ran, unless the lead gives a [retryReason].
+     */
+    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope, retryReason: String? = null): Either<String, Delegated> {
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
+        // The same delegate call made again (a resumed lead turn) gets the helper it already started.
+        val id = coroutineContext[ToolCallContext]?.let { callRunId(it.runId, it.toolUseId) } ?: Uuid.random().toString()
+        runs.get(id)?.let { return Delegated(id, "Helper $id was already started for this call (${it.status}).").right() }
+        val now = clock.now()
+        val recent = runs.startedSince(now - REPEAT_WINDOW.coerceAtLeast(1.days))
+        delegationRefusal(task, recent, now, config.helperMaxPerDay, retryReason)?.let { return it.left() }
         val probe = RunScope("probe", isLead = false)
         // Web search only when the lead names it, and then without any personal-data or outbound tool.
         val search = tools != null && WEB_SEARCH in tools
@@ -130,8 +189,9 @@ class HelperManager(
             if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
         val granted = toolbox.value.helperTools(probe, chosen)
+        // Pages are read only from our side: research without the sandbox's fetch_page does not start.
+        if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
-        val id = Uuid.random().toString()
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
         val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
@@ -149,6 +209,9 @@ class HelperManager(
     }
 
     private val taint = ConcurrentHashMap<String, Boolean>()
+
+    /** The run's spend cap, counting what it already spent (a resume, the nudge). */
+    private suspend fun spendCap(id: String) = SpendCap(dollarsToMicros(config.helperMaxCostUsd), runs.costUsed(id))
 
     suspend fun list(openOnly: Boolean): List<HelperRun> = runs.list(openOnly)
 
@@ -189,7 +252,15 @@ class HelperManager(
         val interrupts = Channel<List<Message>>(Channel.UNLIMITED)
         live[run.id] = interrupts
         var terminal: HarnessEvent.Terminal? = null
+        var stopped: String? = null
         try {
+            // A run that keeps being resumed (a crash loop at boot) is failed instead of resumed again.
+            val starts = runs.recordStart(run.id)
+            if (starts > 1 + config.helperMaxResumes) {
+                stopped = "The helper was stopped: it was resumed ${starts - 1} times after restarts without finishing."
+                log.warn { "helper ${run.id}: started $starts times, failing it" }
+                throw TooManyResumes()
+            }
             runs.markRunning(run.id)
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
@@ -206,26 +277,41 @@ class HelperManager(
                 sink = large.sink,
                 // The cap is per run, not per resume: searches already recorded for it count.
                 webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
-            ).copy(outOfSteps = OutOfSteps())
+            // A resume continues the run's step budget: every model call in its journal counts.
+            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id), countStepsSince = { false })
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
-                if (searchedIn(event)) runScope.taint()
+                if (searchedIn(event)) {
+                    runScope.taint()
+                    log.info { "helper ${run.id}: model call ran ${(event as HarnessEvent.Called).usage.webSearchRequests} web searches" }
+                }
                 if (event is HarnessEvent.Terminal) terminal = event
             }
             harness.resume(run.id, request, interrupts.receiveAsFlow()).collect { onEvent(it) }
-            // Open models sometimes end on a tool round with no text: one bounded nudge, never more.
-            if (helperOwesResult(terminal)) {
-                journal.append(run.id, Message.user(HELPER_RESULT_NUDGE))
-                val nudged = request.copy(webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)))
+            // Open models sometimes end with no text, or with the document as text: one bounded nudge, never more.
+            helperNudge(terminal, set.tools.map { it.name })?.let { nudge ->
+                journal.append(run.id, Message.user(nudge))
+                // The nudge has a budget of its own: one step to write the result, two to save the document and say so.
+                val nudged = request.copy(
+                    webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
+                    spendCap = spendCap(run.id),
+                    maxTurns = nudgeSteps(nudge),
+                    countStepsSince = { it.role == net.robog.clarity.harness.Role.USER && it.content.any { b -> b is net.robog.clarity.harness.Block.Text && b.text == nudge } },
+                )
                 harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
+        } catch (_: TooManyResumes) {
+            // [stopped] says why
         } catch (e: Exception) {
             log.error(e) { "helper ${run.id} crashed" }
         }
-        val (ok, text) = helperOutcome(terminal)
+        if ((terminal as? HarnessEvent.Finished)?.reason == FinishReason.SPEND_LIMIT) {
+            log.warn { "helper ${run.id} hit its spend limit (${"$"}${config.helperMaxCostUsd}) and was stopped" }
+        }
+        val (ok, text) = stopped?.let { false to it } ?: helperOutcome(terminal)
         withContext(NonCancellable) {
             val now = clock.now()
             val current = runs.get(run.id)
@@ -241,6 +327,42 @@ class HelperManager(
         }
     }
 }
+
+private class TooManyResumes : RuntimeException()
+
+/** How long a task that ran is not delegated again without a retry reason. */
+val REPEAT_WINDOW: kotlin.time.Duration = 6.hours
+
+/** Pure: [task] reduced to its words, so the same task in other spacing or case is the same. */
+fun normalizedTask(task: String): String = task.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+
+/**
+ * Pure: why delegating [task] now is refused, given the helper runs started in the last day or more
+ * ([recent]), or null: more than [maxPerDay] started in 24 hours; the same task ([normalizedTask])
+ * still running; or the same task done or failed within [REPEAT_WINDOW] and no [retryReason].
+ */
+fun delegationRefusal(task: String, recent: List<HelperRun>, now: kotlin.time.Instant, maxPerDay: Int, retryReason: String?): String? {
+    val today = recent.count { it.startedAt >= now - 24.hours }
+    if (today >= maxPerDay) {
+        return "Not started: $today helpers were started in the last 24 hours, the limit. Do the rest yourself, or tell the person."
+    }
+    val same = recent.filter { normalizedTask(it.task) == normalizedTask(task) }
+    same.firstOrNull { it.status in RunStatus.OPEN }?.let {
+        return "Not started: helper ${it.id} is already working on this task. Send it news with message_helper."
+    }
+    if (!retryReason.isNullOrBlank()) return null
+    val ran = same.firstOrNull { it.status == RunStatus.DONE || it.status == RunStatus.FAILED }
+        ?.takeIf { (it.finishedAt ?: it.startedAt) >= now - REPEAT_WINDOW }
+        ?: return null
+    return "Not started: helper ${ran.id} already ran this task (${ran.status}). Use its result; to run it again, say why in retryReason."
+}
+
+/** Pure: the run id of the helper that tool call [toolUseId] of run [runId] starts, the same every time. */
+fun callRunId(runId: String, toolUseId: String): String =
+    java.util.UUID.nameUUIDFromBytes("delegate:$runId:$toolUseId".toByteArray()).toString()
+
+/** Pure: the steps a nudged helper gets: two to save the document and say so, one to write a result. */
+fun nudgeSteps(nudge: String): Int = if (nudge == HELPER_SAVE_NUDGE) 2 else 1
 
 /** What a helper run gets from its stored tool list: the tools to build, and web search when it was granted. */
 data class HelperRunPlan(val tools: List<String>?, val webSearch: WebSearchTool?)
@@ -262,6 +384,9 @@ fun searchGrantText(dropped: List<String>): String =
     " It can search the web (only it; you cannot), and has no personal data or outbound tools" +
         (if (dropped.isEmpty()) "" else " (left out: ${dropped.sorted().joinToString()})") +
         ", so its task must say everything it needs."
+
+/** Why a research helper does not start when the sandbox (and its fetch_page) is not there. */
+const val RESEARCH_NEEDS_SANDBOX: String = "Research needs the sandbox to open pages, and it is not available right now."
 
 /** A helper that started: its run id and what `delegate` tells the lead. */
 data class Delegated(val id: String, val text: String)

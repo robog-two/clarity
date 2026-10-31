@@ -198,6 +198,24 @@ class BrowserSettleTest : FunSpec({
         rig.audit.rows.filter { it.gate == "signed_in_guard" }.size shouldBe 2
     }
 
+    // Guards against: a run resumed after a restart forgetting it is signed in and which codes it already typed.
+    test("a pilot rebuilt for the same run keeps its sign-in, its code count and the codes already typed") {
+        val leases = MemoryBrowserLeases()
+        val states = MemoryBrowserRunStates()
+        val before = PilotRig(leases = leases, runStates = states)
+        before.signInFully()
+        before.site.codesSent shouldBe 1
+
+        val after = PilotRig(leases = leases, runStates = states)
+        after.call("look").text() shouldContain "Signed in to example.com"
+        // the sign-in control is refused, as it was before the restart, before any model call
+        after.act("the Sign in link", "a sign-in form") shouldContain "Refused: You are already signed in to example.com"
+        after.site.open(after.site.verifyAgain())
+        after.act("the Verification code field", "the code is typed", value = "[secret:code_h-code]") shouldContain "already typed for an earlier code field"
+        after.site.codesSent shouldBe 0
+        after.site.clicked.shouldBeEmpty()
+    }
+
     test("a second verification after sign-in gets a fresh code through ask_code; an earlier code is never reused") {
         val rig = PilotRig()
         rig.signInFully()

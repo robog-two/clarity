@@ -262,8 +262,11 @@ class OwnStateTools(
     ) { input ->
         val date = input.date?.let { runCatching { LocalDate.parse(it) }.getOrNull() ?: return@tool ToolResult.Error("`date` must be YYYY-MM-DD") } ?: today()
         if (input.text.isBlank()) ToolResult.Error("`text` must not be empty") else {
+            val text = input.text.trim()
+            // A repeated call (a looping model, or a call re-run after a restart) adds nothing.
+            if (memory.journal(date, date).any { looseText(it.text) == looseText(text) }) return@tool ToolResult.Ok("Already in the journal for $date; nothing added.")
             gate.check(GateKind.MEMORY, "write_journal", input.text)?.let { return@tool ToolResult.Error(it) }
-            memory.writeJournal(date, input.text.trim())
+            memory.writeJournal(date, text)
             ToolResult.Ok("Journal entry saved for $date.")
         }
     }
@@ -300,8 +303,12 @@ class OwnStateTools(
         json = ClarityJson,
     ) { input ->
         if (input.text.isBlank()) ToolResult.Error("`text` must not be empty") else {
+            val text = input.text.trim()
+            memory.liveScratch(clock.now()).firstOrNull { looseText(it.text) == looseText(text) }?.let {
+                return@tool ToolResult.Ok("Already noted (until ${agentTime(it.expiresAt, settings.homeZone())}); nothing added.")
+            }
             gate.check(GateKind.MEMORY, "set_scratch", input.text)?.let { return@tool ToolResult.Error(it) }
-            memory.setScratch(input.text.trim(), input.ttlHours.coerceIn(1, 48).hours)
+            memory.setScratch(text, input.ttlHours.coerceIn(1, 48).hours)
             ToolResult.Ok("Noted for ${input.ttlHours.coerceIn(1, 48)} h.")
         }
     }
@@ -323,6 +330,16 @@ class OwnStateTools(
         json = ClarityJson,
     ) { input ->
         if (input.id == null && input.title.isNullOrBlank()) return@tool ToolResult.Error("A new task needs a `title`.")
+        // A repeated create (a looping model, or a call re-run after a restart) names the open task it already made.
+        if (input.id == null) {
+            sameOpenTask(input.title.orEmpty(), tasks.list())?.let { existing ->
+                scope?.turn?.touched(existing.id.value)?.forEach { tasks.link(existing.id, it, TaskLink.INFERRED) }
+                return@tool ToolResult.Ok(
+                    "Task ${existing.id.value} \"${existing.title}\" is already open (${existing.status.name.lowercase()}); no new task was made. " +
+                        "Pass its id to update it.",
+                )
+            }
+        }
         val task = tasks.upsert(input.id?.let(::TaskId), input.title, input.detail, input.status, input.heldActionId?.let(::HeldActionId))
         if (task == null) return@tool ToolResult.Error("No task with id ${input.id}. Open tasks:\n${openTaskLines()}")
         scope?.turn?.touched(task.id.value)?.forEach { tasks.link(task.id, it, TaskLink.INFERRED) }
@@ -356,6 +373,18 @@ private fun saidText(item: FeedItem, limit: Int = 80): String {
     val text = item.cards.filterIsInstance<Card.Said>().joinToString(" ") { it.text }.replace(Regex("\\s+"), " ").trim()
     return if (text.length <= limit) text else text.take(limit - 1).trimEnd() + "\u2026"
 }
+
+/** Pure: [text] compared loosely: case, runs of spaces and trailing punctuation do not count. */
+fun looseText(text: String): String = text.trim().lowercase().replace(Regex("\\s+"), " ").trimEnd('.', '!', '?', ' ')
+
+/** Pure: the open task in [open] with the same title as [title] (compared loosely), if any. */
+fun sameOpenTask(title: String, open: List<AgentTask>): AgentTask? {
+    val key = looseText(title)
+    if (key.isEmpty()) return null
+    return open.firstOrNull { it.status in OPEN_TASK_STATUSES && looseText(it.title) == key }
+}
+
+private val OPEN_TASK_STATUSES = setOf(AgentTask.Status.WORKING, AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU, AgentTask.Status.SCHEDULED)
 
 fun taskLine(task: AgentTask): String = "${task.id.value} \"${task.title}\" (${task.status.name.lowercase()})"
 

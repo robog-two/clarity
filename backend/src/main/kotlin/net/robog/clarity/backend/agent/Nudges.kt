@@ -253,6 +253,10 @@ fun nudgeRefusal(at: Instant, note: String, taskId: TaskId?, now: Instant, pendi
 
 private fun String.normalized() = trim().lowercase().replace(Regex("\\s+"), " ")
 
+/** Pure: the pending nudge that is exactly this one (same time, task and note), if any. */
+fun sameNudge(at: Instant, note: String, taskId: TaskId?, pending: List<Nudge>): Nudge? =
+    pending.firstOrNull { it.at == at && it.taskId == taskId && it.note.normalized() == note.normalized() }
+
 private val FINISHED_TASK = setOf(AgentTask.Status.DONE, AgentTask.Status.CANCELLED)
 
 /** Pure: whether a nudge about [task] has nothing left to check. */
@@ -295,8 +299,13 @@ class NudgeTools(
             val task = tasks.get(taskId) ?: return@tool ToolResult.Error("No task with id ${taskId.value}.")
             if (nudgeTaskFinished(task)) return@tool ToolResult.Error("Task \"${task.title}\" is already ${task.status.wire()}; there is nothing to check.")
         }
+        val pending = nudges.pending()
+        // The very same nudge again (a looping model, or a call re-run after a restart) is the one already set.
+        sameNudge(at, note, taskId, pending)?.let {
+            return@tool ToolResult.Ok("Nudge ${it.id.value} is already set for ${agentTime(it.at, zone)}; no new one was made.")
+        }
         val (dayStart, dayEnd) = homeDay(at, zone)
-        nudgeRefusal(at, note, taskId, now, nudges.pending(), nudges.countActive(dayStart, dayEnd), zone)
+        nudgeRefusal(at, note, taskId, now, pending, nudges.countActive(dayStart, dayEnd), zone)
             ?.let { return@tool ToolResult.Error(it) }
         val created = nudges.create(at, note, taskId)
         ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}. Nothing is sent now; when it fires you decide what to ask.")

@@ -409,6 +409,8 @@ class PilotRig(
     codeWait: Duration = 300.milliseconds,
     /** Who holds the browser; share one between rigs to model two runs on one browser. */
     val leases: MemoryBrowserLeases = MemoryBrowserLeases(),
+    /** Each run's saved browser state; share one between rigs to model a restart of the same run. */
+    val runStates: BrowserRunStates = MemoryBrowserRunStates(),
 ) {
     val clock = StepClock()
     val site = FakeSite(popup)
@@ -427,7 +429,7 @@ class PilotRig(
     val audit = MemoryBrowserAudit()
     val pilot = BrowserPilot(
         gate, FakeBrowserModels(jev), audit, vault, governance, AgentConfig(reviewInterval = 2.hours, browser = settings), clock, { TimeZone.UTC }, leases, settle = 1.milliseconds, leasePoll = 5.milliseconds,
-        settleCap = 60.milliseconds, settlePoll = 1.milliseconds,
+        settleCap = 60.milliseconds, settlePoll = 1.milliseconds, runStates = runStates,
     )
     val scope = RunScope("run-p", isLead = lead, purpose = "Check my orders at the garden shop")
     val tools: Map<String, Tool> = pilot.wrap(scope, site.tools).associateBy { it.name }

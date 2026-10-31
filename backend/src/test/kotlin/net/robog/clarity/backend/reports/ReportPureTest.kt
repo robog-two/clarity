@@ -79,6 +79,59 @@ class ReportPureTest : FunSpec({
         resolveStyle(StyleInput(pageSize = "legal"), ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "pageSize"
     }
 
+    test("a run's second create_report repeats its report: any for a helper, the same title for the lead") {
+        fun report(id: String, title: String) = StoredReport(id, ReportKind.DOCUMENT, title, Instant.parse("2026-10-29T15:00:00Z"), "run")
+        val made = listOf(report("r1", "Le Roman de Silence: A Refresher"), report("r2", "Other"))
+        repeatedReport(emptyList(), "Anything", isLead = false) shouldBe null
+        repeatedReport(made, "A new title", isLead = false) shouldBe made[0]
+        repeatedReport(made, "  le roman de silence: a refresher ", isLead = true) shouldBe made[0]
+        repeatedReport(made, "A new title", isLead = true) shouldBe null
+        repeatedReportText(made[0]) shouldBe
+            "This run already created report r1 (\"Le Roman de Silence: A Refresher\"). Change it with edit_report, or read it with read_report."
+    }
+
+    test("style may be a bare preset name; the schema still asks for an object") {
+        fun create(style: String) = ClarityJson.decodeFromString(
+            ReportTools.CreateInput.serializer(), """{"title":"T","source":"# T","style":$style}""",
+        )
+        resolveStyle(create("\"default\"").style, ReportStyle(fontFamily = "Arial")) shouldBe Either.Right(ReportStyle())
+        resolveStyle(create("\"mla\"").style, ReportStyle()) shouldBe Either.Right(ReportStyle.MLA)
+        resolveStyle(create("""{"preset":"mla","marginIn":1.25}""").style, ReportStyle()).getOrNull()!!.marginIn shouldBe 1.25
+        create("null").style shouldBe null
+        resolveStyle(create("\"apa7\"").style, ReportStyle()).shouldBeInstanceOf<Either.Left<String>>().value shouldBe
+            "Unknown preset \"apa7\"; use mla or default."
+        ClarityJson.decodeFromString(ReportTools.StyleChangeInput.serializer(), """{"id":"r1","style":"mla"}""").style.preset shouldBe "mla"
+        val schema = net.robog.clarity.harness.jsonSchemaOf(ReportTools.CreateInput.serializer().descriptor)
+        schema["\$defs"]!!.jsonObject["StyleInput"]!!.jsonObject["type"]!!.jsonPrimitive.content shouldBe "object"
+    }
+
+    test("fetched pages are read from fetch_page results: header, excerpt, first fetch of each URL") {
+        val fetch = net.robog.clarity.backend.agent.FETCH_PAGE
+        fun use(id: String, name: String = fetch) = net.robog.clarity.harness.Block.ToolUse(id, name, kotlinx.serialization.json.JsonObject(emptyMap()))
+        fun result(id: String, text: String, error: Boolean = false) = net.robog.clarity.harness.Block.Result(id, text, error)
+        val page = "Title: A\nURL: https://a.example/\nFetched: 2026-10-29T12:00:00Z\nDescription: About A.\nCharacters 0-5 of 5\n\nAbody"
+        val messages = listOf(
+            net.robog.clarity.harness.Message(net.robog.clarity.harness.Role.ASSISTANT, listOf(use("1"), use("2"), use("3"), use("4", "sandbox__shell"), use("5"))),
+            net.robog.clarity.harness.Message(
+                net.robog.clarity.harness.Role.USER,
+                listOf(
+                    result("1", page),
+                    result("2", "URL: https://b.example/\nCharacters 0-4 of 4\n\n" + "B text ".repeat(100)),
+                    result("3", "Could not fetch", error = true),
+                    result("4", "URL: https://shell.example/\n\nnot a page"),
+                    result("5", page.replace("About A.", "Again")),
+                ),
+            ),
+        )
+        val pages = fetchedPagesIn(messages)
+        pages.map { it.citation.url } shouldContainExactly listOf("https://a.example/", "https://b.example/")
+        pages[0].citation shouldBe net.robog.clarity.harness.UrlCitation("https://a.example/", "A", "About A.")
+        pages[0].fetchedAt shouldBe Instant.parse("2026-10-29T12:00:00Z")
+        pages[1].citation.title shouldBe null
+        pages[1].citation.content!!.length shouldBe SOURCE_EXCERPT_CHARS
+        pages[1].fetchedAt shouldBe null
+    }
+
     test("downloads are named after the title, with the revision when it is not the latest") {
         downloadFilename("The 1918 Flu: causes & spread", 3, latest = true, ReportFormat.DOCX) shouldBe "The 1918 Flu causes spread.docx"
         downloadFilename("Essay", 2, latest = false, ReportFormat.PDF) shouldBe "Essay-rev2.pdf"

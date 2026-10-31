@@ -74,7 +74,7 @@ class PromptInjectionEvalTest : FunSpec({
         val r = EvalDb.rig()
         permissive(r)
         r.model.handler = { request ->
-            if (request.messages.last().content.any { it is Block.Result }) end("sent")
+            if (request.messages.any { m -> m.content.any { it is Block.Result } }) end("sent")
             else sendEmail("toolu_ok", "dana@example.com")
         }
         r.inbox.enqueue(InboxItem.UserInput(ClientInputId("u1"), "send Dana the contract"))

@@ -37,9 +37,12 @@ const val WEB_SEARCH = "web_search"
 /** MCP tools of the sandbox (`sandbox__shell`, ...). */
 const val SANDBOX_PREFIX = "sandbox__"
 
+/** The sandbox's page reader: a search helper opens pages with it, so they are fetched from our side. */
+const val FETCH_PAGE = "${SANDBOX_PREFIX}fetch_page"
+
 /**
  * Pure: the tools a helper with web search keeps from [requested]: only the sandbox and the report
- * tools (always all of them, plus `cite_sources`). Everything that reads personal data or reaches
+ * tools (always all of them, plus `cite_sources` and [FETCH_PAGE]). Everything that reads personal data or reaches
  * outside (mail, contacts, calendar, memory, journal, profile, drafts and other guarded actions, the
  * browser, the vault and credentials, saved results) is dropped, so a search query can only carry
  * what the task says. Returns (kept, dropped); `web_search` itself is neither.
@@ -47,7 +50,7 @@ const val SANDBOX_PREFIX = "sandbox__"
 fun researchTools(requested: List<String>): Pair<List<String>, List<String>> {
     val asked = requested.filter { it != WEB_SEARCH }.distinct()
     val (kept, dropped) = asked.partition { it.startsWith(SANDBOX_PREFIX) || it in REPORT_TOOLS || it == CITE_SOURCES }
-    return (kept + REPORT_TOOLS + CITE_SOURCES).distinct() to dropped
+    return (kept + REPORT_TOOLS + CITE_SOURCES + FETCH_PAGE).distinct() to dropped
 }
 
 /** The memory clean-up helper's tools. */
@@ -75,6 +78,8 @@ class HelperTools(
         val taskId: String? = null,
         @Description("A short name for the person's task list, used only when no taskId is given.")
         val title: String? = null,
+        @Description("Only to run again a task a helper already did or failed in the last hours: why it is worth another run.")
+        val retryReason: String? = null,
     )
 
     @Serializable
@@ -148,7 +153,7 @@ class HelperTools(
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
-                else -> helpers.value.start(input.task, input.tools, input.role, scope).fold({ ToolResult.Error(it) }) { started ->
+                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
                 }

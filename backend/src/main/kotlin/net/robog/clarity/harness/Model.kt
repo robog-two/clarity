@@ -243,7 +243,7 @@ data class Usage(
     val cacheCreation1hTokens: Long = 0,
     /** What the provider says the call cost, in millionths of a dollar (OpenRouter); null when it does not say. */
     val reportedCostMicros: Long? = null,
-    /** Web searches the server ran for this call (`usage.server_tool_use.web_search_requests`). */
+    /** Web searches the server ran for this call (`usage.server_tool_use_details.web_search_requests`). */
     val webSearchRequests: Long = 0,
     /** The upstream provider that served the call (OpenRouter's `provider`); in a sum, the latest known. */
     val provider: String? = null,
@@ -304,6 +304,9 @@ const val MIN_COMPACT_AT_TOKENS = 50_000L
  */
 fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").startsWith("anthropic/")
 
+/** How much of each search result's page OpenRouter passes on by default: a short excerpt. */
+const val DEFAULT_SEARCH_EXCERPT_CHARS: Int = 400
+
 /**
  * OpenRouter's web search server tool (`{"type": "openrouter:web_search"}`): the search runs on
  * OpenRouter's side, its results go straight into the model's context, and the answer carries
@@ -311,6 +314,8 @@ fun usesCacheBreakpoints(model: String): Boolean = model.removePrefix("~").start
  * never the lead. [maxSearches] caps the searches of one request (`max_tool_calls`, which also bounds
  * any other server tool) and [maxResults] the results of each; [maxTotalResults] the results of the
  * whole request. [excludedDomains] is the engine's block list (Parallel, Exa and others honour it).
+ * [maxCharacters] caps each result's excerpt (`max_characters`; Exa, Parallel and Perplexity): the
+ * helper reads pages itself with `fetch_page`, so a search only needs enough to pick them.
  */
 data class WebSearchTool(
     val engine: String = "parallel",
@@ -319,10 +324,12 @@ data class WebSearchTool(
     val maxSearches: Int = 10,
     val maxTotalResults: Int? = null,
     val excludedDomains: List<String> = emptyList(),
+    val maxCharacters: Int? = DEFAULT_SEARCH_EXCERPT_CHARS,
 ) {
     init {
         require(maxSearches >= 1) { "maxSearches must be at least 1" }
         require(maxResults in 1..25) { "maxResults must be from 1 to 25" }
+        require(maxCharacters == null || maxCharacters in 1..100_000) { "maxCharacters must be from 1 to 100000" }
     }
 }
 
@@ -330,7 +337,7 @@ data class WebSearchTool(
 @kotlinx.serialization.Serializable
 data class UrlCitation(val url: String, val title: String? = null, val content: String? = null)
 
-/** [Block.Raw.type] of the citations kept beside an answer; never sent back to the model. */
+/** [Block.Raw.type] of the citations kept beside an answer; sent back only as [searchResultsNote] text. */
 const val CITATIONS_TYPE = "openrouter_citations"
 
 /** Pure: the [Block.Raw] that keeps [citations] in the journal, where `cite_sources` finds them. */
@@ -344,14 +351,52 @@ fun citationsBlock(citations: List<UrlCitation>): Block.Raw = Block.Raw(
 /** Pure: every citation kept in [messages] ([citationsBlock]), first occurrence of each URL, in order. */
 fun citationsIn(messages: List<Message>): List<UrlCitation> = messages.asSequence()
     .flatMap { it.content.asSequence() }
-    .filterIsInstance<Block.Raw>()
-    .filter { it.type == CITATIONS_TYPE }
-    .flatMap { block ->
-        val list = block.json["citations"] as? JsonArray ?: return@flatMap emptySequence<UrlCitation>()
-        list.asSequence().mapNotNull { runCatching { HarnessJson.decodeFromJsonElement(UrlCitation.serializer(), it) }.getOrNull() }
-    }
+    .flatMap { citationsOf(it).asSequence() }
     .distinctBy { it.url }
     .toList()
+
+/** Pure: the citations [block] keeps, when it is a [citationsBlock]; else none. */
+fun citationsOf(block: Block): List<UrlCitation> {
+    if (block !is Block.Raw || block.type != CITATIONS_TYPE) return emptyList()
+    val list = block.json["citations"] as? JsonArray ?: return emptyList()
+    return list.mapNotNull { runCatching { HarnessJson.decodeFromJsonElement(UrlCitation.serializer(), it) }.getOrNull() }
+}
+
+/** Results listed at most in one [searchResultsNote]. */
+const val SEARCH_NOTE_MAX_RESULTS = 12
+
+/** Characters of each result's excerpt in a [searchResultsNote]. */
+const val SEARCH_NOTE_EXCERPT_CHARS = 300
+
+/** First line of a [searchResultsNote]. */
+const val SEARCH_NOTE_HEADING = "[Web search results from your previous step, as the search returned them]"
+
+/**
+ * Pure: the web search results of one step ([citations]) as text the model reads on later turns,
+ * so it can see what it already searched: one line per page (title, URL, a short excerpt), each URL
+ * once, at most [SEARCH_NOTE_MAX_RESULTS]. Marked as outside content. Null when there are none.
+ */
+fun searchResultsNote(citations: List<UrlCitation>): String? {
+    val unique = citations.distinctBy { it.url }
+    if (unique.isEmpty()) return null
+    fun clean(s: String?) = s?.replace(Regex("\\s+"), " ")?.trim()?.ifEmpty { null }
+    val lines = unique.take(SEARCH_NOTE_MAX_RESULTS).mapIndexed { i, c ->
+        buildString {
+            append(i + 1).append(". ")
+            clean(c.title)?.let { append(it.take(200)).append(" — ") }
+            append(c.url)
+            clean(c.content)?.let { append(": ").append(it.take(SEARCH_NOTE_EXCERPT_CHARS)) }
+        }
+    }
+    val more = unique.size - lines.size
+    return buildString {
+        append(SEARCH_NOTE_HEADING).append('\n')
+        append("<untrusted source=\"web search\">\n")
+        lines.forEach { append(it.replace("</untrusted", "&lt;/untrusted")).append('\n') }
+        if (more > 0) append("(and ").append(more).append(" more)\n")
+        append("</untrusted>")
+    }
+}
 
 /** A single model call: the full (append-only) history plus the stable request prefix. */
 data class ModelRequest(
@@ -403,7 +448,13 @@ data class ModelRequest(
 }
 
 /** The finished (accumulated) assistant turn. */
-data class ModelResponse(val content: List<Block>, val stopReason: StopReason, val usage: Usage) {
+data class ModelResponse(
+    val content: List<Block>,
+    val stopReason: StopReason,
+    val usage: Usage,
+    /** The provider sent no usage for the call: its tokens and cost are unknown, not zero. */
+    val usageMissing: Boolean = false,
+) {
     val toolUses: List<Block.ToolUse> get() = content.filterIsInstance<Block.ToolUse>()
     val text: String get() = content.filterIsInstance<Block.Text>().joinToString("") { it.text }
 }

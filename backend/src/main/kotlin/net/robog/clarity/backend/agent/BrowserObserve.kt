@@ -300,6 +300,7 @@ enum class SignInPhase(val label: String) {
 }
 
 /** The sign-in state of one site in one run: how many codes were sent, when, and what sent them. */
+@Serializable
 data class SignInState(
     val codesSent: Int = 0,
     val lastSentAt: Instant? = null,

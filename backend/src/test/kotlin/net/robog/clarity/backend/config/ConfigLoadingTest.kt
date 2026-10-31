@@ -46,6 +46,44 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
     }
 
+    test("hard spend stops, the lead's turn cap, and the helper limits: defaults and overrides") {
+        val c = load().getOrNull()!!.agent
+        c.spend shouldBe SpendLimits()
+        // No global stop unless one is set; per-run caps catch runaways.
+        c.spend.weeklyUsd shouldBe null
+        c.spend.dailyUsd shouldBe emptyMap()
+        c.spend.any shouldBe false
+        c.leadTurnMaxCostUsd shouldBe 0.5
+        c.helperMaxPerDay shouldBe 20
+        c.helperMaxResumes shouldBe 3
+        val custom = load(
+            mapOf(
+                "CLARITY_SPEND_WEEKLY_MAX" to "7",
+                "CLARITY_SPEND_DAILY_MAX_HELPER" to "1.5",
+                "CLARITY_LEAD_TURN_MAX_COST" to "0.25",
+                "CLARITY_HELPER_MAX_PER_DAY" to "5",
+                "CLARITY_HELPER_MAX_RESUMES" to "0",
+            ),
+        ).getOrNull()!!.agent
+        custom.spend.weeklyUsd shouldBe 7.0
+        custom.spend.dailyUsd[AgentRole.HELPER] shouldBe 1.5
+        custom.spend.dailyUsd[AgentRole.LEAD] shouldBe null
+        custom.spend.any shouldBe true
+        custom.leadTurnMaxCostUsd shouldBe 0.25
+        custom.helperMaxPerDay shouldBe 5
+        custom.helperMaxResumes shouldBe 0
+        load(mapOf("CLARITY_SPEND_WEEKLY_MAX" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+    }
+
+    test("a helper run may spend $0.15 by default; the cap is a dollar amount above 0") {
+        load().getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.15
+        load(mapOf("CLARITY_HELPER_MAX_COST" to "0.5")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.5
+        load(mapOf("CLARITY_HELPER_MAX_COST" to "$1")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 1.0
+        for (bad in listOf("0", "-1", "lots")) {
+            load(mapOf("CLARITY_HELPER_MAX_COST" to bad)).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+        }
+    }
+
     test("agent roles default to the MiMo lead and DeepSeek Flash helper, guard and triage, all on OpenRouter") {
         val roles = load().getOrNull()!!.agent.roles
         roles[AgentRole.LEAD].model shouldBe "xiaomi/mimo-v2.6-pro"

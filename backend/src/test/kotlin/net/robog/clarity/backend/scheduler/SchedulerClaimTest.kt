@@ -4,12 +4,13 @@ import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.longs.shouldBeInRange
 import io.kotest.matchers.shouldBe
-import io.kotest.assertions.throwables.shouldThrow
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,6 +37,7 @@ import net.robog.clarity.shared.session.Settings
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.selectAll
+import org.jetbrains.exposed.v1.jdbc.transactions.TransactionManager
 import org.jetbrains.exposed.v1.jdbc.update
 import org.testcontainers.postgresql.PostgreSQLContainer
 
@@ -51,6 +53,18 @@ private class CountingJob(
         if (fail) error("boom")
         fired.incrementAndGet()
         contexts += context
+    }
+}
+
+/** Throws on its first [failTimes] fires, then succeeds; records the slot of every try. */
+private class FlakyJob(override val name: String, private val schedule: Schedule, private val failTimes: Int) : ScheduledJob {
+    val slots = java.util.concurrent.CopyOnWriteArrayList<Instant>()
+    val succeeded = AtomicInteger()
+    override fun schedule(settings: Settings) = schedule
+    override suspend fun fire(context: FireContext) {
+        slots += context.scheduledFor
+        if (slots.size <= failTimes) error("boom ${slots.size}")
+        succeeded.incrementAndGet()
     }
 }
 
@@ -76,6 +90,9 @@ class SchedulerClaimTest : FunSpec({
 
     suspend fun nextRun(name: String): Instant =
         database.tx { ScheduledJobs.selectAll().where { ScheduledJobs.name eq name }.single()[ScheduledJobs.nextRunAt] }
+
+    suspend fun failuresOf(name: String): Int =
+        database.tx { ScheduledJobs.selectAll().where { ScheduledJobs.name eq name }.single()[ScheduledJobs.failures] }
 
     test("new jobs get a row scheduled in the future and are not fired immediately") {
         val job = CountingJob("a", Schedule.Every(2.hours))
@@ -123,14 +140,97 @@ class SchedulerClaimTest : FunSpec({
         (nextRun("daily") <= Clock.System.now() + 1.days + 1.hours) shouldBe true
     }
 
-    test("a job that throws is not advanced, so it is retried") {
+    // Guards against: a job that throws being re-claimed first on every tick, so the jobs due after it never fire.
+    test("a job that throws does not stop another due job from firing") {
         val bad = CountingJob("bad", Schedule.Every(1.hours), fail = true)
+        val good = CountingJob("good", Schedule.Every(1.hours))
+        val scheduler = Scheduler(database, setOf(bad, good), settings, Clock.System)
+        scheduler.ensureRows()
+        makeDue("bad", 2.hours) // the oldest due row: claimed first
+        makeDue("good", 1.hours)
+        var ticks = 0
+        while (scheduler.tickOnce()) ticks++.also { check(it < 10) { "the scheduler kept finding due work" } }
+        good.fired.get() shouldBe 1
+        bad.fired.get() shouldBe 0
+        (nextRun("bad") > Clock.System.now()) shouldBe true
+        failuresOf("bad") shouldBe 1
+    }
+
+    // Guards against: a failing job being retried every tick forever (or never again).
+    test("a failing job is retried later and later, and the delay stops growing at the cap") {
+        val bad = CountingJob("flaky", Schedule.Every(1.days), fail = true)
         val scheduler = Scheduler(database, setOf(bad), settings, Clock.System)
         scheduler.ensureRows()
-        makeDue("bad", 1.hours)
-        val before = nextRun("bad")
-        shouldThrow<IllegalStateException> { scheduler.tickOnce() }
-        nextRun("bad") shouldBe before
+        val delays = (1..9).map {
+            makeDue("flaky", 1.minutes)
+            val before = Clock.System.now()
+            scheduler.tickOnce() shouldBe true
+            nextRun("flaky") - before
+        }
+        val expected = listOf(1, 2, 4, 8, 16, 32, 60, 60, 60).map { it.minutes }
+        delays.zip(expected).forEach { (got, want) -> got.inWholeSeconds shouldBeInRange (want.inWholeSeconds - 5)..(want.inWholeSeconds + 5) }
+        failuresOf("flaky") shouldBe 9
+    }
+
+    // Guards against: a retry pushing a frequent job past its own next regular run.
+    test("a failing job's retry is never later than its regular next run") {
+        val bad = CountingJob("often", Schedule.Every(3.minutes), fail = true)
+        val scheduler = Scheduler(database, setOf(bad), settings, Clock.System)
+        scheduler.ensureRows()
+        repeat(6) {
+            makeDue("often", 1.minutes)
+            scheduler.tickOnce() shouldBe true
+        }
+        (nextRun("often") <= Clock.System.now() + 3.minutes) shouldBe true
+    }
+
+    // Guards against: retries of one slot getting a new idempotency key each time, so their side effects repeat.
+    test("retries of a failed slot see the same scheduledFor; success clears the failure count") {
+        val job = FlakyJob("slot", Schedule.Every(1.hours), failTimes = 2)
+        val scheduler = Scheduler(database, setOf(job), settings, Clock.System)
+        scheduler.ensureRows()
+        makeDue("slot", 2.hours)
+        val slot = nextRun("slot")
+        scheduler.tickOnce() shouldBe true
+        repeat(2) {
+            makeDue("slot", 1.minutes) // the retry is due now (the backoff had moved it on)
+            scheduler.tickOnce() shouldBe true
+        }
+        job.slots shouldBe listOf(slot, slot, slot)
+        job.succeeded.get() shouldBe 1
+        failuresOf("slot") shouldBe 0
+        database.tx { ScheduledJobs.selectAll().where { ScheduledJobs.name eq "slot" }.single()[ScheduledJobs.retrySlot] } shouldBe null
+        (nextRun("slot") > Clock.System.now() + 50.minutes) shouldBe true
+    }
+
+    // Guards against: the failure path rolling back the backoff along with the job's writes.
+    test("a failing job's own writes roll back, but its backoff is kept") {
+        val writer = object : ScheduledJob {
+            override val name = "writer"
+            override fun schedule(settings: Settings) = Schedule.Every(1.hours)
+            override suspend fun fire(context: FireContext) {
+                with(ExposedInboxStore(database, Clock.System, InboxSignals())) {
+                    TransactionManager.current().enqueueTx(InboxItem.JobDue("writer", "x"), "writer:${context.scheduledFor}")
+                }
+                error("boom after writing")
+            }
+        }
+        val scheduler = Scheduler(database, setOf(writer), settings, Clock.System)
+        scheduler.ensureRows()
+        makeDue("writer", 1.hours)
+        scheduler.tickOnce() shouldBe true
+        failuresOf("writer") shouldBe 1
+        (nextRun("writer") > Clock.System.now()) shouldBe true
+        ExposedInboxStore(database, Clock.System, InboxSignals()).pending().shouldBeEmpty()
+    }
+
+    test("the failure backoff doubles from one minute and is capped at an hour") {
+        Scheduler.failureBackoff(1) shouldBe 1.minutes
+        Scheduler.failureBackoff(2) shouldBe 2.minutes
+        Scheduler.failureBackoff(6) shouldBe 32.minutes
+        Scheduler.failureBackoff(7) shouldBe 1.hours
+        Scheduler.failureBackoff(1_000) shouldBe 1.hours
+        Scheduler.failureBackoff(0) shouldBe 1.minutes
     }
 
     test("rows of jobs that no longer exist are dropped") {

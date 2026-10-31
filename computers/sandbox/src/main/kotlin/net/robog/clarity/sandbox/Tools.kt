@@ -350,7 +350,12 @@ class SearchFilesTool(private val workspace: Workspace) : SandboxTool {
     }
 }
 
-fun sandboxTools(workspace: Workspace, runner: ShellRunner = ShellRunner(workspace)): List<SandboxTool> {
+fun sandboxTools(
+    workspace: Workspace,
+    runner: ShellRunner = ShellRunner(workspace),
+    // Pages come through the same egress proxy as the shell; no proxy, no internet.
+    fetch: FetchPageTool = FetchPageTool(runner.proxy?.let(::fetchClient)),
+): List<SandboxTool> {
     val tracker = ReadTracker()
     return listOf(
         ShellTool(workspace, runner),
@@ -359,6 +364,7 @@ fun sandboxTools(workspace: Workspace, runner: ShellRunner = ShellRunner(workspa
         EditFileTool(workspace, tracker),
         SearchFilesTool(workspace),
         ListFilesTool(workspace),
+        fetch,
     )
 }
 

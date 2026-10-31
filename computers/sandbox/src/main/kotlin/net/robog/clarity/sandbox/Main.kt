@@ -13,7 +13,7 @@ private val log = KotlinLogging.logger {}
  * sandboxd: the agent's Linux workspace as an MCP server.
  *
  * SANDBOX_PORT (8940), SANDBOX_WORKSPACE (/workspace), SANDBOX_KEY_FILE (/run/secrets/sandbox_key),
- * SANDBOX_HTTP_PROXY (optional, e.g. http://egress-sandbox:3128: commands reach the public internet through it).
+ * SANDBOX_HTTP_PROXY (optional, e.g. http://egress-sandbox:3128: commands and fetch_page reach the public internet through it).
  * Without a key the server refuses to start unless SANDBOX_ALLOW_NO_AUTH=true.
  */
 fun main() {

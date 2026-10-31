@@ -257,12 +257,49 @@ class ReportDbTest : FunSpec({
             tool.invoke(args("id" to id, "urls" to listOf("https://nowhere.example"))).shouldBeInstanceOf<ToolResult.Error>()
         }
         withContext(ToolCallContext("another-run", "t2")) {
-            tool.invoke(args("id" to id)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "search first"
+            tool.invoke(args("id" to id)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "fetch_page first"
         }
         r.reportStore.sources(id).map { it.url to it.citedText } shouldContainExactly listOf(
             "https://www.cdc.gov/flu/1918" to "about 50 million",
             "https://example.org/b" to null,
         )
+    }
+
+    test("cite_sources attaches the pages the run fetched, with when they were fetched, before any search citation") {
+        val r = rig()
+        val id = created(r)
+        val runId = "0d3a9a52-2b0e-4d7e-8f3e-6b1f7d2c9e41"
+        r.journal.append(runId, Message.user("research"))
+        r.journal.append(
+            runId,
+            Message(
+                Role.ASSISTANT,
+                listOf(
+                    Block.Text("found it"),
+                    citationsBlock(listOf(UrlCitation("https://openrouter-cited.example/x"))),
+                    Block.ToolUse("f1", net.robog.clarity.backend.agent.FETCH_PAGE, buildJsonObject { put("url", "https://www.cdc.gov/flu/1918") }),
+                    Block.ToolUse("f2", net.robog.clarity.backend.agent.FETCH_PAGE, buildJsonObject { put("url", "https://gone.example") }),
+                ),
+            ),
+        )
+        r.journal.append(
+            runId,
+            Message(
+                Role.USER,
+                listOf(
+                    Block.Result("f1", "Title: 1918 Pandemic\nURL: https://www.cdc.gov/flu/1918\nFetched: 2026-10-29T12:00:00Z\nCharacters 0-30 of 30\n\nIt killed about 50 million people."),
+                    Block.Result("f2", "https://gone.example answered HTTP 404.", isError = true),
+                ),
+            ),
+        )
+        withContext(ToolCallContext(runId, "t1")) {
+            r.reportTools.citeSources().invoke(args("id" to id)).shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "1 new source"
+        }
+        val source = r.reportStore.sources(id).single()
+        source.url shouldBe "https://www.cdc.gov/flu/1918"
+        source.title shouldBe "1918 Pandemic"
+        source.citedText shouldBe "It killed about 50 million people."
+        source.fetchedAt shouldBe kotlin.time.Instant.parse("2026-10-29T12:00:00Z")
     }
 
     test("downloads render once and come from the cache after; Markdown is never rendered") {

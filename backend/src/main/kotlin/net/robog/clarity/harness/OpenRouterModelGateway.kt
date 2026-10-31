@@ -84,7 +84,8 @@ data class Stickiness(val session: String? = null, val preferred: String? = null
  *  - tool uses become assistant `tool_calls` (arguments as a JSON string), tool results `tool`
  *    messages; other [Block.Raw] is dropped (old Anthropic thinking, tool search and server tool
  *    blocks), except this provider's own `reasoning_details` ([REASONING_TYPE]), replayed to the
- *    same model only;
+ *    same model only, and the web search citations of a step ([CITATIONS_TYPE]), which come back as
+ *    a [searchResultsNote] user text right after that step (after its tool results);
  *  - all tools are sent as `function` tools, `tool_choice: auto`;
  *  - `reasoning.effort` is the effort in effect for this request: that of the last effort-only
  *    message since the latest compaction point, else [ModelRequest.effort] ([effortIn]);
@@ -117,6 +118,8 @@ class OpenRouterModelGateway(
     private val routing: OpenRouterRouting = OpenRouterRouting(),
     /** Told which upstream provider served each response (the stream's `provider`), when it says. */
     private val onServed: (provider: String) -> Unit = {},
+    /** The longest wait between two lines of the stream; then the call fails, so a stalled stream frees its slot. */
+    private val idleTimeout: Duration = STREAM_IDLE_TIMEOUT,
 ) : ModelGateway {
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
@@ -188,7 +191,16 @@ class OpenRouterModelGateway(
                 throw error
             }
             val accumulator = StreamAccumulator(model, onTextDelta)
-            stream.bufferedReader().useLines { lines -> parseSse(lines, accumulator::accept) }
+            // OpenRouter sends keep-alive comments while a model thinks, so a long silence means a stalled stream.
+            val watchdog = IdleWatchdog(idleTimeout) { stream.close() }
+            try {
+                stream.bufferedReader().useLines { lines -> parseSse(lines.onEach { watchdog.touch() }, accumulator::accept) }
+            } catch (e: IOException) {
+                if (watchdog.fired) throw OpenRouterException(null, "OpenRouter stream stalled: nothing for $idleTimeout")
+                throw e
+            } finally {
+                watchdog.stop()
+            }
             accumulator.provider?.let(onServed)
             return accumulator.response()
         }
@@ -210,8 +222,11 @@ class OpenRouterModelGateway(
 
         private val CONNECT_TIMEOUT = 30.seconds
 
-        /** Until the response headers arrive; the stream itself has no deadline. */
+        /** Until the response headers arrive; the stream itself has [STREAM_IDLE_TIMEOUT] between lines. */
         private val RESPONSE_TIMEOUT = 10.minutes
+
+        /** The longest silence between two lines of a stream. */
+        val STREAM_IDLE_TIMEOUT: Duration = 3.minutes
 
         private const val ERROR_BODY_LIMIT = 2_000
 
@@ -319,6 +334,7 @@ class OpenRouterModelGateway(
                 put("max_results", maxResults)
                 put("max_total_results", maxTotalResults ?: (maxResults * maxSearches))
                 if (excludedDomains.isNotEmpty()) put("excluded_domains", JsonArray(excludedDomains.map(::JsonPrimitive)))
+                maxCharacters?.let { put("max_characters", it) }
             }
         }
 
@@ -351,6 +367,8 @@ class OpenRouterModelGateway(
             // and whether its last part carries the message breakpoint.
             val userParts = mutableListOf<String>()
             var userMarked = false
+            // The web search results of the last assistant step, read back to the model after it.
+            var searchNote: String? = null
             fun flushUser() {
                 if (userParts.isNotEmpty()) {
                     val content = if (userParts.size == 1 && !userMarked) {
@@ -386,7 +404,7 @@ class OpenRouterModelGateway(
                     Role.SYSTEM -> if (texts.isNotEmpty()) {
                         val notice = operatorUpdate(texts.joinToString("\n\n"))
                         // The placeholder only stood in for the notice; the notice takes its place.
-                        if (userParts.singleOrNull() == OPERATOR_UPDATE_PLACEHOLDER) userParts.clear()
+                        if (userParts.lastOrNull() == OPERATOR_UPDATE_PLACEHOLDER) userParts.removeAt(userParts.lastIndex)
                         userParts += notice
                     }
                     Role.USER -> {
@@ -398,12 +416,15 @@ class OpenRouterModelGateway(
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
                         }
+                        searchNote?.let { userParts += it }
+                        searchNote = null
                         message.content.filterIsInstance<Block.Text>().forEach { userParts += it.text }
                         // The breakpoint sits on the message's last block, so it goes on the last text part:
                         // the message's own, or a notice after it (a tool result carries none here).
                         userMarked = marked != null
                     }
                     Role.ASSISTANT -> {
+                        searchNote = searchResultsNote(message.content.flatMap(::citationsOf))
                         val calls = message.content.filterIsInstance<Block.ToolUse>()
                         if (texts.isEmpty() && calls.isEmpty()) continue
                         val reasoning = message.content.firstNotNullOfOrNull { reasoningFor(it, request.model) }
@@ -427,6 +448,7 @@ class OpenRouterModelGateway(
                     }
                 }
             }
+            searchNote?.let { userParts += it }
             flushUser()
         }
 
@@ -511,7 +533,9 @@ class OpenRouterModelGateway(
             val cached = details.long("cached_tokens")
             val written = details.long("cache_write_tokens")
             val cost = (usage["cost"] as? JsonPrimitive)?.doubleOrNull
-            val searches = (usage["server_tool_use"] as? JsonObject)?.long("web_search_requests") ?: 0
+            // OpenRouter streams `server_tool_use_details`; its docs name `server_tool_use`.
+            val searches = listOf("server_tool_use_details", "server_tool_use")
+                .firstNotNullOfOrNull { usage[it] as? JsonObject }?.long("web_search_requests") ?: 0
             return Usage(
                 inputTokens = (usage.long("prompt_tokens") - cached - written).coerceAtLeast(0),
                 outputTokens = usage.long("completion_tokens"),
@@ -545,6 +569,7 @@ class OpenRouterModelGateway(
         private val citations = LinkedHashMap<String, UrlCitation>()
         private var finish: String? = null
         private var usage: Usage = Usage.ZERO
+        private var usageSeen = false
 
         /** The upstream provider that served the stream, from its chunks' `provider`. */
         var provider: String? = null
@@ -559,7 +584,7 @@ class OpenRouterModelGateway(
                 val message = (error["message"] as? JsonPrimitive)?.contentOrNull ?: "unknown error"
                 throw OpenRouterException(null, "OpenRouter stream failed: ${message.take(300)}")
             }
-            (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it) }
+            (chunk["usage"] as? JsonObject)?.let { usage = toUsage(it); usageSeen = true }
             (chunk["provider"] as? JsonPrimitive)?.contentOrNull?.let { provider = it }
             val choice = (chunk["choices"] as? JsonArray)?.firstOrNull() as? JsonObject ?: return true
             val delta = choice["delta"] as? JsonObject
@@ -605,13 +630,57 @@ class OpenRouterModelGateway(
             val answer = (if (text.isEmpty()) emptyList() else listOf(Block.Text(text.toString()))) + uses
             // Reasoning is kept only beside an answer, so no assistant turn is reasoning alone.
             val kept = if (answer.isEmpty() || reasoning.isEmpty()) emptyList() else listOf(reasoningBlock(model, reasoning.values.map(::JsonObject)))
-            // Citations likewise, after the answer; the request builder never sends them back.
+            // Citations likewise, after the answer; the request builder sends them back only as a search note.
             val cited = if (answer.isEmpty() || citations.isEmpty()) emptyList() else listOf(citationsBlock(citations.values.toList()))
-            return ModelResponse(kept + answer + cited, stopReason(finish, uses.isNotEmpty()), usage.copy(provider = provider))
+            // Citations mean a search ran, even when the usage did not count it: at least one, so the run is tainted.
+            val searches = if (citations.isEmpty()) usage.webSearchRequests else usage.webSearchRequests.coerceAtLeast(1)
+            return ModelResponse(
+                kept + answer + cited,
+                stopReason(finish, uses.isNotEmpty()),
+                usage.copy(webSearchRequests = searches, provider = provider),
+                usageMissing = !usageSeen,
+            )
         }
 
         private companion object {
             val REASONING_TEXT_FIELDS = setOf("text", "summary", "data")
+        }
+    }
+}
+
+/**
+ * Calls [onIdle] once when [touch] has not been called for [timeout] (checked a few times per
+ * [timeout] on one shared daemon thread); [stop] ends the watch.
+ */
+internal class IdleWatchdog(private val timeout: Duration, private val onIdle: () -> Unit) {
+    @Volatile private var last = System.nanoTime()
+    @Volatile var fired = false
+        private set
+    private val task: java.util.concurrent.ScheduledFuture<*>
+
+    init {
+        val period = (timeout.inWholeMilliseconds / 4).coerceIn(50, 5_000)
+        task = TIMER.scheduleAtFixedRate({ check() }, period, period, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    fun touch() {
+        last = System.nanoTime()
+    }
+
+    fun stop() {
+        task.cancel(false)
+    }
+
+    private fun check() {
+        if (fired || System.nanoTime() - last < timeout.inWholeNanoseconds) return
+        fired = true
+        task.cancel(false)
+        runCatching(onIdle)
+    }
+
+    private companion object {
+        val TIMER: java.util.concurrent.ScheduledExecutorService = java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "openrouter-idle-watchdog").apply { isDaemon = true }
         }
     }
 }

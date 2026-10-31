@@ -12,6 +12,16 @@ data class AgentConfig(
     val maxTurns: Int = 30,
     /** A helper's step limit (`CLARITY_AGENT_HELPER_MAX_TURNS`): browsing takes many small steps. */
     val helperMaxTurns: Int = 60,
+    /** What one helper run may spend, in dollars (`CLARITY_HELPER_MAX_COST`); then it wraps up and stops. */
+    val helperMaxCostUsd: Double = 0.15,
+    /** What one lead turn may spend, in dollars (`CLARITY_LEAD_TURN_MAX_COST`); then the turn stops. */
+    val leadTurnMaxCostUsd: Double = 0.50,
+    /** Hard stops on all model calls ([SpendLimits]): per role per day and in all per week. */
+    val spend: SpendLimits = SpendLimits(),
+    /** Helpers the lead may start in 24 hours (`CLARITY_HELPER_MAX_PER_DAY`). */
+    val helperMaxPerDay: Int = 20,
+    /** Times a helper run is resumed after a restart before it is failed instead (`CLARITY_HELPER_MAX_RESUMES`). */
+    val helperMaxResumes: Int = 3,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
@@ -28,6 +38,11 @@ data class AgentConfig(
     val browser: BrowserPilotConfig = BrowserPilotConfig(),
     /** OpenRouter web search for helpers the lead grants it (`CLARITY_WEB_SEARCH*`). */
     val webSearch: WebSearchConfig = WebSearchConfig(),
+    /**
+     * `CLARITY_TRIGGER_FIRES_PER_HOUR`: how often one trigger may wake the lead in an hour; matches
+     * past it are stored but wake nothing (the periodic review still sees them).
+     */
+    val triggerFiresPerHour: Int = 6,
 ) {
     /** The lead role's boot-time model (the former single `CLARITY_AGENT_MODEL`). */
     val model: String get() = roles.lead.model
@@ -130,6 +145,8 @@ data class WebSearchConfig(
     val maxSearchesPerRun: Int = 10,
     val maxResults: Int = 5,
     val excludedDomains: List<String> = emptyList(),
+    /** Characters of each result's page OpenRouter passes on; the helper fetches pages itself. */
+    val maxCharactersPerResult: Int = net.robog.clarity.harness.DEFAULT_SEARCH_EXCERPT_CHARS,
 ) {
     /** The server tool a granted helper's run carries; null when search is off. */
     fun tool(): net.robog.clarity.harness.WebSearchTool? = if (!enabled) null else net.robog.clarity.harness.WebSearchTool(
@@ -138,11 +155,25 @@ data class WebSearchConfig(
         maxResults = maxResults,
         maxSearches = maxSearchesPerRun,
         excludedDomains = excludedDomains,
+        maxCharacters = maxCharactersPerResult,
     )
 
     companion object {
         val ENGINES = listOf("parallel", "exa", "perplexity", "native", "auto")
     }
+}
+
+/**
+ * Optional hard spend stops, in dollars, read from `model_call`: [weeklyUsd] for every call in the
+ * last 7 days (`CLARITY_SPEND_WEEKLY_MAX`), and per role in the last 24 hours (`CLARITY_SPEND_DAILY_MAX_LEAD`,
+ * `_HELPER`, `_GUARD`, `_TRIAGE`, ...). Over one, no model is called until older calls age out. Off
+ * unless set: spend is kept down by tuning, and runaway runs are stopped by the per-run caps.
+ */
+data class SpendLimits(
+    val weeklyUsd: Double? = null,
+    val dailyUsd: Map<AgentRole, Double> = emptyMap(),
+) {
+    val any: Boolean get() = weeklyUsd != null || dailyUsd.isNotEmpty()
 }
 
 /** Jev 1.14's dated id on OpenRouter (`canonical_slug` in the models API, released 2026-10-14). */

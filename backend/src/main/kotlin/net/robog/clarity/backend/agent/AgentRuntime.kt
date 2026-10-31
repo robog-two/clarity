@@ -19,6 +19,7 @@ import net.robog.clarity.harness.RunJournal
 import net.robog.clarity.harness.RunRequest
 import net.robog.clarity.harness.SystemBlock
 import net.robog.clarity.harness.Tool
+import net.robog.clarity.harness.ToolLedger
 import net.robog.clarity.harness.ToolPolicy
 import net.robog.clarity.harness.ToolResultSink
 import net.robog.clarity.harness.WebSearchTool
@@ -46,6 +47,10 @@ class AgentRuntime(
     val settings: ModelSettings,
     factory: ModelGatewayFactory,
     private val usage: UsageRecorder,
+    /** Hard spend stops checked before every call. */
+    private val spendGuard: SpendGuard = SpendGuard.OFF,
+    /** Tool results kept so a resumed run never runs a call twice. */
+    private val ledger: ToolLedger = ToolLedger.NONE,
 ) {
     private val gateway: ModelGateway? = config.openRouterApiKey?.takeIf(String::isNotBlank)?.let(factory::create)
 
@@ -55,7 +60,7 @@ class AgentRuntime(
      */
     fun bind(role: AgentRole): BoundRole? {
         val gateway = gateway ?: return null
-        return BoundRole(role, settings[role], RecordingGateway(gateway, usage, role))
+        return BoundRole(role, settings[role], RecordingGateway(gateway, usage, role, spendGuard))
     }
 
     /** The gateway, recording calls as [role], or null without a key. */
@@ -75,7 +80,7 @@ class AgentRuntime(
     fun harness(journal: RunJournal, role: AgentRole = AgentRole.LEAD): Harness = harness(journal, bindOrFail(role))
 
     /** A harness on [bound]'s gateway; the run keeps it to the end. */
-    fun harness(journal: RunJournal, bound: BoundRole): Harness = Harness(bound.gateway, journal)
+    fun harness(journal: RunJournal, bound: BoundRole): Harness = Harness(bound.gateway, journal, ledger)
 
     /** [bind], or fails without a key. */
     fun bindOrFail(role: AgentRole): BoundRole =
@@ -84,7 +89,8 @@ class AgentRuntime(
 
 const val COMPACTION_INSTRUCTIONS =
     "Summarize the conversation so far for the same agent to continue it: the person's standing preferences and decisions, " +
-        "open threads and what each waits on, held items, helpers running, and anything promised. Drop tool output and chatter."
+        "open threads and what each waits on, held items, helpers running, and anything promised. Drop tool output and chatter " +
+        "(a record of the actions taken is added after the summary)."
 
 /** The last user message of a client-side compaction call. The tools are still sent (the history calls them), so it says not to. */
 const val CLIENT_COMPACTION_REQUEST =
@@ -188,6 +194,44 @@ fun clientCompactionRequest(role: RoleConfig, system: List<SystemBlock>, history
         effort = role.effort,
         cache = cache,
     )
+}
+
+/** First line of the record of actions appended to a summary ([sideEffectRecord]). */
+const val SIDE_EFFECT_RECORD_HEADING = "[clarity] Actions taken before this summary, from the journal (newest last):"
+
+/** Arguments left out of the record: whole documents and message bodies. */
+private val BULKY_ARGS = setOf("source", "body", "content", "markdown", "old", "new", "text", "html")
+
+/**
+ * Pure: the calls of [effects] tools (those that change something) in [history], with their key
+ * arguments and the first line of their result (where ids are), the last [max] of them; null when
+ * there were none. Appended to a client-side summary, so the record of what was sent, created or
+ * started survives the summary, whatever the summary kept.
+ */
+fun sideEffectRecord(history: List<Message>, effects: Set<String>, max: Int = 40): String? {
+    val results = history.flatMap { it.content }.filterIsInstance<Block.Result>().associateBy { it.toolUseId }
+    val lines = history.flatMap { it.content }.filterIsInstance<Block.ToolUse>().filter { it.name in effects }.map { call ->
+        val args = call.input.entries.filter { it.key !in BULKY_ARGS }.mapNotNull { (key, value) ->
+            val text = (value as? kotlinx.serialization.json.JsonPrimitive)?.content
+                ?: (value as? kotlinx.serialization.json.JsonArray)?.joinToString(", ") { (it as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "…" }
+                ?: return@mapNotNull null
+            "$key: ${text.replace(Regex("\\s+"), " ").take(60)}"
+        }.take(4)
+        val result = results[call.id]
+        val outcome = when {
+            result == null -> "no result"
+            else -> (if (result.isError) "error: " else "") + result.content.lineSequence().firstOrNull().orEmpty().take(160)
+        }
+        "- ${call.name}(${args.joinToString("; ")}) → $outcome"
+    }
+    if (lines.isEmpty()) return null
+    val kept = lines.takeLast(max)
+    val more = lines.size - kept.size
+    return buildString {
+        append(SIDE_EFFECT_RECORD_HEADING)
+        if (more > 0) append(" (").append(more).append(" earlier left out)")
+        kept.forEach { append('\n').append(it) }
+    }
 }
 
 /** Pure: a rough token count for a journal (4 characters per token). */

@@ -67,7 +67,7 @@ class HeldAmendEvalTest : FunSpec({
 
         // 1. the lead proposes a send; it is held
         r.model.handler = { request ->
-            if (request.messages.last().content.any { it is Block.Result }) end("held") else sendEmail("toolu_s", "dana@example.com")
+            if (request.messages.any { m -> m.content.any { it is Block.Result } }) end("held") else sendEmail("toolu_s", "dana@example.com")
         }
         r.inbox.enqueue(InboxItem.UserInput(net.robog.clarity.shared.feed.ClientInputId("u1"), "send Dana the contract"))
         r.lead.start()

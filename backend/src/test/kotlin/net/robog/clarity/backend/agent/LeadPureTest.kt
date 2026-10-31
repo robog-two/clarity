@@ -71,6 +71,138 @@ class LeadPureTest : FunSpec({
             helperOwesResult(finished(net.robog.clarity.harness.FinishReason.MAX_TURNS)) shouldBe false
             helperOwesResult(null) shouldBe false
         }
+        test("hard spend stops: the week first, then the role's day; each names its period") {
+            val limits = net.robog.clarity.backend.config.SpendLimits(weeklyUsd = 10.0, dailyUsd = mapOf(AgentRole.HELPER to 3.0))
+            val now = Instant.parse("2026-10-29T15:00:00Z")
+            // Off by default: no global stop however much was spent.
+            spendStop(net.robog.clarity.backend.config.SpendLimits(), AgentRole.HELPER, spentWeek = 99_000_000, spentToday = 99_000_000, now = now) shouldBe null
+            spendStop(limits, AgentRole.HELPER, spentWeek = 9_999_999, spentToday = 2_999_999, now = now) shouldBe null
+            val week = spendStop(limits, AgentRole.HELPER, spentWeek = 10_000_000, spentToday = 0, now = now)!!
+            week.periodKey shouldBe "week:2026-10-29"
+            week.text shouldContain "$10.00"
+            week.text.startsWith(SPEND_LIMIT_PREFIX) shouldBe true
+            val day = spendStop(limits, AgentRole.HELPER, spentWeek = 5_000_000, spentToday = 3_000_000, now = now)!!
+            day.periodKey shouldBe "day:helper:2026-10-29"
+            day.text shouldContain "the helper spent $3.00"
+            spendStop(limits, null, spentWeek = 5_000_000, spentToday = 99_000_000, now = now) shouldBe null
+            usd(1_234_567) shouldBe "$1.23"
+        }
+        test("a lead turn begins at the inbox's or the person's words, an operator note or a summary; never at tool results") {
+            beginsLeadTurn(Message.user("hi")) shouldBe true
+            beginsLeadTurn(Message.system(REPLY_NUDGE)) shouldBe true
+            beginsLeadTurn(Message.summary("s")) shouldBe true
+            beginsLeadTurn(Message(Role.USER, listOf(Block.Result("1", "ok"), Block.Text("note")))) shouldBe false
+            beginsLeadTurn(Message(Role.ASSISTANT, listOf(Block.Text("a")))) shouldBe false
+        }
+        test("compaction backs off after two failures in a row, longer after each") {
+            compactionDue(0, 0) shouldBe true
+            compactionDue(1, 0) shouldBe true
+            compactionDue(2, 4) shouldBe false
+            compactionDue(2, 5) shouldBe true
+            compactionDue(3, 9) shouldBe false
+            compactionDue(3, 10) shouldBe true
+            compactionDue(100, 50) shouldBe true
+        }
+        test("the record of actions after a summary: changing calls with key arguments and the first line of the result") {
+            val history = listOf(
+                Message.user("go"),
+                Message(
+                    Role.ASSISTANT,
+                    listOf(
+                        Block.ToolUse("1", "create_report", buildJsonObject { put("title", "Silence"); put("source", "# long document") }),
+                        Block.ToolUse("2", "search_memory", buildJsonObject { put("query", "tea") }),
+                        Block.ToolUse("3", "send_email", buildJsonObject { put("subject", "Contract"); put("body", "secret body text") }),
+                    ),
+                ),
+                Message(
+                    Role.USER,
+                    listOf(
+                        Block.Result("1", "Report r-1 created: \"Silence\", revision 1.\nStyle: default"),
+                        Block.Result("2", "nothing"),
+                        Block.Result("3", "Held for review", isError = true),
+                    ),
+                ),
+                Message(Role.ASSISTANT, listOf(Block.ToolUse("4", "delegate", buildJsonObject { put("task", "Research Silence") }))),
+            )
+            val record = sideEffectRecord(history, setOf("create_report", "send_email", "delegate"))!!
+            record.lines() shouldBe listOf(
+                SIDE_EFFECT_RECORD_HEADING,
+                "- create_report(title: Silence) → Report r-1 created: \"Silence\", revision 1.",
+                "- send_email(subject: Contract) → error: Held for review",
+                "- delegate(task: Research Silence) → no result",
+            )
+            record shouldNotContain "secret body"
+            sideEffectRecord(history, emptySet()) shouldBe null
+            val many = listOf(Message(Role.ASSISTANT, (1..50).map { Block.ToolUse("t$it", "delegate", buildJsonObject { put("task", "t$it") }) }))
+            sideEffectRecord(many, setOf("delegate"), max = 40)!!.lines().size shouldBe 41
+        }
+        test("delegation: a daily cap, the same task once while it runs, and again within hours only with a reason") {
+            val now = Instant.parse("2026-10-29T15:00:00Z")
+            fun run(task: String, status: String, ago: kotlin.time.Duration, id: String = "h") =
+                HelperRun(id, null, "helper", task, null, status, null, now - ago, now - ago + 5.minutes)
+            normalizedTask("  Research  *Le Roman de Silence*! ") shouldBe "research le roman de silence"
+            delegationRefusal("Research Silence", emptyList(), now, 20, null) shouldBe null
+            delegationRefusal("x", List(20) { run("t$it", RunStatus.DONE, 1.hours) }, now, 20, null)!! shouldContain "20 helpers"
+            delegationRefusal("x", List(20) { run("t$it", RunStatus.DONE, 25.hours) }, now, 20, null) shouldBe null
+            val done = listOf(run("Research *Silence*", RunStatus.DONE, 2.hours, "h1"))
+            delegationRefusal("research silence", done, now, 20, null)!! shouldContain "helper h1 already ran this task"
+            delegationRefusal("research silence", done, now, 20, "the first one hit a paywall") shouldBe null
+            delegationRefusal("research silence", listOf(run("Research Silence", RunStatus.FAILED, 7.hours)), now, 20, null) shouldBe null
+            delegationRefusal("research silence", listOf(run("Research Silence", RunStatus.CANCELLED, 1.hours)), now, 20, null) shouldBe null
+            val running = listOf(run("Research Silence", RunStatus.RUNNING, 1.minutes, "h2"))
+            delegationRefusal("research silence", running, now, 20, "again") !! shouldContain "h2 is already working"
+            callRunId("thread", "toolu_1") shouldBe callRunId("thread", "toolu_1")
+            (callRunId("thread", "toolu_1") == callRunId("thread", "toolu_2")) shouldBe false
+            nudgeSteps(HELPER_SAVE_NUDGE) shouldBe 2
+            nudgeSteps(HELPER_RESULT_NUDGE) shouldBe 1
+        }
+        test("the spend cap: reached at the cap, counting what was spent before; the lead is told plainly") {
+            val cap = net.robog.clarity.harness.SpendCap(maxCostMicros = 150_000, spentBefore = 100_000)
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage(reportedCostMicros = 49_999)) shouldBe false
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage(reportedCostMicros = 50_000)) shouldBe true
+            net.robog.clarity.harness.overSpend(cap, net.robog.clarity.harness.Usage()) shouldBe false
+            net.robog.clarity.harness.overSpend(null, net.robog.clarity.harness.Usage(reportedCostMicros = Long.MAX_VALUE / 2)) shouldBe false
+            dollarsToMicros(0.15) shouldBe 150_000L
+            val (ok, text) = helperOutcome(finished(net.robog.clarity.harness.FinishReason.SPEND_LIMIT, "Report r1 has the first half."))
+            ok shouldBe false
+            text shouldContain "spend limit"
+            text shouldContain "Report r1 has the first half."
+            helperNudge(finished(net.robog.clarity.harness.FinishReason.SPEND_LIMIT, "# Doc\n" + "x".repeat(2_000)), listOf("create_report")) shouldBe null
+        }
+        test("a document written as the reply is a document only when long and with a heading") {
+            val body = "The poem turns on one image. ".repeat(60)
+            looksLikeDocument("# Recap\n\n$body") shouldBe true
+            looksLikeDocument("Intro\n  ## Sources\n$body") shouldBe true
+            looksLikeDocument(body) shouldBe false
+            looksLikeDocument("# Recap\n\nshort") shouldBe false
+            looksLikeDocument("#hashtag\n$body") shouldBe false
+        }
+        test("a report helper that wrote the document as its reply and saved nothing gets one save nudge") {
+            val doc = "# Recap\n\n" + "A sourced line. ".repeat(120)
+            val tools = listOf("create_report", "edit_report", "cite_sources")
+            fun done(text: String, transcript: List<Message> = emptyList(), reason: net.robog.clarity.harness.FinishReason = net.robog.clarity.harness.FinishReason.END_TURN) =
+                net.robog.clarity.harness.HarnessEvent.Finished(net.robog.clarity.harness.RunResult(reason, net.robog.clarity.harness.Usage.ZERO, transcript, text))
+            fun call(name: String, error: Boolean) = listOf(
+                Message(Role.ASSISTANT, listOf(Block.ToolUse("c1", name, JsonObject(emptyMap())))),
+                Message(Role.USER, listOf(Block.Result("c1", "ok", isError = error))),
+            )
+            helperOwesReport(done(doc), tools) shouldBe true
+            helperNudge(done(doc), tools) shouldBe HELPER_SAVE_NUDGE
+            // A failed create_report does not count as saved; a successful one or an edit does.
+            helperOwesReport(done(doc, call("create_report", error = true)), tools) shouldBe true
+            helperOwesReport(done(doc, call("create_report", error = false)), tools) shouldBe false
+            helperOwesReport(done(doc, call("edit_report", error = false)), tools) shouldBe false
+            helperOwesReport(done(doc, call("read_report", error = false)), tools) shouldBe true
+            // Only for a helper that can create reports, ended on its own, with a document as its reply.
+            helperOwesReport(done(doc), listOf("browser__look")) shouldBe false
+            helperOwesReport(done(doc, reason = net.robog.clarity.harness.FinishReason.MAX_TURNS), tools) shouldBe false
+            helperOwesReport(done("Report 1 created: a recap of the poem."), tools) shouldBe false
+            helperOwesReport(null, tools) shouldBe false
+            // The empty-result nudge comes first; a fine result gets none.
+            helperNudge(done(" "), tools) shouldBe HELPER_RESULT_NUDGE
+            helperNudge(done("Report 1 created."), tools) shouldBe null
+            HELPER_SAVE_NUDGE shouldContain "create_report"
+        }
         test("the lead prompt tells it to always answer the person, in the same turn") {
             AgentPrompts.LEAD_SYSTEM shouldContain "When the person writes to you, always answer with send_to_user in the same turn"
         }

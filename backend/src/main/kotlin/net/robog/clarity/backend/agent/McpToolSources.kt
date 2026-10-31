@@ -41,10 +41,10 @@ private val log = KotlinLogging.logger {}
  * that is down at run time is skipped with a warning rather than failing the run. Each server's
  * session id is kept in [stateDir] (`mcp-session-<name>`), so a session this process could not end
  * (it was killed) is ended by the next one; without the browser holds two Firefoxes and refuses
- * the new one ("Maximum number of active sessions").
+ * the new one ("Maximum number of active sessions"). [local] tools stand beside the servers' (tests).
  */
 @SingleIn(AppScope::class)
-class McpToolSources(config: AgentConfig, private val stateDir: Path?) {
+class McpToolSources(config: AgentConfig, private val stateDir: Path?, private val local: List<Tool> = emptyList()) {
     @Inject
     constructor(config: AgentConfig, app: AppConfig) : this(config, app.dataDir)
 
@@ -91,7 +91,7 @@ class McpToolSources(config: AgentConfig, private val stateDir: Path?) {
             log.warn { "MCP server '$name' unavailable, running without its tools: ${e.message}" }
             emptyList()
         }
-    }
+    } + local
 
     /**
      * Lists each server's tools once and logs them, so a misconfigured or unreachable tool server shows

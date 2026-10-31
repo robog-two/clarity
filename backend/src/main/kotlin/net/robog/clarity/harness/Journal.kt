@@ -57,3 +57,35 @@ data class OverflowedResult(val runId: String, val toolUseId: String, val toolNa
 fun truncatedResult(content: String, reference: String, previewChars: Int): String =
     content.take(previewChars) +
         "\n[truncated: ${content.length} characters in total; the full output is stored at $reference]"
+
+/** A tool call's result as the ledger keeps it. */
+data class LedgerEntry(val toolName: String, val content: String, val isError: Boolean)
+
+/**
+ * Every tool call's result, by `(runId, toolUseId)`, written as soon as the tool returns. A run
+ * resumed after a crash between a tool returning and its results being journaled gets the kept
+ * result instead of running the tool again (a second email, a second helper, a second edit).
+ */
+interface ToolLedger {
+    suspend fun find(runId: String, toolUseId: String): LedgerEntry?
+
+    suspend fun record(runId: String, toolUseId: String, entry: LedgerEntry)
+
+    companion object {
+        /** Keeps nothing: every open call runs again on resume. */
+        val NONE: ToolLedger = object : ToolLedger {
+            override suspend fun find(runId: String, toolUseId: String): LedgerEntry? = null
+            override suspend fun record(runId: String, toolUseId: String, entry: LedgerEntry) = Unit
+        }
+    }
+}
+
+class InMemoryToolLedger : ToolLedger {
+    private val entries = ConcurrentHashMap<Pair<String, String>, LedgerEntry>()
+
+    override suspend fun find(runId: String, toolUseId: String): LedgerEntry? = entries[runId to toolUseId]
+
+    override suspend fun record(runId: String, toolUseId: String, entry: LedgerEntry) {
+        entries.putIfAbsent(runId to toolUseId, entry)
+    }
+}

@@ -98,6 +98,17 @@ private class Lookup(
     }
 
     context(_: Raise<ConfigError>)
+    fun dollars(envName: String, path: String, default: Double): Double = dollarsOrNull(envName, path) ?: default
+
+    context(_: Raise<ConfigError>)
+    fun dollarsOrNull(envName: String, path: String): Double? {
+        val raw = string(envName, path) ?: return null
+        val value = raw.trim().removePrefix("$").toDoubleOrNull()
+        if (value == null || value <= 0.0 || value.isInfinite()) raise(ConfigError.Invalid(envName, raw, "expected a dollar amount above 0, e.g. 0.15"))
+        return value
+    }
+
+    context(_: Raise<ConfigError>)
     fun bool(envName: String, path: String, default: Boolean): Boolean {
         val raw = string(envName, path) ?: return default
         return raw.lowercase().toBooleanStrictOrNull()
@@ -204,7 +215,8 @@ private class Lookup(
     /**
      * `CLARITY_WEB_SEARCH` (default true), `CLARITY_WEB_SEARCH_ENGINE` (parallel), `CLARITY_WEB_SEARCH_MODE`
      * (fast; blank: the engine's default), `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10 per helper run),
-     * `CLARITY_WEB_SEARCH_MAX_RESULTS` (5 per search), `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` (comma list).
+     * `CLARITY_WEB_SEARCH_MAX_RESULTS` (5 per search), `CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS` (comma list),
+     * `CLARITY_WEB_SEARCH_MAX_CHARACTERS` (400: the excerpt of each result; pages are fetched by the sandbox).
      * Yaml `agent.webSearch.*`. Firecrawl is refused: OpenRouter rejects it under zero data retention.
      */
     context(_: Raise<ConfigError>)
@@ -222,6 +234,8 @@ private class Lookup(
         }
         val maxResults = int("CLARITY_WEB_SEARCH_MAX_RESULTS", "agent.webSearch.maxResults", defaults.maxResults)
         if (maxResults > 25) raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_MAX_RESULTS", maxResults.toString(), "expected 1 to 25"))
+        val maxCharacters = int("CLARITY_WEB_SEARCH_MAX_CHARACTERS", "agent.webSearch.maxCharactersPerResult", defaults.maxCharactersPerResult)
+        if (maxCharacters > 100_000) raise(ConfigError.Invalid("CLARITY_WEB_SEARCH_MAX_CHARACTERS", maxCharacters.toString(), "expected 1 to 100000"))
         return WebSearchConfig(
             enabled = bool("CLARITY_WEB_SEARCH", "agent.webSearch.enabled", defaults.enabled),
             engine = engine,
@@ -230,6 +244,7 @@ private class Lookup(
             maxResults = maxResults,
             excludedDomains = string("CLARITY_WEB_SEARCH_EXCLUDED_DOMAINS", "agent.webSearch.excludedDomains")
                 ?.split(',')?.map { it.trim().lowercase() }?.filter(String::isNotEmpty).orEmpty(),
+            maxCharactersPerResult = maxCharacters,
         )
     }
 
@@ -284,7 +299,19 @@ private class Lookup(
                 roles = roles,
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
                 helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
+                helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.15),
+                leadTurnMaxCostUsd = dollars("CLARITY_LEAD_TURN_MAX_COST", "agent.leadTurnMaxCost", 0.50),
+                spend = SpendLimits(
+                    weeklyUsd = dollarsOrNull("CLARITY_SPEND_WEEKLY_MAX", "agent.spend.weeklyMax"),
+                    dailyUsd = AgentRole.entries.mapNotNull { role ->
+                        val name = role.name
+                        dollarsOrNull("CLARITY_SPEND_DAILY_MAX_$name", "agent.spend.dailyMax.${name.lowercase()}")?.let { role to it }
+                    }.toMap(),
+                ),
+                helperMaxPerDay = int("CLARITY_HELPER_MAX_PER_DAY", "agent.helperMaxPerDay", 20),
+                helperMaxResumes = int("CLARITY_HELPER_MAX_RESUMES", "agent.helperMaxResumes", 3, min = 0),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
+                triggerFiresPerHour = int("CLARITY_TRIGGER_FIRES_PER_HOUR", "agent.triggerFiresPerHour", 6, min = 1),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
                 openRouterApiKey = openRouterKey,

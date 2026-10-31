@@ -193,7 +193,8 @@ class LeadScenarioTest : FunSpec({
     test("an external tool never acts: the guard holds it, the tool returns the held text, and the held action exists") {
         val r = rig()
         r.model.handler = { request ->
-            if (request.messages.last().content.any { it is Block.Result }) end("held, told the person")
+            // Results anywhere: it already sent (the reply nudge turn must not send it again).
+            if (request.messages.any { m -> m.content.any { it is Block.Result } }) end("held, told the person")
             else callTool(
                 "toolu_mail", "send_email",
                 buildJsonObject {
@@ -214,7 +215,7 @@ class LeadScenarioTest : FunSpec({
         held shouldHaveSize 1
         held.single().status shouldBe HeldAction.Status.HELD
         held.single().agentView shouldBe "Dana asked for the signed contract."
-        val result = r.model.requests.last().messages.last().content.filterIsInstance<Block.Result>().single()
+        val result = r.model.requests.last().messages.flatMap { it.content }.filterIsInstance<Block.Result>().single()
         result.content shouldContain "Held for review"
         result.content shouldContain "Don't retry"
         r.outbox.findByKey(held.single().action.idempotencyKey) shouldBe null

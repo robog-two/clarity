@@ -101,7 +101,18 @@ object ScheduledJobs : Table("scheduled_job") {
     val nextRunAt = timestamp("next_run_at")
     val lastRunAt = timestamp("last_run_at").nullable()
     val payload = jsonb<JsonElement>("payload", ClarityJson).nullable()
+    /** V40: failed tries in a row, and the slot they retry (null when the last try succeeded). */
+    val failures = integer("failures").default(0)
+    val retrySlot = timestamp("retry_slot").nullable()
     override val primaryKey = PrimaryKey(name)
+}
+
+/** V41: a job's slot claimed in a transaction of its own, so a retried fire starts nothing twice. */
+object JobSlotClaims : Table("job_slot_claim") {
+    val job = text("job")
+    val slot = timestamp("slot")
+    val claimedAt = timestamp("claimed_at")
+    override val primaryKey = PrimaryKey(job, slot)
 }
 
 object ToolResults : Table("tool_result") {

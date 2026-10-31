@@ -137,15 +137,22 @@ class GovernedVaultHolds(
         hold(action, reason.ifBlank { credential.purpose }, listOf(ContextItem("page", pageUrl), ContextItem("saved for", credential.site)), provenance, "push_now")
     }
 
-    override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait {
+    /**
+     * A code request still waiting for the person for the same site is reused (same id, so the same
+     * placeholder): asking again would send them a second urgent notification for one code.
+     */
+    override suspend fun askCode(site: String, purpose: String, provenance: Provenance): Hold.Wait = proposing.withLock {
         val domain = Sites.registrableDomain(site) ?: site
+        held.list(setOf(HeldAction.Status.HELD), limit = 200)
+            .firstOrNull { (it.action as? ProposedAction.AskCode)?.site == domain }
+            ?.let { return@withLock Hold.Wait("Already asked the person for the $domain code; it is still waiting for them. Do not ask again.", it.id) }
         val action = ProposedAction.AskCode(
             idempotencyKey = "vault:code:${Uuid.random()}",
             summary = "Type the code $domain sent you",
             site = domain,
             purpose = purpose,
         )
-        return when (val result = hold(action, purpose, listOf(ContextItem("site", domain)), provenance, "push_now")) {
+        when (val result = hold(action, purpose, listOf(ContextItem("site", domain)), provenance, "push_now")) {
             is Hold.Wait -> result
             Hold.Proceed -> Hold.Wait("Could not ask for the code.")
         }
