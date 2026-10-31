@@ -131,6 +131,14 @@ to skip the container too, stop it after each `up` with `podman compose -f deplo
   kept), or a remote URL (https; the host forwards to it with the token as `Authorization: Bearer`). Versions are
   exact; nothing updates on its own, and changing `version` reinstalls. npm installs run with `--ignore-scripts`,
   Python ones with `uv pip install --no-build` (wheels only), so no package code runs while installing.
+- **Built in**: kind `builtin` runs a first-party server shipped in the image (`computers/mcphost/builtin`, Python
+  standard library only, versioned with the image). Today that is Asana (the "Asana" preset): it takes a personal
+  access token (Asana → profile photo → My settings → Apps → Manage developer apps → Create new token) in
+  `ASANA_ACCESS_TOKEN`, optionally `ASANA_WORKSPACE=<gid>`, and reaches only `app.asana.com`, through the proxy. It runs
+  like any other server (own uid, home, proxy login, lifecycle). The token can do anything the Asana account can;
+  its reads run on their own, its writes (create, update, complete, comment, move; no delete) ask first by default.
+- **Presets**: GitHub (release binary), Canvas (PyPI, set up for a student and read only: `CANVAS_ROLE=student` and
+  `ALLOWED_WRITE_TOOLS=none` remove every tool that writes; set `TIMEZONE` to your zone) and Asana (built in).
 - **One uid each**: every server installs and runs as its own uid with its own home (`/data/servers/<id>`, 0700). It
   sees only its own token, in its own environment; it cannot read another server's files or environment, the
   host's keys or its state. The supervisor runs as root inside the rootless container with only `SETUID`, `SETGID`,
@@ -148,6 +156,8 @@ to skip the container too, stop it after each `up` with `podman compose -f deplo
   replaced by `•••`).
 - Smoke test: `computers/mcphost/smoke.sh [mcphost-image] [egress-image]` runs its own compose project with a fake
   server and checks the isolation and the egress rules; `SMOKE_PRESETS=1` also installs the presets.
+  `computers/mcphost/smoke-asana.sh [mcphost-image]` runs the built-in Asana server in the image against a fake
+  Asana behind a fake proxy (nothing leaves the machine) and prints its memory.
 
 ## Reports (`render`)
 

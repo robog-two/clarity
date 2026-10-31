@@ -46,7 +46,8 @@ Top level: `{ "servers": <collection> }`, `minItems: 0`, `x-item-title: "label"`
 | `label` | string, required | "GitHub". Also the tool prefix and memory collection name |
 | `description` | string | One line the lead sees: "Your GitHub repos, issues and PRs" |
 | `enabled` | boolean, default true | |
-| `kind` | enum `npm`, `pypi`, `github-release`, `remote`; titles "npm package", "Python package", "GitHub release binary", "Remote URL" | |
+| `kind` | enum `npm`, `pypi`, `github-release`, `remote`, `builtin`; titles "npm package", "Python package", "GitHub release binary", "Remote URL", "Built into Clarity" | |
+| `server` | enum of built-in servers (`asana`) | `builtin`: which one. Unknown names are refused |
 | `package` | string | npm/PyPI name, or `owner/repo` for `github-release` |
 | `version` | string | Exact version or tag; ranges and `latest` are rejected |
 | `asset` | string | `github-release`: the asset file name |
@@ -63,12 +64,20 @@ Top level: `{ "servers": <collection> }`, `minItems: 0`, `x-item-title: "label"`
 
 The schema marks fields that only apply to some kinds with `x-visible-when` (see
 `connector-accounts.md`), so the app shows a short form per kind: `package`, `version`, `command`, `args`, `env`,
-`secretEnv`, `secretEnv2` and `secret2` for `npm`, `pypi` and `github-release`; `asset` and
-`sha256` for `github-release`; `url` for `remote`. Every other field (including `secret`) is shown
+`secretEnv`, `secretEnv2` and `secret2` for `npm`, `pypi` and `github-release`; `env` also for
+`builtin`; `server` for `builtin`; `asset` and `sha256` for `github-release`; `url` for `remote`. Every other field (including `secret`) is shown
 for all kinds. `kind` is required. The host's validation does not depend on these hints.
 
 The host validates each item and reports problems per server with a clear `ConfigIncomplete`
 style message ("Canvas: version must be exact, not ^1.2"). One bad item never stops the others.
+
+**Built-in servers** (`builtin`): first-party servers shipped in the mcp-host image
+(`computers/mcphost/builtin`, Python standard library only), versioned with the image: no download, but
+otherwise run like every other server (own uid, home, proxy login and allow-list, lifecycle). Each
+one fixes its token variable (`secret` goes there; `secretEnv`, if sent, must name it), adds its own
+hosts to `allowHosts`, and ignores `args`. Source line: `builtin <name> <version>`. Today: `asana`
+(token `ASANA_ACCESS_TOKEN`, optional `ASANA_WORKSPACE`, host `app.asana.com`), because the community
+server ignores the proxy and Asana's hosted MCP needs OAuth.
 
 **Presets** (`x-presets`): only packages you have verified exist at that exact version and work
 through an HTTP proxy (see Contract 3). Look them up with `npm view`, the PyPI JSON API or the GitHub
@@ -76,7 +85,9 @@ releases API; never guess names, versions or hashes. Candidates: GitHub's offici
 `github/github-mcp-server` release binary (restrict toolsets with its env, e.g. repos, issues,
 pull requests, notifications); a maintained Canvas LMS server; a maintained self-run Asana server
 using a personal access token. Leave a candidate out and say so in your report when you cannot
-verify it. Each preset's `description` tells the person where to create the token and which scopes
+verify it. Shipped: GitHub (release binary), Canvas (PyPI; `CANVAS_ROLE=student`,
+`ALLOWED_WRITE_TOOLS=none` so it tracks and never writes, `TIMEZONE=UTC` for the person to set) and Asana
+(`builtin`). Each preset's `description` tells the person where to create the token and which scopes
 to give it (read-only scopes when the service has them).
 
 ## Contract 2: host ↔ backend

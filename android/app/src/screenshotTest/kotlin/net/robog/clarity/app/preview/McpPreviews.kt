@@ -151,7 +151,7 @@ private val SCHEMA = Json.parseToJsonElement(
                 },
                 {
                     "title": "Canvas",
-                    "description": "Canvas LMS (canvas-mcp 1.16.0). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request). Canvas tokens carry your whole account's access; Clarity asks before anything that changes. Set CANVAS_API_URL to your school's address ending in /api/v1, and add that host to the hosts it may reach.",
+                    "description": "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and announcements and never submits, posts or changes anything (CANVAS_ROLE=student and ALLOWED_WRITE_TOOLS=none remove every tool that writes). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your whole account's access. Set CANVAS_API_URL to your school's address ending in /api/v1 and add that host to the hosts it may reach. Set TIMEZONE to your own zone (for example America/New_York) so due dates are right.",
                     "values": {
                         "label": "Canvas",
                         "description": "Your courses, assignments and due dates in Canvas",
@@ -160,11 +160,28 @@ private val SCHEMA = Json.parseToJsonElement(
                         "version": "1.16.0",
                         "command": "canvas-mcp-server",
                         "env": [
-                            "CANVAS_API_URL=https://canvas.example.edu/api/v1"
+                            "CANVAS_API_URL=https://canvas.example.edu/api/v1",
+                            "CANVAS_ROLE=student",
+                            "ALLOWED_WRITE_TOOLS=none",
+                            "TIMEZONE=UTC"
                         ],
                         "secretEnv": "CANVAS_API_TOKEN",
                         "allowHosts": [
                             "canvas.example.edu"
+                        ]
+                    }
+                },
+                {
+                    "title": "Asana",
+                    "description": "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default (you can change that for each tool). To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to the settings.",
+                    "values": {
+                        "label": "Asana",
+                        "description": "Your Asana tasks, projects and comments",
+                        "kind": "builtin",
+                        "server": "asana",
+                        "secretEnv": "ASANA_ACCESS_TOKEN",
+                        "allowHosts": [
+                            "app.asana.com"
                         ]
                     }
                 }
@@ -208,15 +225,34 @@ private val SCHEMA = Json.parseToJsonElement(
                             "npm",
                             "pypi",
                             "github-release",
-                            "remote"
+                            "remote",
+                            "builtin"
                         ],
                         "x-enum-titles": [
                             "npm package",
                             "Python package",
                             "GitHub release binary",
-                            "Remote URL"
+                            "Remote URL",
+                            "Built into Clarity"
                         ],
                         "default": "npm"
+                    },
+                    "server": {
+                        "type": "string",
+                        "title": "Server",
+                        "description": "Built into Clarity: which one. It comes with Clarity and updates with it.",
+                        "enum": [
+                            "asana"
+                        ],
+                        "x-enum-titles": [
+                            "Asana"
+                        ],
+                        "default": "asana",
+                        "x-visible-when": {
+                            "kind": [
+                                "builtin"
+                            ]
+                        }
                     },
                     "package": {
                         "type": "string",
@@ -315,7 +351,8 @@ private val SCHEMA = Json.parseToJsonElement(
                             "kind": [
                                 "npm",
                                 "pypi",
-                                "github-release"
+                                "github-release",
+                                "builtin"
                             ]
                         }
                     },
@@ -420,8 +457,15 @@ private val githubItem = itemForm.initialValues()
 private val canvasItem = itemForm.initialValues()
     .withText("label", "Canvas").withText("description", "Your courses, assignments and due dates in Canvas")
     .withText("kind", "pypi").withText("package", "canvas-mcp").withText("version", "1.16.0").withText("command", "canvas-mcp-server")
-    .withList("env", listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1")).withText("secretEnv", "CANVAS_API_TOKEN")
+    .withList("env", listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"))
+    .withText("secretEnv", "CANVAS_API_TOKEN")
     .withList("allowHosts", listOf("canvas.example.edu"))
+
+/** Asana, built into Clarity, as its preset fills it in: only the server, settings, token and hosts. */
+private val asanaItem = itemForm.initialValues()
+    .withText("label", "Asana").withText("description", "Your Asana tasks, projects and comments")
+    .withText("kind", "builtin").withText("server", "asana").withText("secretEnv", "ASANA_ACCESS_TOKEN")
+    .withList("allowHosts", listOf("app.asana.com"))
 
 /** An example remote server: only its URL, token and hosts. */
 private val remoteItem = itemForm.initialValues()
@@ -459,4 +503,14 @@ fun McpServerEditorPypi() = Frame {
 @PreviewTest @TallScreen @Composable
 fun McpServerEditorRemote() = Frame {
     ConnectorSetupContent(hostState(ItemEdit("servers", "nt6q1s3u7w9y", isNew = true, values = remoteItem)), SetupActions(), step = null)
+}
+
+/** The Asana preset, new: built into Clarity, so no package, version or command. */
+@PreviewTest @TallScreen @Composable
+fun McpServerEditorAsana() = Frame {
+    val preset = ConfigForms.parse(SCHEMA).fields.single().collection!!.presets.first { it.title == "Asana" }
+    ConnectorSetupContent(
+        hostState(ItemEdit("servers", "as9d4f6h1j3k", isNew = true, values = asanaItem, hint = preset.description)),
+        SetupActions(), step = null,
+    )
 }

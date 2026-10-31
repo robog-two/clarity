@@ -136,13 +136,14 @@ class McpHostSchemaTest {
     @Test fun everyItemPropertyRendersInOrderWithTheRightKind() {
         val kinds = itemForm.fields.associate { it.key to it.kind }
         assertEquals(
-            listOf("label", "description", "enabled", "kind", "package", "version", "asset", "sha256", "command", "args", "env",
+            listOf("label", "description", "enabled", "kind", "server", "package", "version", "asset", "sha256", "command", "args", "env",
                 "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts"),
             itemForm.fields.map { it.key },
             "every property but the read-only id, in schema order",
         )
         assertEquals(FieldKind.BOOLEAN, kinds["enabled"])
         assertEquals(FieldKind.ENUM, kinds["kind"])
+        assertEquals(FieldKind.ENUM, kinds["server"])
         assertEquals(FieldKind.STRING_LIST, kinds["args"])
         assertEquals(FieldKind.STRING_LIST, kinds["env"])
         assertEquals(FieldKind.STRING_LIST, kinds["allowHosts"])
@@ -155,8 +156,10 @@ class McpHostSchemaTest {
 
     @Test fun theKindDropdownUsesItsTitles() {
         val kind = itemForm.fields.single { it.key == "kind" }
-        assertEquals(listOf("npm", "pypi", "github-release", "remote"), kind.options.map { it.value })
-        assertEquals(listOf("npm package", "Python package", "GitHub release binary", "Remote URL"), kind.options.map { it.title })
+        assertEquals(listOf("npm", "pypi", "github-release", "remote", "builtin"), kind.options.map { it.value })
+        assertEquals(listOf("npm package", "Python package", "GitHub release binary", "Remote URL", "Built into Clarity"), kind.options.map { it.title })
+        val server = itemForm.fields.single { it.key == "server" }
+        assertEquals(listOf("asana" to "Asana"), server.options.map { it.value to it.title })
     }
 
     @Test fun enabledStartsOnAndKindStartsAtNpm() {
@@ -173,6 +176,7 @@ class McpHostSchemaTest {
         assertEquals(packaged, shown("pypi"))
         assertEquals(packaged + setOf("asset", "sha256"), shown("github-release"))
         assertEquals(always + "url", shown("remote"))
+        assertEquals(always + setOf("server", "env"), shown("builtin"))
     }
 
     @Test fun anUnsetKindCountsAsItsDefault() {
@@ -204,6 +208,15 @@ class McpHostSchemaTest {
         assertEquals("pypi", canvas.values.text("kind"))
         assertEquals("canvas-mcp", canvas.values.text("package"))
         assertEquals("1.16.0", canvas.values.text("version"))
+        assertEquals(
+            listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"),
+            canvas.values.list("env"),
+        )
+        val asana = servers.collection!!.presets.first { it.title == "Asana" }
+        assertEquals("builtin", asana.values.text("kind"))
+        assertEquals("asana", asana.values.text("server"))
+        assertEquals(listOf("app.asana.com"), asana.values.list("allowHosts"))
+        assertTrue(asana.description!!.contains("Manage developer apps"))
     }
 
     @Test fun twoSecretsPerItemAreSealedUnderTheirOwnItemFields() {
