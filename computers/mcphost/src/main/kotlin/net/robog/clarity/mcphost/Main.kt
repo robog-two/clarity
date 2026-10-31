@@ -33,7 +33,8 @@ private val log = KotlinLogging.logger {}
  *   MCPHOST_SERVERS_DIR (/data/servers), MCPHOST_PROXY (egress-mcp:3128; unset = no internet for servers),
  *   MCPHOST_EGRESS_DIR (/egress: the proxy's login and allow-list files), MCPHOST_EGRESS_GID (10001: the proxy's group),
  *   MCPHOST_ISOLATION (uid; `none` runs servers as the supervisor's user, for development only),
- *   MCPHOST_LOCAL_DIR (unset; when set, kind `local` may run a command under it: tests and smoke tests).
+ *   MCPHOST_LOCAL_DIR (unset; when set, kind `local` may run a command under it: tests and smoke tests),
+ *   MCPHOST_BUILTIN_DIR (/opt/mcphost/builtin: the scripts of kind `builtin`).
  */
 data class HostSettings(
     val port: Int = 8950,
@@ -45,6 +46,7 @@ data class HostSettings(
     val egressGid: Int? = null,
     val isolation: Isolation = Isolation.PerUid(),
     val localDir: String? = null,
+    val builtinDir: Path = Path.of(DEFAULT_BUILTIN_DIR),
 ) {
     companion object {
         fun fromEnv(env: Map<String, String> = System.getenv()): HostSettings {
@@ -60,6 +62,7 @@ data class HostSettings(
                 egressGid = v("MCPHOST_EGRESS_GID")?.toInt(),
                 isolation = if (v("MCPHOST_ISOLATION") == "none") Isolation.SameUser else Isolation.PerUid(),
                 localDir = v("MCPHOST_LOCAL_DIR"),
+                builtinDir = Path.of(v("MCPHOST_BUILTIN_DIR") ?: DEFAULT_BUILTIN_DIR),
             )
         }
     }
@@ -128,7 +131,7 @@ fun main() {
         state = state,
         homes = Homes(host.serversDir, runner, state),
         runner = runner,
-        installer = RegistryInstaller(runner, egress),
+        installer = RegistryInstaller(runner, egress, builtinDir = host.builtinDir),
         egress = egress,
         scope = scope,
         childPath = if (host.isolation is Isolation.SameUser) System.getenv("PATH") ?: SYSTEM_PATH else SYSTEM_PATH,

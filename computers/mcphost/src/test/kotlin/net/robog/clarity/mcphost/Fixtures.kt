@@ -29,6 +29,12 @@ class TestClock(var now: Instant = Instant.parse("2026-10-30T08:00:00Z")) : Cloc
     fun advance(by: Duration) { now += by }
 }
 
+/** The built-in servers' sources (`computers/mcphost/builtin`) and their test helpers. */
+object Builtin {
+    val dir: Path = Path.of(System.getProperty("mcphost.builtinDir") ?: error("mcphost.builtinDir is not set"))
+    val fakeAsana: Path get() = dir.resolve("tests/fake_asana.py")
+}
+
 /** The fake stdio server, copied into a fresh "local" directory so kind `local` can run it. */
 object Fake {
     val script: Path = Path.of(System.getProperty("mcphost.fakeServer") ?: error("mcphost.fakeServer is not set"))
@@ -54,19 +60,21 @@ class Harness(
     val policy: LifecyclePolicy = LifecyclePolicy(),
     val withEgress: Boolean = true,
     installer: Installer? = null,
+    proxyHost: String = "egress-mcp",
+    proxyPort: Int = 3128,
 ) : AutoCloseable {
     val root: Path = Files.createTempDirectory("mcphost-test")
     val local: Path = Fake.localDir()
     val runner = ProcessRunner(Isolation.SameUser, System.getenv("PATH"))
     val state = HostState(root.resolve("supervisor"))
     val egressDir: Path = root.resolve("egress")
-    val egress = if (withEgress) EgressAccess(egressDir, "egress-mcp", 3128) else EgressAccess(null, null)
+    val egress = if (withEgress) EgressAccess(egressDir, proxyHost, proxyPort) else EgressAccess(null, null)
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val supervisor = Supervisor(
         state = state,
         homes = Homes(root.resolve("servers"), runner, state),
         runner = runner,
-        installer = installer ?: RegistryInstaller(runner, egress, System.getenv("PATH")),
+        installer = installer ?: RegistryInstaller(runner, egress, System.getenv("PATH"), builtinDir = Builtin.dir),
         egress = egress,
         scope = scope,
         policy = policy,

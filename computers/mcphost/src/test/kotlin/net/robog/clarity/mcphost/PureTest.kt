@@ -4,6 +4,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermissions
@@ -135,21 +136,36 @@ class PureTest : FunSpec({
         servers["minItems"]!!.jsonPrimitive.content shouldBe "0"
         val props = servers["items"]!!.jsonObject["properties"]!!.jsonObject
         props.keys.toList() shouldContainExactly listOf(
-            "id", "label", "description", "enabled", "kind", "package", "version", "asset", "sha256", "command", "args", "env",
+            "id", "label", "description", "enabled", "kind", "server", "package", "version", "asset", "sha256", "command", "args", "env",
             "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts",
         )
-        props["kind"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly listOf("npm", "pypi", "github-release", "remote")
+        props["kind"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly listOf("npm", "pypi", "github-release", "remote", "builtin")
         props["kind"]!!.jsonObject["x-enum-titles"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly
-            listOf("npm package", "Python package", "GitHub release binary", "Remote URL")
+            listOf("npm package", "Python package", "GitHub release binary", "Remote URL", "Built into Clarity")
         props["secret"]!!.jsonObject["x-secret"]!!.jsonPrimitive.content shouldBe "true"
         props["url"]!!.jsonObject["format"]!!.jsonPrimitive.content shouldBe "uri"
         val presets = servers["x-presets"]!!.jsonArray
-        presets.map { it.jsonObject["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas")
+        presets.map { it.jsonObject["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas", "Asana")
         for (preset in presets) {
             val values = preset.jsonObject["values"]!!.jsonObject
             val result = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(values + ("id" to JsonPrimitive("preset1")))), { if (it == "secret") "token-value" else null })
             result.spec.leftOrNull().shouldBeNull()
         }
+    }
+
+    test("the Canvas preset is a student's, with every write tool removed, and its zone editable") {
+        val canvas = serverPresets.map { it.jsonObject }.single { it["title"]!!.jsonPrimitive.content == "Canvas" }
+        val env = canvas["values"]!!.jsonObject["env"]!!.jsonArray.map { it.jsonPrimitive.content }
+        env shouldContainExactly listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC")
+        val spec = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(canvas["values"]!!.jsonObject + ("id" to JsonPrimitive("preset1")))), { if (it == "secret") "t" else null })
+            .spec.getOrNull()!!
+        // none of them is a reserved name the host would refuse or replace
+        spec.env shouldBe mapOf(
+            "CANVAS_API_URL" to "https://canvas.example.edu/api/v1", "CANVAS_ROLE" to "student", "ALLOWED_WRITE_TOOLS" to "none", "TIMEZONE" to "UTC",
+        )
+        val home = ServerHome("preset1", java.nio.file.Path.of("/data/servers/preset1"), 2001)
+        childEnv(home, null, spec.env + spec.secrets).filterKeys { it in spec.env } shouldBe spec.env
+        canvas["description"]!!.jsonPrimitive.content shouldContain "TIMEZONE"
     }
 
     test("SSE parsing finds the response with the id, skipping other events") {

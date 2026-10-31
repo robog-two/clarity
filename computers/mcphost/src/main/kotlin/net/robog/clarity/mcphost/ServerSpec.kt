@@ -15,16 +15,31 @@ enum class ServerKind(val wire: String, val title: String) {
     PYPI("pypi", "Python package"),
     GITHUB_RELEASE("github-release", "GitHub release binary"),
     REMOTE("remote", "Remote URL"),
+    BUILTIN("builtin", "Built into Clarity"),
     LOCAL("local", "Local command"),
     ;
 
     companion object {
         /** The kinds the app can choose, in schema order. */
-        val offered = listOf(NPM, PYPI, GITHUB_RELEASE, REMOTE)
+        val offered = listOf(NPM, PYPI, GITHUB_RELEASE, REMOTE, BUILTIN)
 
         fun parse(raw: String?): ServerKind? = entries.firstOrNull { it.wire == raw?.trim() }
     }
 }
+
+/**
+ * A first-party server shipped in the mcp-host image ([ServerKind.BUILTIN]): a script under the
+ * host's builtin directory, run with the image's Python like any other server (own uid, home and
+ * proxy login). [version] must change with the script's tools so the cached listing is renewed;
+ * the script carries the same `VERSION`. The token goes into [tokenEnv]; [hosts] are always allowed.
+ */
+data class BuiltinServer(val name: String, val title: String, val version: String, val script: String, val tokenEnv: String, val hosts: List<String>)
+
+val BUILTIN_SERVERS = listOf(
+    BuiltinServer("asana", "Asana", version = "1.0.0", script = "asana.py", tokenEnv = "ASANA_ACCESS_TOKEN", hosts = listOf("app.asana.com")),
+)
+
+fun builtinServer(name: String?): BuiltinServer? = BUILTIN_SERVERS.firstOrNull { it.name == name?.trim() }
 
 /**
  * One validated server of the config. [secrets] maps an environment variable to its opened value
@@ -37,6 +52,7 @@ data class ServerSpec(
     val description: String = "",
     val enabled: Boolean = true,
     val kind: ServerKind,
+    /** npm/PyPI name, owner/repo, or the [BuiltinServer] name. */
     val pkg: String? = null,
     val version: String? = null,
     val asset: String? = null,
@@ -71,6 +87,7 @@ data class ServerSpec(
         ServerKind.PYPI -> "pypi $pkg==$version"
         ServerKind.GITHUB_RELEASE -> "github $pkg@$version $asset"
         ServerKind.REMOTE -> "remote $url"
+        ServerKind.BUILTIN -> "builtin $pkg $version"
         ServerKind.LOCAL -> "local $command"
     }
 
@@ -130,7 +147,7 @@ private fun Raise<String>.validate(item: ConfigItem, openSecret: (String) -> Str
     ensure(label.length <= 40) { "label is longer than 40 characters" }
     ensure(slugOf(label).isNotEmpty()) { "label needs at least one letter or digit" }
     val kind = ServerKind.parse(item.text("kind"))?.takeIf { it != ServerKind.LOCAL || localDir != null }
-        ?: raise(if (item.text("kind") == null) "kind is not set" else "kind '${item.text("kind")}' is not one of npm, pypi, github-release, remote")
+        ?: raise(if (item.text("kind") == null) "kind is not set" else "kind '${item.text("kind")}' is not one of ${ServerKind.offered.joinToString { it.wire }}")
     val enabled = item.values["enabled"]?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content?.toBooleanStrictOrNull() } ?: true
 
     fun secret(name: String): String? = try {
@@ -156,6 +173,19 @@ private fun Raise<String>.validate(item: ConfigItem, openSecret: (String) -> Str
             val url = ensureNotNull(item.text("url")) { "url is not set" }
             val host = remoteHost(url)
             base.copy(url = url, bearer = secret("secret"), allowHosts = (base.allowHosts + host).distinct())
+        }
+        ServerKind.BUILTIN -> {
+            val names = BUILTIN_SERVERS.joinToString { it.name }
+            val name = ensureNotNull(item.text("server")) { "server is not set (one of: $names)" }
+            val builtin = ensureNotNull(builtinServer(name)) { "there is no built-in server '$name' (there is: $names)" }
+            item.text("secretEnv")?.let { ensure(it == builtin.tokenEnv) { "${builtin.title} takes its token in ${builtin.tokenEnv}, not $it" } }
+            ensure(builtin.tokenEnv !in env) { "${builtin.tokenEnv} goes in the token field, not in settings" }
+            val token = ensureNotNull(secret("secret")) { "secret is not set (it goes into ${builtin.tokenEnv})" }
+            // the command and its arguments come with the image
+            base.copy(
+                pkg = builtin.name, version = builtin.version, args = emptyList(), secrets = mapOf(builtin.tokenEnv to token),
+                allowHosts = (base.allowHosts + builtin.hosts).distinct(),
+            )
         }
         else -> {
             val secrets = buildMap {
@@ -216,7 +246,7 @@ private fun Raise<String>.installable(item: ConfigItem, base: ServerSpec, localD
             ensure(path.startsWith("$dir/") && REL_PATH.matches(path.removePrefix("$dir/")) && ".." !in path.split('/')) { "command must be under $dir" }
             base.copy(command = path)
         }
-        ServerKind.REMOTE -> error("not installable")
+        ServerKind.REMOTE, ServerKind.BUILTIN -> error("not installable")
     }
 }
 

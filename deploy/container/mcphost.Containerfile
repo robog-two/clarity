@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# mcp-host: installs and runs the person's MCP servers (npm, PyPI, GitHub release binaries) and
-# forwards to remote ones, one uid per server, reaching the internet only through the egress proxy.
+# mcp-host: installs and runs the person's MCP servers (npm, PyPI, GitHub release binaries, and the
+# built-in ones under /opt/mcphost/builtin) and forwards to remote ones, one uid per server, reaching the internet only through the egress proxy.
 # Build from the repository root:
 #
 #   podman build -f deploy/container/mcphost.Containerfile -t ghcr.io/robog-two/clarity-mcphost .
@@ -55,6 +55,10 @@ RUN apk add --no-cache \
 
 COPY --from=build /mcphost /opt/mcphost
 COPY computers/mcphost/entrypoint.sh /usr/local/bin/mcphost-entrypoint
+# Built-in servers (kind `builtin`): standard-library Python, run as each server's own uid. Root-owned and
+# read-only for everyone; compiled here so a start never needs to write bytecode.
+COPY --chmod=0644 computers/mcphost/builtin/asana.py /opt/mcphost/builtin/asana.py
+RUN python3 -m compileall -q /opt/mcphost/builtin && chmod -R a+rX,go-w /opt/mcphost/builtin
 
 ENV MCPHOST_PORT=8950 \
     MCPHOST_KEY_FILE=/run/secrets/mcphost_key \

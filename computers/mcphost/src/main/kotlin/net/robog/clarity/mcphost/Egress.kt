@@ -19,7 +19,7 @@ fun installHosts(kind: ServerKind): List<String> = when (kind) {
     ServerKind.PYPI -> listOf("pypi.org", "files.pythonhosted.org")
     // release downloads redirect to GitHub's asset storage
     ServerKind.GITHUB_RELEASE -> listOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
-    ServerKind.REMOTE, ServerKind.LOCAL -> emptyList()
+    ServerKind.REMOTE, ServerKind.LOCAL, ServerKind.BUILTIN -> emptyList()
 }
 
 /** Proxy user of a running server and of its install. */

@@ -31,7 +31,20 @@ dependencies {
     testImplementation(libs.ktor.client.cio)
 }
 
+// The built-in servers' own tests (Python, standard library only; a fake Asana behind a fake proxy).
+val builtinTest by tasks.registering(Exec::class) {
+    description = "Runs the built-in MCP servers' Python tests."
+    val dir = layout.projectDirectory.dir("builtin")
+    val stamp = layout.buildDirectory.file("builtin-test.ok")
+    inputs.dir(dir)
+    outputs.file(stamp)
+    commandLine("python3", "-B", dir.file("tests/test_asana.py").asFile.absolutePath)
+    doLast { stamp.get().asFile.writeText("ok\n") }
+}
+
 // The fake MCP server the tests start is a Python script; its path reaches the tests as a property.
 tasks.withType<Test>().configureEach {
     systemProperty("mcphost.fakeServer", layout.projectDirectory.file("src/test/resources/fake_mcp.py").asFile.absolutePath)
+    systemProperty("mcphost.builtinDir", layout.projectDirectory.dir("builtin").asFile.absolutePath)
+    dependsOn(builtinTest)
 }

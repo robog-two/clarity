@@ -4,6 +4,8 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import java.net.URI
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.nio.file.Files
+import java.nio.file.Path
 import java.security.MessageDigest
 import java.time.Duration as JDuration
 import kotlin.time.Duration.Companion.minutes
@@ -21,6 +23,9 @@ fun interface Installer {
     suspend fun install(spec: ServerSpec, home: ServerHome): Installed
 }
 
+/** Where the image installs the built-in servers (`deploy/container/mcphost.Containerfile`). */
+const val DEFAULT_BUILTIN_DIR = "/opt/mcphost/builtin"
+
 /** Largest release asset accepted. */
 const val MAX_ASSET_BYTES = 300L * 1024 * 1024
 
@@ -32,6 +37,7 @@ const val MAX_ASSET_BYTES = 300L * 1024 * 1024
  *   of the package's bins.
  * - pypi: a venv at `<home>/venv` made by `uv`, then `uv pip install --no-build` of `pkg==version`
  *   (wheels only, so no package code runs at install time).
+ * - builtin: nothing to fetch; the script ships in the image under [builtinDir] and runs with its Python.
  * - github-release: the host downloads the asset itself (through the proxy) and checks its SHA-256
  *   while streaming it into the home; only a matching file is kept and unpacked (tar.gz, zip or a
  *   bare binary).
@@ -42,8 +48,11 @@ class RegistryInstaller(
     private val path: String = SYSTEM_PATH,
     /** Where release assets come from; tests point it at a local server. */
     private val releaseBase: String = "https://github.com",
+    /** Where the image keeps the [BUILTIN_SERVERS] scripts. */
+    private val builtinDir: Path = Path.of(DEFAULT_BUILTIN_DIR),
 ) : Installer {
     override suspend fun install(spec: ServerSpec, home: ServerHome): Installed {
+        if (spec.kind == ServerKind.BUILTIN) return builtin(spec)
         val credential = egress.grant(installUser(spec.id), installHosts(spec.kind))
         val redactor = Redactor(listOfNotNull(credential?.password) + spec.secretValues)
         try {
@@ -54,10 +63,19 @@ class RegistryInstaller(
                 ServerKind.GITHUB_RELEASE -> release(spec, home, credential, redactor)
                 ServerKind.LOCAL -> Installed(spec.installKey, listOf(spec.command!!))
                 ServerKind.REMOTE -> Installed(spec.installKey, emptyList())
+                ServerKind.BUILTIN -> error("not downloaded")
             }
         } finally {
             egress.revoke(installUser(spec.id))
         }
+    }
+
+    private fun builtin(spec: ServerSpec): Installed {
+        val builtin = builtinServer(spec.pkg) ?: throw InstallFailed("there is no built-in server '${spec.pkg}'")
+        val script = builtinDir.resolve(builtin.script)
+        if (!Files.isRegularFile(script)) throw InstallFailed("the built-in ${builtin.title} server is missing from this image ($script)")
+        // -I: no PYTHON* variables, user site or script-directory imports; -B: nothing written next to the script
+        return Installed(spec.installKey, listOf("python3", "-I", "-B", script.toString()))
     }
 
     private suspend fun step(home: ServerHome, what: String, command: List<String>, env: Map<String, String>, redactor: Redactor): String {

@@ -23,8 +23,11 @@ private fun JsonObjectBuilderScope.visibleWhenKind(kinds: List<ServerKind>?) {
     putJsonObject("x-visible-when") { put("kind", JsonArray(kinds.map { JsonPrimitive(it.wire) })) }
 }
 
-/** Kinds that install and run a program here (everything but a remote URL). */
-private val installed = ServerKind.offered - ServerKind.REMOTE
+/** Kinds whose program is downloaded: they name a package, version and command. */
+private val downloaded = listOf(ServerKind.NPM, ServerKind.PYPI, ServerKind.GITHUB_RELEASE)
+
+/** Kinds that run a program here (everything but a remote URL): they take settings. */
+private val runHere = downloaded + ServerKind.BUILTIN
 
 private fun JsonObjectBuilderScope.text(
     name: String,
@@ -70,17 +73,25 @@ private val serverItem = buildJsonObject {
             put("x-enum-titles", JsonArray(ServerKind.offered.map { JsonPrimitive(it.title) }))
             put("default", ServerKind.NPM.wire)
         }
-        text("package", "Package", "npm or Python package name, or owner/repo for a GitHub release.", "@scope/some-mcp-server", installed)
-        text("version", "Version", "An exact version or release tag. Ranges and \"latest\" are not accepted, so nothing changes on its own.", "1.2.3", installed)
+        putJsonObject("server") {
+            put("type", "string"); put("title", "Server")
+            put("description", "Built into Clarity: which one. It comes with Clarity and updates with it.")
+            put("enum", JsonArray(BUILTIN_SERVERS.map { JsonPrimitive(it.name) }))
+            put("x-enum-titles", JsonArray(BUILTIN_SERVERS.map { JsonPrimitive(it.title) }))
+            put("default", BUILTIN_SERVERS.first().name)
+            visibleWhenKind(listOf(ServerKind.BUILTIN))
+        }
+        text("package", "Package", "npm or Python package name, or owner/repo for a GitHub release.", "@scope/some-mcp-server", downloaded)
+        text("version", "Version", "An exact version or release tag. Ranges and \"latest\" are not accepted, so nothing changes on its own.", "1.2.3", downloaded)
         text("asset", "Release file", "GitHub release only: the file to download.", "server_Linux_x86_64.tar.gz", listOf(ServerKind.GITHUB_RELEASE))
         text("sha256", "SHA-256 of the release file", "GitHub release only: the file is checked against it before it is kept.", visibleWhen = listOf(ServerKind.GITHUB_RELEASE))
-        text("command", "Command", "The command to run, when the package has more than one (for a release: the file inside the archive).", visibleWhen = installed)
-        list("args", "Arguments", "Passed to the command, one per entry.", "stdio", installed)
-        list("env", "Settings", "KEY=value entries for the server's environment. Not for secrets.", "LOG_LEVEL=info", installed)
-        text("secretEnv", "Token variable", "The environment variable that receives the token.", "API_TOKEN", installed)
+        text("command", "Command", "The command to run, when the package has more than one (for a release: the file inside the archive).", visibleWhen = downloaded)
+        list("args", "Arguments", "Passed to the command, one per entry.", "stdio", downloaded)
+        list("env", "Settings", "KEY=value entries for the server's environment. Not for secrets.", "LOG_LEVEL=info", runHere)
+        text("secretEnv", "Token variable", "The environment variable that receives the token.", "API_TOKEN", downloaded)
         secret("secret", "Token", "Kept sealed on your server; only this server sees it. For a remote URL it is sent as a bearer token.")
-        text("secretEnv2", "Second secret variable", "Only if the server needs a second secret.", visibleWhen = installed)
-        secret("secret2", "Second secret", "Kept sealed like the token.", installed)
+        text("secretEnv2", "Second secret variable", "Only if the server needs a second secret.", visibleWhen = downloaded)
+        secret("secret2", "Second secret", "Kept sealed like the token.", downloaded)
         putJsonObject("url") {
             put("type", "string"); put("format", "uri"); put("title", "Server URL")
             put("description", "Remote URL only: the server's streamable HTTP address (https).")
@@ -95,7 +106,9 @@ private val serverItem = buildJsonObject {
  * Presets: only packages checked against their registry at exactly this version and seen working
  * through the egress proxy (`SMOKE_PRESETS=1 computers/mcphost/smoke.sh`), with what the person needs
  * to create the token. GitHub: the release's own checksums file and the GitHub API's asset digest
- * agree on the sha256. Canvas: PyPI's JSON API, a pure-Python wheel.
+ * agree on the sha256. Canvas: PyPI's JSON API, a pure-Python wheel. Asana: built in (`computers/mcphost/builtin`),
+ * since the maintained self-run server (@roychri/mcp-server-asana) resolves app.asana.com itself instead of
+ * going through HTTPS_PROXY, and Asana's hosted MCP needs OAuth.
  */
 val serverPresets: JsonArray = JsonArray(listOf(
     buildJsonObject {
@@ -125,9 +138,11 @@ val serverPresets: JsonArray = JsonArray(listOf(
         put("title", "Canvas")
         put(
             "description",
-            "Canvas LMS (canvas-mcp 1.16.0). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request). " +
-                "Canvas tokens carry your whole account's access; Clarity asks before anything that changes. Set CANVAS_API_URL to your school's " +
-                "address ending in /api/v1, and add that host to the hosts it may reach.",
+            "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and " +
+                "announcements and never submits, posts or changes anything (CANVAS_ROLE=student and ALLOWED_WRITE_TOOLS=none remove every " +
+                "tool that writes). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas " +
+                "tokens carry your whole account's access. Set CANVAS_API_URL to your school's address ending in /api/v1 and add that host " +
+                "to the hosts it may reach. Set TIMEZONE to your own zone (for example America/New_York) so due dates are right.",
         )
         putJsonObject("values") {
             put("label", "Canvas")
@@ -136,13 +151,31 @@ val serverPresets: JsonArray = JsonArray(listOf(
             put("package", "canvas-mcp")
             put("version", "1.16.0")
             put("command", "canvas-mcp-server")
-            put("env", strings("CANVAS_API_URL=https://canvas.example.edu/api/v1"))
+            // On stdio an unset ALLOWED_WRITE_TOOLS means every write tool, so it is set explicitly.
+            put("env", strings("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"))
             put("secretEnv", "CANVAS_API_TOKEN")
             put("allowHosts", strings("canvas.example.edu"))
         }
     },
-    // No Asana preset: the maintained self-run server (@roychri/mcp-server-asana 1.8.0) resolves
-    // app.asana.com itself instead of going through HTTPS_PROXY, so it cannot work here.
+    buildJsonObject {
+        put("title", "Asana")
+        put(
+            "description",
+            "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → " +
+                "Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens " +
+                "carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default " +
+                "(you can change that for each tool). " +
+                "To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to the settings.",
+        )
+        putJsonObject("values") {
+            put("label", "Asana")
+            put("description", "Your Asana tasks, projects and comments")
+            put("kind", ServerKind.BUILTIN.wire)
+            put("server", "asana")
+            put("secretEnv", "ASANA_ACCESS_TOKEN")
+            put("allowHosts", strings("app.asana.com"))
+        }
+    },
 ))
 
 /** The `mcp-host` config schema (contract 1). */
