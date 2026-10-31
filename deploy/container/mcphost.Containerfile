@@ -55,10 +55,9 @@ RUN apk add --no-cache \
 
 COPY --from=build /mcphost /opt/mcphost
 COPY computers/mcphost/entrypoint.sh /usr/local/bin/mcphost-entrypoint
-# Built-in servers (kind `builtin`): standard-library Python, run as each server's own uid. Root-owned and
-# read-only for everyone; compiled here so a start never needs to write bytecode.
+# Built-in servers (kind `builtin`): standard-library Python scripts, root-owned and read-only, run as
+# each server's own uid with `python3 -I -B`.
 COPY --chmod=0644 computers/mcphost/builtin/asana.py /opt/mcphost/builtin/asana.py
-RUN python3 -m compileall -q /opt/mcphost/builtin && chmod -R a+rX,go-w /opt/mcphost/builtin
 
 ENV MCPHOST_PORT=8950 \
     MCPHOST_KEY_FILE=/run/secrets/mcphost_key \
