@@ -40,16 +40,17 @@ source of truth for backups) and loads each into Podman's secret store under the
 |---|---|---|
 | `postgres_password` | postgres, backend | generated |
 | `openrouter_api_key` | backend | yours; required (an empty file falls back to `OPENROUTER_API_KEY`). Every model call goes to OpenRouter, zero data retention |
-| `connector_<id>_key` | backend and that connector | generated; the backend registers every one it finds. `example`, `mail`, `dav` always |
+| `connector_<id>_key` | backend and that connector | generated; the backend registers every one it finds. `example`, `mail`, `dav`, `mcphost` always |
 | `sandbox_key`, `browser_key` | backend and the matching computer | bearer keys for the `computers` profile |
 | `render_key` | backend and `render` | generated; bearer key for the report renderer |
+| `mcphost_key` | backend and `mcp-host` | generated; bearer key for the MCP host (`CLARITY_MCP_HOST`) |
 
 The script is idempotent and only replaces a Podman secret when its file changed; containers pick the new value up
 the next time they start.
 
 | Profile | Adds | Enable |
 |---|---|---|
-| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS), `render` (reports: pandoc + Typst) | |
+| (none) | `postgres`, `backend`, `egress` (outbound proxy), `caddy` (TLS), `render` (reports: pandoc + Typst), `mcp-host` (the MCP servers you add in the app) | |
 | `example` | `connector-example` (pushes one sample message when `emitSample` is on) | `--profile example` |
 | `mail` | `connector-mail` (IMAP sync, SMTP send, drafts) | `--profile mail` |
 | `dav` | `connector-dav` (CalDAV events and reminders, CardDAV contacts, WebDAV files) | `--profile dav` |
@@ -116,6 +117,48 @@ Things worth knowing:
   (`up -d --build`). The browser build runs Firefox once for about 80 s to pre-warm the profile.
   Smoke tests: `computers/sandbox/smoke.sh` and `computers/browser/smoke.sh` (they need podman and curl).
 
+## MCP servers
+
+`mcp-host` installs and runs the MCP servers you add in the app (Settings → MCP servers, presets first) and serves
+each one to the backend. It is part of the default stack and needs no setup: `init-secrets.sh` creates its two keys
+(`mcphost_key`, `connector_mcphost_key`) and the backend's `CLARITY_MCP_HOST` points at it by default. With no servers
+added it idles at about 70–100 MB and makes no outbound requests.
+
+To turn it off, set `CLARITY_MCP_HOST=off` in `deploy/.env` (the backend then lists no third-party servers) and,
+to skip the container too, stop it after each `up` with `podman compose -f deploy/compose.yaml stop mcp-host`.
+
+- **Kinds**: an npm package, a Python package, a GitHub release binary (checked against its `sha256` before it is
+  kept), or a remote URL (https; the host forwards to it with the token as `Authorization: Bearer`). Versions are
+  exact; nothing updates on its own, and changing `version` reinstalls. npm installs run with `--ignore-scripts`,
+  Python ones with `uv pip install --no-build` (wheels only), so no package code runs while installing.
+- **Built in**: kind `builtin` runs a first-party server shipped in the image (`computers/mcphost/builtin`, Python
+  standard library only, versioned with the image). Today that is Asana (the "Asana" preset): it takes a personal
+  access token (Asana → profile photo → My settings → Apps → Manage developer apps → Create new token) in
+  `ASANA_ACCESS_TOKEN`, optionally `ASANA_WORKSPACE=<gid>`, and reaches only `app.asana.com`, through the proxy. It runs
+  like any other server (own uid, home, proxy login, lifecycle). The token can do anything the Asana account can;
+  its reads run on their own, its writes (create, update, complete, comment, move; no delete) ask first by default.
+- **Presets**: GitHub (release binary), Canvas (PyPI, set up for a student and read only: `CANVAS_ROLE=student` and
+  `ALLOWED_WRITE_TOOLS=none` remove every tool that writes; set `TIMEZONE` to your zone) and Asana (built in).
+- **One uid each**: every server installs and runs as its own uid with its own home (`/data/servers/<id>`, 0700). It
+  sees only its own token, in its own environment; it cannot read another server's files or environment, the
+  host's keys or its state. The supervisor runs as root inside the rootless container with only `SETUID`, `SETGID`,
+  `CHOWN` and `KILL`; children start through `setpriv --no-new-privs --clear-groups` with no capabilities.
+- **Egress per server**: `mcp-host` is on `mcphost` (shared only with the backend), `ingest` (it is a connector) and
+  `mcphost-proxy`, never `db` or your LAN. Each server reaches the internet only through `egress`, logged in as its
+  own proxy user, and only to the hosts in its "Hosts it may reach" list (installs get the registry's hosts for the
+  install only). The logins (SHA-256 only) and allow-lists are files in the `mcphost-egress` volume, which `egress`
+  mounts read-only and re-reads on every lookup. A server that ignores `HTTPS_PROXY` simply has no way out.
+- **Lifecycle**: right after an install the host starts the server once, lists its tools (cached; the app's
+  settings screen never starts a server), and stops it. A server then starts on its first request, stops after 10
+  minutes without one, at most 3 run at once (the least recently used stops for a fourth), and a crash is retried on
+  the next request after 1 minute, doubling to 30. The whole container is capped at 640 MB.
+- Logs: `podman logs <project>_mcp-host_1` (a server's stderr appears with its name; tokens and proxy passwords are
+  replaced by `•••`).
+- Smoke test: `computers/mcphost/smoke.sh [mcphost-image] [egress-image]` runs its own compose project with a fake
+  server and checks the isolation and the egress rules; `SMOKE_PRESETS=1` also installs the presets.
+  `computers/mcphost/smoke-asana.sh [mcphost-image]` runs the built-in Asana server in the image against a fake
+  Asana behind a fake proxy (nothing leaves the machine) and prints its memory.
+
 ## Reports (`render`)
 
 The agent writes documents ("reports", the app's Goods) as Markdown plus a style; they download as PDF, Word / Pages,
@@ -138,8 +181,8 @@ the file under `/data/reports` (the `backend-data` volume).
   `/data/reports` is always safe.
 - **Settings**: `CLARITY_RENDER_URL` (`http://render:8950`), `CLARITY_RENDER_KEY_FILE` (`/run/secrets/render_key`),
   `CLARITY_RENDER_TIMEOUT` (60s; the backend waits 10 s longer than that).
-- **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates `render_key`, which the backend
-  now mounts, so the backend does not start without it.
+- **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates any key the new version
+  mounts (`render_key`, `mcphost_key`, `connector_mcphost_key`), and the backend does not start without them.
 - **Fonts**: the image bundles Libre Caslon Text (OFL, `computers/render/fonts/`; static faces are cut at build with
   fonttools) for the default title and headings. Word and OpenDocument downloads embed it (about 200 KB per file).
 - **Secret links**: each Good can have one public download page, `https://<your domain>/g/<token>`, made when the
@@ -178,6 +221,7 @@ proxy (Alpine, pinned; non-root, read-only rootfs, 128 MB) that enforces the pol
 | `browser` (network `browser-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
 | `backend` (network `backend-proxy`) | `openrouter.ai` and hosts in `CLARITY_BACKEND_EGRESS_ALLOW` (443) | refused with 403 |
 | `sandbox` (network `sandbox-proxy`) | any public host on 80 (HTTP) and 443 (CONNECT) | refused with 403 |
+| `mcp-host` (network `mcphost-proxy`) | per MCP server, with that server's proxy login: only the hosts listed for it | 407 without a login, 403 for other hosts |
 | connectors, `caddy` | their own egress networks (connectors usually talk to servers on your LAN) | |
 
 Refused for both: loopback, RFC 1918, CGNAT, link-local (including the 169.254.169.254 metadata address),
@@ -274,23 +318,29 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
 
 ## Security model
 
-- Networks: `db`, `ingest`, `tools`, `render`, `proxy`, `browser-proxy`, `backend-proxy` are `internal` (no route off the
+- Networks: `db`, `ingest`, `tools`, `mcphost`, `render`, `proxy`, `browser-proxy`, `backend-proxy`, `sandbox-proxy`, `mcphost-proxy` are `internal` (no route off the
   host). `render` joins only the backend and the report renderer, which has no other network. The browser and the backend reach the internet only through the `egress` proxy; the other services that
   need it (caddy, connectors) get their own egress network. Postgres is only on `db`; connectors only on `ingest` plus
   their own egress, so they cannot reach the database, the browser or each other. The sandbox sits on `tools` and `sandbox-proxy` (its door to `egress`).
+  `mcp-host` sits on `mcphost` (only the backend is there), `ingest` and `mcphost-proxy`, so its servers cannot reach
+  the sandbox or the browser. They can open connections to the backend's API and ingest ports, which need a device or
+  connector key they do not have.
 - Containers run as non-root numeric users with a read-only root filesystem (writable `/tmp` tmpfs and
-  their data volume), `cap_drop: ALL` and `no-new-privileges`.
+  their data volume), `cap_drop: ALL` and `no-new-privileges`. Two exceptions keep one capability set each:
+  `caddy` (`NET_BIND_SERVICE`) and `mcp-host` (root in its user namespace with `SETUID`, `SETGID`, `CHOWN`, `KILL`,
+  to give each MCP server its own uid).
 - Secrets are Podman secrets (`podman secret ls`), mounted read-only at `/run/secrets/<name>`;
   nothing secret appears in environment variables or `inspect` output. The plaintext copies live in
   `deploy/secrets/` (mode 0600, gitignored) as the source of truth for backups.
 
 ## Rootless Podman notes
 
-- Secrets are declared `external: true` and created by `init-secrets.sh`. podman-compose only
-  honours `uid/gid/mode` and custom targets for non-external secrets, and bind-mounting the 0600 files
+- Secrets are declared `external: true` and created by `init-secrets.sh`; bind-mounting the 0600 files
   fails for non-root container users (user-namespace remapping, SELinux labels). Podman secrets mount
-  as `0444` at `/run/secrets/<name>`, which is why the names carry no prefix (the backend discovers
-  `connector_<id>_key` by file name). Real `docker compose` does not support this; use Podman.
+  as `0444` at `/run/secrets/<name>` by default, which is why the names carry no prefix (the backend discovers
+  `connector_<id>_key` by file name). `mcp-host` sets `mode: "0400"` on its two (podman-compose passes `mode`
+  on for external secrets; quote it, or YAML reads 0400 as the number 256), because its servers run as other
+  uids in the same container; it refuses to start when a key file is readable by others. Real `docker compose` does not support this; use Podman.
 - The backend is only on internal networks (its outbound traffic goes through `egress`). Publishing
   `127.0.0.1:8080` works for it on rootless Podman 5 (pasta); if your engine cannot forward ports to a container
   that is only on internal networks, reach the backend through Caddy instead.

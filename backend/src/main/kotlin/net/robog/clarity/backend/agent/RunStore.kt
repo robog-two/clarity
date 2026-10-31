@@ -49,10 +49,23 @@ data class HelperRun(
     val result: String?,
     val startedAt: Instant,
     val finishedAt: Instant? = null,
+    /** Ids of the third-party MCP servers whose tools it was given. */
+    val servers: List<String> = emptyList(),
+    /** A fixed kind of helper with its own tools and caps ([MCP_SWEEP_PROFILE]); null for a delegated one. */
+    val profile: String? = null,
 )
 
 interface RunStore {
-    suspend fun create(id: String, parentRunId: String?, role: String, task: String, tools: List<String>?, startedAt: Instant)
+    suspend fun create(
+        id: String,
+        parentRunId: String?,
+        role: String,
+        task: String,
+        tools: List<String>?,
+        startedAt: Instant,
+        servers: List<String> = emptyList(),
+        profile: String? = null,
+    )
     suspend fun markRunning(id: String)
 
     /** Counts a start of run [id] (its first, or a resume after a restart) and returns how many there have been. */
@@ -84,7 +97,16 @@ interface RunStore {
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ExposedRunStore(private val database: Database, private val clock: Clock) : RunStore {
-    override suspend fun create(id: String, parentRunId: String?, role: String, task: String, tools: List<String>?, startedAt: Instant) {
+    override suspend fun create(
+        id: String,
+        parentRunId: String?,
+        role: String,
+        task: String,
+        tools: List<String>?,
+        startedAt: Instant,
+        servers: List<String>,
+        profile: String?,
+    ) {
         database.tx {
             AgentRuns.insert {
                 it[AgentRuns.id] = Uuid.parse(id)
@@ -95,6 +117,8 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
                 it[AgentRuns.role] = role
                 it[AgentRuns.tools] = tools?.let { t -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), t) }
                 it[AgentRuns.startedAt] = startedAt
+                it[AgentRuns.mcpServers] = servers.takeIf { s -> s.isNotEmpty() }?.let { s -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), s) }
+                it[AgentRuns.profile] = profile
             }
         }
     }
@@ -176,6 +200,9 @@ private fun ResultRow.toRun(): HelperRun {
         result = this[AgentRuns.result],
         startedAt = this[AgentRuns.startedAt],
         finishedAt = this[AgentRuns.finishedAt],
+        servers = this[AgentRuns.mcpServers]?.takeIf { it !is JsonNull }
+            ?.let { ClarityJson.decodeFromJsonElement(ListSerializer(String.serializer()), it) }.orEmpty(),
+        profile = this[AgentRuns.profile],
     )
 }
 

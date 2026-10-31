@@ -124,7 +124,8 @@ class McpToolProvider(
         runCatching { connection.client.close() }
     }
 
-    private suspend fun call(remoteName: String, input: JsonObject): ToolResult {
+    /** Calls the server's tool [remoteName] directly (connecting if needed), without listing its tools first. */
+    suspend fun call(remoteName: String, input: JsonObject): ToolResult {
         val args = input.mapValues { it.value.toJavaValue() }
         repeat(2) { attempt ->
             val connection = try {

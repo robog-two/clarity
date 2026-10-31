@@ -57,6 +57,8 @@ fun MainScaffold(
     onOpenHeldItem: (HeldActionId) -> Unit,
     onOpenConstitution: () -> Unit,
     onOpenConnector: (String) -> Unit,
+    /** Settings → MCP servers. */
+    onOpenMcp: () -> Unit = {},
     /** A Good opened, from the Goods tab or a card in the thread; the label is where back goes. */
     onOpenReport: (reportId: String, backLabel: String) -> Unit = { _, _ -> },
     viewModel: MainViewModel = metroViewModel(),
@@ -100,7 +102,7 @@ fun MainScaffold(
             MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") })
             MainTab.Goods -> GoodsScreen(onOpen = { onOpenReport(it, "Goods") }, modifier = content)
             MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
-            MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content)
+            MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content, onOpenMcp = onOpenMcp)
         }
     }
 }

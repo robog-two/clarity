@@ -1,7 +1,7 @@
 # Clarity: single-tenant stack for Podman (rootless works).
 #
 #   ./deploy/init-secrets.sh
-#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS) + render (reports)
+#   podman compose -f deploy/compose.yaml up -d                      # postgres + backend + egress proxy + caddy (TLS) + render (reports) + mcp-host (MCP servers you add in the app)
 #   podman compose -f deploy/compose.yaml --profile example up -d    # + example connector
 #   podman compose -f deploy/compose.yaml --profile mail --profile dav up -d   # + email (IMAP/SMTP), calendar/contacts/files (DAV)
 #   podman compose -f deploy/compose.yaml --profile computers up -d  # + sandbox and Firefox browser (agent tools)
@@ -108,6 +108,8 @@ services:
       # With the `computers` profile:
       #   sandbox=http://sandbox:8940/mcp;keyFile=/run/secrets/sandbox_key,browser=http://browser:8931/mcp;keyFile=/run/secrets/browser_key
       CLARITY_MCP_SERVERS: ${CLARITY_MCP_SERVERS:-}
+      # The MCP servers added in the app, run by mcp-host (on by default; `off` turns them off).
+      CLARITY_MCP_HOST: ${CLARITY_MCP_HOST:-http://mcp-host:8950;keyFile=/run/secrets/mcphost_key}
       # Reports: the render service (pandoc + Typst) on the internal `render` network, and the size cap
       # of the rendered-file cache under /data/reports (rebuildable; revisions are never swept).
       CLARITY_RENDER_URL: http://render:8950
@@ -127,7 +129,9 @@ services:
       - connector_example_key
       - connector_mail_key
       - connector_dav_key
+      - connector_mcphost_key
       - sandbox_key      # bearer keys for the `computers` profile (CLARITY_MCP_SERVERS keyFile=...)
+      - mcphost_key      # bearer key for mcp-host (CLARITY_MCP_HOST keyFile=...)
       - browser_key
       - render_key       # bearer key for the render service
     volumes:
@@ -144,7 +148,7 @@ services:
       timeout: 3s
       retries: 12
       start_period: 30s
-    networks: [db, ingest, tools, proxy, backend-proxy, render]
+    networks: [db, ingest, tools, mcphost, proxy, backend-proxy, render]
     mem_limit: 1g
     cpus: 2.0
 
@@ -191,6 +195,10 @@ services:
     environment:
       # Extra hosts the backend may reach (comma separated), e.g. a self-hosted model gateway.
       CLARITY_BACKEND_EGRESS_ALLOW: ${CLARITY_BACKEND_EGRESS_ALLOW:-}
+      # mcp-host's per-server logins and allow-lists (it writes them; read-only here).
+      EGRESS_MCP_DIR: /etc/egress-mcp
+    volumes:
+      - mcphost-egress:/etc/egress-mcp:ro
     healthcheck:
       # a real proxy request to the loopback health listener (a bare TCP connect spams the access log)
       test: ["CMD", "/usr/local/bin/egress-health"]
@@ -202,6 +210,7 @@ services:
       browser-proxy: { aliases: [egress-browser] }
       backend-proxy: { aliases: [egress-backend] }
       sandbox-proxy: { aliases: [egress-sandbox] }
+      mcphost-proxy: { aliases: [egress-mcp] }
       egress: {}
     mem_limit: 128m
     cpus: 0.5
@@ -326,6 +335,58 @@ services:
     cpus: 1.0
     pids_limit: 128
 
+  mcp-host:
+    <<: *hardened
+    # mcp-host (computers/mcphost): installs and runs the MCP servers added in the app, each as its
+    # own uid with its own home, and serves each to the backend at /s/{id}/mcp on the internal `mcphost`
+    # network. Servers reach the internet only through the egress proxy (`mcphost-proxy`), each with
+    # its own login and only the hosts listed for it. Not on `db`, never the LAN.
+    image: ghcr.io/robog-two/clarity-mcphost:${CLARITY_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/container/mcphost.Containerfile
+    # Root inside this rootless container (the deploying user on the host) with only four
+    # capabilities: SETUID and SETGID to run each server as its own uid, CHOWN to give it its home
+    # (and the proxy files to the proxy's group), KILL to stop it. Servers get none of them.
+    user: "0:0"
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_mcphost_key
+      CLARITY_CONNECTOR_ID: mcphost
+      CLARITY_SYNC_INTERVAL: ${CLARITY_MCPHOST_SYNC_INTERVAL:-30s}
+      CLARITY_STATE_DIR: /data/supervisor
+      MCPHOST_KEY_FILE: /run/secrets/mcphost_key
+      MCPHOST_PROXY: egress-mcp:3128
+      MCPHOST_EGRESS_DIR: /egress
+      MCPHOST_EGRESS_GID: "10001"
+    # Mode 0400 (owner root): the servers run as other uids and must not read these keys.
+    # (A quoted string: podman-compose passes it on as is.)
+    secrets:
+      - source: connector_mcphost_key
+        mode: "0400"
+      - source: mcphost_key
+        mode: "0400"
+    volumes:
+      - mcphost-data:/data          # server homes (0700 each), the supervisor's key and state
+      - mcphost-egress:/egress      # proxy logins and allow-lists, read by egress
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8950/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 6
+      start_period: 20s
+    depends_on:
+      backend: { condition: service_healthy }
+      egress: { condition: service_healthy }
+    # Its own network with the backend (not `tools`), so a third-party server cannot reach the sandbox or browser.
+    networks: [mcphost, ingest, mcphost-proxy]
+    mem_limit: 640m
+    cpus: 1.5
+    pids_limit: 512
+
   sandbox:
     <<: *hardened
     profiles: [computers]
@@ -407,13 +468,15 @@ networks:
   db:       { internal: true }   # postgres <-> backend
   ingest:   { internal: true }   # backend <-> connectors
   tools:    { internal: true }   # backend <-> MCP tool containers
+  mcphost:  { internal: true }   # backend <-> mcp-host only
   render:   { internal: true }   # backend <-> render (pandoc); the renderer reaches nothing else
   proxy:    { internal: true }   # caddy <-> backend
-  # The proxy's client networks: browser, sandbox and backend, each <-> egress.
+  # The proxy's client networks: browser, sandbox, backend and mcp-host, each <-> egress.
   browser-proxy: { internal: true }
   sandbox-proxy: { internal: true }
   backend-proxy: { internal: true }
-  # The only route out for the browser, the sandbox and the backend, and only `egress` is on it.
+  mcphost-proxy: { internal: true }
+  # The only route out for the browser, the sandbox, the backend and mcp-host, and only `egress` is on it.
   egress: { enable_ipv6: true }
   # One egress network per remaining service that needs the internet (connectors usually talk to
   # servers on your LAN), so connectors cannot reach each other.
@@ -435,6 +498,10 @@ secrets:
     external: true
   connector_dav_key:
     external: true
+  connector_mcphost_key:
+    external: true
+  mcphost_key:
+    external: true
   sandbox_key:
     external: true
   browser_key:
@@ -453,3 +520,5 @@ volumes:
   sandbox-workspace:
   browser-downloads:
   browser-profile:
+  mcphost-data:
+  mcphost-egress:

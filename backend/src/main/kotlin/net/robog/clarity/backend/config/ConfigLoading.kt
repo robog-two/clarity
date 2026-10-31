@@ -314,6 +314,7 @@ private class Lookup(
                 triggerFiresPerHour = int("CLARITY_TRIGGER_FIRES_PER_HOUR", "agent.triggerFiresPerHour", 6, min = 1),
                 reviewInterval = duration("CLARITY_REVIEW_INTERVAL", "agent.reviewInterval", Duration.parse("2h")),
                 mcpServers = parseMcpServers(mcpRaw),
+                mcpHost = parseMcpHost(string("CLARITY_MCP_HOST", "agent.mcpHost")),
                 openRouterApiKey = openRouterKey,
 
                 openRouterBaseUrl = string("OPENROUTER_BASE_URL", "agent.openRouterBaseUrl") ?: DEFAULT_OPENROUTER_BASE_URL,
@@ -373,3 +374,12 @@ fun parseMcpServers(raw: String): List<McpServerConfig> =
                 ?.substringAfter('=')?.trim()?.takeIf { it.isNotEmpty() }
             if (name.isEmpty() || url.isEmpty()) null else McpServerConfig(name, url, keyFile)
         }
+
+/** Parses `url[;keyFile=/path]` (the `CLARITY_MCP_HOST` format); null when blank or `off`. A trailing `/` is dropped. */
+fun parseMcpHost(raw: String?): McpHostConfig? {
+    if (raw?.trim().equals("off", ignoreCase = true)) return null
+    val parts = raw?.split(';')?.map { it.trim() } ?: return null
+    val url = parts.first().trimEnd('/').ifEmpty { return null }
+    val keyFile = parts.drop(1).firstOrNull { it.startsWith("keyFile=") }?.substringAfter('=')?.trim()?.ifEmpty { null }
+    return McpHostConfig(url, keyFile)
+}

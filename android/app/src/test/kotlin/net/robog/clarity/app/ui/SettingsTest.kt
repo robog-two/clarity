@@ -238,6 +238,15 @@ class SettingsViewModelTest {
         assertEquals("not running on your server", r.state.serverSources.last().sub)
     }
 
+    @Test fun theMcpHostHasItsOwnRowNotASourceRow() = withMain {
+        val running = SettingsRig(connectors = ApiResult.Success(listOf(connector("mail", "mail", null), connector("mcp-host", "mcp-host", null))))
+        assertEquals(listOf("mail"), running.state.serverSources.map { it.id })
+        assertEquals(true, running.state.mcpRunning)
+        val stopped = SettingsRig(connectors = ApiResult.Success(listOf(ConnectorSummary(ConnectorId("mcp-host"), null, emptyMap(), null))))
+        assertTrue(stopped.state.serverSources.isEmpty())
+        assertEquals(false, stopped.state.mcpRunning)
+    }
+
     @Test fun phoneSourcesReflectPermissionsAndLastSync() = withMain {
         val r = SettingsRig()
         r.caps.sms = false; r.caps.dnd = false

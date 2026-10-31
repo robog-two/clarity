@@ -21,8 +21,24 @@ import net.robog.clarity.shared.governance.HeldActionId
 /** One helper run's Agent's Path, stepped into from a task. */
 @Serializable data class RunPath(val runId: String) : NavKey
 
-/** The screen of one server connector (accounts, passwords), opened from settings. */
-@Serializable data class ConnectorView(val connectorId: String) : NavKey
+/**
+ * The screen of one server connector (accounts, passwords), opened from settings. With [add] or
+ * [itemId] it opens one item directly (an MCP server): adding one, prefilled from the preset
+ * titled [preset] or named [label], or editing the item [itemId].
+ */
+@Serializable data class ConnectorView(
+    val connectorId: String,
+    val add: Boolean = false,
+    val preset: String? = null,
+    val label: String? = null,
+    val itemId: String? = null,
+) : NavKey {
+    val direct: net.robog.clarity.app.ui.onboarding.DirectEdit?
+        get() = if (add || itemId != null) net.robog.clarity.app.ui.onboarding.DirectEdit(add, preset, label, itemId) else null
+}
+
+/** Settings → MCP servers: the servers, their tools, and Clarity's suggestions. */
+@Serializable data object McpServersView : NavKey
 
 /** One Good (a report the agent made), opened from the Goods tab or a card in the thread. */
 @Serializable data class ReportView(val reportId: String, val backLabel: String = "Goods") : NavKey

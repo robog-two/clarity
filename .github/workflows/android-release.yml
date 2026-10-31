@@ -68,6 +68,7 @@ jobs:
           browser|deploy/container/browser.Containerfile|||
           egress|deploy/container/egress.Containerfile|||
           render|deploy/container/render.Containerfile|||
+          mcphost|deploy/container/mcphost.Containerfile|||
           LIST
           cat "$RUNNER_TEMP/subjects.txt"
       # One attestation covering all images, stored with GitHub; verify with

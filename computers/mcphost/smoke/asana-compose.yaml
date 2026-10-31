@@ -1,0 +1,80 @@
+# The built-in Asana server's smoke stack (computers/mcphost/smoke-asana.sh runs it under its own
+# project name; it never touches the real `clarity` project). mcp-host is configured as in
+# deploy/compose.yaml, except that `egress-mcp` is a fake: a proxy that checks each login against
+# mcp-host's egress files like the real one, then serves a fake Asana for app.asana.com (TLS with a
+# test CA). Nothing reaches the internet.
+x-hardening: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:rw,nosuid,size=64m"]
+
+services:
+  backend:
+    <<: *hardened
+    image: ${SMOKE_PYTHON_IMAGE:-docker.io/library/python:3-alpine}
+    user: "10001:10001"
+    command: ["python3", "/smoke-bin/fake_backend.py"]
+    volumes:
+      - ${SMOKE_DIR}:/smoke:ro,z
+      - ./fake_backend.py:/smoke-bin/fake_backend.py:ro,z
+    networks: [ingest]
+
+  egress:
+    <<: *hardened
+    image: ${SMOKE_PYTHON_IMAGE:-docker.io/library/python:3-alpine}
+    user: "10001:10001"
+    command: ["python3", "-B", "/fake/fake_asana.py", "--port", "3128", "--certs", "/certs", "--token", "${SMOKE_ASANA_TOKEN}",
+              "--egress-dir", "/etc/egress-mcp"]
+    volumes:
+      - mcphost-egress:/etc/egress-mcp:ro
+      - ../builtin/tests:/fake:ro,z
+      - ${SMOKE_DIR}/certs:/certs:ro,z
+    networks:
+      mcphost-proxy: { aliases: [egress-mcp] }
+
+  mcp-host:
+    <<: *hardened
+    image: ${SMOKE_MCPHOST_IMAGE}
+    user: "0:0"
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/clarity_asanasmoke_connector_key
+      CLARITY_CONNECTOR_ID: mcphost
+      CLARITY_SYNC_INTERVAL: 5s
+      CLARITY_STATE_DIR: /data/supervisor
+      MCPHOST_KEY_FILE: /run/secrets/clarity_asanasmoke_host_key
+      MCPHOST_PROXY: egress-mcp:3128
+      MCPHOST_EGRESS_DIR: /egress
+      MCPHOST_EGRESS_GID: "10001"
+    secrets:
+      - source: clarity_asanasmoke_connector_key
+        mode: "0400"
+      - source: clarity_asanasmoke_host_key
+        mode: "0400"
+    volumes:
+      - mcphost-data:/data
+      - mcphost-egress:/egress
+      - ${SMOKE_DIR}/certs:/opt/asana-test:ro,z
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    depends_on: [backend, egress]
+    networks: [tools, ingest, mcphost-proxy]
+    mem_limit: 640m
+    pids_limit: 512
+
+networks:
+  tools: { internal: true }
+  ingest: { internal: true }
+  mcphost-proxy: { internal: true }
+
+secrets:
+  clarity_asanasmoke_connector_key:
+    external: true
+  clarity_asanasmoke_host_key:
+    external: true
+
+volumes:
+  mcphost-data:
+  mcphost-egress:

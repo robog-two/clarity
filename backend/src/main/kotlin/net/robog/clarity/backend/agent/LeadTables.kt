@@ -93,6 +93,9 @@ object MemoryScratch : Table("memory_scratch") {
     val text = text("text")
     val expiresAt = timestamp("expires_at")
     val createdAt = timestamp("created_at")
+
+    // V44: a note with a key replaces the live one with the same key
+    val key = text("key").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 

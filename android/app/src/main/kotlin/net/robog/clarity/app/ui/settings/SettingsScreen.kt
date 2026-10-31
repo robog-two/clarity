@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Gavel
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Lock
@@ -34,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import net.robog.clarity.R
@@ -127,6 +129,8 @@ data class SettingsActions(
     val onEveningAt: (LocalTime) -> Unit = {},
     val onOpenConstitution: () -> Unit = {},
     val onOpenConnector: (String) -> Unit = {},
+    /** Settings → MCP servers. */
+    val onOpenMcp: () -> Unit = {},
     val onAllowNotifications: () -> Unit = {},
     val onAllowExactAlarms: () -> Unit = {},
     val onAllowFullScreen: () -> Unit = {},
@@ -139,7 +143,13 @@ data class SettingsActions(
 )
 
 @Composable
-fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Unit, modifier: Modifier = Modifier, viewModel: SettingsViewModel = metroViewModel()) {
+fun SettingsTab(
+    onOpenConstitution: () -> Unit,
+    onOpenConnector: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onOpenMcp: () -> Unit = {},
+    viewModel: SettingsViewModel = metroViewModel(),
+) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -184,6 +194,7 @@ fun SettingsTab(onOpenConstitution: () -> Unit, onOpenConnector: (String) -> Uni
             onEveningAt = viewModel::setEveningAt,
             onOpenConstitution = onOpenConstitution,
             onOpenConnector = onOpenConnector,
+            onOpenMcp = onOpenMcp,
             onAllowNotifications = {
                 if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                 else context.openSystem(AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS) { putExtra(AndroidSettings.EXTRA_APP_PACKAGE, context.packageName) }
@@ -256,7 +267,7 @@ fun SettingsContent(
         label = "settings page",
     ) { shown ->
         if (shown == SettingsPage.Home) {
-            SettingsHome(state, open = { page = it }, onOpenConstitution = actions.onOpenConstitution)
+            SettingsHome(state, open = { page = it }, onOpenConstitution = actions.onOpenConstitution, onOpenMcp = actions.onOpenMcp)
         } else {
             SettingsSubPage(shown.title, shown.drawing, onBack = { page = SettingsPage.Home }) {
                 when (shown) {
@@ -295,7 +306,7 @@ fun SettingsContent(
 // --- home ---
 
 @Composable
-private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, onOpenConstitution: () -> Unit) {
+private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, onOpenConstitution: () -> Unit, onOpenMcp: () -> Unit) {
     val settings = state.settings
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
@@ -354,6 +365,11 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
                 if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
                 warning = failing > 0,
             ) { open(SettingsPage.Sources) }
+            GroupRow(
+                Icons.Outlined.Extension, stringResource(R.string.mcp_title),
+                stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary),
+                onClick = onOpenMcp,
+            )
             val batteryWarning = state.pushOn && !state.batteryUnrestricted
             GroupRow(
                 Icons.Outlined.NotificationsActive, "Stay connected",

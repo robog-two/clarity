@@ -176,6 +176,8 @@ object Playbooks {
     fun preparation(): String =
         "Prepare for the morning call that starts in about ten minutes, silently: read yesterday's journal and today's, check yesterday's plan and what was parked " +
             "(Today), look at today's calendar and new mail since yesterday evening, and leave yourself a short scratch note with the three things worth knowing. " +
+            "When a [coming-up] scratch note is there, it lists what the person's MCP servers show for the next 7 days, one line per item naming its server: " +
+            "use it, and bring up in the call what is due soon. " +
             "Do NOT message the person or call send_to_user."
 
     /** The note delivered with a transition; null when the lead has nothing to do. */
