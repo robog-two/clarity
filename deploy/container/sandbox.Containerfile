@@ -19,6 +19,7 @@ COPY connector-sdk connector-sdk
 COPY backend backend
 COPY connectors connectors
 COPY computers/sandbox computers/sandbox
+COPY computers/mcphost computers/mcphost
 # Capped like local builds: the deploy builds beside the running stack on a 7 GB host.
 RUN --mount=type=cache,target=/root/.gradle \
     ./gradlew :computers:sandbox:installDist --no-daemon --console=plain \

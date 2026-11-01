@@ -55,4 +55,5 @@ clarity:
     helperMaxTurns: 60
     maxConcurrentRuns: 2
     mcpServers: ""
+    mcpHost: ""
     openRouterBaseUrl: https://openrouter.ai/api/v1

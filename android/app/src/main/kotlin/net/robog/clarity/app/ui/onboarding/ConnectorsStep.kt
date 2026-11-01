@@ -17,6 +17,7 @@ import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.ConnectorsRepository
+import net.robog.clarity.app.ui.mcp.isMcpHost
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.connector.ConnectorSummary
 import net.robog.clarity.shared.connector.GrantState
@@ -167,7 +168,8 @@ class ConnectorsStepViewModel(
             val tests = _state.value.items.associate { it.row.key to it.test }
             val list = connectors.list()
             val server: List<ConnectorSummary> = when (list) {
-                is ApiResult.Success -> list.value.filterNot { isDeviceConnector(it.id) }
+                // MCP servers are set up later, in Settings; the host has nothing to sync here.
+                is ApiResult.Success -> list.value.filterNot { isDeviceConnector(it.id) || isMcpHost(it) }
                 is ApiResult.Failure -> {
                     val notFound = list.error is ApiError.NotFound
                     // Without a list the phone connectors can still be set up.

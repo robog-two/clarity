@@ -120,6 +120,18 @@ sealed interface InboxItem {
         override val untrusted get() = detail?.takeIf { it.isNotBlank() }?.let { listOf(UntrustedPart("connector", it)) }.orEmpty()
     }
 
+    /**
+     * The person approved a held MCP tool call after the helper that asked stopped waiting, and the
+     * backend ran it. [result] is the server's answer, quoted as untrusted.
+     */
+    @Serializable @SerialName("mcp_call_result")
+    data class McpCallResult(val heldId: String, val server: String, val actionSummary: String, val ok: Boolean, val result: String) : InboxItem {
+        override val priority get() = Priority.NORMAL
+        override val summary get() =
+            "The person approved \"$actionSummary\" ($heldId) and Clarity ran it on $server: " + if (ok) "it worked." else "it failed."
+        override val untrusted get() = listOf(UntrustedPart("mcp:$server", result))
+    }
+
     /** The person ruled on a held action. */
     @Serializable @SerialName("held_decided")
     data class HeldDecided(

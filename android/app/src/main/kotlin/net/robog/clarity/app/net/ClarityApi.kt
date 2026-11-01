@@ -20,6 +20,10 @@ import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.encodeURLPathPart
+import net.robog.clarity.shared.mcp.McpPaths
+import net.robog.clarity.shared.mcp.McpServerList
+import net.robog.clarity.shared.mcp.McpSuggestionList
+import net.robog.clarity.shared.mcp.McpToolPolicyUpdate
 import net.robog.clarity.shared.report.ReportDetail
 import net.robog.clarity.shared.report.ReportLink
 import net.robog.clarity.shared.report.ReportList
@@ -197,6 +201,16 @@ interface ReportsApi {
     suspend fun revokeReportLink(id: String): ApiResult<Unit>
 }
 
+/** Third-party MCP servers run by the `mcp-host` connector ([McpPaths]). Adding and editing servers goes through its connector config. */
+interface McpApi {
+    suspend fun mcpServers(): ApiResult<McpServerList>
+
+    /** How Clarity may use one tool; a null mode returns it to the default. */
+    suspend fun putMcpToolPolicy(serverId: String, tool: String, update: McpToolPolicyUpdate): ApiResult<Unit>
+    suspend fun mcpSuggestions(): ApiResult<McpSuggestionList>
+    suspend fun dismissMcpSuggestion(id: String): ApiResult<Unit>
+}
+
 /** The credential vault's routes and phone-signed decisions. */
 interface VaultApi {
     /** Registers this phone's vault key and approval key (replacing earlier ones). */
@@ -250,7 +264,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi, McpApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -469,6 +483,18 @@ class KtorClarityApi(
 
     override suspend fun revokeReportLink(id: String): ApiResult<Unit> =
         authedUnit { base -> client.delete { url(base + "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link") } }
+
+    // --- MCP servers ---
+
+    override suspend fun mcpServers(): ApiResult<McpServerList> = get(McpPaths.SERVERS)
+
+    override suspend fun putMcpToolPolicy(serverId: String, tool: String, update: McpToolPolicyUpdate): ApiResult<Unit> =
+        putUnit(McpPaths.toolPolicy(serverId.encodeURLPathPart(), tool.encodeURLPathPart()), update)
+
+    override suspend fun mcpSuggestions(): ApiResult<McpSuggestionList> = get(McpPaths.SUGGESTIONS)
+
+    override suspend fun dismissMcpSuggestion(id: String): ApiResult<Unit> =
+        authedUnit { base -> client.delete { url(base + "${McpPaths.SUGGESTIONS}/${id.encodeURLPathPart()}") } }
 
     // --- ingest (phone connector) ---
 

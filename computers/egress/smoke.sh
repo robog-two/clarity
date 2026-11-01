@@ -6,6 +6,8 @@
 #   - private/loopback/link-local/ULA/mapped destinations, a name resolving to a private address,
 #     the host gateway names and non-443 CONNECT are refused (403)
 #   - the backend listener allows only openrouter.ai (+ CLARITY_BACKEND_EGRESS_ALLOW)
+#   - the mcp listener wants a login (407 without one or with a wrong one) and lets each login reach
+#     only its own allow-list, which is re-read when it changes
 #   - clients on the internal networks have no direct route out
 #   - the same proxy listeners are not reachable across networks
 #
@@ -15,12 +17,26 @@ image="${1:-ghcr.io/robog-two/clarity-egress:local}"
 curl_image="${SMOKE_CURL_IMAGE:-docker.io/curlimages/curl:8.11.1}"
 id="$$"
 egress="clarity-egress-smoke-$id"
-nets="clarity-egsmoke-browser-$id clarity-egsmoke-backend-$id clarity-egsmoke-sandbox-$id clarity-egsmoke-out-$id"
+nets="clarity-egsmoke-browser-$id clarity-egsmoke-backend-$id clarity-egsmoke-sandbox-$id clarity-egsmoke-mcp-$id clarity-egsmoke-out-$id"
 net_browser="clarity-egsmoke-browser-$id"; net_backend="clarity-egsmoke-backend-$id"; net_sandbox="clarity-egsmoke-sandbox-$id"; net_out="clarity-egsmoke-out-$id"
+net_mcp="clarity-egsmoke-mcp-$id"
+# mcp-host's login and allow-list files, as it writes them (here world-readable: a throwaway fixture)
+mcpdir="$(mktemp -d)"
+mkdir -p "$mcpdir/users" "$mcpdir/allow"
+chmod 755 "$mcpdir" "$mcpdir/users" "$mcpdir/allow"
+mcp_login() { # mcp_login <user> <password> <host...>: what mcp-host's EgressAccess.grant writes
+  u="$1"; p="$2"; shift 2
+  printf '%s\n' "$@" >"$mcpdir/allow/$u"
+  printf '%s' "$p" | sha256sum | cut -d' ' -f1 >"$mcpdir/users/$u"
+  chmod 644 "$mcpdir/allow/$u" "$mcpdir/users/$u"
+}
+mcp_login s-one pw-one-0123456789 example.com
+mcp_login s-two pw-two-0123456789 .iana.org
 
 cleanup() {
   podman rm -f "$egress" >/dev/null 2>&1 || true
   for n in $nets; do podman network rm -f "$n" >/dev/null 2>&1 || true; done
+  rm -rf "$mcpdir"
 }
 trap cleanup EXIT
 fail() { echo "FAIL: $*" >&2; podman logs "$egress" 2>&1 | tail -20 >&2 || true; exit 1; }
@@ -28,6 +44,7 @@ fail() { echo "FAIL: $*" >&2; podman logs "$egress" 2>&1 | tail -20 >&2 || true;
 podman network create --internal "$net_browser" >/dev/null
 podman network create --internal "$net_backend" >/dev/null
 podman network create --internal "$net_sandbox" >/dev/null
+podman network create --internal "$net_mcp" >/dev/null
 podman network create "$net_out" >/dev/null
 
 # private.test resolves (via /etc/hosts, which Squid reads) to an RFC 1918 address.
@@ -35,7 +52,8 @@ podman run -d --name "$egress" --user 10001:10001 --read-only --cap-drop ALL --s
   --tmpfs /tmp:rw,nosuid,size=64m --memory 128m \
   --add-host private.test:10.1.2.3 --add-host private6.test:fd00::5 \
   -e CLARITY_BACKEND_EGRESS_ALLOW=example.com \
-  --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_sandbox:alias=egress-sandbox" --network "$net_out" \
+  --network "$net_browser:alias=egress-browser,alias=egress" --network "$net_backend:alias=egress-backend" --network "$net_sandbox:alias=egress-sandbox" --network "$net_mcp:alias=egress-mcp" --network "$net_out" \
+  -v "$mcpdir:/etc/egress-mcp:ro,z" \
   "$image" >/dev/null
 for _ in $(seq 1 30); do
   podman exec "$egress" egress-health >/dev/null 2>&1 && break
@@ -91,6 +109,32 @@ case "$code" in 000|403|407|5*) fail "backend: openrouter.ai should be allowed, 
 expect "backend refuses other public host (www.iana.org)" 403 "$(via_backend https://www.iana.org/)"
 expect "backend refuses a private address" 403 "$(via_backend http://10.0.0.1/)"
 
+# --- mcp listener: a login per server, each with its own allow-list ------------------------------
+via_mcp() { u="$1"; shift; client "$net_mcp" -x "http://$u@egress-mcp:3128" "$@"; }
+expect "mcp: no login is challenged" 407 "$(client "$net_mcp" -x http://egress-mcp:3128 https://example.com/)"
+expect "mcp: a wrong password is challenged" 407 "$(via_mcp s-one:wrong-password-0000 https://example.com/)"
+expect "mcp: an unknown user is challenged" 407 "$(via_mcp s-nobody:pw-one-0123456789 https://example.com/)"
+expect "mcp: one's own host (example.com)" 200 "$(via_mcp s-one:pw-one-0123456789 https://example.com/)"
+expect "mcp: one's own host over plain HTTP" 200 "$(via_mcp s-one:pw-one-0123456789 http://example.com/)"
+expect "mcp: one refuses a host not on its list" 403 "$(via_mcp s-one:pw-one-0123456789 https://www.iana.org/)"
+expect "mcp: one cannot use two's password" 407 "$(via_mcp s-one:pw-two-0123456789 https://example.com/)"
+expect "mcp: two's subdomain rule (.iana.org)" 200 "$(via_mcp s-two:pw-two-0123456789 https://www.iana.org/)"
+expect "mcp: two refuses example.com" 403 "$(via_mcp s-two:pw-two-0123456789 https://example.com/)"
+expect "mcp refuses a private address" 403 "$(via_mcp s-one:pw-one-0123456789 http://10.0.0.1/)"
+expect "mcp refuses a name resolving to a private address" 403 "$(via_mcp s-one:pw-one-0123456789 https://private.test/)"
+expect "mcp refuses localhost" 403 "$(via_mcp s-one:pw-one-0123456789 http://localhost/)"
+expect "mcp: CONNECT to non-443 port refused" 403 "$(via_mcp s-one:pw-one-0123456789 https://example.com:8443/)"
+expect "mcp network: no direct route to a public IP" 000 "$(client "$net_mcp" --noproxy '*' https://1.1.1.1/)"
+expect "mcp network cannot use the browser listener name" 000 "$(client "$net_mcp" -x http://egress-browser:3128 https://example.com/)"
+# a changed allow-list and a removed login take effect without a reload (after the helpers' cache)
+mcp_login s-one pw-one-0123456789 example.com www.iana.org
+rm -f "$mcpdir/users/s-two"
+sleep 32
+expect "mcp: an added host works after the list changed" 200 "$(via_mcp s-one:pw-one-0123456789 https://www.iana.org/)"
+expect "mcp: a removed login stops working" 407 "$(via_mcp s-two:pw-two-0123456789 https://www.iana.org/)"
+if podman logs "$egress" 2>&1 | grep -q 'pw-one-0123456789'; then fail "a proxy password reached the log"; fi
+echo "ok   no proxy password in the log"
+
 # --- no direct route out, no borrowing the other network's listener ------------------------------
 expect "browser network: no direct route to a public IP" 000 "$(client "$net_browser" --noproxy '*' https://1.1.1.1/)"
 expect "backend network: no direct route to a public IP" 000 "$(client "$net_backend" --noproxy '*' https://1.1.1.1/)"
@@ -120,7 +164,10 @@ fi
 podman logs "$egress" 2>&1 | grep -q 'TCP_DENIED' || fail "no denials in the access log"
 # --- a clean config and a quiet healthcheck ------------------------------------------------------
 for _ in 1 2 3; do podman exec "$egress" egress-health || fail "healthcheck failed"; done
-if podman logs "$egress" 2>&1 | grep -E 'ERROR|WARNING|transaction-end-before-headers| 127\.0\.0\.1 '; then
+# (Squid tries setuid(0) in each helper it starts, the mcp login helpers here, and warns that a
+# non-root proxy may not; that one warning is expected.)
+if podman logs "$egress" 2>&1 | grep -v 'WARNING: no_suid: setuid(0): (1) Operation not permitted' \
+    | grep -E 'ERROR|WARNING|transaction-end-before-headers| 127\.0\.0\.1 '; then
   fail "config errors/warnings or healthcheck lines in the log"
 fi
 echo "ok   no config warnings, healthchecks not in the access log"

@@ -28,6 +28,7 @@ import net.robog.clarity.backend.agent.MemoryStore
 import net.robog.clarity.backend.agent.Priority
 import net.robog.clarity.backend.agent.RunScope
 import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.mcpservers.McpCatalog
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.feed.FeedStore
@@ -125,6 +126,7 @@ class MemoryGcJob(
     private val collections: CollectionStore,
     private val helpers: HelperManager,
     private val slots: JobSlots,
+    private val mcp: McpCatalog,
 ) : ScheduledJob {
     override val name = "memory-gc"
 
@@ -144,7 +146,7 @@ class MemoryGcJob(
             return
         }
         helpers.delegate(
-            task = memoryGcTask(weekAgo, today),
+            task = memoryGcTask(weekAgo, today, mcp.collectionNames()),
             tools = MEMORY_GC_TOOLS,
             role = "helper",
             parent = RunScope("memory-gc", isLead = false),
@@ -158,9 +160,14 @@ class MemoryGcJob(
     }
 }
 
-/** Pure: the memory clean-up helper's task. */
-fun memoryGcTask(from: LocalDate, until: LocalDate): String =
+/** Pure: the memory clean-up helper's task. [keep] are the collections of the person's MCP servers. */
+fun memoryGcTask(from: LocalDate, until: LocalDate, keep: List<String> = emptyList()): String =
     "Tidy the agent's memory. Change only what is clearly better; when in doubt, leave it.\n" +
+        (
+            if (keep.isEmpty()) ""
+            else "The collections ${keep.joinToString()} hold the notes for using the person's MCP servers: keep their names (never rename, merge or delete them), " +
+                "keep their \"Sweep recipe:\" notes, and file facts about those services into them.\n"
+            ) +
         "1. Profile: read it with read_profile. Merge facts that say the same thing, drop ones that are clearly stale " +
         "(check read_journal when unsure), keep every fact that is still true, and keep each one short. " +
         "If anything changed, call replace_profile once with the complete cleaned list.\n" +

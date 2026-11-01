@@ -298,7 +298,7 @@ class ToolRepeatGuardsDbTest : FunSpec({
         val helperJob = scope.launch { rig.helpers.run() }
         val today = journalDate(Clock.System.now(), rig.settingsProvider.current().homeZone)
         repeat(6) { rig.memory.writeJournal(today, "entry $it") }
-        val gc = MemoryGcJob(rig.memory, rig.constitutions, rig.collections, rig.helpers, JobSlots(database, Clock.System))
+        val gc = MemoryGcJob(rig.memory, rig.constitutions, rig.collections, rig.helpers, JobSlots(database, Clock.System), rig.mcpCatalog)
         // Fails after the helper was started, as a commit or a later write could.
         val failing = object : ScheduledJob {
             override val name = "memory-gc"

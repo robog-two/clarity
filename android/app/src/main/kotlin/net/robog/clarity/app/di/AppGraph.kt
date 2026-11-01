@@ -266,6 +266,9 @@ interface AppGraph : ViewModelGraph {
 
     @Provides fun modelsRepository(api: KtorClarityApi): ModelsRepository = DefaultModelsRepository(api)
 
+    @Provides fun mcpRepository(api: KtorClarityApi): net.robog.clarity.app.data.McpRepository =
+        net.robog.clarity.app.data.DefaultMcpRepository(api)
+
     @Provides @SingleIn(AppScope::class)
     fun vaultKeys(): VaultKeys = AndroidVaultKeys()
 

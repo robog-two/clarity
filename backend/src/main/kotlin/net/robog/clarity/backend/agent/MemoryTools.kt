@@ -148,6 +148,53 @@ class MemoryTools(
     }
 
     @Serializable
+    class SaveServerNoteInput(
+        @Description("The collection: one of those named in this tool's description.") val collection: String? = null,
+        @Description("One self-contained note: a name, an ID, a formatting rule, or how to find something.") val text: String? = null,
+        @Description("Edit this note (or delete it, with remove) instead of adding one.") val id: Long? = null,
+        val remove: Boolean = false,
+    )
+
+    /**
+     * `save_note` limited to the [allowed] collections (name to the description a missing one is
+     * created with): the notes a helper keeps for the MCP servers it was given. Same checks as [saveNote].
+     */
+    fun saveNoteIn(allowed: Map<String, String>): Tool = tool<SaveServerNoteInput>(
+        name = "save_note",
+        description = "Add a note to the collection of an MCP server you were given (${allowed.keys.sorted().joinToString()}), or edit/remove one of its notes by id. " +
+            "For what helps next time: names, IDs, formatting rules, how to find what is coming up. Passwords, codes, keys and tokens are rejected.",
+        effect = ToolEffect.WRITE,
+        json = ClarityJson,
+    ) { input ->
+        val names = allowed.keys
+        val only = "You can keep notes only in ${names.sorted().joinToString()}."
+        if (input.id != null) {
+            val note = collections.note(input.id) ?: return@tool ToolResult.Error("No note #${input.id}.")
+            if (note.collection !in names) return@tool ToolResult.Error("Note #${input.id} is in ${note.collection}. $only")
+            if (input.remove) {
+                return@tool if (collections.removeNote(input.id)) ToolResult.Ok("Note #${input.id} removed.") else ToolResult.Error("No note #${input.id}.")
+            }
+        }
+        val text = input.text?.trim().orEmpty()
+        if (text.isEmpty() || text.length > MAX_NOTE_CHARS) return@tool ToolResult.Error("`text` must be 1-$MAX_NOTE_CHARS characters.")
+        rejection(text)?.let { return@tool ToolResult.Error(it) }
+        gate.check(GateKind.MEMORY, "save_note", text)?.let { return@tool ToolResult.Error(it) }
+        if (input.id != null) {
+            return@tool if (collections.editNote(input.id, text)) ToolResult.Ok("Note #${input.id} updated.") else ToolResult.Error("No note #${input.id}.")
+        }
+        val name = input.collection?.let(::collectionSlug) ?: names.singleOrNull() ?: return@tool ToolResult.Error("Name the `collection`. $only")
+        if (name !in names) return@tool ToolResult.Error("Not saved. $only")
+        val collection = collections.find(name)
+            ?: collections.create(name, allowed.getValue(name))
+            ?: collections.find(name)
+            ?: return@tool ToolResult.Error("Could not create \"$name\".")
+        val duplicate = collections.notes(collection.id, text, 5).firstOrNull { it.text.equals(text, ignoreCase = true) }
+        if (duplicate != null) return@tool ToolResult.Ok("Already in ${collection.name} as #${duplicate.id}.")
+        val id = collections.addNote(collection.id, text, null)
+        ToolResult.Ok("Saved as #$id in ${collection.name}.")
+    }
+
+    @Serializable
     class ManageCollectionInput(
         @Description("The collection to change.") val name: String,
         @Description("New one-line description.") val description: String? = null,

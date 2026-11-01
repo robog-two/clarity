@@ -1,0 +1,89 @@
+# The mcp-host smoke test's own stack (computers/mcphost/smoke.sh runs it under its own project name;
+# it never touches the real `clarity` project). mcp-host and egress are configured as in
+# deploy/compose.yaml; a stand-in backend serves the config; the fake MCP server comes from the tests.
+x-hardening: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:rw,nosuid,size=64m"]
+
+services:
+  backend:
+    <<: *hardened
+    image: ${SMOKE_PYTHON_IMAGE:-docker.io/library/python:3-alpine}
+    user: "10001:10001"
+    command: ["python3", "/smoke-bin/fake_backend.py"]
+    volumes:
+      - ${SMOKE_DIR}:/smoke:ro,z
+      - ./fake_backend.py:/smoke-bin/fake_backend.py:ro,z
+    networks: [ingest]
+
+  egress:
+    <<: *hardened
+    image: ${SMOKE_EGRESS_IMAGE}
+    user: "10001:10001"
+    environment:
+      EGRESS_MCP_DIR: /etc/egress-mcp
+    # private.test resolves (through /etc/hosts, which Squid reads) to an RFC 1918 address
+    extra_hosts: ["private.test:10.1.2.3"]
+    volumes:
+      - mcphost-egress:/etc/egress-mcp:ro
+    networks:
+      browser-proxy: { aliases: [egress-browser] }
+      backend-proxy: { aliases: [egress-backend] }
+      sandbox-proxy: { aliases: [egress-sandbox] }
+      mcphost-proxy: { aliases: [egress-mcp] }
+      egress: {}
+    mem_limit: 128m
+    pids_limit: 64
+
+  mcp-host:
+    <<: *hardened
+    image: ${SMOKE_MCPHOST_IMAGE}
+    user: "0:0"
+    cap_add: [SETUID, SETGID, CHOWN, KILL]
+    environment:
+      CLARITY_URL: http://backend:8080
+      CLARITY_CONNECTOR_KEY_FILE: /run/secrets/clarity_mcpsmoke_connector_key
+      CLARITY_CONNECTOR_ID: mcphost
+      CLARITY_SYNC_INTERVAL: 5s
+      CLARITY_STATE_DIR: /data/supervisor
+      MCPHOST_KEY_FILE: /run/secrets/clarity_mcpsmoke_host_key
+      MCPHOST_PROXY: egress-mcp:3128
+      MCPHOST_EGRESS_DIR: /egress
+      MCPHOST_EGRESS_GID: "10001"
+      MCPHOST_LOCAL_DIR: /opt/mcp-local
+    secrets:
+      - source: clarity_mcpsmoke_connector_key
+        mode: "0400"
+      - source: clarity_mcpsmoke_host_key
+        mode: "0400"
+    volumes:
+      - mcphost-data:/data
+      - mcphost-egress:/egress
+      - ../src/test/resources:/opt/mcp-local:ro,z
+    tmpfs:
+      - /tmp:rw,nosuid,size=128m
+    depends_on: [backend, egress]
+    networks: [tools, ingest, mcphost-proxy]
+    mem_limit: 640m
+    pids_limit: 512
+
+networks:
+  tools: { internal: true }
+  ingest: { internal: true }
+  browser-proxy: { internal: true }
+  backend-proxy: { internal: true }
+  sandbox-proxy: { internal: true }
+  mcphost-proxy: { internal: true }
+  egress: {}
+
+secrets:
+  clarity_mcpsmoke_connector_key:
+    external: true
+  clarity_mcpsmoke_host_key:
+    external: true
+
+volumes:
+  mcphost-data:
+  mcphost-egress:

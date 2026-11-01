@@ -109,13 +109,14 @@ net.robog.clarity.backend
 ├── dedup/                  pure: per-noun normalization + DedupKey
 ├── connectors/             registry, manifests, grants, config, action outbox (app + connector APIs)
 ├── triggers/               pure RecordQuery evaluator + trigger store + matcher on ingest events
-├── scheduler/              durable in-process jobs (morning call prep, evening batch, review, nudges)
+├── scheduler/              durable in-process jobs (morning call prep, evening batch, review, nudges, MCP sweep)
 ├── agent/                  lead agent, inbox, journal, helpers, memory, domain tools, prompts
 ├── governance/             constitution store, guard, held actions, action executor, notify policy
 ├── feed/                   the app's feed: messages + cards, sequence numbers, SSE fan-out
 ├── sessions/               morning call, values interview, ask, amend: session state machines
 ├── setup/                  instance setup: model key, schedule settings
-└── mcp/                    exposes the domain tools as an MCP server at /mcp
+├── mcp/                    exposes the domain tools as an MCP server at /mcp
+└── mcpservers/             the person's own MCP servers (mcp-host): catalog, tool modes, held calls, sweep
 net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (the only model provider) + MCP client
 ```
 
@@ -142,6 +143,8 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/held` · `POST /api/v1/held/{id}/decision` | device | held actions; approve (optionally edited), decline, talk |
 | `GET /api/v1/activity` | device | actions taken alone ("see allowed actions") |
 | `GET /api/v1/nudges?since={iso}` | device | pending nudges and the timeline of fired/skipped/missed/cancelled ones |
+| `GET /api/v1/mcp/servers` · `PUT …/servers/{id}/tools/{tool}` | device | the person's MCP servers (state, tools, modes, collection; 503 until the host has answered once); set a tool's mode, `{"mode": null}` resets it; answers the tool |
+| `GET /api/v1/mcp/suggestions` · `DELETE …/suggestions/{id}` | device | servers Clarity suggests (never in the chat); dismissing deletes |
 | `GET /api/v1/reports` · `GET /api/v1/reports/{id}` | device | reports the agent wrote; one with its revisions, sources and formats ("Word / Pages" for docx) |
 | `GET /api/v1/reports/{id}/source?rev=` | device | a revision's Markdown (latest without `rev`) |
 | `GET /api/v1/reports/{id}/download/{format}?rev=` | device | the rendered file (pdf, docx, odt, txt, md), named after the title; rendered on demand and cached |
@@ -266,6 +269,10 @@ person managing a to-do list with a few assistants.
 - Helpers are durable: each is a row in `agent_run` with its journal; a crashed or restarted
   helper resumes from its last completed turn. The lead can list, message and cancel helpers
   (`list_helpers`, `message_helper`, `cancel_helper`).
+- `delegate(servers = [label])` adds the tools of those of the person's MCP servers (see "The
+  person's MCP servers"); none by default, never together with `web_search`. The server ids are kept
+  in `agent_run.mcp_servers`, so a resume gets the same ones. A run with a `profile` (the morning
+  sweep) gets fixed tools and caps instead of the lead's choice.
 
 ### The review gate (decision model)
 
@@ -595,6 +602,56 @@ under ZDR) is not offered.
   `openrouter_citations` raw block after the answer in the journal, never sent back to the model;
   `cite_sources` copies them into `report_source`.
 
+### The person's MCP servers
+
+Any MCP server the person adds from the phone (GitHub, Canvas, Asana, ...) runs in the `mcp-host`
+container (`computers/mcphost`, connector kind `mcp-host`; see "The agent's computers"). The backend
+reads `CLARITY_MCP_HOST` (`http://mcp-host:8950;keyFile=/run/secrets/mcphost_key`; unset: no such
+servers, nothing else changes). A background service (`McpRefresher`) lists `GET /servers` at boot
+(retrying until the host answers) and every 60 s; lead turns, helper starts and routes only read
+that cached listing (`McpCatalog`), which keeps the last good one while the host is down. The listing is the host's cached `tools/list`, so
+listing never starts a server; a call goes through one `McpToolProvider` per server at `/s/{id}/mcp`.
+The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
+
+- **Who sees what.** The lead never gets their tools, only an index ("[mcp servers] ... - GitHub:
+  your repos, issues and PRs"), re-sent only when it changes (like the collection index; state and
+  tool counts are left out so it rarely does). A helper gets a server's tools only when `delegate`
+  names it: `mcp_<slug(label)>__<tool>`, descriptions headed `[label]`.
+- **Modes** (`McpToolMode`, `mcp_tool_policy`): `auto` by default only when `readOnlyHint` is true,
+  else `ask`; the person changes them per tool in Settings. `off` tools are never built. The hint is
+  not believed for a tool whose name has a write verb as a word (`create_issue`, `addLabel`:
+  `looksLikeWrite`); that tool counts as not read-only everywhere (default mode, `McpToolStatus`, gate).
+- **`auto`** calls still pass governance. A read-only tool gets only the person's hard limits
+  (`hardLineVerdict`, no model call: a "never" kind such as payments blocks it, "never alone" holds it
+  for the phone, a never-store topic holds it). A write tool the person set to Auto goes through
+  `gateLocal` with the full guard; what it does not allow is held or blocked like an `ask` call.
+- **`ask`** calls become `ProposedAction.ExternalTool(server = "mcp:<id>")` through
+  `ActionGate.gateLocal(alwaysAsk = …)`: held even when the guard would allow it (a guard DENY still
+  blocks), with a summary naming the server, tool and key inputs. Approving only records the yes
+  (`isLocalAction`); the helper waits up to 15 minutes (`HeldWaiters`, so the lead is not woken) and
+  runs the call itself, moving the item to `executed`. A yes that comes after the helper stopped
+  waiting is run once by `McpApprovals` and its result goes to that helper if it is still running,
+  else to the lead (`InboxItem.McpCallResult`). Each yes is one call; an edit is refused. At boot,
+  approved calls nobody ran are run once into the lead's inbox when approved in the last 30 minutes,
+  and expire unrun when older.
+- **Untrusted results.** Every result (and error) is quoted `<untrusted source="mcp:<label>">` and
+  taints the run; oversized ones go through the usual large-result handling.
+- **Memory per server.** A server listed for the first time gets a collection named after its label
+  (`mcp_server_seen`, made once). A helper given servers also gets `open_collection`, `search_memory`
+  and a `save_note` limited to their collections (same secret and failure checks). The memory tidy
+  keeps those collections' names and their "Sweep recipe:" notes.
+- **Morning sweep** (`mcp-sweep`): 30 minutes before the call prep on call days, when an enabled
+  server has a read-only `auto` tool, one helper (helper model, `profile = mcp-sweep`) gets only the
+  read-only `auto` tools of the enabled servers (a call the person's hard limits would hold is
+  skipped with an error: the sweep never asks or waits), `open_collection`, the limited `save_note` and a `set_scratch` that
+  writes the keyed note `coming-up` (20 h, at most 1,200 characters, every line starting with its
+  server). Caps: $0.03 and 12 tool calls (counted from its journal on a resume), 16 steps. It follows
+  and updates each collection's "Sweep recipe:" note. It posts nothing and wakes no one: its result
+  is only logged; the prep instruction tells the lead to use the note.
+- **Suggestions.** The lead's `suggest_mcp_server(label, why, preset?)` stores an `McpSuggestion`
+  (one open per label, three a week counted with dismissed ones in `mcp_suggestion_made`, none for a
+  server already set up). Shown only in Settings.
+
 ### Durability (journal instead of a workflow engine)
 
 Temporal is the textbook answer, but for one person on one box it adds a server and a schema
@@ -623,7 +680,7 @@ for what our loop already has: an append-only transcript. So:
   results is left out (the guide documents system and user content only). Other models (MiMo,
   DeepSeek, Gemini) cache on their own and get no `cache_control`.
 - **Tools**: all of a run's tools are sent with every request (no tool search); the lead has no
-  MCP tools, so the list is small and stable.
+  MCP tools (neither the static servers' nor the person's), so the list is small and stable.
 - **Compaction**: the lead compacts client-side: after a turn whose last call's prompt reached
   `compactAtTokens`, one call on the same model (same system blocks and tools, so it reads the
   cached prefix on Claude) writes a summary, appended to the journal as a user message starting
@@ -674,7 +731,7 @@ the prompt, contents loaded when needed), which matters more the sooner the lead
 | **Constitution + profile** | Lines with reasons, hard lines, autonomy tiers, people who get through, protected times, plus short profile facts | Always (system block) |
 | **Collections** | Named topics of notes (`memory_collection`, `memory_note`): people, places, projects, detailed preferences, how-tos | Only the index (name + one-line description, capped at 40), as a system message when it changes; `open_collection` reads one, `save_note` adds/edits/removes, `manage_collection` re-describes, renames, merges |
 | **Journal** | Dated entries the agent writes about what happened and was decided (the morning call writes one) | Today's and yesterday's; older via search |
-| **Scratch** | Short-lived notes with a TTL (hours) | Live ones, as a system message when changed |
+| **Scratch** | Short-lived notes with a TTL (hours); a keyed one (the sweep's `coming-up`) replaces the last with its key | Live ones, as a system message when changed |
 | **Conversation archive** | The lead thread from before its latest compaction point (a client-side summary, or a stored Anthropic compaction block), as readable chunks (`conversation_chunk`) | Search only |
 | **Everything else** | Ingested records, documents, files in the sandbox | Search tools only (`search_memory`, domain tools, shell in sandbox) |
 
@@ -716,13 +773,14 @@ itself changes only through an amendment the person approves.
 
 Reads: `list_messages`, `search_messages`, `list_calendar_events`, `search_contacts`,
 `search_documents`, `read_document`, `search_memory`, `read_memory`, `open_collection`, `read_journal`, `today`.
-Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`, `save_note`, `manage_collection`,
+Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remember_fact`, `save_note`, `manage_collection`, `suggest_mcp_server`,
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls, the report tools (`create_report`, `edit_report`, `set_report_style`, `present_report`,
 `cite_sources`; `read_report` and `list_reports` read). External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
 plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
-Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held. Sandbox tools are ungated (no
+Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held, and the
+`ask` tools of the person's MCP servers (always held, run by the backend on a yes). Sandbox tools are ungated (no
 network, no credentials).
 
 ## Governance
@@ -871,7 +929,12 @@ Two containers on the internal `tools` network, each an MCP server the backend c
   browses. `computers/browser/pilot-e2e/` starts a throwaway copy with a test login site for the
   pilot's live test.
 
-A third container, **render** (`computers/render`, `renderd`), is not an MCP server and not a tool
+The person's own MCP servers run in a separate container, **mcp-host** (`computers/mcphost`): one
+container however many servers, each server as its own user with its own home and token, reaching
+only the hosts listed for it through the egress proxy, started on demand and stopped when idle. The
+backend reaches it on `tools` with a bearer key; it never reaches the database or the LAN.
+
+Another container, **render** (`computers/render`, `renderd`), is not an MCP server and not a tool
 of the agent's: the backend calls it to turn report revisions into files. It is a Python
 standard-library HTTP server (`POST /render {source, style, format}` → bytes, `GET /healthz` → its
 version) with pinned, sha-256-verified pandoc 3.12.1 and Typst 0.15.1 on Alpine, plus the Liberation

@@ -13,6 +13,7 @@ deploy/.env
 **/local.properties
 # Not needed to build any image: tests, docs and design files.
 **/src/test
+computers/mcphost/builtin/tests
 **/src/*Test
 docs
 e2e

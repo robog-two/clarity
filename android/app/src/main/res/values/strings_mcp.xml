@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings → MCP servers -->
+    <string name="mcp_title">MCP servers</string>
+    <string name="mcp_row_summary">Tools from GitHub, Canvas and more</string>
+    <string name="mcp_row_not_running">Not running on your server</string>
+    <string name="mcp_back_settings">settings</string>
+    <string name="mcp_intro">Tools from your own accounts, run on your server. Clarity asks before it uses anything that changes things, unless you choose otherwise.</string>
+    <string name="mcp_add">add server</string>
+    <string name="mcp_retry">try again</string>
+    <string name="mcp_empty">No servers yet. Add one to give Clarity tools for GitHub, Canvas, Asana and more.</string>
+    <string name="mcp_not_running_blurb">The MCP host hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.</string>
+
+    <!-- Suggestions -->
+    <string name="mcp_suggests">Clarity suggests: %1$s</string>
+    <string name="mcp_set_up">set up</string>
+    <string name="mcp_dismiss">Dismiss</string>
+
+    <!-- Server states -->
+    <string name="mcp_state_installing">Installing</string>
+    <string name="mcp_state_idle">Idle</string>
+    <string name="mcp_state_running">Running</string>
+    <string name="mcp_state_failed">Failed</string>
+    <string name="mcp_state_disabled">Off</string>
+
+    <!-- Tool counts: "12 tools · 9 read · 3 change things" -->
+    <string name="mcp_tools_none">Tools not listed yet</string>
+    <plurals name="mcp_tools_count">
+        <item quantity="one">%d tool</item>
+        <item quantity="other">%d tools</item>
+    </plurals>
+    <string name="mcp_tools_read">%d read</string>
+    <plurals name="mcp_tools_change">
+        <item quantity="one">%d changes things</item>
+        <item quantity="other">%d change things</item>
+    </plurals>
+
+    <!-- Server detail -->
+    <string name="mcp_back_servers">MCP servers</string>
+    <string name="mcp_reaches">Reaches %1$s</string>
+    <string name="mcp_notes">Clarity keeps notes for it in “%1$s”.</string>
+    <string name="mcp_edit">edit server</string>
+    <string name="mcp_group_reads">Reads</string>
+    <string name="mcp_group_changes">Changes things</string>
+    <string name="mcp_reads_hint">These only look things up.</string>
+    <string name="mcp_changes_hint">On Ask, each use waits for your OK, like sending an email.</string>
+    <string name="mcp_no_tools">Its tools show up here once it’s installed and listed.</string>
+    <string name="mcp_mode_auto">Auto</string>
+    <string name="mcp_mode_ask">Ask</string>
+    <string name="mcp_mode_off">Off</string>
+    <string name="mcp_default">default</string>
+    <string name="mcp_default_is">default is %1$s</string>
+    <string name="mcp_reset">Reset</string>
+    <string name="mcp_destructive">Can delete or overwrite things</string>
+
+    <!-- Confirming Auto for a tool that changes things -->
+    <string name="mcp_confirm_title">Let Clarity use %1$s without asking?</string>
+    <string name="mcp_confirm_text">It changes things in %1$s. On Auto, Clarity uses it without asking you first.</string>
+    <string name="mcp_confirm_destructive">It can also delete or overwrite things.</string>
+    <string name="mcp_confirm_yes">Allow</string>
+    <string name="mcp_confirm_no">Cancel</string>
+</resources>

@@ -12,6 +12,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.minus
 import net.robog.clarity.backend.persistence.tx
 import org.jetbrains.exposed.v1.core.and
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.less
 import org.jetbrains.exposed.v1.core.lessEq
@@ -22,7 +23,8 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 
 data class JournalEntry(val id: Long, val date: LocalDate, val text: String)
 
-data class ScratchNote(val id: Long, val text: String, val expiresAt: Instant)
+/** [key] names a note that is replaced rather than added to (the morning sweep's `coming-up`). */
+data class ScratchNote(val id: Long, val text: String, val expiresAt: Instant, val key: String? = null)
 
 /** Journal and scratch: the dated and short-lived memory tiers ([MemorySearch] searches everything). */
 interface MemoryStore {
@@ -31,7 +33,8 @@ interface MemoryStore {
     /** Entries with `from <= date <= to`, oldest first. */
     suspend fun journal(from: LocalDate, to: LocalDate): List<JournalEntry>
 
-    suspend fun setScratch(text: String, ttl: Duration): Long
+    /** Adds a note; with a [key], it replaces every note with that key. */
+    suspend fun setScratch(text: String, ttl: Duration, key: String? = null): Long
 
     /** Notes that have not expired at [now]. */
     suspend fun liveScratch(now: Instant): List<ScratchNote>
@@ -58,18 +61,20 @@ class ExposedMemoryStore(private val database: Database, private val clock: Cloc
             .map { JournalEntry(it[MemoryJournal.id], it[MemoryJournal.date], it[MemoryJournal.text]) }
     }
 
-    override suspend fun setScratch(text: String, ttl: Duration): Long = database.tx {
+    override suspend fun setScratch(text: String, ttl: Duration, key: String?): Long = database.tx {
         val now = clock.now()
+        if (key != null) MemoryScratch.deleteWhere { MemoryScratch.key eq key }
         MemoryScratch.insert {
             it[MemoryScratch.text] = text
             it[expiresAt] = now + ttl
             it[createdAt] = now
+            it[MemoryScratch.key] = key
         }[MemoryScratch.id]
     }
 
     override suspend fun liveScratch(now: Instant): List<ScratchNote> = database.tx {
         MemoryScratch.selectAll().where { MemoryScratch.expiresAt greaterEq now }.orderBy(MemoryScratch.id)
-            .map { ScratchNote(it[MemoryScratch.id], it[MemoryScratch.text], it[MemoryScratch.expiresAt]) }
+            .map { ScratchNote(it[MemoryScratch.id], it[MemoryScratch.text], it[MemoryScratch.expiresAt], it[MemoryScratch.key]) }
     }
 
     override suspend fun purgeScratch(now: Instant): Int = database.tx {
@@ -99,7 +104,7 @@ fun renderMemoryContext(today: LocalDate, entries: List<JournalEntry>, scratch: 
         }
         if (scratch.isNotEmpty()) {
             append("\nScratch notes (they expire):")
-            scratch.forEach { append("\n- ").append(it.text).append(" (until ").append(agentTime(it.expiresAt, zone)).append(')') }
+            scratch.forEach { append("\n- ").append(it.key?.let { k -> "[$k] " }.orEmpty()).append(it.text).append(" (until ").append(agentTime(it.expiresAt, zone)).append(')') }
         }
     }
 }

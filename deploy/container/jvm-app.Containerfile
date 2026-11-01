@@ -35,6 +35,7 @@ COPY connector-sdk connector-sdk
 COPY backend backend
 COPY connectors connectors
 COPY computers/sandbox computers/sandbox
+COPY computers/mcphost computers/mcphost
 
 # The Gradle user home is a cache mount (BuildKit and Buildah): dependencies are downloaded once.
 # The start script is renamed to a fixed name so ENTRYPOINT does not depend on APP_NAME.

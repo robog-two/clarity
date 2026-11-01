@@ -133,9 +133,12 @@ fun ConnectorSetupScreen(
             onSaved()
         }
     }
-    // Back from an account or from the presets goes to the account list, not out of the connector.
-    BackHandler(enabled = state.editor != null) { viewModel.cancelItem() }
-    BackHandler(enabled = state.choosing != null) { viewModel.closeChooser() }
+    // Back from an account or from the presets goes to the account list, not out of the connector;
+    // opened for one item, the item is the whole screen and back leaves it.
+    val leaveItem = if (state.direct) onBack else viewModel::cancelItem
+    val leaveChooser = if (state.direct) onBack else viewModel::closeChooser
+    BackHandler(enabled = state.editor != null) { leaveItem() }
+    BackHandler(enabled = state.choosing != null) { leaveChooser() }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         viewModel.onPermissionResult(it)
     }
@@ -150,11 +153,11 @@ fun ConnectorSetupScreen(
             onRecheck = viewModel::recheck,
             collections = CollectionActions(viewModel::startAdd, viewModel::editItem, viewModel::removeItem),
             onChoosePreset = viewModel::choosePreset,
-            onCloseChooser = viewModel::closeChooser,
+            onCloseChooser = leaveChooser,
             onItemValueChanged = viewModel::onItemValueChanged,
             onItemListChanged = viewModel::onItemListChanged,
             onSaveItem = viewModel::saveItem,
-            onCancelItem = viewModel::cancelItem,
+            onCancelItem = leaveItem,
         ),
         step = step,
         backLabel = backLabel,
@@ -241,7 +244,7 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
             problem?.let { ErrorBox(it) }
         }
         val errors = state.errors
-        state.form.fields.forEach { field ->
+        state.form.visibleFields(state.values).forEach { field ->
             FieldInput(
                 field = field,
                 values = state.values,
@@ -256,12 +259,13 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
                         error = errors[it.key],
                         actions = actions.collections,
                         testLineFor = state::testLineFor,
+                        noun = state.noun,
                     )
                 },
             )
         }
         if (state.form.fields.any { it.kind == FieldKind.COLLECTION }) {
-            Hint("Accounts are stored when you tap ${state.saveLabel}.")
+            Hint("${sentenceCase(state.noun.many)} are stored when you tap ${state.saveLabel}.")
         }
         if (state.phone != null) {
             InfoBox {
@@ -277,14 +281,15 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
 @Composable
 private fun PresetChooserContent(state: ConnectorSetupState, collection: String, actions: SetupActions, step: OnboardingStep?) {
     val presets = state.collectionField(collection)?.collection?.presets.orEmpty()
+    val noun = state.noun
     StepScaffold(
         step = step,
-        backLabel = state.title,
+        backLabel = backTo(state),
         onBack = actions.onCloseChooser,
-        kicker = "new account",
-        title = "Which kind?",
+        kicker = "new ${noun.one}",
+        title = noun.chooserTitle,
     ) {
-        Hint("Pick a provider and I’ll fill in its server settings. You can change anything.")
+        Hint(noun.chooserHint)
         Column {
             presets.forEach { p ->
                 SelectRow(
@@ -294,7 +299,7 @@ private fun PresetChooserContent(state: ConnectorSetupState, collection: String,
                     { actions.onChoosePreset(collection, p) },
                 )
             }
-            SelectRow("Other provider", "Enter the server settings yourself", "→", { actions.onChoosePreset(collection, null) })
+            SelectRow(noun.otherTitle, noun.otherCaption, "→", { actions.onChoosePreset(collection, null) })
         }
     }
 }
@@ -325,20 +330,48 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     val errors = state.editorErrors
     val field = state.collectionField(editor.collection)
     val title = field?.let { form.itemTitle(it, ItemValues(editor.id, editor.values)) }?.takeIf { !editor.isNew }
+    val noun = state.noun
+    var removing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     StepScaffold(
         step = step,
-        backLabel = state.title,
+        backLabel = backTo(state),
         onBack = actions.onCancelItem,
-        kicker = if (editor.isNew) "new account" else "edit account",
-        title = title ?: if (editor.isNew) "New account" else "Account",
-        footer = { PrimaryButton("save account", actions.onSaveItem, Modifier.fillMaxWidth()) },
+        kicker = if (editor.isNew) "new ${noun.one}" else "edit ${noun.one}",
+        title = title ?: sentenceCase(if (editor.isNew) "new ${noun.one}" else noun.one),
+        footer = {
+            PrimaryButton("save ${noun.one}", actions.onSaveItem, Modifier.fillMaxWidth(), busy = state.saving)
+            // Opened for this one item, removing it happens here too (and is saved at once).
+            if (state.direct && !editor.isNew) {
+                androidx.compose.material3.TextButton(onClick = { removing = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Remove ${noun.one}", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
     ) {
+        if (state.direct) state.problem?.let { ErrorBox(it.message()) }
         editor.hint?.let { InfoBox { Hint(it) } }
-        form.fields.forEach { f ->
+        form.visibleFields(editor.values).forEach { f ->
             FieldInput(f, editor.values, errors[f.key], actions.onItemValueChanged, actions.onItemListChanged)
         }
     }
+    if (removing) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { removing = false },
+            title = { Text("Remove ${title ?: noun.one}?") },
+            text = { Text(noun.removeNowText) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    removing = false
+                    actions.collections.onRemove(editor.collection, editor.id)
+                }) { Text("Remove") }
+            },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { removing = false }) { Text("Cancel") } },
+        )
+    }
 }
+
+/** Where back goes from an item: the connector, or (opened for one item) the screen that opened it. */
+private fun backTo(state: ConnectorSetupState): String = if (state.direct && state.noun == ItemNoun.Server) "MCP servers" else state.title
 
 private fun SetupProblem.message(): String = when (this) {
     SetupProblem.NoSealingKey -> "This connector hasn’t published its encryption key yet, so I can’t send the password safely. Try again in a minute."

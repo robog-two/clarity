@@ -12,6 +12,7 @@ import net.robog.clarity.backend.governance.ActionResults
 import net.robog.clarity.backend.governance.GovernanceEvent
 import net.robog.clarity.backend.governance.GovernanceEvents
 import net.robog.clarity.backend.governance.HeldWaiters
+import net.robog.clarity.backend.governance.isMcpCall
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.shared.action.ActionOutcome
@@ -39,6 +40,8 @@ fun inboxFor(event: GovernanceEvent, waitingHelper: (HeldActionId) -> String? = 
         val browserOrVault = h.action is ProposedAction.ExternalTool || h.action is ProposedAction.UseCredential || h.action is ProposedAction.AskCode
         val priority = when {
             h.status !in DECIDED || waitingHelper(h.id) != null -> null
+            // An approved MCP call is run by the backend, which reports its result itself (McpApprovals).
+            h.status == HeldAction.Status.APPROVED && isMcpCall(h.action) -> null
             h.status == HeldAction.Status.APPROVED -> if (browserOrVault) Priority.NORMAL else null
             h.status in NO -> Priority.LOW
             else -> Priority.NORMAL

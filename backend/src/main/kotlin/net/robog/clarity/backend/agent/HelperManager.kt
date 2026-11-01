@@ -26,6 +26,9 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.lifecycle.BackgroundService
+import net.robog.clarity.backend.mcpservers.MCP_SWEEP_MAX_COST_USD
+import net.robog.clarity.backend.mcpservers.MCP_SWEEP_MAX_TURNS
+import net.robog.clarity.backend.mcpservers.MCP_SWEEP_PROFILE
 import net.robog.clarity.backend.vault.GrantStore
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.FinishReason
@@ -164,9 +167,20 @@ class HelperManager(
     /**
      * Starts a helper for [task]; returns its id and what to tell the lead, or the reason it could not
      * start. At most [AgentConfig.helperMaxPerDay] in 24 hours, and not the same task again within
-     * [REPEAT_WINDOW] of one that ran, unless the lead gives a [retryReason].
+     * [REPEAT_WINDOW] of one that ran, unless the lead gives a [retryReason]. [servers] are labels of
+     * the person's MCP servers the helper gets. A [profile] run ([MCP_SWEEP_PROFILE]) gets its own
+     * tools from [serverIds] instead of [tools].
      */
-    suspend fun start(task: String, tools: List<String>?, role: String?, parent: RunScope, retryReason: String? = null): Either<String, Delegated> {
+    suspend fun start(
+        task: String,
+        tools: List<String>?,
+        role: String?,
+        parent: RunScope,
+        retryReason: String? = null,
+        servers: List<String> = emptyList(),
+        profile: String? = null,
+        serverIds: List<String> = emptyList(),
+    ): Either<String, Delegated> {
         if (!runtime.enabled) return "Helpers are unavailable: no model key is configured.".left()
         val agentRole = delegableRole(role) ?: return "Unknown role \"$role\"; use helper or triage.".left()
         // The same delegate call made again (a resumed lead turn) gets the helper it already started.
@@ -175,9 +189,17 @@ class HelperManager(
         val now = clock.now()
         val recent = runs.startedSince(now - REPEAT_WINDOW.coerceAtLeast(1.days))
         delegationRefusal(task, recent, now, config.helperMaxPerDay, retryReason)?.let { return it.left() }
+        if (profile != null) {
+            runs.create(id, null, agentRole.name.lowercase(), task, null, clock.now(), servers = serverIds, profile = profile)
+            taint[id] = parent.untrusted
+            start(requireNotNull(runs.get(id)))
+            return Delegated(id, "Helper $id started ($profile).").right()
+        }
         val probe = RunScope("probe", isLead = false)
         // Web search only when the lead names it, and then without any personal-data or outbound tool.
         val search = tools != null && WEB_SEARCH in tools
+        if (search && servers.isNotEmpty()) return "A helper with web_search gets no personal data: give it either web_search or servers, not both.".left()
+        val ids = if (servers.isEmpty()) emptyList() else toolbox.value.resolveServers(servers).fold({ return it.left() }, { it })
         if (search && config.webSearch.tool() == null) return "Web search is turned off on this server (CLARITY_WEB_SEARCH=false).".left()
         val (requested, dropped) = when {
             tools == null -> null to emptyList()
@@ -188,14 +210,14 @@ class HelperManager(
             val defaults = toolbox.value.helperTools(probe, null).tools
             if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
-        val granted = toolbox.value.helperTools(probe, chosen)
+        val granted = toolbox.value.helperTools(probe, chosen, ids)
         // Pages are read only from our side: research without the sandbox's fetch_page does not start.
         if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
         val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
-        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, stored, clock.now())
+        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, task, stored, clock.now(), servers = ids)
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
@@ -203,7 +225,8 @@ class HelperManager(
         val text = if (search) {
             delegatedText(id, roleName, null, names) + " It has only: ${names.sorted().joinToString()}." + searchGrantText(dropped)
         } else {
-            delegatedText(id, roleName, chosen, names)
+            delegatedText(id, roleName, chosen, names) +
+                if (ids.isEmpty() || chosen != null) "" else " It has the tools of ${servers.joinToString()} that you allowed, and their notes."
         }
         return Delegated(id, text).right()
     }
@@ -211,7 +234,7 @@ class HelperManager(
     private val taint = ConcurrentHashMap<String, Boolean>()
 
     /** The run's spend cap, counting what it already spent (a resume, the nudge). */
-    private suspend fun spendCap(id: String) = SpendCap(dollarsToMicros(config.helperMaxCostUsd), runs.costUsed(id))
+    private suspend fun spendCap(id: String, maxUsd: Double = config.helperMaxCostUsd) = SpendCap(dollarsToMicros(maxUsd), runs.costUsed(id))
 
     suspend fun list(openOnly: Boolean): List<HelperRun> = runs.list(openOnly)
 
@@ -265,20 +288,27 @@ class HelperManager(
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
             val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task)
-            val plan = helperRunPlan(run.tools, config.webSearch.tool())
-            val set = toolbox.value.helperTools(runScope, plan.tools).tools
+            val sweep = run.profile == MCP_SWEEP_PROFILE
+            val plan = if (sweep) HelperRunPlan(null, null) else helperRunPlan(run.tools, config.webSearch.tool())
+            val set = if (sweep) {
+                // The sweep's tool calls count across a resume too (its scratch note aside).
+                val used = journal.load(run.id).flatMap { it.content }.count { it is Block.ToolUse && it.name != "set_scratch" }
+                toolbox.value.sweepTools(runScope, run.servers, used)
+            } else {
+                toolbox.value.helperTools(runScope, plan.tools, run.servers).tools
+            }
             val request = roleRequest(
                 role = bound.config,
                 runId = run.id,
                 system = helperSystemBlocks(),
                 messages = listOf(Message.user(helperPrompt(run.task, clock.now(), settings.homeZone()))),
                 tools = set.tools,
-                maxTurns = config.helperMaxTurns,
+                maxTurns = if (sweep) MCP_SWEEP_MAX_TURNS else config.helperMaxTurns,
                 sink = large.sink,
                 // The cap is per run, not per resume: searches already recorded for it count.
                 webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
             // A resume continues the run's step budget: every model call in its journal counts.
-            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id), countStepsSince = { false })
+            ).copy(outOfSteps = OutOfSteps(), spendCap = spendCap(run.id, if (sweep) MCP_SWEEP_MAX_COST_USD else config.helperMaxCostUsd), countStepsSince = { false })
             val harness = runtime.harness(journal, bound)
             // Search results are outside content: a run that searched is tainted like one that read mail.
             val onEvent: (HarnessEvent) -> Unit = { event ->
@@ -295,7 +325,7 @@ class HelperManager(
                 // The nudge has a budget of its own: one step to write the result, two to save the document and say so.
                 val nudged = request.copy(
                     webSearch = searchFor(plan.webSearch, runs.webSearchesUsed(run.id)),
-                    spendCap = spendCap(run.id),
+                    spendCap = spendCap(run.id, if (sweep) MCP_SWEEP_MAX_COST_USD else config.helperMaxCostUsd),
                     maxTurns = nudgeSteps(nudge),
                     countStepsSince = { it.role == net.robog.clarity.harness.Role.USER && it.content.any { b -> b is net.robog.clarity.harness.Block.Text && b.text == nudge } },
                 )
@@ -321,8 +351,13 @@ class HelperManager(
                     .onFailure { log.warn { "helper ${run.id}: transcript not saved (${it::class.simpleName})" } }
                 runs.finish(run.id, if (ok) RunStatus.DONE else RunStatus.FAILED, text, terminal?.usage, if (ok) null else text, now)
                 // The lead's own tasks do not follow the helper; it is told which are still open so it closes them.
-                val openTasks = runCatching { toolbox.value.openLeadTasksOf(run.id) }.getOrDefault(emptyList())
-                inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text, openTasks), dedupKey = "helper:${run.id}")
+                if (run.profile == MCP_SWEEP_PROFILE) {
+                    // The sweep's findings are its scratch note, read at the call prep; it wakes no one.
+                    log.info { "MCP sweep ${run.id} ${if (ok) "finished" else "failed"}: ${text.take(200)}" }
+                } else {
+                    val openTasks = runCatching { toolbox.value.openLeadTasksOf(run.id) }.getOrDefault(emptyList())
+                    inbox.enqueue(InboxItem.HelperResult(run.id, run.task, ok, text, openTasks), dedupKey = "helper:${run.id}")
+                }
             }
         }
     }
