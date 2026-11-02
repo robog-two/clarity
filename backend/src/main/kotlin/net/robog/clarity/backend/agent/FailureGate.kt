@@ -88,7 +88,8 @@ class FailureGate(
         const val BRIEF_REFUSAL = "Not delegated: the brief explains or works around earlier technical failures, glitches or bugs. " +
             "Those guesses mislead the helper. Resend the brief with only the goal, a short flow of the steps " +
             "(e.g. \"Select the Ithaca store → go to the bookings page → see availability → read the full page (scroll to the bottom) → report back\") " +
-            "and the person's constraints (view-only, stop before booking…); the helper works the site out from what it sees."
+            "and the person's constraints (view-only, stop before booking…); the helper works the site out from what it sees. " +
+            "Keep the same servers, tools and taskId."
     }
 }
 

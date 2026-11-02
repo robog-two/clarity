@@ -84,7 +84,7 @@ class HelperTools(
         val title: String? = null,
         @Description("Only to run again a task a helper already did or failed in the last hours: why it is worth another run.")
         val retryReason: String? = null,
-        @Description("Labels of the person's MCP servers (from [mcp servers]) whose tools the helper gets, e.g. [\"GitHub\"], on top of its other tools. A helper gets no MCP server unless it is named here. Not with web_search.")
+        @Description("Labels of the person's MCP servers (from [mcp servers]) whose tools the helper gets, e.g. [\"GitHub\"], on top of its other tools. A helper gets no MCP server unless it is named here, so name them again when you resend or retry a brief. Not with web_search.")
         val servers: List<String>? = null,
     )
 
