@@ -127,6 +127,7 @@ private val timezone = PresetInput(
         PresetChoice("Pacific/Honolulu", "Hawaii"),
     ),
     other = true, pattern = "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}",
+    otherTitle = "Time zone name", otherDescription = "A name like Europe/Berlin or America/Toronto.",
 )
 
 private fun JsonObjectBuilderScope.form(form: PresetForm) = form.toJson().forEach { (k, v) -> put(k, v) }

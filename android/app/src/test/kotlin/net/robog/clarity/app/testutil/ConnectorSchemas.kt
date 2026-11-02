@@ -220,7 +220,9 @@ val MCP_HOST_SCHEMA_JSON = """
                                 }
                             ],
                             "other": true,
-                            "pattern": "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}"
+                            "pattern": "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}",
+                            "otherTitle": "Time zone name",
+                            "otherDescription": "A name like Europe/Berlin or America/Toronto."
                         },
                         {
                             "id": "token",

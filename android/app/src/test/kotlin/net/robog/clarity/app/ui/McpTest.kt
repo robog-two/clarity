@@ -560,6 +560,12 @@ class McpServerEditorTest {
         assertTrue("TIMEZONE=America/Phoenix" in vm.state.value.editor!!.values.list("env"))
         vm.onPresetAnswer("timezone", OTHER_CHOICE)
         assertEquals(setOf("timezone"), vm.state.value.editor!!.simple!!.others)
+        // The box the other zone is typed in has its own label, not a second "Time zone".
+        val zone = vm.state.value.editor!!.simple!!.form.inputs.single { it.id == "timezone" }
+        assertEquals("Time zone name", zone.otherTitle)
+        assertEquals("A name like Europe/Berlin or America/Toronto.", zone.otherDescription)
+        // A new server from a preset is called by the preset's name.
+        assertEquals("Canvas", vm.state.value.editor!!.simple!!.preset.title)
         assertFalse(vm.state.value.editor!!.values.list("env").any { it.startsWith("TIMEZONE=") })
         vm.onPresetAnswer("timezone", "Europe/Berlin")
         assertTrue("TIMEZONE=Europe/Berlin" in vm.state.value.editor!!.values.list("env"))

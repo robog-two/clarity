@@ -48,6 +48,9 @@ data class PresetInput(
     val choices: List<PresetChoice> = emptyList(),
     /** [PresetInputType.CHOICE]: something else may be typed ("Other"). */
     val other: Boolean = false,
+    /** The label and help of the box an "Other" answer is typed in; the input's own title when absent. */
+    val otherTitle: String? = null,
+    val otherDescription: String? = null,
     /** [PresetInputType.URL]: the path the address always ends in (`/api/v1`); what was typed after the host is replaced by it. */
     val path: String = "",
     /** Typed text ([PresetInputType.TEXT], or an "Other" choice) must match this whole. */
@@ -117,6 +120,8 @@ data class PresetForm(
                     PresetChoice(value, co["title"].str() ?: value)
                 },
                 other = (o["other"] as? JsonPrimitive)?.booleanOrNull == true,
+                otherTitle = o["otherTitle"].str(),
+                otherDescription = o["otherDescription"].str(),
                 path = o["path"].str().orEmpty(),
                 pattern = o["pattern"].str(),
                 property = property,
@@ -137,6 +142,8 @@ private fun PresetInput.toJson(): JsonObject = buildJsonObject {
         put("choices", JsonArray(choices.map { c -> buildJsonObject { put("value", c.value); put("title", c.title) } }))
     }
     if (other) put("other", true)
+    otherTitle?.let { put("otherTitle", it) }
+    otherDescription?.let { put("otherDescription", it) }
     if (path.isNotEmpty()) put("path", path)
     pattern?.let { put("pattern", it) }
     property?.let { put("property", it) }

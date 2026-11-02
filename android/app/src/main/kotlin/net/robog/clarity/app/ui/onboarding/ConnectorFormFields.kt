@@ -300,8 +300,9 @@ private fun PresetQuestion(input: PresetInput, edit: PresetEdit, values: FormVal
             )
             if (other) {
                 ClarityField(
-                    label = input.title,
+                    label = input.otherTitle ?: input.title,
                     value = answer,
+                    supporting = input.otherDescription,
                     onValueChange = { onAnswer(input.id, it) },
                     placeholder = input.placeholder ?: input.default,
                     error = error?.message(),

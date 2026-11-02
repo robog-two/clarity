@@ -334,7 +334,9 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     val form = state.itemForm(editor.collection) ?: ConfigForm(emptyList())
     val errors = state.editorErrors
     val field = state.collectionField(editor.collection)
+    // A new item from a preset is called by the preset's name ("Canvas"); a saved one by its own.
     val title = field?.let { form.itemTitle(it, ItemValues(editor.id, editor.values)) }?.takeIf { !editor.isNew }
+        ?: editor.simple?.preset?.title?.takeIf { editor.isNew }
     val noun = state.noun
     var removing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
     StepScaffold(

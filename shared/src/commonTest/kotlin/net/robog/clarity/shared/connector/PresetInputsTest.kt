@@ -131,6 +131,8 @@ class PresetInputsTest {
     @Test fun theWireFormRoundTrips() {
         val preset = JsonObject(mapOf("title" to JsonPrimitive("Canvas")) + form.toJson())
         assertEquals(form, PresetForm.parse(preset))
+        val labelled = form.copy(inputs = form.inputs.map { if (it.other) it.copy(otherTitle = "Zone name", otherDescription = "Like Europe/Berlin") else it })
+        assertEquals(labelled, PresetForm.parse(JsonObject(labelled.toJson())))
         assertNull(PresetForm.parse(JsonObject(mapOf("title" to JsonPrimitive("Plain")))))
         // A secret that is not bound to its own property is dropped, never templated.
         val loose = JsonObject(form.copy(inputs = listOf(form.inputs[2].copy(property = null))).toJson())
