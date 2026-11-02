@@ -152,6 +152,7 @@ class McpPureTest : FunSpec({
         val index = renderMcpIndex(listOf(gh, off, disabled, canvas)).shouldNotBeNull()
         index shouldStartWith MCP_INDEX_PREFIX
         index shouldContain "delegate(servers=[\"<label>\"])"
+        index shouldContain "retries too: a helper has no other way into these services"
         index.lines().drop(1) shouldContainExactly listOf("- canvas", "- GitHub: Your GitHub things")
         // the state is not in it: a server starting or stopping does not re-send it
         renderMcpIndex(listOf(gh.copy(host = gh.host.copy(state = McpServerState.IDLE)), canvas)) shouldBe index

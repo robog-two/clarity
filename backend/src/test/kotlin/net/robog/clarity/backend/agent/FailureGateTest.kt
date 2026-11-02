@@ -80,6 +80,8 @@ class FailureGateTest : FunSpec({
             refusal shouldBe FailureGate.BRIEF_REFUSAL
             refusal!! shouldContain "only the goal, a short flow"
             refusal shouldContain "constraints"
+            // a resent brief keeps the helper's servers, tools and task
+            refusal shouldContain "Keep the same servers, tools and taskId."
             jev.asked.single().second.getValue(FailureGate.Q_FAILURE).shouldBeInstanceOf<DecisionQuestion.Noul>().instructions shouldBe
                 "Does this brief give workaround advice or explanations about earlier technical failures, glitches or bugs " +
                 "(as opposed to the goal, the steps of the task, and the person's constraints)?"
@@ -119,6 +121,12 @@ class FailureGateTest : FunSpec({
                 // The only gendered pronouns are the quoted ones in the rule that forbids them.
                 Regex("\\b(she|her|he|him)\\b").find(prompt.replace(Regex("\"(she|her|he|him)\""), "")).shouldBeNull()
             }
+        }
+
+        test("the person's MCP servers are named again on a retry, and a helper without one says so") {
+            AgentPrompts.LEAD_SYSTEM shouldContain "so name every server its task needs, again on every retry or resent brief"
+            AgentPrompts.LEAD_SYSTEM shouldContain "A helper without a server has no other way into that service"
+            AgentPrompts.HELPER_SYSTEM shouldContain "you have no mcp_ tool for it, say so in your result instead of signing in to it with the browser"
         }
 
         test("the memory clean-up drops failure stories") {
