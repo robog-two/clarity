@@ -112,7 +112,7 @@ fun renderMcpIndex(servers: List<McpServer>, maxDescription: Int = 120): String?
     if (usable.isEmpty()) return null
     return buildString {
         append(MCP_INDEX_PREFIX)
-        append(" The person's MCP servers. You cannot use them yourself: give a helper the ones its task needs with delegate(servers=[\"<label>\"]). ")
+        append(" The person's MCP servers. You cannot use them yourself: give a helper the ones its task needs with delegate(servers=[\"<label>\"]), on every delegate that needs them, retries too: a helper has no other way into these services. ")
         append("Calls that change something wait for the person's approval. Each server has a memory collection of the same name with notes for using it.")
         usable.forEach { s ->
             val d = s.host.description.replace(Regex("\\s+"), " ").trim()
