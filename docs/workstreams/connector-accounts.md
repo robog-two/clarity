@@ -59,6 +59,26 @@ On every property:
   as choices ("iCloud", "Fastmail", ..., "Other"). A choice prefills the item form. `description`
   is shown as a hint in the form, for example "Use an app-specific password from
   account.apple.com".
+- A preset may also have a **short form**: `id`, `inputs` and `derive` (parsed and applied by
+  `shared/.../connector/PresetInputs.kt`, used by the connector's own tests and by the app). The app
+  then opens the item on these questions only, with "Advanced settings" revealing the full form.
+  - `inputs`: `[{"id", "title", "type", "description"?, "required"?, "default"?, "examples"?, ...}]`.
+    `type` is `url` (normalized to `https://<host><path>`, with `"path": "/api/v1"`; http, other
+    ports, user names and IP addresses are refused), `choice` (`"choices": [{"value", "title"}]`,
+    `"other": true` allows free text, checked against an optional `pattern`), `text` (optional
+    `pattern`) or `secret`. An input with `"property": "<item property>"` is that property itself
+    (a `secret` must have one): no templates, so a secret never lands in another value.
+  - `derive`: `{"<item property>": "<template>"}` for a text property, or
+    `{"<item property>": ["<template>", ...]}` for a list property (one entry each). `{id}` is an
+    answer, `{id.host}` a URL answer's host. A template whose answer is missing or invalid produces
+    nothing. `values` holds everything else and never a placeholder the person must replace.
+  - Answers rewrite a derived value only while it is still what the previous answers produced (a
+    list entry is also left alone when one of the same `KEY=` shape was added by hand). So what the
+    person changes under Advanced settings wins; the form says which properties the answers no longer set.
+  - `x-preset-key` on the collection names a read-only item property (for example `"preset"`) where
+    the app stores the preset's `id`. Editing an item whose preset has a short form reopens it, its
+    answers read back from the values through the templates. Items without it keep the full form;
+    nothing is migrated. Older apps skip the read-only property (and drop it when they save).
 
 ### Secrets
 

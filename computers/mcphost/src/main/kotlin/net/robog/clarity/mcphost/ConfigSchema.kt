@@ -6,6 +6,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import net.robog.clarity.shared.connector.PresetChoice
+import net.robog.clarity.shared.connector.PresetForm
+import net.robog.clarity.shared.connector.PresetInput
+import net.robog.clarity.shared.connector.PresetInputType
 
 /** Name of the config collection that holds the servers. */
 const val SERVERS = "servers"
@@ -99,8 +103,33 @@ private val serverItem = buildJsonObject {
             visibleWhenKind(listOf(ServerKind.REMOTE))
         }
         list("allowHosts", "Hosts it may reach", "The only internet hosts this server can connect to. A leading dot allows subdomains.", "api.example.com")
+        // Set by the app from the chosen preset and kept as it is; the host only stores it.
+        putJsonObject(PRESET_KEY) {
+            put("type", "string"); put("readOnly", true); put("title", "Preset")
+            put("description", "The preset it was set up from, so the app can reopen its short form.")
+        }
     }
 }
+
+/** The item property that records which preset a server was set up from (`x-preset-key`). */
+const val PRESET_KEY = "preset"
+
+private val token = PresetInput("token", "Access token", PresetInputType.SECRET, required = true, property = "secret")
+
+/** The US zones, then anything else as an IANA name (`Europe/Berlin`). */
+private val timezone = PresetInput(
+    id = "timezone", title = "Time zone", type = PresetInputType.CHOICE, required = true, default = "America/New_York",
+    description = "So due dates and times are shown right.",
+    choices = listOf(
+        PresetChoice("America/New_York", "Eastern"), PresetChoice("America/Chicago", "Central"),
+        PresetChoice("America/Denver", "Mountain"), PresetChoice("America/Phoenix", "Arizona"),
+        PresetChoice("America/Los_Angeles", "Pacific"), PresetChoice("America/Anchorage", "Alaska"),
+        PresetChoice("Pacific/Honolulu", "Hawaii"),
+    ),
+    other = true, pattern = "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}",
+)
+
+private fun JsonObjectBuilderScope.form(form: PresetForm) = form.toJson().forEach { (k, v) -> put(k, v) }
 
 /**
  * Presets: only packages checked against their registry at exactly this version and seen working
@@ -109,9 +138,14 @@ private val serverItem = buildJsonObject {
  * agree on the sha256. Canvas: PyPI's JSON API, a pure-Python wheel. Asana: built in (`computers/mcphost/builtin`),
  * since the maintained self-run server (@roychri/mcp-server-asana) resolves app.asana.com itself instead of
  * going through HTTPS_PROXY, and Asana's hosted MCP needs OAuth.
+ *
+ * Each has an `id` (stored in the item's [PRESET_KEY]) and a short form (`inputs`, `derive`): the app
+ * asks only those questions and fills in `values` plus what the answers derive. `values` therefore
+ * never holds a placeholder the person would have to replace by hand.
  */
 val serverPresets: JsonArray = JsonArray(listOf(
     buildJsonObject {
+        put("id", "github")
         put("title", "GitHub")
         put(
             "description",
@@ -133,16 +167,17 @@ val serverPresets: JsonArray = JsonArray(listOf(
             put("secretEnv", "GITHUB_PERSONAL_ACCESS_TOKEN")
             put("allowHosts", strings("api.github.com", "raw.githubusercontent.com"))
         }
+        form(PresetForm(listOf(token.copy(title = "Personal access token"))))
     },
     buildJsonObject {
+        put("id", "canvas")
         put("title", "Canvas")
         put(
             "description",
             "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and " +
-                "announcements and never submits, posts or changes anything (CANVAS_ROLE=student and ALLOWED_WRITE_TOOLS=none remove every " +
-                "tool that writes). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas " +
-                "tokens carry your whole account's access. Set CANVAS_API_URL to your school's address ending in /api/v1 and add that host " +
-                "to the hosts it may reach. Set TIMEZONE to your own zone (for example America/New_York) so due dates are right.",
+                "announcements and never submits, posts or changes anything (it runs as a student with every tool that writes removed). " +
+                "In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your " +
+                "whole account's access.",
         )
         putJsonObject("values") {
             put("label", "Canvas")
@@ -152,12 +187,26 @@ val serverPresets: JsonArray = JsonArray(listOf(
             put("version", "1.16.0")
             put("command", "canvas-mcp-server")
             // On stdio an unset ALLOWED_WRITE_TOOLS means every write tool, so it is set explicitly.
-            put("env", strings("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"))
+            put("env", strings("CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none"))
             put("secretEnv", "CANVAS_API_TOKEN")
-            put("allowHosts", strings("canvas.example.edu"))
         }
+        form(
+            PresetForm(
+                inputs = listOf(
+                    PresetInput(
+                        id = "canvas", title = "Your school's Canvas address", type = PresetInputType.URL, required = true,
+                        description = "The address you open Canvas at.", placeholder = "canvas.yourschool.edu", path = "/api/v1",
+                    ),
+                    timezone,
+                    token,
+                ),
+                // The address sets both the API URL and the one host the server may reach, so they cannot disagree.
+                lists = mapOf("env" to listOf("CANVAS_API_URL={canvas}", "TIMEZONE={timezone}"), "allowHosts" to listOf("{canvas.host}")),
+            ),
+        )
     },
     buildJsonObject {
+        put("id", "asana")
         put("title", "Asana")
         put(
             "description",
@@ -165,7 +214,7 @@ val serverPresets: JsonArray = JsonArray(listOf(
                 "Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens " +
                 "carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default " +
                 "(you can change that for each tool). " +
-                "To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to the settings.",
+                "To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to Settings under Advanced settings.",
         )
         putJsonObject("values") {
             put("label", "Asana")
@@ -175,6 +224,7 @@ val serverPresets: JsonArray = JsonArray(listOf(
             put("secretEnv", "ASANA_ACCESS_TOKEN")
             put("allowHosts", strings("app.asana.com"))
         }
+        form(PresetForm(listOf(token.copy(title = "Personal access token"))))
     },
 ))
 
@@ -188,6 +238,7 @@ val hostConfigSchema: JsonObject = buildJsonObject {
             put("minItems", 0)
             put("x-item-title", "label")
             put("x-item-subtitle", "package")
+            put("x-preset-key", PRESET_KEY)
             put("x-presets", serverPresets)
             put("items", serverItem)
         }

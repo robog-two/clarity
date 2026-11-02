@@ -56,3 +56,17 @@ fun McpToolStatus.withMode(mode: McpToolMode?): McpToolStatus =
 /** The servers with one tool changed. */
 fun List<McpServerStatus>.withTool(serverId: String, tool: String, change: (McpToolStatus) -> McpToolStatus): List<McpServerStatus> =
     map { s -> if (s.id != serverId) s else s.copy(tools = s.tools.map { t -> if (t.name == tool) change(t) else t }) }
+
+private val HTTPS_HOST = Regex("https://([A-Za-z0-9.-]+)")
+
+/**
+ * Hosts of the https addresses in a server's `KEY=value` settings that [allowHosts] does not cover
+ * (an entry `.example.com` covers example.com and every subdomain, as the egress proxy reads it).
+ */
+fun unreachableHosts(env: List<String>, allowHosts: List<String>): List<String> {
+    val allowed = allowHosts.map { it.trim().lowercase().removeSuffix(".") }.filter { it.isNotEmpty() }
+    fun covered(host: String) = allowed.any { a -> host == a || (a.startsWith(".") && (host == a.drop(1) || host.endsWith(a))) }
+    return env.flatMap { line -> HTTPS_HOST.findAll(line.substringAfter('=', "")).map { it.groupValues[1].lowercase().removeSuffix(".") } }
+        .filter { it.contains('.') && !covered(it) }
+        .distinct()
+}

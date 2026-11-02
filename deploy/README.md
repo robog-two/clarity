@@ -138,7 +138,9 @@ to skip the container too, stop it after each `up` with `podman compose -f deplo
   like any other server (own uid, home, proxy login, lifecycle). The token can do anything the Asana account can;
   its reads run on their own, its writes (create, update, complete, comment, move; no delete) ask first by default.
 - **Presets**: GitHub (release binary), Canvas (PyPI, set up for a student and read only: `CANVAS_ROLE=student` and
-  `ALLOWED_WRITE_TOOLS=none` remove every tool that writes; set `TIMEZONE` to your zone) and Asana (built in).
+  `ALLOWED_WRITE_TOOLS=none` remove every tool that writes) and Asana (built in). Each opens on a short form in the app:
+  the token, and for Canvas the school's address (which sets both `CANVAS_API_URL` and the one host it may reach) and
+  the time zone. Everything else is under Advanced settings.
 - **One uid each**: every server installs and runs as its own uid with its own home (`/data/servers/<id>`, 0700). It
   sees only its own token, in its own environment; it cannot read another server's files or environment, the
   host's keys or its state. The supervisor runs as root inside the rootless container with only `SETUID`, `SETGID`,

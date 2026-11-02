@@ -74,8 +74,8 @@ class BuiltinTest : FunSpec({
             val when_ = p.jsonObject["x-visible-when"]?.jsonObject?.get("kind")?.jsonArray?.map { it.jsonPrimitive.content }
             when_ == null || kind in when_
         }.keys
-        visibleFor("builtin") shouldContainExactlyInAnyOrder listOf("id", "label", "description", "enabled", "kind", "server", "env", "secret", "allowHosts")
-        visibleFor("remote") shouldContainExactlyInAnyOrder listOf("id", "label", "description", "enabled", "kind", "secret", "url", "allowHosts")
+        visibleFor("builtin") shouldContainExactlyInAnyOrder listOf("id", "label", "description", "enabled", "kind", "server", "env", "secret", "allowHosts", "preset")
+        visibleFor("remote") shouldContainExactlyInAnyOrder listOf("id", "label", "description", "enabled", "kind", "secret", "url", "allowHosts", "preset")
         ("server" in visibleFor("npm")) shouldBe false
         ("env" in visibleFor("npm")) shouldBe true
         props["server"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly listOf("asana")

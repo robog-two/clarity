@@ -13,6 +13,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import net.robog.clarity.shared.ConnectorId
+import net.robog.clarity.shared.connector.PresetForm
 import net.robog.clarity.shared.connector.SealedValue
 import net.robog.clarity.shared.connector.Sealing
 
@@ -25,8 +26,18 @@ enum class FieldKind { TEXT, PASSWORD, URL, EMAIL, NUMBER, BOOLEAN, ENUM, STRING
 
 data class EnumOption(val value: String, val title: String)
 
-/** A choice offered when adding a collection item ("iCloud", "Fastmail", ...). */
-data class ItemPreset(val title: String, val description: String?, val values: FormValues)
+/**
+ * A choice offered when adding a collection item ("iCloud", "Fastmail", ...). With a [simple] form
+ * the item opens on a few questions instead of every field (see [PresetForm]); [id] is recorded in
+ * the item (under [CollectionSpec.presetKey]) so editing it later opens the same questions.
+ */
+data class ItemPreset(
+    val title: String,
+    val description: String?,
+    val values: FormValues,
+    val id: String? = null,
+    val simple: PresetForm? = null,
+)
 
 /** How a collection field renders and validates its items. */
 data class CollectionSpec(
@@ -37,7 +48,19 @@ data class CollectionSpec(
     val subtitleKey: String? = null,
     val minItems: Int = 0,
     val presets: List<ItemPreset> = emptyList(),
-)
+    /** `x-preset-key`: the item property that records the preset's id. */
+    val presetKey: String? = null,
+) {
+    /** The preset [values] were set up from, when it has a short form. */
+    fun presetOf(values: FormValues): ItemPreset? {
+        val id = presetKey?.let(values::text)?.takeIf(String::isNotEmpty) ?: return null
+        return presets.firstOrNull { it.id == id && it.simple != null }
+    }
+
+    /** A preset by its title (as a suggestion names it) or id. */
+    fun preset(name: String): ItemPreset? =
+        presets.firstOrNull { it.title.equals(name, ignoreCase = true) } ?: presets.firstOrNull { it.id == name }
+}
 
 /** One input of a connector's settings form, derived from a property of its `configSchema`. */
 data class FormField(
@@ -66,6 +89,8 @@ data class FormField(
      * `{"kind": ["remote"]}`). A hidden field is not validated and not sent. Null: always shown.
      */
     val visibleWhen: Map<String, Set<String>>? = null,
+    /** Kept, checked and sent like any field, but never drawn (the item's preset id). */
+    val hidden: Boolean = false,
 ) {
     val secret: Boolean get() = kind == FieldKind.PASSWORD
 
@@ -159,8 +184,11 @@ data class ConfigForm(val fields: List<FormField>) {
         current in allowed
     } ?: true
 
-    /** The fields shown for [values], in order. */
+    /** The fields that apply to [values], in order: checked and sent. */
     fun visibleFields(values: FormValues): List<FormField> = fields.filter { isVisible(it, values) }
+
+    /** The fields drawn for [values]: [visibleFields] without the [FormField.hidden] ones. */
+    fun shownFields(values: FormValues): List<FormField> = visibleFields(values).filterNot { it.hidden }
 
     /** Initial values: schema defaults. Booleans always have a value. */
     fun initialValues(): FormValues {
@@ -329,14 +357,16 @@ object ConfigForms {
     /** Builds the form from a JSON Schema object; properties outside the supported subset are skipped. */
     fun parse(schema: JsonObject): ConfigForm = parse(schema, allowCollections = true)
 
-    private fun parse(schema: JsonObject, allowCollections: Boolean): ConfigForm {
+    /** [keep]: read-only properties kept as hidden text fields (the item's preset id). */
+    private fun parse(schema: JsonObject, allowCollections: Boolean, keep: Set<String> = emptySet()): ConfigForm {
         val properties = (schema["properties"] as? JsonObject).orEmpty()
         val required = (schema["required"] as? kotlinx.serialization.json.JsonArray)
             ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.toSet().orEmpty()
         val fields = properties.mapNotNull { (key, node) ->
             val p = node as? JsonObject ?: return@mapNotNull null
             // `id` of an item and other generated values are never shown.
-            if ((p["readOnly"] as? JsonPrimitive)?.booleanOrNull == true) return@mapNotNull null
+            val readOnly = (p["readOnly"] as? JsonPrimitive)?.booleanOrNull == true
+            if (readOnly && key !in keep) return@mapNotNull null
             val type = typeOf(p) ?: return@mapNotNull null
             val format = p["format"].str()
             val flagSecret = listOf("writeOnly", "x-secret").any { (p[it] as? JsonPrimitive)?.booleanOrNull == true }
@@ -384,17 +414,24 @@ object ConfigForms {
                 visibleWhen = (p["x-visible-when"] as? JsonObject)?.mapNotNull { (k, v) ->
                     (v as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }?.toSet()?.let { k to it }
                 }?.toMap()?.takeIf { it.isNotEmpty() },
+                hidden = readOnly,
             )
         }
         return ConfigForm(fields)
     }
 
     private fun collectionSpec(p: JsonObject, items: JsonObject): CollectionSpec {
-        val itemForm = parse(items, allowCollections = false)
+        val presetKey = p["x-preset-key"].str()
+        val itemForm = parse(items, allowCollections = false, keep = setOfNotNull(presetKey))
+        val keyField = itemForm.fields.firstOrNull { it.key == presetKey && it.kind == FieldKind.TEXT }
         val presets = (p["x-presets"] as? JsonArray).orEmpty().mapNotNull { node ->
             val o = node as? JsonObject ?: return@mapNotNull null
             val title = o["title"].str() ?: return@mapNotNull null
-            ItemPreset(title, o["description"].str(), presetValues(itemForm, o["values"] as? JsonObject))
+            val id = o["id"].str()
+            // A short form is only offered when its id can be stored with the item, so editing reopens it.
+            val simple = if (keyField != null && id != null) PresetForm.parse(o) else null
+            val values = presetValues(itemForm, o["values"] as? JsonObject)
+            ItemPreset(title, o["description"].str(), if (keyField != null && id != null) values.withText(keyField.key, id) else values, id, simple)
         }
         return CollectionSpec(
             itemForm = itemForm,
@@ -402,6 +439,7 @@ object ConfigForms {
             subtitleKey = p["x-item-subtitle"].str(),
             minItems = ((p["minItems"] as? JsonPrimitive)?.doubleOrNull)?.toInt() ?: 0,
             presets = presets,
+            presetKey = keyField?.key,
         )
     }
 

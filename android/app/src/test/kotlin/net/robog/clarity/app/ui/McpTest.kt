@@ -39,6 +39,9 @@ import net.robog.clarity.app.ui.onboarding.ConnectorSetupViewModel
 import net.robog.clarity.app.ui.onboarding.ConnectorsStepViewModel
 import net.robog.clarity.app.ui.onboarding.DirectEdit
 import net.robog.clarity.app.ui.onboarding.ItemNoun
+import net.robog.clarity.app.ui.onboarding.OTHER_CHOICE
+import net.robog.clarity.app.ui.mcp.unreachableHosts
+import net.robog.clarity.shared.connector.PresetInputError
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
@@ -137,10 +140,14 @@ class McpHostSchemaTest {
         val kinds = itemForm.fields.associate { it.key to it.kind }
         assertEquals(
             listOf("label", "description", "enabled", "kind", "server", "package", "version", "asset", "sha256", "command", "args", "env",
-                "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts"),
+                "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts", "preset"),
             itemForm.fields.map { it.key },
             "every property but the read-only id, in schema order",
         )
+        // The preset id is kept and sent, never drawn.
+        assertEquals(listOf("preset"), itemForm.fields.filter { it.hidden }.map { it.key })
+        assertEquals(FieldKind.TEXT, kinds["preset"])
+        assertEquals("preset", servers.collection!!.presetKey)
         assertEquals(FieldKind.BOOLEAN, kinds["enabled"])
         assertEquals(FieldKind.ENUM, kinds["kind"])
         assertEquals(FieldKind.ENUM, kinds["server"])
@@ -170,7 +177,7 @@ class McpHostSchemaTest {
     private fun shown(kind: String) = itemForm.visibleFields(itemForm.initialValues().withText("kind", kind)).map { it.key }.toSet()
 
     @Test fun eachKindShowsOnlyItsFields() {
-        val always = setOf("label", "description", "enabled", "kind", "secret", "allowHosts")
+        val always = setOf("label", "description", "enabled", "kind", "secret", "allowHosts", "preset")
         val packaged = always + setOf("package", "version", "command", "args", "env", "secretEnv", "secretEnv2", "secret2")
         assertEquals(packaged, shown("npm"))
         assertEquals(packaged, shown("pypi"))
@@ -208,10 +215,12 @@ class McpHostSchemaTest {
         assertEquals("pypi", canvas.values.text("kind"))
         assertEquals("canvas-mcp", canvas.values.text("package"))
         assertEquals("1.16.0", canvas.values.text("version"))
-        assertEquals(
-            listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"),
-            canvas.values.list("env"),
-        )
+        // No placeholder address: the short form fills in the URL, the zone and the host.
+        assertEquals(listOf("CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none"), canvas.values.list("env"))
+        assertEquals(emptyList(), canvas.values.list("allowHosts"))
+        assertEquals("canvas", canvas.values.text("preset"))
+        assertEquals(listOf("canvas", "timezone", "token"), canvas.simple!!.inputs.map { it.id })
+        assertEquals(listOf("token"), gh.simple!!.inputs.map { it.id })
         val asana = servers.collection!!.presets.first { it.title == "Asana" }
         assertEquals("builtin", asana.values.text("kind"))
         assertEquals("asana", asana.values.text("server"))
@@ -423,22 +432,37 @@ class McpServerEditorTest {
         val editor = vm.state.value.editor!!
         assertTrue(editor.isNew)
         assertEquals("canvas-mcp", editor.values.text("package"))
-        assertEquals(listOf("canvas.example.edu"), editor.values.list("allowHosts"))
+        // The short form: nothing to reach until the address is given; the zone starts at Eastern.
+        val simple = editor.simple!!
+        assertFalse(simple.advanced)
+        assertEquals("America/New_York", simple.answers["timezone"])
+        assertEquals(emptyList(), editor.values.list("allowHosts"))
+        assertEquals(listOf("CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=America/New_York"), editor.values.list("env"))
 
-        vm.onItemValueChanged("secret", "canvas-token")
+        vm.onPresetAnswer("canvas", "canvas.ithaca.edu")
+        vm.onPresetAnswer("token", "canvas-token")
         vm.saveItem()
         val saved = repo.saved.single()
         assertEquals(listOf("GitHub", "Canvas"), saved.items("servers").map { it.values.text("label") }, "the other server is kept")
         assertEquals(setOf("secret"), saved.items("servers").first().values.storedSecrets.keys, "its token too")
+        val item = saved.items("servers").last().values
+        assertEquals("canvas-token", item.text("secret"))
+        assertEquals("canvas", item.text("preset"))
+        assertEquals(listOf("canvas.ithaca.edu"), item.list("allowHosts"))
+        assertEquals(
+            listOf("CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=America/New_York", "CANVAS_API_URL=https://canvas.ithaca.edu/api/v1"),
+            item.list("env"),
+        )
         assertTrue(vm.state.value.saved)
     }
 
     @Test fun aSuggestionWithoutAKnownPresetStartsEmptyWithItsName() = withMain {
         val vm = vm(StoredConnectors(listOf(hostSummary())))
-        vm.openById(MCP_HOST, DirectEdit(add = true, preset = "Asana", label = "Asana"))
+        vm.openById(MCP_HOST, DirectEdit(add = true, preset = "Linear", label = "Linear"))
         val editor = vm.state.value.editor!!
-        assertEquals("Asana", editor.values.text("label"))
+        assertEquals("Linear", editor.values.text("label"))
         assertEquals("", editor.values.text("package"))
+        assertNull(editor.simple, "no preset, so the full form")
     }
 
     @Test fun editingOpensThatServer() = withMain {
@@ -485,5 +509,133 @@ class McpServerEditorTest {
         val vm = ConnectorsStepViewModel(StoredConnectors(listOf(hostSummary())), Granted())
         vm.refresh()
         assertEquals(listOf("phone-messages"), vm.state.value.items.map { it.row.key })
+    }
+
+    // --- the short form of a preset ---
+
+    private val storedCanvas = ConnectorConfig(
+        4,
+        obj(
+            """{"servers":[{"id":"cv0000000001","label":"Canvas","kind":"pypi","package":"canvas-mcp","version":"1.16.0",
+               "command":"canvas-mcp-server","secretEnv":"CANVAS_API_TOKEN","preset":"canvas",
+               "env":["CANVAS_ROLE=student","ALLOWED_WRITE_TOOLS=none","CANVAS_API_URL=https://canvas.ithaca.edu/api/v1","TIMEZONE=Europe/Berlin"],
+               "allowHosts":["canvas.ithaca.edu"],
+               "secret":{"type":"sealed","algorithm":"${Sealing.ALGORITHM}","ciphertext":"ONE"}},
+              {"id":"cv0000000002","label":"Old Canvas","kind":"pypi","package":"canvas-mcp","version":"1.16.0",
+               "env":["CANVAS_API_URL=https://canvas.ithaca.edu/api/v1"],"allowHosts":["canvas.example.edu"]}]}""",
+        ),
+    )
+
+    private fun canvasVm(repo: StoredConnectors = StoredConnectors(listOf(hostSummary()))) = vm(repo).also {
+        it.openById(MCP_HOST, DirectEdit(add = true, preset = "Canvas"))
+    }
+
+    @Test fun theAddressSetsTheUrlAndTheHostAndFollowsChanges() = withMain {
+        val vm = canvasVm()
+        vm.onPresetAnswer("canvas", "https://canvas.ithaca.edu/courses/12")
+        vm.onPresetAnswer("canvas", "canvas.cornell.edu")
+        val values = vm.state.value.editor!!.values
+        assertEquals(listOf("canvas.cornell.edu"), values.list("allowHosts"))
+        assertEquals(1, values.list("env").count { it.startsWith("CANVAS_API_URL=") })
+        assertTrue("CANVAS_API_URL=https://canvas.cornell.edu/api/v1" in values.list("env"))
+    }
+
+    @Test fun anHttpAddressIsRefusedAtOnceAndNothingIsSaved() = withMain {
+        val repo = StoredConnectors(listOf(hostSummary()))
+        val vm = canvasVm(repo)
+        vm.onPresetAnswer("canvas", "canvas")
+        assertTrue(vm.state.value.presetErrors.isEmpty(), "a half-typed address is not called wrong yet")
+        vm.onPresetAnswer("canvas", "http://canvas.ithaca.edu")
+        assertEquals(mapOf("canvas" to PresetInputError.NotHttps), vm.state.value.presetErrors)
+        assertEquals(emptyList(), vm.state.value.editor!!.values.list("allowHosts"))
+        vm.saveItem()
+        assertTrue(repo.saved.isEmpty())
+        assertEquals(setOf("canvas", "token"), vm.state.value.presetErrors.keys)
+        assertFalse(vm.state.value.editor!!.simple!!.advanced, "the problems are in the questions")
+    }
+
+    @Test fun anotherZoneCanBeTyped() = withMain {
+        val vm = canvasVm()
+        vm.onPresetAnswer("timezone", "America/Phoenix")
+        assertTrue("TIMEZONE=America/Phoenix" in vm.state.value.editor!!.values.list("env"))
+        vm.onPresetAnswer("timezone", OTHER_CHOICE)
+        assertEquals(setOf("timezone"), vm.state.value.editor!!.simple!!.others)
+        assertFalse(vm.state.value.editor!!.values.list("env").any { it.startsWith("TIMEZONE=") })
+        vm.onPresetAnswer("timezone", "Europe/Berlin")
+        assertTrue("TIMEZONE=Europe/Berlin" in vm.state.value.editor!!.values.list("env"))
+        // Back to a listed zone.
+        vm.onPresetAnswer("timezone", "Pacific/Honolulu")
+        assertEquals(emptySet(), vm.state.value.editor!!.simple!!.others)
+        assertEquals(listOf("TIMEZONE=Pacific/Honolulu"), vm.state.value.editor!!.values.list("env").filter { it.startsWith("TIMEZONE=") })
+    }
+
+    @Test fun whatIsChangedUnderAdvancedIsKept() = withMain {
+        val vm = canvasVm()
+        vm.onPresetAnswer("canvas", "canvas.ithaca.edu")
+        vm.toggleAdvanced()
+        assertTrue(vm.state.value.editor!!.simple!!.advanced)
+        val env = vm.state.value.editor!!.values.list("env").map { if (it.startsWith("CANVAS_API_URL=")) "CANVAS_API_URL=https://lms.example.edu/api/v1" else it }
+        vm.onItemListChanged("env", env)
+        assertEquals(setOf("env"), vm.state.value.editor!!.simple!!.diverged(vm.state.value.editor!!.values))
+        vm.onPresetAnswer("canvas", "canvas.cornell.edu")
+        val after = vm.state.value.editor!!.values
+        assertTrue("CANVAS_API_URL=https://lms.example.edu/api/v1" in after.list("env"), "the hand-made URL stays")
+        assertEquals(listOf("canvas.cornell.edu"), after.list("allowHosts"))
+    }
+
+    @Test fun aMissingFieldOutsideTheQuestionsOpensAdvanced() = withMain {
+        val repo = StoredConnectors(listOf(hostSummary()))
+        val vm = canvasVm(repo)
+        vm.onPresetAnswer("canvas", "canvas.ithaca.edu")
+        vm.onPresetAnswer("token", "t")
+        vm.onItemValueChanged("label", "")
+        vm.saveItem()
+        assertTrue(repo.saved.isEmpty())
+        assertTrue(vm.state.value.editor!!.simple!!.advanced)
+        assertEquals(setOf("label"), vm.state.value.editorErrors.keys)
+    }
+
+    @Test fun aServerFromAPresetReopensItsQuestions() = withMain {
+        val repo = StoredConnectors(listOf(hostSummary()), storedCanvas)
+        val vm = vm(repo)
+        vm.openById(MCP_HOST, DirectEdit(itemId = "cv0000000001"))
+        val editor = vm.state.value.editor!!
+        val simple = editor.simple!!
+        assertEquals(mapOf("canvas" to "https://canvas.ithaca.edu/api/v1", "timezone" to "Europe/Berlin"), simple.answers)
+        assertEquals(setOf("timezone"), simple.others)
+        assertTrue(simple.diverged(editor.values).isEmpty())
+        assertTrue(editor.hint!!.contains("Canvas"))
+        // The saved token counts: saving without retyping it keeps it.
+        vm.saveItem()
+        val item = repo.saved.single().items("servers").first().values
+        assertEquals(setOf("secret"), item.storedSecrets.keys)
+        assertEquals("canvas", item.text("preset"))
+    }
+
+    @Test fun aServerSavedWithoutAPresetKeepsTheFullForm() = withMain {
+        val vm = vm(StoredConnectors(listOf(hostSummary()), storedCanvas))
+        vm.openById(MCP_HOST, DirectEdit(itemId = "cv0000000002"))
+        val editor = vm.state.value.editor!!
+        assertNull(editor.simple)
+        assertEquals(listOf("canvas.example.edu"), editor.values.list("allowHosts"), "nothing is rewritten")
+        assertEquals(listOf("canvas.ithaca.edu"), unreachableHosts(editor.values.list("env"), editor.values.list("allowHosts")))
+    }
+
+    @Test fun thePresetIsSentWithTheItem() = withMain {
+        val canvas = ConfigForms.parse(MCP_HOST_SCHEMA).fields.single().collection!!.presets.first { it.title == "Canvas" }
+        val form = ConfigForms.parse(MCP_HOST_SCHEMA)
+        val item = form.fields.single().collection!!.itemForm.initialValues().overlay(canvas.values)
+        val out = form.toConfigValues(FormValues().withItem("servers", ItemValues("cv0000000001", item)), seal)
+        assertEquals("canvas", out["servers"]!!.jsonArray.single().jsonObject["preset"]!!.jsonPrimitive.content)
+    }
+}
+
+class UnreachableHostsTest {
+    @Test fun httpsHostsMustBeAllowed() {
+        assertEquals(emptyList(), unreachableHosts(listOf("A=https://canvas.ithaca.edu/api/v1"), listOf("canvas.ithaca.edu")))
+        assertEquals(emptyList(), unreachableHosts(listOf("A=https://canvas.ithaca.edu/api/v1"), listOf(".ithaca.edu")))
+        assertEquals(emptyList(), unreachableHosts(listOf("A=https://ithaca.edu"), listOf(".ithaca.edu")))
+        assertEquals(listOf("canvas.ithaca.edu"), unreachableHosts(listOf("A=https://Canvas.Ithaca.edu/api/v1", "B=x"), listOf("canvas.example.edu")))
+        assertEquals(emptyList(), unreachableHosts(listOf("A=http://plain.example.com", "LOG=info"), emptyList()), "only https addresses")
     }
 }

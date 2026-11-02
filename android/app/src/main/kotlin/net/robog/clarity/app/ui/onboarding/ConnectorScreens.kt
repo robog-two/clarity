@@ -158,6 +158,8 @@ fun ConnectorSetupScreen(
             onItemListChanged = viewModel::onItemListChanged,
             onSaveItem = viewModel::saveItem,
             onCancelItem = leaveItem,
+            onPresetAnswer = viewModel::onPresetAnswer,
+            onToggleAdvanced = viewModel::toggleAdvanced,
         ),
         step = step,
         backLabel = backLabel,
@@ -179,6 +181,9 @@ data class SetupActions(
     val onItemListChanged: (String, List<String>) -> Unit = { _, _ -> },
     val onSaveItem: () -> Unit = {},
     val onCancelItem: () -> Unit = {},
+    /** A short-form answer: input id and value ([OTHER_CHOICE] for "Other"). */
+    val onPresetAnswer: (String, String) -> Unit = { _, _ -> },
+    val onToggleAdvanced: () -> Unit = {},
 )
 
 @Composable
@@ -244,7 +249,7 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
             problem?.let { ErrorBox(it) }
         }
         val errors = state.errors
-        state.form.visibleFields(state.values).forEach { field ->
+        state.form.shownFields(state.values).forEach { field ->
             FieldInput(
                 field = field,
                 values = state.values,
@@ -350,8 +355,21 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
     ) {
         if (state.direct) state.problem?.let { ErrorBox(it.message()) }
         editor.hint?.let { InfoBox { Hint(it) } }
-        form.visibleFields(editor.values).forEach { f ->
-            FieldInput(f, editor.values, errors[f.key], actions.onItemValueChanged, actions.onItemListChanged)
+        val simple = editor.simple
+        if (simple == null) {
+            ItemFields(form, editor, errors, actions, noun)
+        } else {
+            PresetQuestions(simple, editor.values, state.presetErrors, actions.onPresetAnswer)
+            val changed = simple.diverged(editor.values)
+            if (changed.isNotEmpty()) {
+                val names = form.fields.filter { it.key in changed }.joinToString { "“${it.label}”" }
+                Hint("$names changed under Advanced settings, so the answers above no longer change ${if (changed.size == 1) "it" else "them"}.")
+            }
+            AdvancedToggle(simple.advanced, actions.onToggleAdvanced)
+            if (simple.advanced) {
+                Hint("Everything this ${noun.one} is set up with. What you change here is kept as it is.")
+                ItemFields(form, editor, errors, actions, noun, skip = simple.form.inputs.mapNotNull { it.property }.toSet())
+            }
         }
     }
     if (removing) {
@@ -367,6 +385,21 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
             },
             dismissButton = { androidx.compose.material3.TextButton(onClick = { removing = false }) { Text("Cancel") } },
         )
+    }
+}
+
+/** The item's fields (all of them, or under "Advanced settings" all but [skip]). */
+@Composable
+private fun ItemFields(form: ConfigForm, editor: ItemEdit, errors: Map<String, net.robog.clarity.app.connector.FieldError>, actions: SetupActions, noun: ItemNoun, skip: Set<String> = emptySet()) {
+    form.shownFields(editor.values).filterNot { it.key in skip }.forEach { f ->
+        FieldInput(f, editor.values, errors[f.key], actions.onItemValueChanged, actions.onItemListChanged)
+    }
+    // A server told to call an https address it is not allowed to reach would be refused by the proxy.
+    if (noun == ItemNoun.Server) {
+        val missing = net.robog.clarity.app.ui.mcp.unreachableHosts(editor.values.list("env"), editor.values.list("allowHosts"))
+        if (missing.isNotEmpty()) {
+            UnreachableHosts(missing) { host -> actions.onItemListChanged("allowHosts", editor.values.list("allowHosts") + host) }
+        }
     }
 }
 

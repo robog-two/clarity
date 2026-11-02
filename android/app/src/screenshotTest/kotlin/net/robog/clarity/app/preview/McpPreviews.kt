@@ -1,16 +1,24 @@
 package net.robog.clarity.app.preview
 
 import android.content.res.Configuration
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
 import com.android.tools.screenshot.PreviewTest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import net.robog.clarity.app.connector.ConfigForms
 import net.robog.clarity.app.connector.FormValues
 import net.robog.clarity.app.connector.ItemValues
+import net.robog.clarity.app.connector.PresetEdit
 import net.robog.clarity.app.ui.mcp.MCP_HOST
 import net.robog.clarity.app.ui.mcp.McpActions
 import net.robog.clarity.app.ui.mcp.McpContent
@@ -18,6 +26,11 @@ import net.robog.clarity.app.ui.mcp.McpUiState
 import net.robog.clarity.app.ui.onboarding.ConnectorSetupContent
 import net.robog.clarity.app.ui.onboarding.ConnectorSetupState
 import net.robog.clarity.app.ui.onboarding.ItemEdit
+import net.robog.clarity.app.ui.onboarding.PresetQuestions
+import net.robog.clarity.app.ui.onboarding.StringListEditor
+import net.robog.clarity.app.ui.onboarding.UnreachableHosts
+import net.robog.clarity.app.ui.onboarding.choiceOptions
+import net.robog.clarity.app.ui.mcp.unreachableHosts
 import net.robog.clarity.app.ui.onboarding.SetupActions
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.shared.mcp.McpServerState
@@ -123,8 +136,10 @@ private val SCHEMA = Json.parseToJsonElement(
             "minItems": 0,
             "x-item-title": "label",
             "x-item-subtitle": "package",
+            "x-preset-key": "preset",
             "x-presets": [
                 {
+                    "id": "github",
                     "title": "GitHub",
                     "description": "GitHub's own MCP server (release v2.0.3, Linux x86_64). Create a fine-grained token at github.com/settings/personal-access-tokens with read-only access to Contents, Issues, Pull requests and Metadata for the repositories you choose; give write access only if you want Clarity to change things (each change still waits for your OK). Notifications need a classic token with the notifications scope.",
                     "values": {
@@ -147,11 +162,22 @@ private val SCHEMA = Json.parseToJsonElement(
                             "api.github.com",
                             "raw.githubusercontent.com"
                         ]
-                    }
+                    },
+                    "inputs": [
+                        {
+                            "id": "token",
+                            "title": "Personal access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {}
                 },
                 {
+                    "id": "canvas",
                     "title": "Canvas",
-                    "description": "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and announcements and never submits, posts or changes anything (CANVAS_ROLE=student and ALLOWED_WRITE_TOOLS=none remove every tool that writes). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your whole account's access. Set CANVAS_API_URL to your school's address ending in /api/v1 and add that host to the hosts it may reach. Set TIMEZONE to your own zone (for example America/New_York) so due dates are right.",
+                    "description": "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and announcements and never submits, posts or changes anything (it runs as a student with every tool that writes removed). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your whole account's access.",
                     "values": {
                         "label": "Canvas",
                         "description": "Your courses, assignments and due dates in Canvas",
@@ -160,20 +186,85 @@ private val SCHEMA = Json.parseToJsonElement(
                         "version": "1.16.0",
                         "command": "canvas-mcp-server",
                         "env": [
-                            "CANVAS_API_URL=https://canvas.example.edu/api/v1",
                             "CANVAS_ROLE=student",
-                            "ALLOWED_WRITE_TOOLS=none",
-                            "TIMEZONE=UTC"
+                            "ALLOWED_WRITE_TOOLS=none"
                         ],
-                        "secretEnv": "CANVAS_API_TOKEN",
+                        "secretEnv": "CANVAS_API_TOKEN"
+                    },
+                    "inputs": [
+                        {
+                            "id": "canvas",
+                            "title": "Your school's Canvas address",
+                            "type": "url",
+                            "description": "The address you open Canvas at.",
+                            "required": true,
+                            "examples": [
+                                "canvas.yourschool.edu"
+                            ],
+                            "path": "/api/v1"
+                        },
+                        {
+                            "id": "timezone",
+                            "title": "Time zone",
+                            "type": "choice",
+                            "description": "So due dates and times are shown right.",
+                            "required": true,
+                            "default": "America/New_York",
+                            "choices": [
+                                {
+                                    "value": "America/New_York",
+                                    "title": "Eastern"
+                                },
+                                {
+                                    "value": "America/Chicago",
+                                    "title": "Central"
+                                },
+                                {
+                                    "value": "America/Denver",
+                                    "title": "Mountain"
+                                },
+                                {
+                                    "value": "America/Phoenix",
+                                    "title": "Arizona"
+                                },
+                                {
+                                    "value": "America/Los_Angeles",
+                                    "title": "Pacific"
+                                },
+                                {
+                                    "value": "America/Anchorage",
+                                    "title": "Alaska"
+                                },
+                                {
+                                    "value": "Pacific/Honolulu",
+                                    "title": "Hawaii"
+                                }
+                            ],
+                            "other": true,
+                            "pattern": "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}"
+                        },
+                        {
+                            "id": "token",
+                            "title": "Access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {
+                        "env": [
+                            "CANVAS_API_URL={canvas}",
+                            "TIMEZONE={timezone}"
+                        ],
                         "allowHosts": [
-                            "canvas.example.edu"
+                            "{canvas.host}"
                         ]
                     }
                 },
                 {
+                    "id": "asana",
                     "title": "Asana",
-                    "description": "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default (you can change that for each tool). To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to the settings.",
+                    "description": "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default (you can change that for each tool). To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to Settings under Advanced settings.",
                     "values": {
                         "label": "Asana",
                         "description": "Your Asana tasks, projects and comments",
@@ -183,7 +274,17 @@ private val SCHEMA = Json.parseToJsonElement(
                         "allowHosts": [
                             "app.asana.com"
                         ]
-                    }
+                    },
+                    "inputs": [
+                        {
+                            "id": "token",
+                            "title": "Personal access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {}
                 }
             ],
             "items": {
@@ -430,6 +531,12 @@ private val SCHEMA = Json.parseToJsonElement(
                         "examples": [
                             "api.example.com"
                         ]
+                    },
+                    "preset": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "Preset",
+                        "description": "The preset it was set up from, so the app can reopen its short form."
                     }
                 }
             }
@@ -453,13 +560,30 @@ private val githubItem = itemForm.initialValues()
     .withList("allowHosts", listOf("api.github.com", "raw.githubusercontent.com"))
     .copy(storedSecrets = mapOf("secret" to kotlinx.serialization.json.JsonObject(emptyMap())))
 
-/** Canvas from PyPI, new, as its preset fills it in. */
+/**
+ * Canvas from PyPI, saved before presets were recorded (so it keeps the full form), whose URL names a
+ * host it may not reach.
+ */
 private val canvasItem = itemForm.initialValues()
     .withText("label", "Canvas").withText("description", "Your courses, assignments and due dates in Canvas")
     .withText("kind", "pypi").withText("package", "canvas-mcp").withText("version", "1.16.0").withText("command", "canvas-mcp-server")
-    .withList("env", listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"))
+    .withList("env", listOf("CANVAS_API_URL=https://canvas.ithaca.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC"))
     .withText("secretEnv", "CANVAS_API_TOKEN")
     .withList("allowHosts", listOf("canvas.example.edu"))
+
+private fun preset(title: String) = ConfigForms.parse(SCHEMA).fields.single().collection!!.presets.first { it.title == title }
+
+/** A new server from [title]'s preset, on its short form, with [answers] given. */
+private fun fromPreset(title: String, id: String, answers: Map<String, String> = emptyMap(), advanced: Boolean = false): ItemEdit {
+    val p = preset(title)
+    var (edit, values) = PresetEdit.start(p, itemForm.initialValues().overlay(p.values))
+    for ((input, value) in answers) {
+        val next = edit.answer(edit.form.inputs.first { it.id == input }, value, values)
+        edit = next.first
+        values = next.second
+    }
+    return ItemEdit("servers", id, isNew = true, values = values, hint = p.description, simple = edit.copy(advanced = advanced))
+}
 
 /** Asana, built into Clarity, as its preset fills it in: only the server, settings, token and hosts. */
 private val asanaItem = itemForm.initialValues()
@@ -489,12 +613,63 @@ fun McpServerEditor() = Frame {
     ConnectorSetupContent(hostState(ItemEdit("servers", github.id, isNew = false, values = githubItem)), SetupActions(), step = null)
 }
 
-/** A Python package, as the Canvas preset fills it in: no release file or URL fields. */
+/**
+ * A Python package in the full form: no release file or URL fields. Saved before presets were
+ * recorded, its URL's host is missing from the hosts it may reach, which the form points out.
+ */
 @PreviewTest @TallScreen @Composable
 fun McpServerEditorPypi() = Frame {
-    val preset = ConfigForms.parse(SCHEMA).fields.single().collection!!.presets.first { it.title == "Canvas" }
     ConnectorSetupContent(
-        hostState(ItemEdit("servers", "cv3n8r2w5t0a", isNew = true, values = canvasItem, hint = preset.description)),
+        hostState(ItemEdit("servers", "cv3n8r2w5t0a", isNew = false, values = canvasItem)),
+        SetupActions(), step = null,
+    )
+}
+
+/** The Canvas preset's short form: the school's address (and what it becomes), the zone, the token. */
+@PreviewTest @Screen @Composable
+fun McpServerEditorCanvas() = Frame {
+    ConnectorSetupContent(
+        hostState(fromPreset("Canvas", "cv3n8r2w5t0a", mapOf("canvas" to "canvas.ithaca.edu", "token" to "secret-token"))),
+        SetupActions(), step = null,
+    )
+}
+
+/**
+ * The zone menu of the Canvas short form: the US zones and "Other…". Layoutlib does not draw popups,
+ * so the menu's items are drawn in place, in a menu's surface, under the field.
+ */
+@PreviewTest @Screen @Composable
+fun McpServerEditorCanvasZones() = Frame {
+    val edit = fromPreset("Canvas", "cv3n8r2w5t0a", mapOf("canvas" to "canvas.ithaca.edu"))
+    val simple = edit.simple!!
+    val zone = simple.form.inputs.first { it.id == "timezone" }
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        PresetQuestions(simple, edit.values, emptyMap(), { _, _ -> })
+        Surface(shape = MaterialTheme.shapes.extraSmall, color = MaterialTheme.colorScheme.surfaceContainer, shadowElevation = 3.dp) {
+            Column(Modifier.padding(vertical = 8.dp)) {
+                choiceOptions(zone).forEach { (_, title) -> DropdownMenuItem(text = { Text(title) }, onClick = {}) }
+            }
+        }
+    }
+}
+
+/** An http address is refused as soon as it is typed; "Other…" takes any zone name. */
+@PreviewTest @Screen @Composable
+fun McpServerEditorCanvasProblems() = Frame {
+    val edit = fromPreset("Canvas", "cv3n8r2w5t0a", mapOf("canvas" to "http://canvas.ithaca.edu"))
+    val simple = edit.simple!!
+    val zone = simple.form.inputs.first { it.id == "timezone" }
+    val (other, values) = simple.chooseOther(zone, true, edit.values)
+    val zoned = other.answer(zone, "Europe/Berlin", values)
+    val state = hostState(edit.copy(values = zoned.second, simple = zoned.first))
+    ConnectorSetupContent(state, SetupActions(), step = null)
+}
+
+/** The Canvas short form with Advanced settings open: every field, the derived ones filled in. */
+@PreviewTest @TallScreen @Composable
+fun McpServerEditorCanvasAdvanced() = Frame {
+    ConnectorSetupContent(
+        hostState(fromPreset("Canvas", "cv3n8r2w5t0a", mapOf("canvas" to "canvas.ithaca.edu"), advanced = true)),
         SetupActions(), step = null,
     )
 }
@@ -505,12 +680,26 @@ fun McpServerEditorRemote() = Frame {
     ConnectorSetupContent(hostState(ItemEdit("servers", "nt6q1s3u7w9y", isNew = true, values = remoteItem)), SetupActions(), step = null)
 }
 
-/** The Asana preset, new: built into Clarity, so no package, version or command. */
-@PreviewTest @TallScreen @Composable
+/** The Asana preset, new: built into Clarity, so its short form asks only for the token. */
+@PreviewTest @Screen @Composable
 fun McpServerEditorAsana() = Frame {
-    val preset = ConfigForms.parse(SCHEMA).fields.single().collection!!.presets.first { it.title == "Asana" }
+    ConnectorSetupContent(hostState(fromPreset("Asana", "as9d4f6h1j3k")), SetupActions(), step = null)
+}
+
+/** Asana in the full form (Advanced settings): no package, version or command. */
+@PreviewTest @TallScreen @Composable
+fun McpServerEditorAsanaFull() = Frame {
     ConnectorSetupContent(
-        hostState(ItemEdit("servers", "as9d4f6h1j3k", isNew = true, values = asanaItem, hint = preset.description)),
+        hostState(ItemEdit("servers", "as9d4f6h1j3k", isNew = true, values = asanaItem, hint = preset("Asana").description)),
         SetupActions(), step = null,
     )
+}
+
+/** The end of the full form above (McpServerEditorPypi): its URL's host is not one it may reach, with "Add". */
+@PreviewTest @Screen @Composable
+fun McpServerEditorUnreachableHost() = Frame {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        StringListEditor("Hosts it may reach (optional)", canvasItem.list("allowHosts"), {}, supporting = "The only internet hosts this server can connect to.")
+        UnreachableHosts(unreachableHosts(canvasItem.list("env"), canvasItem.list("allowHosts"))) {}
+    }
 }
