@@ -132,4 +132,14 @@ class TwoPassTest {
         val tokens = "<unk> 0\n▁t 1\n▁th 2\nad 99\n<blk> 1024\n"
         assertEquals("<unk>\t0.0\n▁t\t-0.0\n▁th\t-1.0\nad\t-98.0\n", bpeVocabFromTokens(tokens))
     }
+
+    @Test fun sessionLevelsAreTheAverageAndTheLoudestSampleOfEverythingAdded() {
+        val levels = SessionLevels()
+        levels.add(FloatArray(SAMPLE_RATE) { 0.1f })
+        levels.add(FloatArray(SAMPLE_RATE) { 0.1f }.also { it[0] = 0.5f })
+        assertEquals(2.0, levels.seconds)
+        assertEquals(-20, levels.averageDb)
+        assertEquals(-6, levels.peakDb)
+        assertEquals(-120, SessionLevels().averageDb)
+    }
 }

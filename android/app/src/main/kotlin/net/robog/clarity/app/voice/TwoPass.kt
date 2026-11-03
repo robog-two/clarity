@@ -254,3 +254,24 @@ fun levelDb(samples: FloatArray): Int {
     val rms = kotlin.math.sqrt(sum / samples.size)
     return if (rms <= 1e-6) -120 else kotlin.math.round(20 * kotlin.math.log10(rms)).toInt()
 }
+
+/** The loudness of one mic session as a whole (average and loudest sample), for the voice log. */
+class SessionLevels {
+    private var sumSquares = 0.0
+    private var count = 0L
+    private var peak = 0f
+
+    fun add(samples: FloatArray) {
+        for (s in samples) {
+            sumSquares += s.toDouble() * s
+            if (kotlin.math.abs(s) > peak) peak = kotlin.math.abs(s)
+        }
+        count += samples.size
+    }
+
+    val seconds: Double get() = count.toDouble() / SAMPLE_RATE
+    val averageDb: Int get() = dbOf(if (count == 0L) 0.0 else kotlin.math.sqrt(sumSquares / count))
+    val peakDb: Int get() = dbOf(peak.toDouble())
+
+    private fun dbOf(amplitude: Double): Int = if (amplitude <= 1e-6) -120 else kotlin.math.round(20 * kotlin.math.log10(amplitude)).toInt()
+}
