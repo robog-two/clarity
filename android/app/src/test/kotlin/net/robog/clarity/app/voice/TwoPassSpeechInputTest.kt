@@ -14,24 +14,29 @@ import kotlinx.coroutines.withTimeout
 
 /** The threaded shell around [TwoPassCore], with fake audio and engines (real threads, no native code). */
 class TwoPassSpeechInputTest {
-    private class ScriptedMic(chunks: List<FloatArray>) : AudioSource {
+    private class ScriptedMic(chunks: List<FloatArray>, private val chunkMs: Long = 1) : AudioSource {
         val script = ConcurrentLinkedQueue(chunks)
         val opened = AtomicInteger()
+        val closed = AtomicInteger()
         override fun open(): AudioStream {
             opened.incrementAndGet()
             return object : AudioStream {
                 override fun read(): FloatArray {
                     // After the script: silence, a little faster than real time.
-                    Thread.sleep(1) // paced like a real recorder, only faster
+                    Thread.sleep(chunkMs) // paced like a real recorder, only faster
                     return script.poll() ?: FloatArray(CHUNK)
                 }
-                override fun close() = Unit
+                override fun close() { closed.incrementAndGet() }
             }
         }
     }
 
-    private class Engines(val failWith: Throwable? = null) : SpeechEngineFactory {
-        override fun firstPass(paths: EnginePaths): StreamingRecognizer = failWith?.let { throw it } ?: FakeFirstPass()
+    private class Engines(val failWith: Throwable? = null, val openMs: Long = 0) : SpeechEngineFactory {
+        override fun firstPass(paths: EnginePaths): StreamingRecognizer {
+            failWith?.let { throw it }
+            Thread.sleep(openMs) // loading a model from storage
+            return FakeFirstPass()
+        }
         override fun vad(paths: EnginePaths): VoiceActivity = FakeVad()
         override fun secondPass(paths: EnginePaths): PhraseRecognizer = FakeSecondPass()
     }
@@ -79,6 +84,41 @@ class TwoPassSpeechInputTest {
         withTimeout(5_000) { while (synchronized(finals) { finals.isEmpty() }) kotlinx.coroutines.delay(10) }
         assertEquals(listOf("W5"), synchronized(finals) { finals.toList() })
         assertEquals(MicMode.Off, bus.mic.value.mode)
+        collector.cancel()
+        input.release()
+    }
+
+    @Test fun wordsSaidWhileTheModelsAreStillLoadingAreNotLost() = runBlocking {
+        // The person talks straight away; the models take a second and a half to load (a cold start).
+        // At 10 ms a chunk the recorder runs 10× faster than real time: 15 s of audio arrives during the load.
+        val mic = ScriptedMic(speech(1, chunks = 4) + silence(600) + speech(2) + silence(3_600), chunkMs = 10)
+        val bus = SpeechBus()
+        val log = VoiceLog()
+        val input = TwoPassSpeechInput(bus, { paths }, Engines(openMs = 1_500), mic, log = log)
+        val finals = mutableListOf<String>()
+        val collector = launch(Dispatchers.Default) { bus.events.collect { e -> if (e is SpeechEvent.Final) synchronized(finals) { finals += e.text } } }
+        Thread.sleep(50)
+        input.start(keepOn = true)
+        withTimeout(15_000) { while (synchronized(finals) { finals.isEmpty() }) kotlinx.coroutines.delay(20) }
+        assertEquals("W1 W2", synchronized(finals) { finals.first() }, "the first words, said before the models were ready, are in the first message")
+        assertTrue(log.entries.value.any { it.text.startsWith("Live words and speech detection loaded in") }, log.entries.value.toString())
+        assertTrue(log.entries.value.any { it.text.startsWith("Mic on: first audio") }, log.entries.value.toString())
+        collector.cancel()
+        input.release()
+    }
+
+    @Test fun pushToTalkThatHeardOnlyNoiseTurnsTheRecorderOff() = runBlocking {
+        val mic = ScriptedMic(noise() + silence(3_600))
+        val bus = SpeechBus()
+        val input = TwoPassSpeechInput(bus, { paths }, Engines(), mic)
+        val errors = mutableListOf<SpeechEvent.Error>()
+        val collector = launch(Dispatchers.Default) { bus.events.collect { e -> if (e is SpeechEvent.Error) synchronized(errors) { errors += e } } }
+        Thread.sleep(50)
+        input.start(keepOn = false)
+        withTimeout(10_000) { while (synchronized(errors) { errors.isEmpty() }) kotlinx.coroutines.delay(10) }
+        assertEquals(SpeechError.NoMatch, synchronized(errors) { errors.first().kind })
+        withTimeout(5_000) { while (mic.closed.get() == 0) kotlinx.coroutines.delay(10) }
+        assertEquals(MicMode.Off, bus.mic.value.mode, "the chip says off, and the recorder really is")
         collector.cancel()
         input.release()
     }

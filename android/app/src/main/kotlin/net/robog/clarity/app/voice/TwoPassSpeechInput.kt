@@ -1,6 +1,7 @@
 package net.robog.clarity.app.voice
 
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -45,6 +46,8 @@ class TwoPassSpeechInput(
     private val speeds: SpeedStore = MemorySpeedStore(),
     private val onUnavailable: (keepOn: Boolean, Throwable?) -> Unit = { _, _ -> },
     private val idleReleaseMs: Long = 60_000,
+    /** What happened, for Settings → Voice; memory only. */
+    private val log: VoiceLog = VoiceLog(),
     asrDispatcher: CoroutineDispatcher? = null,
     decodeDispatcher: CoroutineDispatcher? = null,
 ) : SpeechInput {
@@ -66,6 +69,13 @@ class TwoPassSpeechInput(
     private var retrying: Job? = null
     private var hotwordArg = ""
     private val chunks = Channel<FloatArray>(capacity = 300) // 30 s of audio
+    /** Chunks the recorder could not hand over (the queue was full); logged with the next start. */
+    private val dropped = AtomicInteger()
+    /** When the mic was asked to start, and when its first audio arrived (nanoTime; 0 until then). */
+    @Volatile private var startedAt = 0L
+    @Volatile private var firstAudioAt = 0L
+    /** The first second of audio after a start, for its level in the log; null once logged. */
+    private var opening: MutableList<FloatArray>? = null
     /** Commands the state machine asked for while the core was mid-call; run once it returns. */
     private val pending = ArrayDeque<MicCommand>()
 
@@ -94,8 +104,11 @@ class TwoPassSpeechInput(
     private fun emit(event: SpeechEvent) {
         bus.emit(event)
         pending += bus.step(MicInput.Recognizer(event))
-        // "Mic stays on" is off and a message just went out: the mic turns off after it.
-        if (event is SpeechEvent.Final && bus.mic.value.mode != MicMode.Listening) pending += MicCommand.StopRecognizer
+        // "Mic stays on" is off and a message just went out, or turned out to be only noise: the mic turns
+        // off after it. (After a blank one it used to show as off while it went on recording.)
+        if ((event is SpeechEvent.Final || event is SpeechEvent.Error) && bus.mic.value.mode != MicMode.Listening && reader != null) {
+            pending += MicCommand.StopRecognizer
+        }
     }
 
     private suspend fun runPending() {
@@ -115,16 +128,42 @@ class TwoPassSpeechInput(
         release?.cancel()
         // The recorder first: while the models load (a second or so the first time), audio waits in [chunks],
         // so the first words are not lost.
-        reader = MicReader(audio, onChunk = { chunks.trySend(it) }, onError = { kind -> post { failed(kind) } }).also { it.start() }
+        startedAt = System.nanoTime()
+        firstAudioAt = 0L
+        opening = mutableListOf()
+        reader = MicReader(
+            audio,
+            onChunk = { chunk ->
+                if (firstAudioAt == 0L) firstAudioAt = System.nanoTime()
+                if (chunks.trySend(chunk).isFailure) dropped.incrementAndGet()
+            },
+            onError = { kind -> post { failed(kind) } },
+        ).also { it.start() }
         val core = core ?: open() ?: return
         if (loop?.isActive != true) {
             loop = scope.launch {
                 for (chunk in chunks) {
+                    noteOpening(chunk)
                     core.audio(chunk)
                     runPending()
                 }
             }
         }
+    }
+
+    /** Logs how the mic started: how soon audio came, and how loud its first second was (silence there: a slow recorder). */
+    private fun noteOpening(chunk: FloatArray) {
+        val heard = opening ?: return
+        heard += chunk
+        val size = heard.sumOf { it.size }
+        if (size < SAMPLE_RATE) return
+        opening = null
+        val firstMs = if (firstAudioAt > 0) (firstAudioAt - startedAt) / 1_000_000 else -1
+        val all = FloatArray(size)
+        var at = 0
+        heard.forEach { it.copyInto(all, at); at += it.size }
+        val lost = dropped.getAndSet(0)
+        log.add("Mic on: first audio $firstMs ms after the start, first second at ${levelDb(all)} dB" + if (lost > 0) ", $lost chunks dropped" else "")
     }
 
     /** The engines did not open: the recorder goes, and the audio it buffered with it (nobody will decode it). */
@@ -144,32 +183,39 @@ class TwoPassSpeechInput(
             onUnavailable(keepOn, null)
             return null
         }
+        val loading = System.nanoTime()
         val opened = try {
             hotwordArg = runCatching { hotwordsArg(hotwords()) }.getOrDefault("")
             val f = factory.firstPass(found)
             val v = try { factory.vad(found) } catch (t: Throwable) { f.close(); throw t }
             Triple(found, f, v)
         } catch (t: Throwable) { // LinkageError included: no native library for this phone
+            log.add("Live words could not start (${t.javaClass.simpleName}); the phone’s recognizer takes over")
             stopReader()
             bus.reset()
             onUnavailable(keepOn, t)
             return null
         }
+        // The audio that came in meanwhile waits in [chunks]: none of it is dropped.
+        log.add("Live words and speech detection loaded in ${(System.nanoTime() - loading) / 1_000_000} ms (${opened.first.tier} tier)")
         engines = opened.first
         first = opened.second
         vad = opened.third
-        return TwoPassCore(opened.second, opened.third, ::submit, ::emit, { speeds.speed(opened.first.tier) }).also { core = it }
+        return TwoPassCore(opened.second, opened.third, ::submit, ::emit, { speeds.speed(opened.first.tier) }, log = log::add)
+            .also { core = it }
     }
 
     private fun submit(job: DecodeJob) {
         val paths = engines ?: return
         scope.launch(decoder) {
+            val model = recognizer(paths)
+            // Timed once the model is open: the first phrase must not count the load as decode speed.
             val started = System.nanoTime()
-            val text = runCatching { recognizer(paths)?.decode(job.samples, hotwordArg) }.getOrNull()
+            val text = model?.let { runCatching { it.decode(job.samples, hotwordArg) }.getOrNull() }
             val ms = (System.nanoTime() - started) / 1_000_000
             if (text != null) updatedSpeed(speeds.speed(paths.tier), job.seconds, ms)?.let { speeds.record(paths.tier, it) }
             withContext(asr) {
-                core?.decoded(DecodeResult(job, text))
+                core?.decoded(DecodeResult(job, text, ms.takeIf { model != null }))
                 runPending()
             }
         }
@@ -178,9 +224,17 @@ class TwoPassSpeechInput(
     /** Parakeet, opened on first use (decode thread). If it cannot open, phrases keep their live words. */
     private fun recognizer(paths: EnginePaths): PhraseRecognizer? {
         if (secondFailed) return null
-        return second ?: try {
-            factory.secondPass(paths).also { second = it }
-        } catch (_: Throwable) {
+        second?.let { return it }
+        val loading = System.nanoTime()
+        return try {
+            factory.secondPass(paths).also {
+                second = it
+                val words = hotwordArg.split('/').count { w -> w.isNotBlank() }
+                val how = if (paths.bpeVocab != null) "beam search, $words hotwords" else "greedy search"
+                log.add("Second pass loaded in ${(System.nanoTime() - loading) / 1_000_000} ms (${paths.tier} tier, $how)")
+            }
+        } catch (t: Throwable) {
+            log.add("Second pass could not load (${t.javaClass.simpleName}); phrases keep their live words")
             secondFailed = true
             null
         }
@@ -192,6 +246,8 @@ class TwoPassSpeechInput(
         val r = reader ?: return
         reader = null
         withContext(kotlinx.coroutines.Dispatchers.IO) { r.stop() }
+        opening = null
+        log.add("Mic off")
         val core = core ?: return
         while (true) {
             val chunk = chunks.tryReceive().getOrNull() ?: break
