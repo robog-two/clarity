@@ -97,8 +97,8 @@ fun VoiceModelsContent(state: VoiceUiState, actions: VoiceModelActions, modifier
                     )
                     Hint(
                         when {
-                            state.engineFailed -> "The models couldn’t start on this phone, so the phone’s own recogniser listens instead."
-                            state.useBuiltIn -> "The phone’s own recogniser listens, as you chose below."
+                            state.engineFailed -> "The models couldn’t start on this phone, so the phone’s own recognizer listens instead."
+                            state.useBuiltIn -> "The phone’s own recognizer listens, as you chose below."
                             else -> "Live words as you talk, then a more accurate pass on each phrase. Your voice never leaves this phone."
                         },
                     )
@@ -110,7 +110,7 @@ fun VoiceModelsContent(state: VoiceUiState, actions: VoiceModelActions, modifier
                             "sentences, and the audio never leaves the phone. One download of ${formatBytes(status.bytes)}" +
                             if (state.mobileData) "." else ", over Wi-Fi.",
                     )
-                    Hint("Until then, the phone’s own recogniser listens.")
+                    Hint("Until then, the phone’s own recognizer listens.")
                     PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = 4.dp))
                 }
                 is ModelStatus.Downloading -> {
@@ -145,7 +145,7 @@ fun VoiceModelsContent(state: VoiceUiState, actions: VoiceModelActions, modifier
             state.mobileData, actions.onMobileData,
         )
         ToggleRow(
-            "Use the phone’s built-in recogniser", if (state.useBuiltIn) "Instead of the downloaded models" else "Only while the models are missing",
+            "Use the phone’s built-in recognizer instead", if (state.useBuiltIn) "The downloaded models aren’t used" else "The downloaded models listen once they’re ready",
             state.useBuiltIn, actions.onUseBuiltIn,
         )
         if (state.status == ModelStatus.Ready) {

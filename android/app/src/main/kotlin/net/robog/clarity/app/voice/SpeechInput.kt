@@ -30,7 +30,7 @@ interface SpeechInput {
 }
 
 /**
- * The events and mic state screens see. Shared by the recognisers behind [SwitchingSpeechInput], so a
+ * The events and mic state screens see. Shared by the recognizers behind [SwitchingSpeechInput], so a
  * screen keeps one flow to collect whichever of them is listening.
  */
 class SpeechBus {
@@ -53,11 +53,11 @@ class SpeechBus {
 }
 
 /**
- * The phone's own recogniser: `SpeechRecognizer.createOnDeviceSpeechRecognizer` when the device has an
+ * The phone's own recognizer: `SpeechRecognizer.createOnDeviceSpeechRecognizer` when the device has an
  * on-device model, otherwise the default one. Only the fallback now, while the app's own models are
- * missing or cannot run (see [SwitchingSpeechInput]). All recogniser calls happen on the main thread.
+ * missing or cannot run (see [SwitchingSpeechInput]). All recognizer calls happen on the main thread.
  *
- * The system recogniser plays its start chime on every `startListening`; Android has no supported way
+ * The system recognizer plays its start chime on every `startListening`; Android has no supported way
  * to turn that off (short of muting audio streams, which this app does not do), so the fallback keeps
  * restarts to the minimum: one per segment, never two at once.
  */
@@ -73,7 +73,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
     private val pendingStart = Runnable { begin() }
 
     /**
-     * The recogniser ends a segment at the first short pause. A segment is held for [PAUSE_GRACE_MS]
+     * The recognizer ends a segment at the first short pause. A segment is held for [PAUSE_GRACE_MS]
      * while it listens on; more speech joins it, and only silence for that long sends it.
      */
     private val joiner = PauseJoiner()
@@ -132,7 +132,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
         main.removeCallbacks(graceOver)
         val text = joiner.flush() ?: return
         emit(SpeechEvent.Final(text))
-        // Without "mic stays on" the mic is now off, but the recogniser was listening through the pause.
+        // Without "mic stays on" the mic is now off, but the recognizer was listening through the pause.
         if (bus.mic.value.mode != MicMode.Listening) halt()
     }
 
@@ -151,7 +151,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
 
     private fun emit(event: SpeechEvent) {
         bus.emit(event)
-        // Recogniser callbacks arrive on the main thread already.
+        // Recognizer callbacks arrive on the main thread already.
         dispatch(MicInput.Recognizer(event))
     }
 
@@ -167,7 +167,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
     /** Listens unless it already does (or is about to): a second `startListening` would fail as busy. */
     private fun startRecognizer() {
         if (active || main.hasCallbacks(pendingStart)) return
-        // A short pause keeps the recogniser from reporting "busy" when restarting right after a result.
+        // A short pause keeps the recognizer from reporting "busy" when restarting right after a result.
         main.postDelayed(pendingStart, RESTART_DELAY_MS)
     }
 
@@ -189,7 +189,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
         active = false
     }
 
-    /** Busy or client error: a fresh recogniser after a back-off. */
+    /** Busy or client error: a fresh recognizer after a back-off. */
     private fun retry() {
         halt()
         recognizer?.destroy()
@@ -214,7 +214,7 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
         putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
         putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
-        // Hints only (many recognisers ignore them); the pause grace above is what makes pauses safe.
+        // Hints only (many recognizers ignore them); the pause grace above is what makes pauses safe.
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
     }

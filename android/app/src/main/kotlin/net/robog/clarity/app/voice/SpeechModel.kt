@@ -9,7 +9,7 @@ import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.UserInput
 import net.robog.clarity.shared.session.SessionId
 
-/** What the speech recogniser tells the app. Pure data so the logic around it is testable. */
+/** What the speech recognizer tells the app. Pure data so the logic around it is testable. */
 sealed interface SpeechEvent {
     /**
      * Words so far, replaced by the next partial (the dashed "live" bubble). The first [confirmed]
@@ -18,22 +18,22 @@ sealed interface SpeechEvent {
     data class Partial(val text: String, val confirmed: Int = 0) : SpeechEvent
     /** A finished segment; becomes a [UserInput] with `source = VOICE`. */
     data class Final(val text: String) : SpeechEvent
-    /** The recogniser started or stopped hearing speech. */
+    /** The recognizer started or stopped hearing speech. */
     data class Hearing(val active: Boolean) : SpeechEvent
     data class Error(val kind: SpeechError) : SpeechEvent
 }
 
 enum class SpeechError {
-    /** Nothing recognised / nobody spoke: harmless, listening just restarts. */
+    /** Nothing recognized / nobody spoke: harmless, listening just restarts. */
     NoMatch,
     Timeout,
     /** `RECORD_AUDIO` not granted. */
     NoPermission,
-    /** No recogniser on this device (or language not available). */
+    /** No recognizer on this device (or language not available). */
     Unavailable,
-    /** The recogniser (or the microphone) is in use: worth a few retries. */
+    /** The recognizer (or the microphone) is in use: worth a few retries. */
     Busy,
-    /** The recogniser rejected a call (`ERROR_CLIENT`), e.g. a start while it was still stopping. */
+    /** The recognizer rejected a call (`ERROR_CLIENT`), e.g. a start while it was still stopping. */
     Client,
     Other,
 }
@@ -49,14 +49,14 @@ fun speechErrorOf(code: Int): SpeechError = when (code) {
     else -> SpeechError.Other
 }
 
-/** Whether the recogniser is on, and whether it restarts itself after each final segment. */
+/** Whether the recognizer is on, and whether it restarts itself after each final segment. */
 enum class MicMode { Off, Listening, Muted }
 
 data class MicState(
     val mode: MicMode = MicMode.Off,
     /** "Mic stays on": keep listening until stopped. */
     val keepOn: Boolean = false,
-    /** The recogniser currently hears speech. */
+    /** The recognizer currently hears speech. */
     val hearing: Boolean = false,
     /** Failed starts in a row (busy, client errors); reset by anything heard. */
     val retries: Int = 0,
@@ -72,10 +72,10 @@ sealed interface MicInput {
 
 enum class MicCommand {
     None,
-    /** Make sure the recogniser listens. Idempotent: when it already listens, nothing happens. */
+    /** Make sure the recognizer listens. Idempotent: when it already listens, nothing happens. */
     StartRecognizer,
     StopRecognizer,
-    /** The recogniser failed: reset it and start again after a short back-off ([retryDelayMs]). */
+    /** The recognizer failed: reset it and start again after a short back-off ([retryDelayMs]). */
     RetryRecognizer,
 }
 
@@ -110,7 +110,7 @@ private fun recognizerStep(state: MicState, event: SpeechEvent): Pair<MicState, 
             SpeechError.NoMatch, SpeechError.Timeout ->
                 if (state.keepOn) state.copy(hearing = false) to MicCommand.StartRecognizer
                 else MicState() to MicCommand.None
-            // Nothing to retry: no permission, or no recogniser at all.
+            // Nothing to retry: no permission, or no recognizer at all.
             SpeechError.NoPermission, SpeechError.Unavailable -> MicState() to MicCommand.StopRecognizer
             // Busy, client errors and unknown failures: a few spaced retries, then off instead of looping.
             SpeechError.Busy, SpeechError.Client, SpeechError.Other ->
@@ -142,7 +142,7 @@ fun joinSpeech(first: String, second: String): String =
     listOf(first.trim(), second.trim()).filter { it.isNotEmpty() }.joinToString(" ")
 
 /**
- * Holds the segments the recogniser ends at each short pause, so a sentence, a pause to think and
+ * Holds the segments the recognizer ends at each short pause, so a sentence, a pause to think and
  * the next sentence become one message. The caller runs the timer and calls [flush] when the pause lasts.
  */
 class PauseJoiner {
@@ -151,7 +151,7 @@ class PauseJoiner {
     /** A segment is held, waiting to see if more follows. */
     val holding: Boolean get() = pending.isNotEmpty()
 
-    /** The recogniser ended a segment. Blank ones change nothing. */
+    /** The recognizer ended a segment. Blank ones change nothing. */
     fun segment(text: String) {
         pending = joinSpeech(pending, text)
     }

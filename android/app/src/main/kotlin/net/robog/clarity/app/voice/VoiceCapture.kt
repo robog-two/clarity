@@ -28,7 +28,7 @@ class VoiceCapture(
     val words: StateFlow<SpeechEvent.Partial?> = _words.asStateFlow()
 
     private val _error = MutableStateFlow<SpeechError?>(null)
-    /** The last problem worth telling the person about (permission, no recogniser). */
+    /** The last problem worth telling the person about (permission, no recognizer). */
     val error: StateFlow<SpeechError?> = _error.asStateFlow()
 
     val mic: StateFlow<MicState> get() = speech.mic

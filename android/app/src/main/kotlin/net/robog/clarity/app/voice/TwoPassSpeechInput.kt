@@ -27,14 +27,14 @@ class MemorySpeedStore : SpeedStore {
 
 /**
  * Two-pass speech to text on this phone with the app's own models: one `AudioRecord` stream for as
- * long as the mic is on, so there is no recogniser restart (and no start chime) between messages.
+ * long as the mic is on, so there is no recognizer restart (and no start chime) between messages.
  *
  * Threads: the mic reads on "voice-mic"; the first pass, the detector and [TwoPassCore] run on
  * "voice-asr"; Parakeet runs on "voice-decode", so a long decode never holds up listening. Control
  * calls (start, stop, mute) hop onto "voice-asr", which serialises everything that touches the core.
  *
  * [onUnavailable] is called when the engines cannot be opened (no models, or the native library cannot
- * load on this phone); the caller then switches to the phone's own recogniser.
+ * load on this phone); the caller then switches to the phone's own recognizer.
  */
 class TwoPassSpeechInput(
     private val bus: SpeechBus,

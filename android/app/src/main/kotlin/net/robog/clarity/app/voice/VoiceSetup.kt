@@ -41,7 +41,7 @@ data class VoicePrefsState(
     val choice: TierChoice = TierChoice.Auto,
     /** The measured decode showed the 0.6B model is too slow here: Auto stays on the lighter one. */
     val benchmarkedDown: Boolean = false,
-    /** Use the phone's own recogniser even when the models are there. */
+    /** Use the phone's own recognizer even when the models are there. */
     val useBuiltIn: Boolean = false,
     /** Download over mobile data too (default: Wi-Fi or another unmetered network only). */
     val mobileData: Boolean = false,
@@ -111,13 +111,13 @@ data class VoiceUiState(
     val engineFailed: Boolean = false,
     val benchmarkedDown: Boolean = false,
 ) {
-    /** Which recogniser listens now. */
+    /** Which recognizer listens now. */
     val usingOwn: Boolean get() = status == ModelStatus.Ready && !useBuiltIn && !engineFailed
 }
 
 /**
  * The speech models on this phone: what is installed, the download (WorkManager, unmetered network by
- * default, resumable), the tier, and the switch to the built-in recogniser. Only model files are ever
+ * default, resumable), the tier, and the switch to the built-in recognizer. Only model files are ever
  * downloaded; nothing is uploaded.
  */
 class VoiceModels(

@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 /**
  * The [SpeechInput] screens get: the app's own two-pass models when they are downloaded and run on
- * this phone, otherwise the phone's built-in recogniser. Both share one [SpeechBus], so screens see one
+ * this phone, otherwise the phone's built-in recognizer. Both share one [SpeechBus], so screens see one
  * event flow and one mic state whichever is listening. The choice is made at each start.
  */
 class SwitchingSpeechInput(
@@ -29,7 +29,7 @@ class SwitchingSpeechInput(
         target.start(keepOn)
     }
 
-    /** The own engine could not open: carry on with the built-in recogniser. */
+    /** The own engine could not open: carry on with the built-in recognizer. */
     fun fallBack(keepOn: Boolean) {
         active = builtIn
         builtIn.start(keepOn)

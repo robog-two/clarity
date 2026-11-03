@@ -886,7 +886,7 @@ The agent can log in and pay for things without ever seeing a password or card n
   - **Two passes, the app's own models** (sherpa-onnx 1.13.8, its official AAR from the GitHub
     release, SHA-256 pinned in `android/gradle/verification-metadata.xml`; arm64 only). While the mic
     is on, one `AudioRecord` stream (16 kHz mono, `VOICE_RECOGNITION`) stays open, so there is no
-    recogniser restart and no start chime between messages. A streaming FastConformer transducer
+    recognizer restart and no start chime between messages. A streaming FastConformer transducer
     (first pass) gives the live words; Silero VAD closes a phrase at each ~0.5 s pause; Parakeet TDT
     (second pass, 0.6B v2 or 110M) decodes each closed phrase on its own thread while the person
     keeps talking, and its text replaces that phrase's live words. The live bubble shows settled words
@@ -909,7 +909,7 @@ The agent can log in and pay for things without ever seeing a password or card n
   - **Fallback**: Android's `SpeechRecognizer` listens while the models are missing or downloading,
     when the person picks it in Settings, or when the native engine cannot load. Busy and client
     errors there are retried a few times (back-off) instead of turning the mic off; only a missing
-    permission or recogniser turns it off. Its start chime cannot be turned off through any supported
+    permission or recognizer turns it off. Its start chime cannot be turned off through any supported
     API, so the fallback keeps restarts to one per segment.
 - A **session** is a structured episode on the lead thread: `MORNING_CALL`, `VALUES_INTERVIEW`,
   `ASK`, `AMEND`. Starting one appends a system message with the session's playbook (stages,

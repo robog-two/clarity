@@ -247,7 +247,7 @@ interface AppGraph : ViewModelGraph {
 
     /**
      * Two-pass recognition with the app's own models (sherpa-onnx) once they are downloaded; the phone's
-     * built-in recogniser until then, when switched on in Settings, or if the models cannot run here.
+     * built-in recognizer until then, when switched on in Settings, or if the models cannot run here.
      */
     @Provides @SingleIn(AppScope::class)
     fun speechInput(context: Context, voice: VoiceModels): SpeechInput {

@@ -96,7 +96,7 @@ class MicControllerTest {
         val (muted, c1) = run(MicState(), MicInput.Start(true), MicInput.Mute)
         assertEquals(MicMode.Muted, muted.mode)
         assertEquals(MicCommand.StopRecognizer, c1.last())
-        // Late recogniser events while muted do nothing (no restart).
+        // Late recognizer events while muted do nothing (no restart).
         val (still, c2) = run(muted, MicInput.Recognizer(SpeechEvent.Final("late")), MicInput.Recognizer(SpeechEvent.Error(SpeechError.NoMatch)))
         assertEquals(muted, still)
         assertEquals(listOf(MicCommand.None, MicCommand.None), c2)

@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Speech to text on the phone: only the recognised text leaves the device. -->
+    <!-- Speech to text on the phone: only the recognized text leaves the device. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- The "messages" connector (read only); the phone connector itself is a later workstream. -->
     <uses-permission android:name="android.permission.READ_SMS" />

@@ -83,7 +83,7 @@ class TwoPassSpeechInputTest {
         input.release()
     }
 
-    @Test fun enginesThatCannotLoadHandOverToTheBuiltInRecogniser() = runBlocking {
+    @Test fun enginesThatCannotLoadHandOverToTheBuiltInRecognizer() = runBlocking {
         val bus = SpeechBus()
         var handedOver: Boolean? = null
         val input = TwoPassSpeechInput(
@@ -93,7 +93,7 @@ class TwoPassSpeechInputTest {
         input.start(keepOn = true)
         withTimeout(5_000) { while (handedOver == null) kotlinx.coroutines.delay(10) }
         assertEquals(true, handedOver)
-        assertEquals(MicState(), bus.mic.value, "the built-in recogniser starts from a clean state")
+        assertEquals(MicState(), bus.mic.value, "the built-in recognizer starts from a clean state")
         input.release()
     }
 }
