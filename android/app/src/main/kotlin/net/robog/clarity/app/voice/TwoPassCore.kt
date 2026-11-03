@@ -95,6 +95,12 @@ class TwoPassCore(
     private var hearing = false
     private var lastShown = LiveWords("", "")
 
+    /** For the voice log: how much audio the detector took for speech, and how many phrases it closed. */
+    var speechSamples = 0L
+        private set
+    var phrasesClosed = 0
+        private set
+
     /**
      * The first-pass words the detector never heard as speech that ended the last message. A message of
      * only the same words again, with no speech heard in between, is an engine repeating itself, not the
@@ -110,6 +116,7 @@ class TwoPassCore(
         val words = first.accept(samples)
         vad.accept(samples)
         val speaking = vad.speaking
+        if (speaking) speechSamples += samples.size
         if (speaking != hearing) {
             hearing = speaking
             emit(SpeechEvent.Hearing(speaking))
@@ -173,6 +180,7 @@ class TwoPassCore(
         val message = open
         val live = message.transcript.tail
         val id = message.transcript.close()
+        phrasesClosed++
         if (message.keepAudio) {
             val kept = message.audio.values.sumOf { it.size } + samples.size
             if (kept <= MAX_REDECODE_SECONDS * SAMPLE_RATE) message.audio[id] = samples

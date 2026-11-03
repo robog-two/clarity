@@ -21,6 +21,7 @@ class TwoPassSpeechInputTest {
         override fun open(): AudioStream {
             opened.incrementAndGet()
             return object : AudioStream {
+                override val info = "scripted mic"
                 override fun read(): FloatArray {
                     // After the script: silence, a little faster than real time.
                     Thread.sleep(chunkMs) // paced like a real recorder, only faster
@@ -103,6 +104,7 @@ class TwoPassSpeechInputTest {
         assertEquals("W1 W2", synchronized(finals) { finals.first() }, "the first words, said before the models were ready, are in the first message")
         assertTrue(log.entries.value.any { it.text.startsWith("Live words and speech detection loaded in") }, log.entries.value.toString())
         assertTrue(log.entries.value.any { it.text.startsWith("Mic on: first audio") }, log.entries.value.toString())
+        assertTrue(log.entries.value.any { it.text == "Mic: scripted mic" }, log.entries.value.toString())
         collector.cancel()
         input.release()
     }
@@ -134,6 +136,20 @@ class TwoPassSpeechInputTest {
         withTimeout(5_000) { while (handedOver == null) kotlinx.coroutines.delay(10) }
         assertEquals(true, handedOver)
         assertEquals(MicState(), bus.mic.value, "the built-in recognizer starts from a clean state")
+        input.release()
+    }
+
+    @Test fun theLogSumsUpEachMicSessionWhatItHeardAgainstWhatTheDetectorMadeOfIt() = runBlocking {
+        val mic = ScriptedMic(speech(1) + silence(3_600))
+        val bus = SpeechBus()
+        val log = VoiceLog()
+        val input = TwoPassSpeechInput(bus, { paths }, Engines(), mic, log = log)
+        Thread.sleep(50)
+        input.start(keepOn = false)
+        withTimeout(10_000) { while (mic.closed.get() == 0) kotlinx.coroutines.delay(10) }
+        withTimeout(5_000) { while (log.entries.value.none { it.text.startsWith("Mic session:") }) kotlinx.coroutines.delay(10) }
+        val line = log.entries.value.first { it.text.startsWith("Mic session:") }.text
+        assertTrue("in 1 phrases" in line && "heard speech for" in line, line)
         input.release()
     }
 }

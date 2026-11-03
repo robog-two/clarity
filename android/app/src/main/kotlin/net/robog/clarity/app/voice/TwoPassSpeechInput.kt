@@ -76,6 +76,10 @@ class TwoPassSpeechInput(
     @Volatile private var firstAudioAt = 0L
     /** The first second of audio after a start, for its level in the log; null once logged. */
     private var opening: MutableList<FloatArray>? = null
+    /** This mic session's loudness, and the core's speech counters when it started (asr thread). */
+    private var levels = SessionLevels()
+    private var speechAtStart = 0L
+    private var phrasesAtStart = 0
     /** Commands the state machine asked for while the core was mid-call; run once it returns. */
     private val pending = ArrayDeque<MicCommand>()
 
@@ -131,6 +135,9 @@ class TwoPassSpeechInput(
         startedAt = System.nanoTime()
         firstAudioAt = 0L
         opening = mutableListOf()
+        levels = SessionLevels()
+        speechAtStart = core?.speechSamples ?: 0L
+        phrasesAtStart = core?.phrasesClosed ?: 0
         reader = MicReader(
             audio,
             onChunk = { chunk ->
@@ -138,12 +145,14 @@ class TwoPassSpeechInput(
                 if (chunks.trySend(chunk).isFailure) dropped.incrementAndGet()
             },
             onError = { kind -> post { failed(kind) } },
+            onOpened = { info -> log.add("Mic: $info") },
         ).also { it.start() }
         val core = core ?: open() ?: return
         if (loop?.isActive != true) {
             loop = scope.launch {
                 for (chunk in chunks) {
                     noteOpening(chunk)
+                    levels.add(chunk)
                     core.audio(chunk)
                     runPending()
                 }
@@ -164,6 +173,16 @@ class TwoPassSpeechInput(
         heard.forEach { it.copyInto(all, at); at += it.size }
         val lost = dropped.getAndSet(0)
         log.add("Mic on: first audio $firstMs ms after the start, first second at ${levelDb(all)} dB" + if (lost > 0) ", $lost chunks dropped" else "")
+    }
+
+    /** Logs the whole session's loudness against what the detector made of it (facts only). */
+    private fun noteSession(core: TwoPassCore) {
+        val speech = (core.speechSamples - speechAtStart).toDouble() / SAMPLE_RATE
+        val phrases = core.phrasesClosed - phrasesAtStart
+        log.add(
+            "Mic session: %.0f s, level average %d dB, loudest %d dB; the detector heard speech for %.1f s in %d phrases"
+                .format(java.util.Locale.ROOT, levels.seconds, levels.averageDb, levels.peakDb, speech, phrases),
+        )
     }
 
     /** The engines did not open: the recorder goes, and the audio it buffered with it (nobody will decode it). */
@@ -251,10 +270,12 @@ class TwoPassSpeechInput(
         val core = core ?: return
         while (true) {
             val chunk = chunks.tryReceive().getOrNull() ?: break
+            levels.add(chunk)
             core.audio(chunk)
         }
         core.flush()
         runPending()
+        noteSession(core)
         scheduleRelease()
     }
 
@@ -262,6 +283,7 @@ class TwoPassSpeechInput(
     private suspend fun failed(kind: SpeechError) {
         reader?.stop()
         reader = null
+        log.add("Mic error: $kind")
         bus.emit(SpeechEvent.Error(kind))
         pending += bus.step(MicInput.Recognizer(SpeechEvent.Error(kind)))
         runPending()

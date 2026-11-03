@@ -885,7 +885,8 @@ The agent can log in and pay for things without ever seeing a password or card n
   uploaded. Code: `android/.../voice/`.
   - **Two passes, the app's own models** (sherpa-onnx 1.13.8, its official AAR from the GitHub
     release, SHA-256 pinned in `android/gradle/verification-metadata.xml`; arm64 only). While the mic
-    is on, one `AudioRecord` stream (16 kHz mono, `VOICE_RECOGNITION`) stays open, so there is no
+    is on, one `AudioRecord` stream (16 kHz mono, `VOICE_COMMUNICATION`, so the system applies gain,
+    noise suppression and echo cancellation) stays open, so there is no
     recognizer restart and no start chime between messages. A streaming FastConformer transducer
     (first pass) gives the live words; Silero VAD closes a phrase at each ~0.5 s pause; Parakeet TDT
     (second pass, 0.6B v2 or 110M) decodes each closed phrase on its own thread while the person

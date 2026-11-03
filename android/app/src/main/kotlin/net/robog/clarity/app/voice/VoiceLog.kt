@@ -15,7 +15,7 @@ data class VoiceLogEntry(val atMs: Long, val text: String)
  * Memory only: the last [capacity] lines, gone when the app closes. It holds words that were said, so
  * it is never written to disk, logcat or the network. Thread-safe.
  */
-class VoiceLog(private val capacity: Int = 20, private val clock: () -> Long = System::currentTimeMillis) {
+class VoiceLog(private val capacity: Int = 40, private val clock: () -> Long = System::currentTimeMillis) {
     private val _entries = MutableStateFlow<List<VoiceLogEntry>>(emptyList())
     val entries: StateFlow<List<VoiceLogEntry>> = _entries.asStateFlow()
 
