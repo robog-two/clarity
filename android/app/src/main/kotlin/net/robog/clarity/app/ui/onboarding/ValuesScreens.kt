@@ -161,7 +161,7 @@ private fun InterviewBody(
     onMicReady: () -> Unit,
 ) {
     state.question?.let { Text(it, style = MaterialTheme.typography.headlineSmall) }
-    if (state.live != null) LiveBubble(state.live, Modifier.padding(start = 32.dp))
+    if (state.live != null) LiveBubble(state.live, Modifier.padding(start = 32.dp), confirmed = state.liveConfirmed)
     if (state.live == null && state.said != null) SaidBubble(state.said, Modifier.padding(start = 32.dp))
     state.captured?.let { CapturedLine(it) }
     MicPermissionGate {

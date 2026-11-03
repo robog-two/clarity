@@ -115,8 +115,10 @@ val MCP_HOST_SCHEMA_JSON = """
             "minItems": 0,
             "x-item-title": "label",
             "x-item-subtitle": "package",
+            "x-preset-key": "preset",
             "x-presets": [
                 {
+                    "id": "github",
                     "title": "GitHub",
                     "description": "GitHub's own MCP server (release v2.0.3, Linux x86_64). Create a fine-grained token at github.com/settings/personal-access-tokens with read-only access to Contents, Issues, Pull requests and Metadata for the repositories you choose; give write access only if you want Clarity to change things (each change still waits for your OK). Notifications need a classic token with the notifications scope.",
                     "values": {
@@ -139,11 +141,22 @@ val MCP_HOST_SCHEMA_JSON = """
                             "api.github.com",
                             "raw.githubusercontent.com"
                         ]
-                    }
+                    },
+                    "inputs": [
+                        {
+                            "id": "token",
+                            "title": "Personal access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {}
                 },
                 {
+                    "id": "canvas",
                     "title": "Canvas",
-                    "description": "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and announcements and never submits, posts or changes anything (CANVAS_ROLE=student and ALLOWED_WRITE_TOOLS=none remove every tool that writes). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your whole account's access. Set CANVAS_API_URL to your school's address ending in /api/v1 and add that host to the hosts it may reach. Set TIMEZONE to your own zone (for example America/New_York) so due dates are right.",
+                    "description": "Canvas LMS for a student (canvas-mcp 1.16.0), read only: it tracks your courses, assignments, due dates, grades and announcements and never submits, posts or changes anything (it runs as a student with every tool that writes removed). In Canvas, open Account → Settings → New Access Token (some schools issue tokens on request); Canvas tokens carry your whole account's access.",
                     "values": {
                         "label": "Canvas",
                         "description": "Your courses, assignments and due dates in Canvas",
@@ -152,20 +165,87 @@ val MCP_HOST_SCHEMA_JSON = """
                         "version": "1.16.0",
                         "command": "canvas-mcp-server",
                         "env": [
-                            "CANVAS_API_URL=https://canvas.example.edu/api/v1",
                             "CANVAS_ROLE=student",
-                            "ALLOWED_WRITE_TOOLS=none",
-                            "TIMEZONE=UTC"
+                            "ALLOWED_WRITE_TOOLS=none"
                         ],
-                        "secretEnv": "CANVAS_API_TOKEN",
+                        "secretEnv": "CANVAS_API_TOKEN"
+                    },
+                    "inputs": [
+                        {
+                            "id": "canvas",
+                            "title": "Your school's Canvas address",
+                            "type": "url",
+                            "description": "The address you open Canvas at.",
+                            "required": true,
+                            "examples": [
+                                "canvas.yourschool.edu"
+                            ],
+                            "path": "/api/v1"
+                        },
+                        {
+                            "id": "timezone",
+                            "title": "Time zone",
+                            "type": "choice",
+                            "description": "So due dates and times are shown right.",
+                            "required": true,
+                            "default": "America/New_York",
+                            "choices": [
+                                {
+                                    "value": "America/New_York",
+                                    "title": "Eastern"
+                                },
+                                {
+                                    "value": "America/Chicago",
+                                    "title": "Central"
+                                },
+                                {
+                                    "value": "America/Denver",
+                                    "title": "Mountain"
+                                },
+                                {
+                                    "value": "America/Phoenix",
+                                    "title": "Arizona"
+                                },
+                                {
+                                    "value": "America/Los_Angeles",
+                                    "title": "Pacific"
+                                },
+                                {
+                                    "value": "America/Anchorage",
+                                    "title": "Alaska"
+                                },
+                                {
+                                    "value": "Pacific/Honolulu",
+                                    "title": "Hawaii"
+                                }
+                            ],
+                            "other": true,
+                            "pattern": "[A-Za-z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+){0,2}",
+                            "otherTitle": "Time zone name",
+                            "otherDescription": "A name like Europe/Berlin or America/Toronto."
+                        },
+                        {
+                            "id": "token",
+                            "title": "Access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {
+                        "env": [
+                            "CANVAS_API_URL={canvas}",
+                            "TIMEZONE={timezone}"
+                        ],
                         "allowHosts": [
-                            "canvas.example.edu"
+                            "{canvas.host}"
                         ]
                     }
                 },
                 {
+                    "id": "asana",
                     "title": "Asana",
-                    "description": "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default (you can change that for each tool). To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to the settings.",
+                    "description": "Clarity's own Asana server, which comes with Clarity. In Asana, click your profile photo → My settings → Apps → Manage developer apps (or open app.asana.com/0/my-apps), choose \"Create new token\", and paste it here. Asana tokens carry your whole account's access. Reading runs on its own; new tasks, edits and comments wait for your OK by default (you can change that for each tool). To use another workspace than your first, add ASANA_WORKSPACE=<workspace gid> to Settings under Advanced settings.",
                     "values": {
                         "label": "Asana",
                         "description": "Your Asana tasks, projects and comments",
@@ -175,7 +255,17 @@ val MCP_HOST_SCHEMA_JSON = """
                         "allowHosts": [
                             "app.asana.com"
                         ]
-                    }
+                    },
+                    "inputs": [
+                        {
+                            "id": "token",
+                            "title": "Personal access token",
+                            "type": "secret",
+                            "required": true,
+                            "property": "secret"
+                        }
+                    ],
+                    "derive": {}
                 }
             ],
             "items": {
@@ -422,6 +512,12 @@ val MCP_HOST_SCHEMA_JSON = """
                         "examples": [
                             "api.example.com"
                         ]
+                    },
+                    "preset": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "Preset",
+                        "description": "The preset it was set up from, so the app can reopen its short form."
                     }
                 }
             }

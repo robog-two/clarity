@@ -61,6 +61,7 @@ Top level: `{ "servers": <collection> }`, `minItems: 0`, `x-item-title: "label"`
 | `secret2` | string, `x-secret` | |
 | `url` | string, `format: uri` | `remote` only, https only |
 | `allowHosts` | string array | Hosts the server may reach (`api.github.com`). For `remote`, the URL's host is added |
+| `preset` | string, readOnly | The `id` of the preset it was set up from (`x-preset-key`); stored only, ignored by the host |
 
 The schema marks fields that only apply to some kinds with `x-visible-when` (see
 `connector-accounts.md`), so the app shows a short form per kind: `package`, `version`, `command`, `args`, `env`,
@@ -86,8 +87,11 @@ releases API; never guess names, versions or hashes. Candidates: GitHub's offici
 pull requests, notifications); a maintained Canvas LMS server; a maintained self-run Asana server
 using a personal access token. Leave a candidate out and say so in your report when you cannot
 verify it. Shipped: GitHub (release binary), Canvas (PyPI; `CANVAS_ROLE=student`,
-`ALLOWED_WRITE_TOOLS=none` so it tracks and never writes, `TIMEZONE=UTC` for the person to set) and Asana
-(`builtin`). Each preset's `description` tells the person where to create the token and which scopes
+`ALLOWED_WRITE_TOOLS=none` so it tracks and never writes) and Asana
+(`builtin`). Each has a short form (see `connector-accounts.md`): all three ask for the token; Canvas
+also for the school's address, which derives `CANVAS_API_URL=https://<host>/api/v1` and `allowHosts`
+`<host>` so the two cannot disagree, and the time zone (US zones, Eastern by default, or another IANA
+name) for `TIMEZONE`. Each preset's `description` tells the person where to create the token and which scopes
 to give it (read-only scopes when the service has them).
 
 ## Contract 2: host ↔ backend

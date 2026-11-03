@@ -22,6 +22,7 @@ import net.robog.clarity.app.connector.ItemIds
 import net.robog.clarity.app.connector.ItemPreset
 import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
+import net.robog.clarity.app.connector.PresetEdit
 import net.robog.clarity.app.connector.PhonePermissions
 import net.robog.clarity.app.connector.accountTestLine
 import net.robog.clarity.app.data.ApiError
@@ -30,6 +31,10 @@ import net.robog.clarity.app.data.ConnectorsRepository
 import net.robog.clarity.app.data.SaveConnectorOutcome
 import net.robog.clarity.app.ui.mcp.MCP_HOST
 import net.robog.clarity.app.ui.mcp.isMcpHost
+import net.robog.clarity.shared.connector.PresetInputError
+
+/** The value a choice input's menu sends for "Other". */
+const val OTHER_CHOICE = "\u0000other"
 
 enum class SetupProblem { NoSealingKey, NotAvailable, Unreachable, Other }
 
@@ -46,6 +51,8 @@ data class ItemEdit(
     val hint: String? = null,
     /** Errors are only shown once the person tried to save the item. */
     val showErrors: Boolean = false,
+    /** Opened on its preset's short form; null: the full form only. */
+    val simple: PresetEdit? = null,
 )
 
 /**
@@ -98,6 +105,17 @@ data class ConnectorSetupState(
     val errors: Map<String, FieldError> get() = if (showErrors) form.errors(values) else emptyMap()
     val editorErrors: Map<String, FieldError>
         get() = editor?.takeIf { it.showErrors }?.let { e -> itemForm(e.collection)?.errors(e.values) } ?: emptyMap()
+
+    /**
+     * Problems with the short form's answers. An address that is not https says so at once; the
+     * rest once the person tried to save, so a half-typed address is not called wrong.
+     */
+    val presetErrors: Map<String, PresetInputError>
+        get() {
+            val e = editor ?: return emptyMap()
+            val all = e.simple?.errors(e.values).orEmpty()
+            return if (e.showErrors) all else all.filterValues { it == PresetInputError.NotHttps || it == PresetInputError.WrongPort }
+        }
     val canSave: Boolean
         get() = !saving && !notRunning && if (phone != null) allowed else form.errors(values).isEmpty()
     val saveLabel: String get() = if (failedReason != null) "save and retest" else "save"
@@ -224,8 +242,7 @@ class ConnectorSetupViewModel(
             editItem(collection, edit.itemId)
             return
         }
-        val presets = _state.value.collectionField(collection)?.collection?.presets.orEmpty()
-        val preset = edit.preset?.let { title -> presets.firstOrNull { it.title.equals(title, ignoreCase = true) } }
+        val preset = edit.preset?.let { form(collection)?.preset(it) }
         when {
             preset != null -> beginItem(collection, preset)
             // A suggestion without a preset (or with one this connector does not offer): an empty form with its name.
@@ -264,21 +281,55 @@ class ConnectorSetupViewModel(
         val form = s.itemForm(collection) ?: return@update s
         val taken = s.values.items(collection).map { it.id }.toSet()
         val initial = form.initialValues()
+        val values = if (preset != null) initial.overlay(preset.values) else initial
+        // A preset with a short form opens on its questions, their defaults already written in.
+        val (simple, start) = preset?.takeIf { it.simple != null }?.let { PresetEdit.start(it, values) } ?: (null to values)
         s.copy(
             choosing = null,
             editor = ItemEdit(
                 collection = collection,
                 id = ItemIds.generate(taken, random),
                 isNew = true,
-                values = if (preset != null) initial.overlay(preset.values) else initial,
+                values = start,
                 hint = preset?.description,
+                simple = simple,
             ),
         )
     }
 
     fun editItem(collection: String, id: String) = _state.update { s ->
         val item = s.values.items(collection).firstOrNull { it.id == id } ?: return@update s
-        s.copy(editor = ItemEdit(collection, id, isNew = false, values = item.values))
+        // Set up from a preset with a short form: reopen it. Anything else (or saved before presets were
+        // recorded) opens the full form, as it always did.
+        val preset = s.collectionField(collection)?.collection?.presetOf(item.values)
+        s.copy(
+            editor = ItemEdit(
+                collection, id, isNew = false, values = item.values,
+                hint = preset?.description, simple = preset?.let { PresetEdit.reopen(it, item.values) },
+            ),
+        )
+    }
+
+    // --- the short form of a preset ---
+
+    /** A short-form answer typed or picked. [OTHER_CHOICE] picks "Other" for a choice input. */
+    fun onPresetAnswer(inputId: String, value: String) = _state.update { s ->
+        val e = s.editor ?: return@update s
+        val simple = e.simple ?: return@update s
+        val input = simple.form.inputs.firstOrNull { it.id == inputId } ?: return@update s
+        val (next, values) = when {
+            value == OTHER_CHOICE -> simple.chooseOther(input, true, e.values)
+            input.id in simple.others && input.choices.any { it.value == value } ->
+                simple.copy(others = simple.others - input.id).answer(input, value, e.values)
+            else -> simple.answer(input, value, e.values)
+        }
+        s.copy(editor = e.copy(values = values, simple = next))
+    }
+
+    /** "Advanced settings": shows or hides every field of the item under the questions. */
+    fun toggleAdvanced() = _state.update { s ->
+        val e = s.editor ?: return@update s
+        s.copy(editor = e.copy(simple = e.simple?.let { it.copy(advanced = !it.advanced) }))
     }
 
     fun onItemValueChanged(key: String, value: String) =
@@ -295,8 +346,11 @@ class ConnectorSetupViewModel(
         val s = _state.value
         val e = s.editor ?: return
         val form = s.itemForm(e.collection) ?: return
-        if (form.errors(e.values).isNotEmpty()) {
-            _state.update { it.copy(editor = e.copy(showErrors = true)) }
+        val fieldErrors = form.errors(e.values)
+        if (fieldErrors.isNotEmpty() || e.simple?.errors(e.values).orEmpty().isNotEmpty()) {
+            // A field outside the questions needs fixing: open the full form so it can be seen.
+            val hiddenProblem = e.simple != null && (fieldErrors.keys - e.simple.form.targets).isNotEmpty()
+            _state.update { it.copy(editor = e.copy(showErrors = true, simple = e.simple?.let { p -> if (hiddenProblem) p.copy(advanced = true) else p })) }
             return
         }
         val values = s.values.withItem(e.collection, ItemValues(e.id, e.values))

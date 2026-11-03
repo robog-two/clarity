@@ -70,6 +70,8 @@ data class AmendUiState(
     val session: Session? = null,
     val talk: List<FeedItem> = emptyList(),
     val live: String? = null,
+    /** How many leading characters of [live] the second pass has settled. */
+    val liveConfirmed: Int = 0,
     val mic: MicChipState = MicChipState.Off,
     val proposal: Amendment? = null,
     val waitingAgent: Boolean = false,
@@ -116,7 +118,7 @@ class AmendViewModel(
 
     init {
         voice.attach(viewModelScope)
-        viewModelScope.launch { voice.live.collect { l -> _state.update { it.copy(live = l) } } }
+        viewModelScope.launch { voice.words.collect { w -> _state.update { it.copy(live = w?.text, liveConfirmed = w?.confirmed ?: 0) } } }
         viewModelScope.launch { voice.mic.collect { m -> _state.update { it.copy(mic = micChipState(m)) } } }
         viewModelScope.launch {
             combine(feed.items, feed.held, feed.agentBusy) { items, held, busy -> Triple(items, held, busy) }

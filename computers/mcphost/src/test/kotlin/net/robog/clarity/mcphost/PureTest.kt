@@ -2,7 +2,9 @@ package net.robog.clarity.mcphost
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
@@ -12,12 +14,30 @@ import kotlin.io.path.exists
 import kotlin.io.path.readText
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import net.robog.clarity.connector.sdk.ConfigItem
+import net.robog.clarity.shared.connector.PresetForm
+import net.robog.clarity.shared.connector.PresetInputType
+import net.robog.clarity.shared.connector.PresetInputs
+import net.robog.clarity.shared.connector.PresetTargets
+
+/** A preset's item as the app saves it from the short form, with [answers] (and the preset recorded). */
+private fun filled(preset: JsonObject, answers: Map<String, String>): JsonObject {
+    val values = preset["values"]!!.jsonObject
+    val form = PresetForm.parse(preset)!!
+    val given = form.inputs.filter { it.property == null }.associate { it.id to (answers[it.id] ?: it.default.orEmpty()) }
+    val current = PresetTargets(lists = form.lists.keys.associateWith { k -> values[k]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty() })
+    val out = PresetInputs.apply(form, emptyMap(), given, current)
+    return JsonObject(
+        values + out.lists.mapValues { (_, v) -> JsonArray(v.map(::JsonPrimitive)) } + out.texts.mapValues { JsonPrimitive(it.value) } +
+            mapOf("id" to JsonPrimitive("preset1"), PRESET_KEY to preset["id"]!!),
+    )
+}
 
 class PureTest : FunSpec({
     val t0 = Instant.parse("2026-10-30T08:00:00Z")
@@ -133,39 +153,60 @@ class PureTest : FunSpec({
         val servers = hostConfigSchema["properties"]!!.jsonObject[SERVERS]!!.jsonObject
         servers["x-item-title"]!!.jsonPrimitive.content shouldBe "label"
         servers["x-item-subtitle"]!!.jsonPrimitive.content shouldBe "package"
+        servers["x-preset-key"]!!.jsonPrimitive.content shouldBe PRESET_KEY
         servers["minItems"]!!.jsonPrimitive.content shouldBe "0"
         val props = servers["items"]!!.jsonObject["properties"]!!.jsonObject
         props.keys.toList() shouldContainExactly listOf(
             "id", "label", "description", "enabled", "kind", "server", "package", "version", "asset", "sha256", "command", "args", "env",
-            "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts",
+            "secretEnv", "secret", "secretEnv2", "secret2", "url", "allowHosts", "preset",
         )
+        props["preset"]!!.jsonObject["readOnly"]!!.jsonPrimitive.content shouldBe "true"
         props["kind"]!!.jsonObject["enum"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly listOf("npm", "pypi", "github-release", "remote", "builtin")
         props["kind"]!!.jsonObject["x-enum-titles"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly
             listOf("npm package", "Python package", "GitHub release binary", "Remote URL", "Built into Clarity")
         props["secret"]!!.jsonObject["x-secret"]!!.jsonPrimitive.content shouldBe "true"
         props["url"]!!.jsonObject["format"]!!.jsonPrimitive.content shouldBe "uri"
-        val presets = servers["x-presets"]!!.jsonArray
-        presets.map { it.jsonObject["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas", "Asana")
+        val presets = servers["x-presets"]!!.jsonArray.map { it.jsonObject }
+        presets.map { it["title"]!!.jsonPrimitive.content } shouldContainExactly listOf("GitHub", "Canvas", "Asana")
+        presets.map { it["id"]!!.jsonPrimitive.content } shouldContainExactly listOf("github", "canvas", "asana")
         for (preset in presets) {
-            val values = preset.jsonObject["values"]!!.jsonObject
-            val result = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(values + ("id" to JsonPrimitive("preset1")))), { if (it == "secret") "token-value" else null })
+            val form = PresetForm.parse(preset)!!
+            // Every short form writes only item properties, and asks for the token.
+            (form.targets - props.keys).shouldBeEmpty()
+            form.inputs.single { it.type == PresetInputType.SECRET }.property shouldBe "secret"
+            val values = filled(preset, mapOf("canvas" to "canvas.ithaca.edu", "timezone" to "America/Chicago"))
+            val result = parseItem(ConfigItem(SERVERS, "preset1", values), { if (it == "secret") "token-value" else null })
             result.spec.leftOrNull().shouldBeNull()
         }
     }
 
-    test("the Canvas preset is a student's, with every write tool removed, and its zone editable") {
+    test("the Canvas preset is a student's, with every write tool removed, and its address sets the URL and the host") {
         val canvas = serverPresets.map { it.jsonObject }.single { it["title"]!!.jsonPrimitive.content == "Canvas" }
-        val env = canvas["values"]!!.jsonObject["env"]!!.jsonArray.map { it.jsonPrimitive.content }
-        env shouldContainExactly listOf("CANVAS_API_URL=https://canvas.example.edu/api/v1", "CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none", "TIMEZONE=UTC")
-        val spec = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(canvas["values"]!!.jsonObject + ("id" to JsonPrimitive("preset1")))), { if (it == "secret") "t" else null })
-            .spec.getOrNull()!!
+        // Nothing to replace by hand: the address and the zone come from the short form.
+        canvas["values"]!!.jsonObject["env"]!!.jsonArray.map { it.jsonPrimitive.content } shouldContainExactly listOf("CANVAS_ROLE=student", "ALLOWED_WRITE_TOOLS=none")
+        canvas["values"]!!.jsonObject["allowHosts"].shouldBeNull()
+        val form = PresetForm.parse(canvas)!!
+        form.inputs.map { it.id } shouldContainExactly listOf("canvas", "timezone", "token")
+        form.inputs[1].default shouldBe "America/New_York"
+        form.inputs[1].choices.map { it.value } shouldContainExactly listOf(
+            "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "America/Anchorage", "Pacific/Honolulu",
+        )
+        for (zone in listOf("UTC", "Europe/Berlin", "America/Argentina/Buenos_Aires", "Etc/GMT+5")) PresetInputs.error(form.inputs[1], zone).shouldBeNull()
+        PresetInputs.error(form.inputs[1], "Eastern time").shouldNotBeNull()
+        val values = filled(canvas, mapOf("canvas" to "https://canvas.ithaca.edu/api/v1", "timezone" to "America/New_York"))
+        val spec = parseItem(ConfigItem(SERVERS, "preset1", values), { if (it == "secret") "t" else null }).spec.getOrNull()!!
         // none of them is a reserved name the host would refuse or replace
         spec.env shouldBe mapOf(
-            "CANVAS_API_URL" to "https://canvas.example.edu/api/v1", "CANVAS_ROLE" to "student", "ALLOWED_WRITE_TOOLS" to "none", "TIMEZONE" to "UTC",
+            "CANVAS_ROLE" to "student", "ALLOWED_WRITE_TOOLS" to "none",
+            "CANVAS_API_URL" to "https://canvas.ithaca.edu/api/v1", "TIMEZONE" to "America/New_York",
         )
+        spec.allowHosts shouldContainExactly listOf("canvas.ithaca.edu")
+        // The preset is stored with the item and changes nothing about how it runs.
+        values[PRESET_KEY]!!.jsonPrimitive.content shouldBe "canvas"
+        val without = parseItem(ConfigItem(SERVERS, "preset1", JsonObject(values - PRESET_KEY)), { if (it == "secret") "t" else null }).spec.getOrNull()!!
+        without.runKey shouldBe spec.runKey
         val home = ServerHome("preset1", java.nio.file.Path.of("/data/servers/preset1"), 2001)
         childEnv(home, null, spec.env + spec.secrets).filterKeys { it in spec.env } shouldBe spec.env
-        canvas["description"]!!.jsonPrimitive.content shouldContain "TIMEZONE"
     }
 
     test("SSE parsing finds the response with the id, skipping other events") {

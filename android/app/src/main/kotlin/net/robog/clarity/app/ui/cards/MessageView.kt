@@ -49,6 +49,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -196,17 +199,28 @@ fun ReactionBadge(reaction: Reaction, modifier: Modifier = Modifier) {
     }
 }
 
-/** Words heard so far, not yet sent: an outlined bubble on the right. */
+/**
+ * Words heard so far, not yet sent: an outlined bubble on the right. The first [confirmed] characters
+ * are settled (checked by the second, more accurate pass) and read in full colour; the words after
+ * them may still change and stay a quieter tone.
+ */
 @Composable
-fun LiveBubble(text: String, modifier: Modifier = Modifier) {
+fun LiveBubble(text: String, modifier: Modifier = Modifier, confirmed: Int = 0) {
+    val scheme = MaterialTheme.colorScheme
+    val settled = confirmed.coerceIn(0, text.length)
+    val shown = remember(text, settled, scheme) {
+        buildAnnotatedString {
+            withStyle(SpanStyle(color = scheme.onSurface)) { append(text.substring(0, settled)) }
+            withStyle(SpanStyle(color = scheme.onSurfaceVariant)) { append(text.substring(settled)) }
+        }
+    }
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Text(
-            text,
+            shown,
             Modifier
                 .widthIn(max = MaxBubble)
-                .border(1.dp, MaterialTheme.colorScheme.outline, YouShape)
+                .border(1.dp, scheme.outline, YouShape)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.clarityText.chat,
         )
     }

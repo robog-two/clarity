@@ -880,10 +880,37 @@ The agent can log in and pay for things without ever seeing a password or card n
 
 ## Sessions and voice
 
-- **Speech-to-text runs on the phone** (Android on-device `SpeechRecognizer`, partial results
-  give the word-by-word "live" bubble). Only final text reaches the server, as `UserInput` with
-  `source = VOICE`. The agent always answers in text. (A server-side Whisper container is a
-  possible later option for devices without on-device recognition.)
+- **Speech-to-text runs on the phone**, and only final text reaches the server, as `UserInput`
+  with `source = VOICE`. The agent always answers in text. Audio is never written to disk or
+  uploaded. Code: `android/.../voice/`.
+  - **Two passes, the app's own models** (sherpa-onnx 1.13.8, its official AAR from the GitHub
+    release, SHA-256 pinned in `android/gradle/verification-metadata.xml`; arm64 only). While the mic
+    is on, one `AudioRecord` stream (16 kHz mono, `VOICE_RECOGNITION`) stays open, so there is no
+    recognizer restart and no start chime between messages. A streaming FastConformer transducer
+    (first pass) gives the live words; Silero VAD closes a phrase at each ~0.5 s pause; Parakeet TDT
+    (second pass, 0.6B v2 or 110M) decodes each closed phrase on its own thread while the person
+    keeps talking, and its text replaces that phrase's live words. The live bubble shows settled words
+    in full colour and still-live ones quieter (`SpeechEvent.Partial.confirmed`). A message is 3 s of
+    silence after its last phrase (the same rule as `PauseJoiner`); then only the last phrase is left
+    to decode, and when the measured decode speed says a whole-message pass fits ~700 ms
+    (`endPass`), the message is decoded once more as a whole for context across phrases.
+  - Threads: "voice-mic" reads, "voice-asr" runs the first pass, the VAD and `TwoPassCore` (pure,
+    single-threaded, tested with fakes), "voice-decode" runs Parakeet. Models are released one minute
+    after the mic goes off.
+  - **Context priming**: the second pass uses modified beam search with hotwords: capitalised words
+    from task titles already cached on the phone (`hotwordsFrom`). No new permission or endpoint;
+    contacts are not read.
+  - **Models are downloaded, not bundled**: Settings → Voice offers the download with its size
+    (138 MB first pass + VAD, plus 661 MB for Parakeet 0.6B or 136 MB for 110M), run by WorkManager on
+    an unmetered network unless mobile data is allowed, resumable (`Range`), each file checked against
+    its pinned SHA-256 before use, stored in `noBackupFilesDir/voice-models`. The tier is chosen from
+    `ActivityManager` memory, then a measured decode on the phone steps the 0.6B down to 110M when it
+    is too slow (never by device name); a tier change deletes the other model.
+  - **Fallback**: Android's `SpeechRecognizer` listens while the models are missing or downloading,
+    when the person picks it in Settings, or when the native engine cannot load. Busy and client
+    errors there are retried a few times (back-off) instead of turning the mic off; only a missing
+    permission or recognizer turns it off. Its start chime cannot be turned off through any supported
+    API, so the fallback keeps restarts to one per segment.
 - A **session** is a structured episode on the lead thread: `MORNING_CALL`, `VALUES_INTERVIEW`,
   `ASK`, `AMEND`. Starting one appends a system message with the session's playbook (stages,
   goals, what to produce); the stage machine (pure) advances on the person's "that's all / next /

@@ -88,8 +88,16 @@ import net.robog.clarity.app.data.feed.FeedSync
 import net.robog.clarity.app.data.feed.RoomFeedStore
 import net.robog.clarity.app.net.FeedEventSource
 import net.robog.clarity.app.net.KtorFeedEventSource
+import net.robog.clarity.app.voice.AndroidAudioSource
 import net.robog.clarity.app.voice.AndroidSpeechInput
+import net.robog.clarity.app.voice.DataStoreVoicePrefs
+import net.robog.clarity.app.voice.SherpaEngineFactory
+import net.robog.clarity.app.voice.SpeechBus
 import net.robog.clarity.app.voice.SpeechInput
+import net.robog.clarity.app.voice.SwitchingSpeechInput
+import net.robog.clarity.app.voice.TwoPassSpeechInput
+import net.robog.clarity.app.voice.VoiceModels
+import net.robog.clarity.app.voice.VoicePrefs
 import net.robog.clarity.app.connector.PhoneConnector
 import net.robog.clarity.app.data.DataStoreSessionStore
 import net.robog.clarity.app.data.DefaultEnrollmentRepository
@@ -232,7 +240,36 @@ interface AppGraph : ViewModelGraph {
     @Provides fun phonePermissions(context: Context): PhonePermissions = AndroidPhonePermissions(context)
 
     @Provides @SingleIn(AppScope::class)
-    fun speechInput(context: Context): SpeechInput = AndroidSpeechInput(context)
+    fun voicePrefs(store: DataStore<Preferences>): VoicePrefs = DataStoreVoicePrefs(store)
+
+    @Provides @SingleIn(AppScope::class)
+    fun voiceModels(context: Context, prefs: VoicePrefs, feed: FeedStore): VoiceModels = VoiceModels(context, prefs, feed)
+
+    /**
+     * Two-pass recognition with the app's own models (sherpa-onnx) once they are downloaded; the phone's
+     * built-in recognizer until then, when switched on in Settings, or if the models cannot run here.
+     */
+    @Provides @SingleIn(AppScope::class)
+    fun speechInput(context: Context, voice: VoiceModels): SpeechInput {
+        val bus = SpeechBus()
+        val builtIn = AndroidSpeechInput(context, bus)
+        lateinit var switching: SwitchingSpeechInput
+        val own = TwoPassSpeechInput(
+            bus = bus,
+            paths = voice::readyPaths,
+            factory = SherpaEngineFactory(),
+            audio = AndroidAudioSource(context),
+            hotwords = voice::hotwords,
+            speeds = voice.speeds,
+            onUnavailable = { keepOn, problem ->
+                // A load failure (no arm64 library, a model that will not open) sticks until the app restarts.
+                if (problem != null) voice.nativeFailed()
+                switching.fallBack(keepOn)
+            },
+        )
+        switching = SwitchingSpeechInput(bus, own, builtIn, voice::useOwnModels)
+        return switching
+    }
 
     @Provides fun instanceRepository(api: ClarityApi): InstanceRepository = DefaultInstanceRepository(api)
 
@@ -440,6 +477,7 @@ interface AppGraph : ViewModelGraph {
     val callService: CallService
     val callScheduler: CallScheduler
     val phoneConnector: PhoneConnector
+    val voiceModels: VoiceModels
     val dndActions: DndActionHandler
     val sessionStore: SessionStore
     val vaultRepository: VaultRepository

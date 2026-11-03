@@ -2,12 +2,17 @@ package net.robog.clarity.app.ui.onboarding
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ExpandLess
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +34,7 @@ import net.robog.clarity.app.connector.FieldKind
 import net.robog.clarity.app.connector.FormField
 import net.robog.clarity.app.connector.FormValues
 import net.robog.clarity.app.connector.ItemValues
+import net.robog.clarity.app.connector.PresetEdit
 import net.robog.clarity.app.ui.components.ClarityDropdown
 import net.robog.clarity.app.ui.components.ClarityField
 import net.robog.clarity.app.ui.components.Hint
@@ -37,6 +43,10 @@ import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.components.ToggleRow
 import net.robog.clarity.app.ui.mcp.MCP_HOST
+import net.robog.clarity.shared.connector.PresetInput
+import net.robog.clarity.shared.connector.PresetInputError
+import net.robog.clarity.shared.connector.PresetInputType
+import net.robog.clarity.shared.connector.PresetInputs
 
 /** What one collection item is called on screen: a mail account, an MCP server. */
 data class ItemNoun(
@@ -262,3 +272,108 @@ fun FieldError.message(noun: ItemNoun = ItemNoun.Account): String = when (this) 
 }
 
 private fun trim(d: Double): String = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
+
+// --- the short form of a preset ---
+
+/** The preset's questions, in order: an address, a menu (with "Other"), a token. */
+@Composable
+fun PresetQuestions(edit: PresetEdit, values: FormValues, errors: Map<String, PresetInputError>, onAnswer: (String, String) -> Unit) {
+    edit.form.inputs.forEach { input ->
+        PresetQuestion(input, edit, values, errors[input.id], onAnswer)
+    }
+}
+
+@Composable
+private fun PresetQuestion(input: PresetInput, edit: PresetEdit, values: FormValues, error: PresetInputError?, onAnswer: (String, String) -> Unit) {
+    val label = if (input.required) input.title else "${input.title} (optional)"
+    val answer = edit.answerOf(input, values)
+    when (input.type) {
+        PresetInputType.CHOICE -> {
+            val other = input.id in edit.others
+            ClarityDropdown(
+                label = label,
+                selected = if (other) OTHER_CHOICE else answer,
+                options = choiceOptions(input),
+                onSelect = { onAnswer(input.id, it) },
+                supporting = input.description,
+                error = error?.takeIf { !other }?.message(),
+            )
+            if (other) {
+                ClarityField(
+                    label = input.otherTitle ?: input.title,
+                    value = answer,
+                    supporting = input.otherDescription,
+                    onValueChange = { onAnswer(input.id, it) },
+                    placeholder = input.placeholder ?: input.default,
+                    error = error?.message(),
+                    keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Next),
+                )
+            }
+        }
+        else -> {
+            val secret = input.type == PresetInputType.SECRET
+            val stored = input.property?.let { it in values.storedSecrets } == true
+            val supporting = when {
+                stored && answer.isEmpty() -> SAVED_SECRET
+                input.type == PresetInputType.URL -> (PresetInputs.normalizeUrl(answer, input.path) as? PresetInputs.Result.Ok)
+                    ?.let { "Saved as ${it.value.url}" } ?: input.description
+                else -> input.description
+            }
+            ClarityField(
+                label = label,
+                value = answer,
+                onValueChange = { onAnswer(input.id, it) },
+                placeholder = if (stored) SAVED_SECRET else input.placeholder,
+                supporting = supporting,
+                error = error?.message(),
+                visualTransformation = if (secret) PasswordVisualTransformation() else VisualTransformation.None,
+                keyboardOptions = KeyboardOptions(
+                    autoCorrectEnabled = false,
+                    keyboardType = when (input.type) {
+                        PresetInputType.SECRET -> KeyboardType.Password
+                        PresetInputType.URL -> KeyboardType.Uri
+                        else -> KeyboardType.Text
+                    },
+                    imeAction = ImeAction.Next,
+                ),
+            )
+        }
+    }
+}
+
+/** A choice input's menu: each choice with its value, then "Other…" when other answers are taken. */
+fun choiceOptions(input: PresetInput): List<Pair<String, String>> =
+    input.choices.map { it.value to "${it.title} · ${it.value}" } + if (input.other) listOf(OTHER_CHOICE to "Other…") else emptyList()
+
+/** "Advanced settings": every field of the item, folded away under the questions. */
+@Composable
+fun AdvancedToggle(open: Boolean, onToggle: () -> Unit) {
+    TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 12.dp)) {
+        Text("Advanced settings")
+        Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
+    }
+}
+
+/** Hosts named by https addresses in the settings that the server may not reach, each with "Add". */
+@Composable
+fun UnreachableHosts(hosts: List<String>, onAdd: (String) -> Unit) {
+    InfoBox(container = MaterialTheme.colorScheme.errorContainer, content = MaterialTheme.colorScheme.onErrorContainer, border = null) {
+        Text("Not in the hosts it may reach", style = MaterialTheme.typography.titleSmall)
+        Hint(
+            "The settings send it to ${hosts.joinToString()}, but it may not connect there, so those requests will be refused.",
+            color = MaterialTheme.colorScheme.onErrorContainer,
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+            hosts.forEach { h -> TextButton(onClick = { onAdd(h) }) { Text("Add $h") } }
+        }
+    }
+}
+
+fun PresetInputError.message(): String = when (this) {
+    PresetInputError.Required -> "Required."
+    PresetInputError.NotHttps -> "Use the https address (it starts with https://, or just type the name)."
+    PresetInputError.NotAnAddress -> "Enter the address you open it at, like canvas.yourschool.edu."
+    PresetInputError.WrongPort -> "Use the address without a port number."
+    PresetInputError.NoMatch -> "That doesn’t look right. Check for typos."
+    PresetInputError.NotAChoice -> "Pick one of the choices."
+}

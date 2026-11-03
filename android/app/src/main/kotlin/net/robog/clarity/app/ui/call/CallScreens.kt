@@ -267,7 +267,7 @@ private fun RowScope.Segment(label: String, state: SegmentState) {
 @Composable
 private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
     val entries = remember(state.items) { chatEntries(state.items) }
-    ChatTranscript(entries, state.live, CardEnv(held = state.held, tasks = state.tasks), modifier)
+    ChatTranscript(entries, state.live, CardEnv(held = state.held, tasks = state.tasks), modifier, liveConfirmed = state.liveConfirmed)
 }
 
 /**

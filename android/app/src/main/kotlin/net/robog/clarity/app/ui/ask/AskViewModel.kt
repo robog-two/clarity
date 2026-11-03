@@ -129,6 +129,8 @@ data class AskUiState(
     val tasks: Map<TaskId, AgentTask> = emptyMap(),
     val draft: String = "",
     val live: String? = null,
+    /** How many leading characters of [live] the second pass has settled. */
+    val liveConfirmed: Int = 0,
     val mic: MicChipState = MicChipState.Off,
     val micProblem: SpeechError? = null,
     /** The agent is thinking or working. */
@@ -162,7 +164,7 @@ class AskViewModel(
 
     init {
         voice.attach(viewModelScope)
-        viewModelScope.launch { voice.live.collect { l -> _state.update { it.copy(live = l) } } }
+        viewModelScope.launch { voice.words.collect { w -> _state.update { it.copy(live = w?.text, liveConfirmed = w?.confirmed ?: 0) } } }
         viewModelScope.launch { voice.error.collect { e -> _state.update { it.copy(micProblem = e) } } }
         viewModelScope.launch { voice.mic.collect { m -> _state.update { it.copy(mic = micChipState(m)) } } }
         viewModelScope.launch {
