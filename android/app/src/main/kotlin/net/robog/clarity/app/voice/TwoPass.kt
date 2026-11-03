@@ -202,3 +202,55 @@ fun bpeVocabFromTokens(tokens: String): String = buildString {
         append(piece).append('\t').append(score).append('\n')
     }
 }
+
+// --- phrase onsets ---
+
+/** Audio put back in front of each phrase the detector found (see [PreRoll]). */
+const val PRE_ROLL_SECONDS = 0.3
+
+/**
+ * Silero marks a phrase as starting only shortly before its first window loud enough to count, so a
+ * quiet first word ("well", "so", "God") is clipped and the second pass never hears it. This keeps the
+ * recent audio and puts up to [preSeconds] of it back in front of each phrase, never reaching into the
+ * phrase before. Positions count the samples fed since the last [reset], as the detector does. Pure.
+ *
+ * @param keepSeconds how much audio is kept: a phrase is reported up to the detector's longest phrase
+ *   (plus its closing pause) after it started
+ */
+class PreRoll(keepSeconds: Double, private val preSeconds: Double = PRE_ROLL_SECONDS, private val sampleRate: Int = SAMPLE_RATE) {
+    private val ring = FloatArray((keepSeconds * sampleRate).toInt().coerceAtLeast(1))
+    private var fed = 0L
+    private var lastEnd = 0L
+
+    fun add(samples: FloatArray) {
+        var at = (fed % ring.size).toInt()
+        for (s in samples) {
+            ring[at] = s
+            at = if (at + 1 == ring.size) 0 else at + 1
+        }
+        fed += samples.size
+    }
+
+    /** [segment], which the detector says starts at sample [start], with the audio just before it in front. */
+    fun extend(start: Long, segment: FloatArray): FloatArray {
+        val from = maxOf(start - (preSeconds * sampleRate).toLong(), lastEnd, fed - ring.size, 0L)
+        lastEnd = maxOf(lastEnd, start + segment.size)
+        if (from >= start || start > fed) return segment
+        val pre = FloatArray((start - from).toInt()) { ring[((from + it) % ring.size).toInt()] }
+        return pre + segment
+    }
+
+    fun reset() {
+        fed = 0
+        lastEnd = 0
+    }
+}
+
+/** Loudness of [samples] in dBFS (RMS; full scale is 0), for the voice log. Silence is -120. */
+fun levelDb(samples: FloatArray): Int {
+    if (samples.isEmpty()) return -120
+    var sum = 0.0
+    for (s in samples) sum += s.toDouble() * s
+    val rms = kotlin.math.sqrt(sum / samples.size)
+    return if (rms <= 1e-6) -120 else kotlin.math.round(20 * kotlin.math.log10(rms)).toInt()
+}

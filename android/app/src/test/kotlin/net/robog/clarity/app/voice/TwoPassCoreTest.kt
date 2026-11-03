@@ -127,7 +127,7 @@ class TwoPassCoreTest {
     @Test fun onlyNoiseSendsNothingAndListeningGoesOn() {
         val r = Rig(immediate = false)
         r.start(keepOn = true)
-        r.feed(speech(1) + silence(3_600))
+        r.feed(noise() + silence(3_600))
         r.core.decoded(DecodeResult(r.jobs.removeFirst(), ""))
         assertEquals(emptyList(), r.finals)
         assertEquals(SpeechEvent.Error(SpeechError.NoMatch), r.events.last())

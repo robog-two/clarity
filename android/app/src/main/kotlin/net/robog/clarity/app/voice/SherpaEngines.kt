@@ -8,6 +8,7 @@ import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
@@ -48,7 +49,13 @@ class SherpaStreaming(base: File, threads: Int = 1) : StreamingRecognizer {
             decodingMethod = "greedy_search",
         ),
     )
-    private val stream = recognizer.createStream()
+    private var stream = freshStream()
+
+    /**
+     * A new stream, primed with a moment of silence: a stream whose first audio is already speech drops
+     * its first word ("well i don't" came out as "i don't").
+     */
+    private fun freshStream(): OnlineStream = recognizer.createStream().also { it.acceptWaveform(FloatArray(PAD), SAMPLE_RATE) }
 
     override fun accept(samples: FloatArray): String {
         if (samples.isNotEmpty()) stream.acceptWaveform(samples, SAMPLE_RATE)
@@ -56,7 +63,24 @@ class SherpaStreaming(base: File, threads: Int = 1) : StreamingRecognizer {
         return recognizer.getResult(stream).text.trim()
     }
 
-    override fun reset() = recognizer.reset(stream)
+    /**
+     * Not `recognizer.reset(stream)`: that keeps the audio the model has not decoded yet, so the end of
+     * the closed phrase came out afterwards as words of the next message. Instead the stream is padded
+     * so its last words decode, finished, and replaced.
+     */
+    override fun endPhrase(): String {
+        stream.acceptWaveform(FloatArray(PAD), SAMPLE_RATE)
+        stream.inputFinished()
+        val words = accept(FloatArray(0))
+        stream.release()
+        stream = freshStream()
+        return words
+    }
+
+    private companion object {
+        /** 0.5 s of silence: enough for the 480 ms look-ahead (measured with the real model). */
+        const val PAD = SAMPLE_RATE / 2
+    }
 
     override fun close() {
         stream.release()
@@ -85,15 +109,21 @@ class SherpaVad(
             provider = "cpu",
         ),
     )
+    private val preRoll = PreRoll(keepSeconds = maxSpeechSeconds + minSilenceSeconds + 1.0)
+
     // The library keeps leftover samples between calls itself, so any chunk size works.
-    override fun accept(samples: FloatArray) = vad.acceptWaveform(samples)
+    override fun accept(samples: FloatArray) {
+        preRoll.add(samples)
+        vad.acceptWaveform(samples)
+    }
 
     override val speaking: Boolean get() = vad.isSpeechDetected()
 
     override fun closed(): List<FloatArray> {
         val out = mutableListOf<FloatArray>()
         while (!vad.empty()) {
-            out += vad.front().samples
+            val segment = vad.front()
+            out += preRoll.extend(segment.start.toLong(), segment.samples)
             vad.pop()
         }
         return out
@@ -101,7 +131,10 @@ class SherpaVad(
 
     override fun flush() = vad.flush()
 
-    override fun reset() = vad.reset()
+    override fun reset() {
+        vad.reset()
+        preRoll.reset()
+    }
 
     override fun close() = vad.release()
 

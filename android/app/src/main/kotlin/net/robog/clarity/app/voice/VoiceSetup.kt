@@ -126,6 +126,8 @@ class VoiceModels(
     private val feed: FeedStore,
 ) {
     val store = ModelStore(File(context.noBackupFilesDir, "voice-models"))
+    /** What on-phone recognition did lately, for Settings → Voice. Memory only. */
+    val log = VoiceLog()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val engineFailed = MutableStateFlow(false)
     private val installedTick = MutableStateFlow(0)
@@ -262,9 +264,16 @@ class VoiceModels(
                     (System.nanoTime() - started) / 1e9 / BENCHMARK_SECONDS
                 }
             }.getOrNull()
-        } ?: return nativeFailed()
+        } ?: run {
+            log.add("Speed test: the $tier model could not run on this phone")
+            return nativeFailed()
+        }
         prefs.update { it.copy(speeds = it.speeds + (tier to speed)) }
         val next = tierAfterBenchmark(tier, speed)
+        log.add(
+            "Speed test: the $tier model takes %.2f s per second of audio".format(java.util.Locale.ROOT, speed) +
+                if (next != tier) "; too slow, stepping down to $next" else "",
+        )
         if (next != tier) {
             prefs.update { it.copy(benchmarkedDown = true) }
             cleanUp(next)

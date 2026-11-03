@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
@@ -15,6 +17,14 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.font.FontFamily
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -40,6 +50,7 @@ import net.robog.clarity.app.ui.today.SectionTitle
 import net.robog.clarity.app.voice.ModelStatus
 import net.robog.clarity.app.voice.TierChoice
 import net.robog.clarity.app.voice.VoiceCatalog
+import net.robog.clarity.app.voice.VoiceLogEntry
 import net.robog.clarity.app.voice.VoiceModels
 import net.robog.clarity.app.voice.VoiceTier
 import net.robog.clarity.app.voice.VoiceUiState
@@ -50,8 +61,10 @@ import net.robog.clarity.app.voice.formatBytes
 @ContributesIntoMap(AppScope::class)
 class VoiceModelsViewModel(private val voice: VoiceModels) : ViewModel() {
     val state: StateFlow<VoiceUiState> = voice.state.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), VoiceUiState())
+    val log: StateFlow<List<VoiceLogEntry>> = voice.log.entries
 
     val actions = VoiceModelActions(
+        onClearLog = { voice.log.clear() },
         onDownload = { voice.download() },
         onCancel = { voice.cancelDownload() },
         onChoice = { voice.setChoice(it) },
@@ -69,12 +82,14 @@ data class VoiceModelActions(
     val onUseBuiltIn: (Boolean) -> Unit = {},
     val onMobileData: (Boolean) -> Unit = {},
     val onDelete: () -> Unit = {},
+    val onClearLog: () -> Unit = {},
 )
 
 @Composable
 fun VoiceModelsSection(viewModel: VoiceModelsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    VoiceModelsContent(state, viewModel.actions)
+    val log by viewModel.log.collectAsStateWithLifecycle()
+    VoiceModelsContent(state, viewModel.actions, log = log)
 }
 
 fun tierTitle(tier: VoiceTier): String = when (tier) {
@@ -85,7 +100,14 @@ fun tierTitle(tier: VoiceTier): String = when (tier) {
 /** Settings → Voice: the on-phone speech models. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun VoiceModelsContent(state: VoiceUiState, actions: VoiceModelActions, modifier: Modifier = Modifier) {
+fun VoiceModelsContent(
+    state: VoiceUiState,
+    actions: VoiceModelActions,
+    modifier: Modifier = Modifier,
+    log: List<VoiceLogEntry> = emptyList(),
+    zone: ZoneId = ZoneId.systemDefault(),
+    logOpen: Boolean = false,
+) {
     Column(modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         SectionTitle("Speech recognition")
         InfoBox {
@@ -151,8 +173,51 @@ fun VoiceModelsContent(state: VoiceUiState, actions: VoiceModelActions, modifier
         if (state.status == ModelStatus.Ready) {
             SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = 4.dp))
         }
+        if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
     }
 }
+
+/**
+ * The voice log: what on-phone recognition did lately, newest first, with the words each pass heard,
+ * so a problem can be read off the phone. Kept in memory only.
+ */
+@Composable
+private fun VoiceLogPanel(log: List<VoiceLogEntry>, onClear: () -> Unit, zone: ZoneId, startOpen: Boolean) {
+    var open by rememberSaveable { mutableStateOf(startOpen) }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Voice log", style = MaterialTheme.typography.titleMedium)
+                Hint("The last ${log.size} steps, with the words heard. Only in this phone’s memory: never saved or sent.")
+            }
+            TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
+        }
+        if (open) {
+            InfoBox {
+                if (log.isEmpty()) {
+                    Hint("Nothing yet. Talk with the mic on, then look here.")
+                } else {
+                    log.asReversed().forEach { entry ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                logTime(entry.atMs, zone),
+                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Text(entry.text, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+            if (log.isNotEmpty()) SecondaryButton("clear log", onClear)
+        }
+    }
+}
+
+/** "14:52:21" in the phone's time zone. Pure. */
+fun logTime(atMs: Long, zone: ZoneId): String =
+    DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT).format(Instant.ofEpochMilli(atMs).atZone(zone))
 
 @Composable
 private fun TierPicker(state: VoiceUiState, onChoice: (TierChoice) -> Unit) {

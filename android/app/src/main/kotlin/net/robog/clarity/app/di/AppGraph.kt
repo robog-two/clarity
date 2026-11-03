@@ -261,6 +261,7 @@ interface AppGraph : ViewModelGraph {
             audio = AndroidAudioSource(context),
             hotwords = voice::hotwords,
             speeds = voice.speeds,
+            log = voice.log,
             onUnavailable = { keepOn, problem ->
                 // A load failure (no arm64 library, a model that will not open) sticks until the app restarts.
                 if (problem != null) voice.nativeFailed()

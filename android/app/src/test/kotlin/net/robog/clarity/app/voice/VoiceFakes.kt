@@ -23,9 +23,12 @@ private fun wordsIn(samples: FloatArray): List<Int> {
     return out
 }
 
+/** Sound the detector takes for speech but no model finds words in (a cough, a door). */
+fun noise(chunks: Int = 3): List<FloatArray> = List(chunks) { FloatArray(CHUNK) { 0.5f } }
+
 class FakeFirstPass : StreamingRecognizer {
     private val heard = mutableListOf<Int>()
-    var resets = 0
+    var phrasesEnded = 0
     override fun accept(samples: FloatArray): String {
         if (samples.isNotEmpty()) {
             val w = samples[0].toInt()
@@ -33,7 +36,44 @@ class FakeFirstPass : StreamingRecognizer {
         }
         return heard.joinToString(" ") { "w$it" }
     }
-    override fun reset() { heard.clear(); resets++ }
+    override fun endPhrase(): String = accept(FloatArray(0)).also { heard.clear(); phrasesEnded++ }
+    override fun close() = Unit
+}
+
+/**
+ * Like the real streaming model: its newest word comes out only with the next audio (look-ahead), so
+ * when the detector closes a phrase its last word is still inside. [endPhrase] has to get it out;
+ * a stream merely reset let it out later, as a word of the next message.
+ */
+class LaggingFirstPass(private val lagChunks: Int = 8) : StreamingRecognizer {
+    private val heard = mutableListOf<Int>()
+    /** Words heard but not out yet, with the chunk they were heard in. */
+    private val inside = ArrayDeque<Pair<Int, Int>>()
+    private var chunk = 0
+    override fun accept(samples: FloatArray): String {
+        if (samples.isNotEmpty()) {
+            chunk++
+            val w = samples[0].toInt()
+            if (w > 0 && (inside.lastOrNull()?.first ?: heard.lastOrNull()) != w) inside += w to chunk
+        }
+        while (inside.isNotEmpty() && inside.first().second + lagChunks <= chunk) heard += inside.removeFirst().first
+        return heard.joinToString(" ") { "w$it" }
+    }
+    override fun endPhrase(): String {
+        while (inside.isNotEmpty()) heard += inside.removeFirst().first
+        return heard.joinToString(" ") { "w$it" }.also { heard.clear() }
+    }
+    override fun close() = Unit
+}
+
+/** A broken first pass that says [stuck] forever once it has heard anything, whatever it is fed or told. */
+class StuckFirstPass(private val stuck: String) : StreamingRecognizer {
+    private var heardAny = false
+    override fun accept(samples: FloatArray): String {
+        if (samples.isNotEmpty() && samples[0] >= 1f) heardAny = true
+        return if (heardAny) stuck else ""
+    }
+    override fun endPhrase(): String = accept(FloatArray(0))
     override fun close() = Unit
 }
 

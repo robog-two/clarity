@@ -6,6 +6,53 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class TwoPassTest {
+    @Test fun preRollPutsTheAudioJustBeforeAPhraseBackInFront() {
+        val p = PreRoll(keepSeconds = 2.0, preSeconds = 0.25, sampleRate = 100) // 100 Hz: one sample per 10 ms
+        p.add(FloatArray(100) { it.toFloat() }) // samples 0..99
+        // The detector says the phrase starts at sample 60 and gives 20 samples of it.
+        val out = p.extend(60, FloatArray(20) { 60f + it })
+        assertEquals((35 until 80).map { it.toFloat() }, out.toList(), "25 samples (0.25 s) of the onset put back")
+    }
+
+    @Test fun preRollNeverReachesIntoThePhraseBefore() {
+        val p = PreRoll(keepSeconds = 2.0, preSeconds = 0.25, sampleRate = 100)
+        p.add(FloatArray(100) { it.toFloat() })
+        p.extend(10, FloatArray(40) { 10f + it }) // the first phrase: 10..49
+        val second = p.extend(60, FloatArray(10) { 60f + it })
+        assertEquals((50 until 70).map { it.toFloat() }, second.toList())
+    }
+
+    @Test fun preRollGivesThePhraseAsIsWhenItsOnsetIsNoLongerKept() {
+        val p = PreRoll(keepSeconds = 0.5, preSeconds = 0.25, sampleRate = 100)
+        p.add(FloatArray(300))
+        val phrase = FloatArray(10) { 1f }
+        assertEquals(phrase.toList(), p.extend(100, phrase).toList())
+        p.reset()
+        p.add(FloatArray(20) { 2f })
+        assertEquals(30, p.extend(20, FloatArray(10)).size, "after a reset, positions count from 0 again")
+    }
+
+    @Test fun theVoiceLogKeepsTheLastLinesInMemory() {
+        var now = 0L
+        val log = VoiceLog(capacity = 3, clock = { now++ })
+        (1..5).forEach { log.add("line $it") }
+        assertEquals(listOf("line 3", "line 4", "line 5"), log.entries.value.map { it.text })
+        log.clear()
+        assertTrue(log.entries.value.isEmpty())
+    }
+
+    @Test fun sameWordsIgnoresCaseAndPunctuation() {
+        assertTrue(sameWords("At some point.", "at  some point"))
+        assertFalse(sameWords("at some point", "at some pint"))
+        assertFalse(sameWords("", ""))
+        assertFalse(sameWords("at some point", null))
+    }
+
+    @Test fun levelsAreInDecibelsBelowFullScale() {
+        assertEquals(-120, levelDb(FloatArray(10)))
+        assertEquals(0, levelDb(FloatArray(10) { 1f }))
+        assertEquals(-20, levelDb(FloatArray(10) { 0.1f }))
+    }
     @Test fun settledPhrasesLeadAndTheRestStaysLive() {
         val t = Transcript()
         assertTrue(t.isEmpty())

@@ -17,6 +17,8 @@ import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.voice.ModelStatus
 import net.robog.clarity.app.voice.TierChoice
 import net.robog.clarity.app.voice.VoiceCatalog
+import net.robog.clarity.app.voice.VoiceLogEntry
+import java.time.ZoneOffset
 import net.robog.clarity.app.voice.VoiceTier
 import net.robog.clarity.app.voice.VoiceUiState
 
@@ -52,6 +54,29 @@ fun VoiceModelsReady() = VoiceFrame {
     VoiceModelsContent(
         VoiceUiState(tier = VoiceTier.Light, choice = TierChoice.Auto, proposed = VoiceTier.Accurate, benchmarkedDown = true, status = ModelStatus.Ready),
         VoiceModelActions(),
+    )
+}
+
+/** Settings → Voice with the voice log open: what both passes heard, newest first. */
+@PreviewTest @Part @Composable
+fun VoiceLogOpen() = VoiceFrame {
+    val at = 1_793_717_541_000L // 14:52:21 UTC
+    val lines = listOf(
+        "Live words and speech detection loaded in 1840 ms (Accurate tier)",
+        "Mic on: first audio 120 ms after the start, first second at -41 dB",
+        "Phrase 0.0 closed: 1.9 s, -34 dB; live “so the first thing is”",
+        "Second pass loaded in 6210 ms (Accurate tier, beam search, 12 hotwords)",
+        "Phrase 0.0: second pass “So the first thing is” (412 ms)",
+        "Phrase 0.1 closed: 2.6 s, -36 dB; live “we should meet at some point”",
+        "Phrase 0.1: second pass “we should meet at some point.” (388 ms)",
+        "Message 0 sent: “So the first thing is we should meet at some point.”",
+    )
+    VoiceModelsContent(
+        VoiceUiState(tier = VoiceTier.Accurate, choice = TierChoice.Auto, proposed = VoiceTier.Accurate, status = ModelStatus.Ready),
+        VoiceModelActions(),
+        log = lines.mapIndexed { i, text -> VoiceLogEntry(at + i * 900L, text) },
+        zone = ZoneOffset.UTC,
+        logOpen = true,
     )
 }
 

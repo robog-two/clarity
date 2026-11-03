@@ -10,8 +10,12 @@ interface StreamingRecognizer : AutoCloseable {
     /** Feeds [samples] (16 kHz mono, -1..1), decodes what is ready and returns the current phrase's words. */
     fun accept(samples: FloatArray): String
 
-    /** Starts a new phrase (the detector closed the last one). */
-    fun reset()
+    /**
+     * The phrase is over (the detector closed it, or the message or the mic ended): decodes what the
+     * model still holds and returns all of the phrase's words, then starts afresh, so nothing of this
+     * phrase can come out later as words of the next one.
+     */
+    fun endPhrase(): String
 }
 
 /** Voice activity detection: which audio is speech, cut into phrases at short pauses. */
@@ -47,8 +51,8 @@ sealed interface DecodeJob {
     val seconds: Double get() = samples.size.toDouble() / SAMPLE_RATE
 }
 
-/** What the second pass made of a [DecodeJob]; [text] is null when the decode failed. */
-class DecodeResult(val job: DecodeJob, val text: String?)
+/** What the second pass made of a [DecodeJob]; [text] is null when the decode failed. [ms]: how long it took. */
+class DecodeResult(val job: DecodeJob, val text: String?, val ms: Long? = null)
 
 /**
  * Two-pass recognition, single-threaded and free of Android: the caller feeds audio, hands decode jobs
@@ -59,6 +63,8 @@ class DecodeResult(val job: DecodeJob, val text: String?)
  * it is then sealed, waits for its last phrase's second pass (and, when [endPass] says so, a pass
  * over the whole message), and goes out as one [SpeechEvent.Final]. Speech after the seal starts the
  * next message straight away; the microphone never stops in between.
+ *
+ * [log] gets a line for the voice log at each step (phrases, both passes' words, messages); it stays on the phone.
  */
 class TwoPassCore(
     private val first: StreamingRecognizer,
@@ -68,6 +74,7 @@ class TwoPassCore(
     /** Measured decode time per second of audio, for [endPass]; null when unknown. */
     private val speed: () -> Double? = { null },
     private val graceMs: Long = PAUSE_GRACE_MS,
+    private val log: (String) -> Unit = {},
 ) {
     private class Message(val id: Int) {
         val transcript = Transcript()
@@ -88,6 +95,13 @@ class TwoPassCore(
     private var hearing = false
     private var lastShown = LiveWords("", "")
 
+    /**
+     * The first-pass words the detector never heard as speech that ended the last message. A message of
+     * only the same words again, with no speech heard in between, is an engine repeating itself, not the
+     * person: it is dropped instead of sent a second time.
+     */
+    private var lastUnheard: String? = null
+
     /** Nothing held: no words in progress and no message waiting to be sent. */
     val idle: Boolean get() = open.transcript.isEmpty() && waiting.isEmpty()
 
@@ -102,14 +116,15 @@ class TwoPassCore(
         }
         val closed = vad.closed()
         if (closed.isNotEmpty()) {
-            open.transcript.live(words)
+            // The phrase's last words may still be inside the first pass: take them all, and start it afresh.
+            open.transcript.live(first.endPhrase().ifBlank { words })
             closed.forEach(::closePhrase)
         } else {
             if (words != open.transcript.tail) lastActivityMs = nowMs // the first pass still finds words
             open.transcript.live(words)
         }
         if (speaking) lastActivityMs = nowMs
-        if (!speaking && !open.transcript.isEmpty() && nowMs - lastActivityMs >= graceMs) seal()
+        if (!speaking && !open.transcript.isEmpty() && nowMs - lastActivityMs >= graceMs) seal(firstEnded = false)
         show()
     }
 
@@ -117,12 +132,22 @@ class TwoPassCore(
     fun decoded(result: DecodeResult) {
         val job = result.job
         val message = (waiting.asSequence() + open).firstOrNull { it.id == job.message } ?: return
+        val took = result.ms?.let { " ($it ms)" }.orEmpty()
         when (job) {
             is DecodeJob.OnePhrase -> {
                 val live = message.transcript.all.firstOrNull { it.id == job.phrase }?.live.orEmpty()
-                message.transcript.confirm(job.phrase, result.text ?: live)
+                val text = result.text?.takeIf { it.isNotBlank() }
+                // An empty or failed decode keeps the live words: the detector heard speech there.
+                message.transcript.confirm(job.phrase, text ?: live)
+                log(
+                    "Phrase ${message.id}.${job.phrase}: second pass ${quoted(result.text)}$took" +
+                        if (text == null && live.isNotBlank()) ", kept the live words" else "",
+                )
             }
-            is DecodeJob.Whole -> message.final = result.text?.takeIf { it.isNotBlank() } ?: message.transcript.joined()
+            is DecodeJob.Whole -> {
+                message.final = result.text?.takeIf { it.isNotBlank() } ?: message.transcript.joined()
+                log("Message ${message.id}: whole-message pass ${quoted(result.text)}$took")
+            }
         }
         finishReady()
         show()
@@ -132,11 +157,10 @@ class TwoPassCore(
     fun flush() {
         vad.flush()
         val closed = vad.closed()
-        val words = first.accept(FloatArray(0))
-        open.transcript.live(words)
+        // Everything the first pass still holds, and a fresh start for the next time the mic opens.
+        open.transcript.live(first.endPhrase())
         closed.forEach(::closePhrase)
-        seal()
-        first.reset()
+        seal(firstEnded = true)
         vad.reset()
         if (hearing) {
             hearing = false
@@ -147,22 +171,42 @@ class TwoPassCore(
 
     private fun closePhrase(samples: FloatArray) {
         val message = open
+        val live = message.transcript.tail
         val id = message.transcript.close()
         if (message.keepAudio) {
             val kept = message.audio.values.sumOf { it.size } + samples.size
             if (kept <= MAX_REDECODE_SECONDS * SAMPLE_RATE) message.audio[id] = samples
             else { message.keepAudio = false; message.audio.clear() }
         }
+        log("Phrase ${message.id}.$id closed: ${secondsOf(samples.size)}, ${levelDb(samples)} dB; live ${quoted(live)}")
         submit(DecodeJob.OnePhrase(message.id, id, samples))
-        first.reset()
+        lastUnheard = null
         lastActivityMs = nowMs
     }
 
     /** The pause lasted: this message is complete; new speech starts the next one. */
-    private fun seal() {
+    private fun seal(firstEnded: Boolean) {
         val message = open
-        // Words the first pass heard that the detector never took for speech (very quiet): keep them as they are.
-        if (message.transcript.tail.isNotBlank()) message.transcript.close(confirmed = message.transcript.tail)
+        val tail = message.transcript.tail
+        if (tail.isNotBlank()) {
+            // Words the first pass heard that the detector never took for speech (very quiet speech). They
+            // are kept as they are, and the first pass starts afresh: left in it, the same words would be
+            // the next message's too, and the one after, every few seconds.
+            val heard = (if (firstEnded) "" else first.endPhrase()).ifBlank { tail }
+            val unheardOnly = message.transcript.size == 0
+            if (unheardOnly && sameWords(heard, lastUnheard)) {
+                message.transcript.live("")
+                log("Dropped ${quoted(heard)}: the same words again, with no speech heard in between")
+                if (waiting.isEmpty()) {
+                    lastShown = LiveWords("", "")
+                    emit(SpeechEvent.Error(SpeechError.NoMatch))
+                }
+                return
+            }
+            message.transcript.close(live = heard, confirmed = heard)
+            log("Message ${message.id}: kept first-pass words the detector did not hear as speech: ${quoted(heard)}")
+            lastUnheard = heard
+        }
         if (message.transcript.size == 0) return
         waiting.addLast(message)
         open = Message(nextMessage++)
@@ -188,6 +232,7 @@ class TwoPassCore(
             waiting.removeFirst()
             val text = head.final.orEmpty()
             lastShown = LiveWords("", "") // the bubble empties with the message
+            log(if (text.isBlank()) "Message ${head.id}: no words, nothing sent" else "Message ${head.id} sent: ${quoted(text)}")
             // Only noise (a cough the second pass found no words in): nothing to send, listening goes on.
             emit(if (text.isBlank()) SpeechEvent.Error(SpeechError.NoMatch) else SpeechEvent.Final(text))
         }
@@ -212,4 +257,12 @@ class TwoPassCore(
         lastShown = words
         if (!words.isEmpty()) emit(words.toEvent())
     }
+}
+
+/** The same words, ignoring case, punctuation and spacing. Pure. */
+fun sameWords(a: String?, b: String?): Boolean {
+    if (a == null || b == null) return false
+    fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}' ]"), " ").trim().replace(Regex("\\s+"), " ")
+    val x = norm(a)
+    return x.isNotEmpty() && x == norm(b)
 }
