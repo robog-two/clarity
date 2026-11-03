@@ -113,8 +113,10 @@ class TwoPassSpeechInput(
     private suspend fun listen() {
         if (bus.mic.value.mode != MicMode.Listening || reader != null) return
         release?.cancel()
-        val core = core ?: open() ?: return
+        // The recorder first: while the models load (a second or so the first time), audio waits in [chunks],
+        // so the first words are not lost.
         reader = MicReader(audio, onChunk = { chunks.trySend(it) }, onError = { kind -> post { failed(kind) } }).also { it.start() }
+        val core = core ?: open() ?: return
         if (loop?.isActive != true) {
             loop = scope.launch {
                 for (chunk in chunks) {
@@ -125,17 +127,30 @@ class TwoPassSpeechInput(
         }
     }
 
+    /** The engines did not open: the recorder goes, and the audio it buffered with it (nobody will decode it). */
+    private fun stopReader() {
+        reader?.stop()
+        reader = null
+        while (chunks.tryReceive().isSuccess) Unit
+    }
+
     /** Opens the first pass and the detector (Parakeet opens on its own thread at the first phrase). */
     private suspend fun open(): TwoPassCore? {
         val keepOn = bus.mic.value.keepOn
-        val found = paths()
+        val found = paths() ?: run {
+            // The models went away since the start was routed here (deleted, tier changed): not a failure.
+            stopReader()
+            bus.reset()
+            onUnavailable(keepOn, null)
+            return null
+        }
         val opened = try {
-            if (found == null) error("speech models are not downloaded")
             hotwordArg = runCatching { hotwordsArg(hotwords()) }.getOrDefault("")
             val f = factory.firstPass(found)
             val v = try { factory.vad(found) } catch (t: Throwable) { f.close(); throw t }
             Triple(found, f, v)
         } catch (t: Throwable) { // LinkageError included: no native library for this phone
+            stopReader()
             bus.reset()
             onUnavailable(keepOn, t)
             return null

@@ -67,8 +67,13 @@ android {
             // sherpa-onnx ships its engine for four ABIs; phones that can run the models are arm64. Elsewhere
             // (an x86 emulator) the library is missing, the engine fails to load and voice falls back to
             // the phone's own recogniser.
-            excludes += listOf("lib/armeabi-v7a/libsherpa-onnx-jni.so", "lib/x86/libsherpa-onnx-jni.so", "lib/x86_64/libsherpa-onnx-jni.so")
-            // Compressed in the APK (about 9 MB instead of 24 MB to download); extracted once on install.
+            excludes += listOf(
+                "lib/armeabi-v7a/libsherpa-onnx-jni.so",
+                "lib/x86/libsherpa-onnx-jni.so",
+                "lib/x86/libonnxruntime.so",
+                "lib/x86_64/libsherpa-onnx-jni.so",
+            )
+            // Compressed in the APK (about 10 MB instead of 24 MB to download); extracted once on install.
             useLegacyPackaging = true
         }
     }
