@@ -2,6 +2,7 @@ package net.robog.clarity.app.voice
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
@@ -48,11 +49,47 @@ class MicControllerTest {
         assertEquals(MicMode.Listening, s1.mode)
         assertEquals(listOf(MicCommand.StartRecognizer, MicCommand.StartRecognizer, MicCommand.StartRecognizer), c1)
 
-        for (fatal in listOf(SpeechError.NoPermission, SpeechError.Unavailable, SpeechError.Busy, SpeechError.Other)) {
+        for (fatal in listOf(SpeechError.NoPermission, SpeechError.Unavailable)) {
             val (s2, c2) = run(MicState(), MicInput.Start(true), MicInput.Recognizer(SpeechEvent.Error(fatal)))
             assertEquals(MicState(), s2, "$fatal turns the mic off")
             assertEquals(MicCommand.StopRecognizer, c2.last())
         }
+    }
+
+    @Test fun busyAndClientErrorsRetryAFewTimesThenGiveUp() {
+        for (kind in listOf(SpeechError.Busy, SpeechError.Client, SpeechError.Other)) {
+            val busy = MicInput.Recognizer(SpeechEvent.Error(kind))
+            val (s, cmds) = run(MicState(), MicInput.Start(true), busy, busy, busy)
+            assertEquals(MicMode.Listening, s.mode, "$kind: still on after $MAX_MIC_RETRIES failures")
+            assertEquals(List(MAX_MIC_RETRIES) { MicCommand.RetryRecognizer }, cmds.drop(1))
+            val (off, last) = run(s, busy)
+            assertEquals(MicState(), off, "$kind: off once the retries are used up")
+            assertEquals(listOf(MicCommand.StopRecognizer), last)
+        }
+    }
+
+    @Test fun anythingHeardResetsTheRetries() {
+        val busy = MicInput.Recognizer(SpeechEvent.Error(SpeechError.Busy))
+        val (s, _) = run(MicState(), MicInput.Start(true), busy, busy, MicInput.Recognizer(SpeechEvent.Partial("hi")), busy, busy, busy)
+        assertEquals(MicMode.Listening, s.mode)
+        assertEquals(MAX_MIC_RETRIES, s.retries)
+        assertEquals(listOf(300L, 600L, 1_200L), (1..3).map(::retryDelayMs))
+    }
+
+    /** The bug behind "it cuts off after the first message": a busy error must never end a call. */
+    @Test fun aMorningCallKeepsListeningAcrossManyMessagesAndOccasionalBusyErrors() {
+        var s = micStep(MicState(), MicInput.Start(keepOn = true)).first
+        repeat(50) { i ->
+            for (e in listOf(SpeechEvent.Hearing(true), SpeechEvent.Partial("message $i"), SpeechEvent.Hearing(false), SpeechEvent.Final("message $i"))) {
+                val (next, cmd) = micStep(s, MicInput.Recognizer(e))
+                s = next
+                assertTrue(cmd != MicCommand.StopRecognizer, "message $i: $e must not stop the mic")
+            }
+            if (i % 7 == 3) s = micStep(s, MicInput.Recognizer(SpeechEvent.Error(SpeechError.Busy))).first
+            if (i % 11 == 5) s = micStep(s, MicInput.Recognizer(SpeechEvent.Error(SpeechError.NoMatch))).first
+            assertEquals(MicMode.Listening, s.mode, "after message $i")
+        }
+        assertEquals(MicState(), micStep(s, MicInput.Stop).first, "only hanging up turns it off")
     }
 
     @Test fun mutePausesAndUnmuteResumes() {
@@ -89,6 +126,7 @@ class MicControllerTest {
         assertEquals(SpeechError.NoPermission, speechErrorOf(9))
         assertEquals(SpeechError.Busy, speechErrorOf(8))
         assertEquals(SpeechError.Unavailable, speechErrorOf(13))
+        assertEquals(SpeechError.Client, speechErrorOf(5))
         assertEquals(SpeechError.Other, speechErrorOf(2))
     }
 }

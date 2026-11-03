@@ -23,6 +23,10 @@ class VoiceCapture(
     /** Words so far in the current segment, or null when nothing is being said. */
     val live: StateFlow<String?> = _live.asStateFlow()
 
+    private val _words = MutableStateFlow<SpeechEvent.Partial?>(null)
+    /** The same words with how many of their first characters are settled (two-pass recognition). */
+    val words: StateFlow<SpeechEvent.Partial?> = _words.asStateFlow()
+
     private val _error = MutableStateFlow<SpeechError?>(null)
     /** The last problem worth telling the person about (permission, no recogniser). */
     val error: StateFlow<SpeechError?> = _error.asStateFlow()
@@ -34,13 +38,13 @@ class VoiceCapture(
         speech.events.collect { event ->
             if (!isOwner()) return@collect
             when (event) {
-                is SpeechEvent.Partial -> { _live.value = event.text; _error.value = null }
+                is SpeechEvent.Partial -> { _words.value = event; _live.value = event.text; _error.value = null }
                 is SpeechEvent.Final -> {
-                    _live.value = null
+                    clearLive()
                     if (event.text.isNotBlank()) onFinal(event.text.trim())
                 }
                 is SpeechEvent.Error -> {
-                    _live.value = null
+                    clearLive()
                     _error.value = event.kind.takeIf { it in REPORTED }
                 }
                 is SpeechEvent.Hearing -> Unit
@@ -55,7 +59,12 @@ class VoiceCapture(
     }
 
     // Stopping keeps ownership: the segment still held is flushed after this returns, and belongs here.
-    fun stop() { speech.stop(); _live.value = null }
+    fun stop() { speech.stop(); clearLive() }
+
+    private fun clearLive() {
+        _live.value = null
+        _words.value = null
+    }
 
     private fun isOwner(): Boolean = synchronized(owners) { owners[speech] === this }
     fun mute() = speech.mute()

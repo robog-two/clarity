@@ -29,6 +29,20 @@ dependencyResolutionManagement {
             }
         }
         mavenCentral()
+        // On-device speech recognition (sherpa-onnx, Apache-2.0): the official prebuilt AAR from the
+        // project's GitHub release. It is on no Maven repository, so this repo serves that one module
+        // and nothing else; its SHA-256 is pinned in gradle/verification-metadata.xml.
+        exclusiveContent {
+            forRepository {
+                ivy {
+                    name = "sherpaOnnxReleases"
+                    url = uri("https://github.com/k2-fsa/sherpa-onnx/releases/download")
+                    patternLayout { artifact("v[revision]/[artifact]-[revision].[ext]") }
+                    metadataSources { artifact() }
+                }
+            }
+            filter { includeModule("com.k2fsa.sherpa.onnx", "sherpa-onnx-static-link-onnxruntime") }
+        }
     }
     versionCatalogs {
         create("libs") { from(files("../gradle/libs.versions.toml")) }

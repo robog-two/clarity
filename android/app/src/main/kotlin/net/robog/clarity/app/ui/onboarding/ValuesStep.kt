@@ -86,6 +86,8 @@ data class ValuesState(
     val question: String? = null,
     /** Words heard so far, not yet final (the dashed bubble). */
     val live: String? = null,
+    /** How many leading characters of [live] the second pass has settled. */
+    val liveConfirmed: Int = 0,
     /** The finished answer to the current question (the solid bubble). */
     val said: String? = null,
     val captured: Line? = null,
@@ -175,7 +177,7 @@ class ValuesStepViewModel(
             launch {
                 speech.events.collect { event ->
                     when (event) {
-                        is SpeechEvent.Partial -> _state.update { it.copy(live = event.text) }
+                        is SpeechEvent.Partial -> _state.update { it.copy(live = event.text, liveConfirmed = event.confirmed) }
                         is SpeechEvent.Final -> {
                             _state.update { it.copy(live = null) }
                             if (event.text.isNotBlank()) feed.send(event.text.trim(), InputSource.VOICE, id)

@@ -212,6 +212,7 @@ fun SettingsTab(
         modifier = modifier,
         vault = { VaultSection(showTitle = false) },
         models = { ModelsSection(showTitle = false) },
+        voiceModels = { VoiceModelsSection() },
     )
 }
 
@@ -246,6 +247,8 @@ fun SettingsContent(
     vault: @Composable () -> Unit = {},
     /** The model choices, shown on their own page. */
     models: @Composable () -> Unit = {},
+    /** The on-phone speech models, shown on the Voice page. */
+    voiceModels: @Composable () -> Unit = {},
     /** The page to open on; previews use it to show a sub-page. */
     startPage: SettingsPage = SettingsPage.Home,
 ) {
@@ -273,7 +276,7 @@ fun SettingsContent(
                 when (shown) {
                     SettingsPage.Home -> Unit
                     SettingsPage.MorningCall -> settings?.let { MorningCallPage(state, it, actions) { pickingTime = TIME_CALL } } ?: LoadingSpinner()
-                    SettingsPage.Voice -> settings?.let { VoicePage(it, actions) } ?: LoadingSpinner()
+                    SettingsPage.Voice -> settings?.let { VoicePage(it, actions, voiceModels) } ?: LoadingSpinner()
                     SettingsPage.HeldActions -> settings?.let { HeldActionsPage(it, actions) { pickingTime = TIME_EVENING } } ?: LoadingSpinner()
                     SettingsPage.Push -> PushPage(state, actions)
                     SettingsPage.Vault -> vault()
@@ -502,7 +505,7 @@ private fun MorningCallPage(state: SettingsUiState, settings: Settings, actions:
 }
 
 @Composable
-private fun VoicePage(settings: Settings, actions: SettingsActions) {
+private fun VoicePage(settings: Settings, actions: SettingsActions, voiceModels: @Composable () -> Unit = {}) {
     Column {
         ToggleRow(
             "Mic always on during calls", if (settings.micAlwaysOn) "So you can jump in" else "Push to talk",
@@ -510,6 +513,7 @@ private fun VoicePage(settings: Settings, actions: SettingsActions) {
         )
         Hint("I always answer in text, on screen.", Modifier.padding(top = 8.dp))
     }
+    voiceModels()
 }
 
 @Composable

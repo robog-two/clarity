@@ -61,6 +61,17 @@ android {
     testOptions {
         unitTests.isReturnDefaultValues = true
     }
+
+    packaging {
+        jniLibs {
+            // sherpa-onnx ships its engine for four ABIs; phones that can run the models are arm64. Elsewhere
+            // (an x86 emulator) the library is missing, the engine fails to load and voice falls back to
+            // the phone's own recogniser.
+            excludes += listOf("lib/armeabi-v7a/libsherpa-onnx-jni.so", "lib/x86/libsherpa-onnx-jni.so", "lib/x86_64/libsherpa-onnx-jni.so")
+            // Compressed in the APK (about 9 MB instead of 24 MB to download); extracted once on install.
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {
@@ -91,6 +102,8 @@ dependencies {
     implementation(libs.androidx.navigation3.ui)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.work.runtime)
+    // The AAR's Kotlin API (com.k2fsa.sherpa.onnx) and its JNI library; only voice/SherpaEngines.kt touches it.
+    implementation("${libs.sherpa.onnx.get()}@aar")
 
     implementation(libs.metrox.viewmodel.compose)
 

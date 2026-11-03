@@ -76,6 +76,8 @@ fun ChatTranscript(
     live: String?,
     env: CardEnv,
     modifier: Modifier = Modifier,
+    /** How many leading characters of [live] are settled (see [LiveBubble]). */
+    liveConfirmed: Int = 0,
     newest: LazyListScope.() -> Unit = {},
     oldest: LazyListScope.() -> Unit = {},
 ) {
@@ -89,7 +91,7 @@ fun ChatTranscript(
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
     ) {
         newest()
-        live?.let { text -> item(key = "live") { LiveBubble(text, arrivingItem()) } }
+        live?.let { text -> item(key = "live") { LiveBubble(text, arrivingItem(), confirmed = liveConfirmed) } }
         items(entries.asReversed(), key = { it.key }) { entry ->
             when (entry) {
                 is ChatEntry.Message -> FeedItemView(entry.item, arrivingItem(), env = env, reaction = entry.reaction)

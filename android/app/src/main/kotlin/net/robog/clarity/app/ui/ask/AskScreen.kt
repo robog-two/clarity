@@ -101,6 +101,7 @@ fun AskContent(
         ChatTranscript(
             entries = state.entries,
             live = state.live,
+            liveConfirmed = state.liveConfirmed,
             env = env,
             modifier = Modifier.weight(1f),
             newest = {

@@ -74,6 +74,8 @@ data class CallUiState(
     val held: Map<HeldActionId, HeldAction> = emptyMap(),
     /** The dashed bubble with the words heard so far. */
     val live: String? = null,
+    /** How many leading characters of [live] the second pass has settled. */
+    val liveConfirmed: Int = 0,
     val mic: MicChipState = MicChipState.Off,
     val pushToTalk: Boolean = false,
     val micProblem: SpeechError? = null,
@@ -138,7 +140,7 @@ class CallViewModel(
 
     init {
         voice.attach(viewModelScope)
-        viewModelScope.launch { voice.live.collect { live -> _state.update { it.copy(live = live) } } }
+        viewModelScope.launch { voice.words.collect { w -> _state.update { it.copy(live = w?.text, liveConfirmed = w?.confirmed ?: 0) } } }
         viewModelScope.launch { voice.error.collect { e -> _state.update { it.copy(micProblem = e) } } }
         viewModelScope.launch {
             voice.mic.collect { mic -> _state.update { it.copy(mic = micChipState(mic)) } }
