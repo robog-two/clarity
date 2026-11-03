@@ -7,6 +7,10 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.AudioEffect
+import android.media.audiofx.AutomaticGainControl
+import android.media.audiofx.NoiseSuppressor
 import android.os.Process
 import androidx.core.content.ContextCompat
 
@@ -30,7 +34,9 @@ class AndroidAudioSource(private val context: Context) : AudioSource {
         val min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         // Two seconds of room, so a slow moment on the decoding side never drops audio.
         val record = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            // The system's voice mode: automatic gain, noise suppression and echo cancellation. VOICE_RECOGNITION
+            // leaves them off on many phones, which made quiet speech too faint for the detector.
+            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -45,11 +51,16 @@ class AndroidAudioSource(private val context: Context) : AudioSource {
             record.release()
             throw IllegalStateException("the microphone did not start")
         }
-        return AndroidAudioStream(record)
+        val effects = listOfNotNull(
+            if (AutomaticGainControl.isAvailable()) AutomaticGainControl.create(record.audioSessionId) else null,
+            if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(record.audioSessionId) else null,
+            if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(record.audioSessionId) else null,
+        ).onEach { it.enabled = true }
+        return AndroidAudioStream(record, effects)
     }
 }
 
-private class AndroidAudioStream(private val record: AudioRecord) : AudioStream {
+private class AndroidAudioStream(private val record: AudioRecord, private val effects: List<AudioEffect>) : AudioStream {
     private val shorts = ShortArray(SAMPLE_RATE / 10)
 
     override fun read(): FloatArray? {
@@ -60,6 +71,7 @@ private class AndroidAudioStream(private val record: AudioRecord) : AudioStream 
 
     override fun close() {
         runCatching { record.stop() }
+        effects.forEach { runCatching { it.release() } }
         record.release()
     }
 }
