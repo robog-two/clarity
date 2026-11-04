@@ -60,9 +60,9 @@ sealed interface FormCardState {
  * cancelled with a [CredentialRequest.closedReason]; it is not waiting for anything.
  */
 fun closedFormState(request: CredentialRequest): FormCardState.Done = when (request.status) {
-    CredentialRequestStatus.FULFILLED -> FormCardState.Done("Saved. I can use it now.")
+    CredentialRequestStatus.FULFILLED -> FormCardState.Done("Saved.")
     CredentialRequestStatus.CANCELLED -> request.closedReason
-        ?.let { FormCardState.Done("No longer needed: ${it.trimEnd('.')}.", kicker = "no longer needed") }
+        ?.let { FormCardState.Done("No longer needed. ${it.trimEnd('.')}.", kicker = "no longer needed") }
         ?: FormCardState.Done("This request was cancelled.", kicker = "cancelled")
     CredentialRequestStatus.OPEN -> FormCardState.Done("Waiting for you to fill it in.", kicker = "for you to fill in")
 }
@@ -117,7 +117,7 @@ class CredentialFormModel(
         state = s.copy(saving = true, error = null)
         state = when (val outcome = vault.save(s.form.request, s.form.normalized())) {
             // Dropping the editing state drops the typed secrets with it.
-            is SaveOutcome.Saved -> FormCardState.Done("Saved. “${credentialTitle(outcome.meta.name)}” is locked on your phone and I can use it now.")
+            is SaveOutcome.Saved -> FormCardState.Done("Saved. “${credentialTitle(outcome.meta.name)}” is locked on this phone.")
             is SaveOutcome.Failed -> s.copy(saving = false, error = outcome.message)
         }
     }
@@ -133,7 +133,7 @@ private fun currentYearMonth(): Pair<Int, Int> {
 fun CredentialFormCard(requestId: CredentialRequestId, modifier: Modifier = Modifier) {
     val vault = LocalVaultRepository.current
     if (vault == null) {
-        NoteBox("I need a login or card from you. Open the vault to add it.", modifier)
+        NoteBox("A login or card is needed. Open the vault to add it.", modifier)
         return
     }
     val model = remember(requestId, vault) { CredentialFormModel(requestId, vault) }
@@ -153,7 +153,7 @@ fun CredentialFormContent(
 ) {
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         when (state) {
-            FormCardState.Loading -> { Kicker("for you to fill in"); Hint("Loading the form…") }
+            FormCardState.Loading -> { Kicker("for you to fill in"); Hint("Loading the form") }
             is FormCardState.Failed -> {
                 ErrorBox("Couldn’t load the form", state.message)
                 TextButton(onClick = onRetry) { Text("Try again") }
@@ -173,9 +173,9 @@ private fun EditingForm(state: FormCardState.Editing, onEdit: (FieldSpec, String
 @Composable
 private fun FormBody(state: FormCardState.Editing, onEdit: (FieldSpec, String) -> Unit, onTouch: (FieldSpec) -> Unit, onSave: () -> Unit) {
     val request = state.form.request
-    Kicker("for you to fill in · ${request.site}")
+    Kicker("Fill in for ${request.site}")
     Text(request.purpose, style = MaterialTheme.typography.titleMedium)
-    Hint("It’s locked on your phone before it leaves it. I never see it; I only get to use it when you approve.")
+    Hint("Locked on this phone before it leaves.")
     Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         request.fields.forEach { field ->
             FieldRow(field, state.form.valueOf(field), state.form.shownError(field), enabled = !state.saving, onEdit, onTouch)
@@ -183,7 +183,7 @@ private fun FormBody(state: FormCardState.Editing, onEdit: (FieldSpec, String) -
     }
     state.error?.let { ErrorBox(it) }
     PrimaryButton(
-        if (state.saving) "Locking it up…" else "Save",
+        if (state.saving) "Saving" else "Save",
         onSave,
         Modifier.fillMaxWidth().padding(top = 8.dp),
         enabled = !state.saving,

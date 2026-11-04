@@ -61,7 +61,7 @@ class PhoneApprover(
         } catch (e: CancellationException) {
             throw e
         } catch (_: KeysInvalidatedException) {
-            ApprovalResult.Denied("This phone’s vault keys were reset. Open Settings → Vault to set them up again.")
+            ApprovalResult.Denied("Vault keys were reset. Go to Settings, then Vault.")
         } catch (_: NotAuthenticatedException) {
             ApprovalResult.Denied("That took too long. Try again.")
         } catch (e: Exception) {

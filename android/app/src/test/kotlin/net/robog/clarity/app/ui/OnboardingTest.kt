@@ -276,7 +276,7 @@ class OnboardingStepTest {
             OnboardingStep.entries.map { it.segments },
         )
         assertNull(OnboardingStep.Welcome.kicker)
-        assertEquals("step 2 of 4 · values", OnboardingStep.Values.kicker)
+        assertEquals("Step 2 of 4, values", OnboardingStep.Values.kicker)
     }
 
     @Test fun resumesAtTheFirstMissingThing() {
@@ -297,11 +297,11 @@ class OnboardingStepTest {
     }
 
     @Test fun connectorsSummaryLines() {
-        assertEquals("2 of 6 set up", connectorsSummaryLine(6, 2, 0, syncing = false, anyFailed = false))
-        assertEquals("testing and syncing…", connectorsSummaryLine(6, 6, 1, syncing = true, anyFailed = false))
-        assertEquals("5 of 6 synced · tap the failed one to fix it", connectorsSummaryLine(6, 6, 5, syncing = false, anyFailed = true))
-        assertEquals("all 6 synced", connectorsSummaryLine(6, 6, 6, syncing = false, anyFailed = false))
-        assertEquals("2 of 4 synced · 1 not running · tap the failed one to fix it", connectorsSummaryLine(4, 4, 2, syncing = false, anyFailed = true, notRunning = 1))
+        assertEquals("2 of 6 set up.", connectorsSummaryLine(6, 2, 0, syncing = false, anyFailed = false))
+        assertEquals("Testing and syncing", connectorsSummaryLine(6, 6, 1, syncing = true, anyFailed = false))
+        assertEquals("5 of 6 synced. Fix the failed one.", connectorsSummaryLine(6, 6, 5, syncing = false, anyFailed = true))
+        assertEquals("All 6 synced.", connectorsSummaryLine(6, 6, 6, syncing = false, anyFailed = false))
+        assertEquals("2 of 4 synced. 1 not running. Fix the failed one.", connectorsSummaryLine(4, 4, 2, syncing = false, anyFailed = true, notRunning = 1))
         assertEquals("Dav", connectorDisplayName("dav"))
         assertEquals("IMAP", protocolLabel("imap"))
         assertEquals("iCloud", net.robog.clarity.app.ui.components.sentenceCase("iCloud"))
@@ -338,7 +338,7 @@ class InterviewDerivationTest {
 
     @Test fun sectionLabelsMatchThePrototype() {
         assertEquals("hard line", sectionLabel(Section.HARD_LINES))
-        assertEquals("how much I do alone", sectionLabel(Section.AUTONOMY))
+        assertEquals("does alone", sectionLabel(Section.AUTONOMY))
         assertEquals("repair + memory", sectionLabel(Section.REPAIR))
     }
 }
@@ -361,7 +361,7 @@ class ConstitutionSectionsTest {
 
     @Test fun groupsByPrototypeSectionsAndSkipsEmptyOnes() {
         val titles = constitutionSections(c).map { it.title }
-        assertEquals(listOf("what I value", "hard lines · never crossed", "how much I do alone", "who gets through"), titles)
+        assertEquals(listOf("what matters", "hard lines", "what it does alone", "who gets through"), titles)
     }
 
     @Test fun keepsReasonsAndFixedLines() {
@@ -370,12 +370,12 @@ class ConstitutionSectionsTest {
     }
 
     @Test fun autonomyListsTiersInOrder() {
-        val auto = constitutionSections(c).first { it.title == "how much I do alone" }
+        val auto = constitutionSections(c).first { it.title == "what it does alone" }
         assertEquals(
             listOf(
-                "do it, then tell me: save draft, create event.",
-                "ask me first: send email.",
-                "never alone: payment.",
+                "Do, then report. Save draft, create event.",
+                "Ask first. Send email.",
+                "Never alone. Payment.",
             ),
             auto.entries.map { it.text },
         )
@@ -409,14 +409,14 @@ class ScheduleRulesTest {
     }
 
     @Test fun doneLineVariants() {
-        assertEquals("I’ll send a heads-up 10 minutes before, then call. Pick up in the app.", doneLine(call))
+        assertEquals("Heads-up 10 minutes before, then a call. Answer in the app.", doneLine(call))
         assertEquals(
-            "I’ll send a heads-up 10 minutes before, then a notification to start.",
+            "Heads-up 10 minutes before, then a notification.",
             doneLine(call.copy(mode = Settings.MorningCall.Mode.NOTIFY)),
         )
-        assertEquals("I’ll call at 9:00 am. Pick up in the app.", doneLine(call.copy(headsUpMinutes = null)))
+        assertEquals("Call at 9:00 am. Answer in the app.", doneLine(call.copy(headsUpMinutes = null)))
         assertEquals(
-            "You’ll get a notification at 9:00 am.",
+            "Notification at 9:00 am.",
             doneLine(call.copy(headsUpMinutes = null, mode = Settings.MorningCall.Mode.NOTIFY)),
         )
     }
@@ -538,11 +538,11 @@ class ConnectorsStepViewModelTest {
         val items = vm.state.value.items
         assertEquals(listOf("mail", "cal", "phone-messages"), items.map { it.row.key })
         assertEquals(listOf(true, false, true), items.map { it.saved })
-        assertEquals(listOf("ready", "set up →", "ready"), items.map { it.status })
-        assertEquals("IMAP · on your server", items[0].row.proto)
-        assertEquals("allowed · on this phone", items[2].caption)
+        assertEquals(listOf("ready", "Set up", "ready"), items.map { it.status })
+        assertEquals("On your server", items[0].row.proto)
+        assertEquals("Allowed on this phone", items[2].caption)
         assertFalse(vm.state.value.canSync, "every connector must be set up first")
-        assertEquals("2 of 3 set up", vm.state.value.summaryLine)
+        assertEquals("2 of 3 set up.", vm.state.value.summaryLine)
     }
 
     @Test fun aServerWithoutTheRouteStillOffersThePhoneConnectors() = withMain {
@@ -571,10 +571,10 @@ class ConnectorsStepViewModelTest {
         assertEquals(listOf(ConnectorId("mail"), ConnectorId("files")), repo.tests)
         assertEquals(TestState.Ok("ok mail"), s.items[0].test)
         assertEquals(TestState.Failed("password rejected (401)"), s.items[1].test)
-        assertEquals("failed · fix →", s.items[1].status)
+        assertEquals("Fix it", s.items[1].status)
         assertEquals("password rejected (401)", s.items[1].caption)
         assertTrue(s.anyFailed && !s.syncing && !s.allSynced && !s.canSync)
-        assertEquals("2 of 3 synced · tap the failed one to fix it", s.summaryLine)
+        assertEquals("2 of 3 synced. Fix the failed one.", s.summaryLine)
     }
 
     @Test fun fixingAFailedConnectorRetestsItAndEnablesContinue() = withMain {
@@ -588,7 +588,7 @@ class ConnectorsStepViewModelTest {
         assertEquals(TestState.Ok("1,940 files"), vm.state.value.items.first { it.row.key == "files" }.test)
         assertFalse(vm.state.value.anyFailed)
         assertTrue(vm.state.value.allSynced)
-        assertEquals("all 2 synced", vm.state.value.summaryLine)
+        assertEquals("All 2 synced.", vm.state.value.summaryLine)
     }
 
     @Test fun missingTestRouteIsAFailureNotACrash() = withMain {
@@ -833,7 +833,7 @@ class ConstitutionStepViewModelTest {
         vm.load()
         val s = assertIs<ConstitutionUi.Loaded>(vm.state.value)
         assertEquals(3, s.version)
-        assertEquals(listOf("what I value"), s.sections.map { it.title })
+        assertEquals(listOf("what matters"), s.sections.map { it.title })
     }
 
     @Test fun missingRouteAndFailures() = withMain {

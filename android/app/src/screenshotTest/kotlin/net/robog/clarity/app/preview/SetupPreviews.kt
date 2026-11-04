@@ -327,11 +327,11 @@ private val vaultRows = listOf(
 
 private val settingsState = SettingsUiState(
     instanceUrl = "https://clarity.home.example.org", deviceId = "dev_8f3k2m9q", loading = false,
-    settings = Settings(), constitution = "v3 · 14 lines · amended yesterday",
+    settings = Settings(), constitution = "Version 3, 14 lines, amended yesterday",
     serverSources = listOf(
-        SourceRow("mail", "imap · 2 accounts", "4 min ago", "mail"),
-        SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
-        SourceRow("files", "webdav", "never", "files"),
+        SourceRow("mail", "2 accounts", "4 min ago", "mail"),
+        SourceRow("calendar and contacts", "Password rejected", "Failed", "dav"),
+        SourceRow("files", "On your server", "never", "files"),
     ),
     smsGranted = true, sms = net.robog.clarity.app.ui.settings.SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )

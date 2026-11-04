@@ -9,6 +9,11 @@ import net.robog.clarity.shared.mcp.McpToolStatus
 /** The connector that runs third-party MCP servers; its config holds one item per server. */
 const val MCP_HOST = "mcp-host"
 
+/** A tool's name as a person reads it: its title, or the id with underscores as spaces ("create_issue" becomes "Create issue"). */
+fun toolDisplayName(tool: McpToolStatus): String =
+    tool.title?.takeIf { it.isNotBlank() }
+        ?: tool.name.replace('_', ' ').replace('-', ' ').trim().replaceFirstChar { it.titlecase() }
+
 /** The `mcp-host` connector, found by id or (once it has sent a manifest) by kind. */
 fun isMcpHost(summary: ConnectorSummary): Boolean =
     summary.id.value == MCP_HOST || summary.manifest?.kind == MCP_HOST
@@ -24,14 +29,14 @@ fun McpServerState.tone(): ChipTone = when (this) {
     McpServerState.DISABLED -> ChipTone.Off
 }
 
-/** "12 tools · 9 read · 3 change things": how many of a server's tools only read. */
+/** "12 tools: 9 read, 3 can change things": how many of a server's tools only read. */
 data class ToolCounts(val total: Int, val reads: Int) {
     val changes: Int get() = total - reads
 }
 
 fun McpServerStatus.toolCounts(): ToolCounts = ToolCounts(tools.size, tools.count { it.readOnly })
 
-/** What Clarity does with [tool] when the person has not chosen: only read-only tools run without asking. */
+/** What I do with [tool] when the person has not chosen: only read-only tools run without asking. */
 fun defaultMode(tool: McpToolStatus): McpToolMode = if (tool.readOnly) McpToolMode.AUTO else McpToolMode.ASK
 
 /** A server's tools in the two groups of its detail screen, each sorted by name. */
@@ -43,7 +48,7 @@ fun McpServerStatus.toolGroups(): ToolGroups {
 }
 
 /**
- * Choosing Auto for a tool that changes things lets Clarity use it without asking, so it is
+ * Choosing Auto for a tool that changes things lets me use it without asking, so it is
  * confirmed first. Read-only tools and the other modes are set at once.
  */
 fun needsConfirmation(tool: McpToolStatus, mode: McpToolMode): Boolean =

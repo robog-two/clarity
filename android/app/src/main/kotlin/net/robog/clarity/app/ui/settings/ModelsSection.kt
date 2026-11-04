@@ -26,6 +26,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -66,9 +69,9 @@ fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions, showTitle
         if (!showTitle) LoadingSpinner()
         return
     }
-    if (showTitle) SectionTitle("Models")
+    if (showTitle) SectionTitle("Models", Modifier.semantics { heading() })
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Which model does each part of the work, by its OpenRouter name. Changes are saved on your server.")
+        Hint("Model for each job, by OpenRouter name. Saved on your server.")
         state.message?.let { ErrorBox(it) }
         state.rows.forEach { row -> RoleModelItem(row, state.efforts, actions) }
     }
@@ -83,7 +86,10 @@ private fun RoleModelItem(row: RoleModelRow, efforts: List<String>, actions: Mod
                 Text(sentenceCase(row.title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal))
                 Kicker(row.caption)
             }
-            if (!row.isDefault) TextButton(onClick = { actions.onReset(row.role) }) { Text("Reset to default") }
+            if (!row.isDefault) TextButton(
+                onClick = { actions.onReset(row.role) },
+                modifier = Modifier.semantics { contentDescription = "Reset ${row.title} to default" },
+            ) { Text("Reset to default") }
         }
         ModelField(row, onModel = { actions.onModel(row.role, it) })
         ClarityDropdown(

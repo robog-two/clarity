@@ -12,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
@@ -50,27 +52,27 @@ fun VaultSectionContent(
     showTitle: Boolean = true,
 ) {
     var deleting by remember { mutableStateOf<CredentialRow?>(null) }
-    if (showTitle) SectionTitle("Vault")
+    if (showTitle) SectionTitle("Vault", Modifier.semantics { heading() })
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Hint("Logins and cards I can use for you, each locked on your phone. I can’t read them; I ask you every time.")
+        Hint("Logins and cards stay locked on this phone. Each use needs your approval.")
         state.message?.let { ErrorBox(it) }
         state.notice?.let { Hint(it) }
         when (state.keys) {
             VaultKeyStatus.INVALIDATED -> {
-                Hint("A new fingerprint or face was added, so the saved logins can’t be opened any more.")
+                Hint("A new fingerprint or face was added. Saved logins can’t be opened. Reset the keys and add them again.")
                 SecondaryButton("reset the vault keys", onRekey, Modifier.fillMaxWidth())
             }
             VaultKeyStatus.MISSING, VaultKeyStatus.READY -> Unit
         }
         Column {
-            if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet. When I need a login or card, I’ll ask you here.")
+            if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet.")
             state.rows.forEach { row ->
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 ListItem(
                     colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                     headlineContent = { Text(credentialTitle(row.name), style = MaterialTheme.clarityText.chat) },
                     supportingContent = {
-                        Text(sentenceCase(listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(" · ")), style = MaterialTheme.clarityText.chatSmall)
+                        Text(sentenceCase(listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(", ")), style = MaterialTheme.clarityText.chatSmall)
                     },
                     trailingContent = {
                         IconButton(onClick = { deleting = row }) {
@@ -85,7 +87,7 @@ fun VaultSectionContent(
         AlertDialog(
             onDismissRequest = { deleting = null },
             title = { Text("Delete ${credentialTitle(row.name)}?") },
-            text = { Text("I won’t be able to use it again until you add it again.") },
+            text = { Text("It can’t be used until you add it again.") },
             confirmButton = { TextButton(onClick = { deleting = null; onDelete(row.id) }) { Text("Delete", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { deleting = null }) { Text("Keep") } },
         )

@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ButtonDefaults
@@ -325,6 +326,10 @@ fun SelectRow(
     modifier: Modifier = Modifier,
     statusAlpha: Float = 1f,
     statusColor: Color = MaterialTheme.colorScheme.primary,
+    /** Show a right-pointing chevron when [status] is empty (a row that only opens something). */
+    chevron: Boolean = false,
+    /** Spoken state for a row in trouble, e.g. "Needs attention". */
+    stateDescription: String? = null,
 ) {
     Column(modifier) {
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -333,6 +338,7 @@ fun SelectRow(
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
                 .clickable(onClick = onClick)
+                .semantics { if (stateDescription != null) this.stateDescription = stateDescription }
                 .padding(vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -341,7 +347,12 @@ fun SelectRow(
                 Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
                 Kicker(caption)
             }
-            Text(sentenceCase(status), color = statusColor.copy(alpha = statusAlpha), style = MaterialTheme.typography.labelLarge)
+            if (status.isNotEmpty()) Text(sentenceCase(status), color = statusColor.copy(alpha = statusAlpha), style = MaterialTheme.typography.labelLarge)
+            if (chevron) androidx.compose.material3.Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
     }
 }

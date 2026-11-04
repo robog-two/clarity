@@ -90,7 +90,7 @@ class DefaultVaultRepository(
 
     override suspend fun save(request: CredentialRequest, values: Map<String, String>): SaveOutcome {
         if (keyStatus() == VaultKeyStatus.INVALIDATED) {
-            return SaveOutcome.Failed("This phone’s vault keys were reset. Open Settings → Vault first.")
+            return SaveOutcome.Failed("Vault keys were reset. Go to Settings, then Vault.")
         }
         (register() as? ApiResult.Failure)?.let { return SaveOutcome.Failed(it.error.sentence()) }
         val devices = when (val r = api.vaultDevices()) {

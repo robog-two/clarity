@@ -70,10 +70,10 @@ fun ScheduleContent(
 ) {
     StepScaffold(
         step = OnboardingStep.Schedule,
-        title = "When should I call?",
+        title = "Call time",
         footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading, busy = state.saving) },
     ) {
-        Hint("Eight minutes. You talk, I take notes, then I set things up.")
+        Hint("Pick the time and days.")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             state.times.forEach { t ->
                 PillChoice(formatTime(t), selected = t == state.call.at, onClick = { onPickTime(t) })
@@ -91,14 +91,14 @@ fun ScheduleContent(
                 checked = state.call.headsUpMinutes != null,
                 onCheckedChange = { onToggleHeadsUp() },
             )
-            net.robog.clarity.app.ui.components.Kicker("how I reach you", Modifier.padding(top = 12.dp))
+            net.robog.clarity.app.ui.components.Kicker("contact method", Modifier.padding(top = 12.dp))
             val calling = state.call.mode == MorningCall.Mode.CALL
             SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
                 SegmentedButton(calling, { if (!calling) onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) {
-                    androidx.compose.material3.Text("Call me")
+                    androidx.compose.material3.Text("Call")
                 }
                 SegmentedButton(!calling, { if (calling) onToggleMode() }, SegmentedButtonDefaults.itemShape(1, 2)) {
-                    androidx.compose.material3.Text("Notify me")
+                    androidx.compose.material3.Text("Notify")
                 }
             }
         }
@@ -140,7 +140,7 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
             val connectors = if (state.connectors == 1) "1 connector" else "${state.connectors} connectors"
-            Kicker("set up · $connectors" + (state.constitutionVersion?.let { " · constitution v$it" } ?: ""))
+            Kicker("$connectors set up" + (state.constitutionVersion?.let { ". Constitution version $it" } ?: ""))
             Text(
                 state.nextDay?.let { "Talk $it at ${formatTime(state.call.at)}." } ?: "You’re all set.",
                 style = MaterialTheme.clarityText.hero.copy(fontSize = 36.sp),
@@ -148,11 +148,9 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
             ReadingText(doneLine(state.call), color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (state.askBattery) {
                 InfoBox {
-                    Text("Let me stay awake in the background", style = MaterialTheme.typography.titleMedium)
+                    Text("Run in background", style = MaterialTheme.typography.titleMedium)
                     Hint(
-                        "To tell you about urgent things the moment they happen, I keep a quiet connection to your server open. " +
-                            "Your phone may pause that to save battery. Allowing it costs very little. If you skip it, " +
-                            "pushes still work but may be late. You can change this in settings.",
+                        "Urgent items arrive at once. Uses little battery. Without it they may arrive late.",
                     )
                     SecondaryButton("allow", onAllowBattery, Modifier.fillMaxWidth())
                 }
