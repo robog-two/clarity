@@ -75,7 +75,7 @@ fun NotNowOptions(held: HeldAction, onDeny: () -> Unit, onAlways: () -> Unit, mo
             colors = clear,
             leadingContent = { Icon(Icons.Outlined.Block, contentDescription = null) },
             headlineContent = { Text("Deny", style = MaterialTheme.clarityText.chat) },
-            supportingContent = { Text("I won’t do it, and nothing changes in your rules", style = MaterialTheme.clarityText.chatSmall) },
+            supportingContent = { Text("Rules stay the same.", style = MaterialTheme.clarityText.chatSmall) },
         )
         if (canAlwaysAllow(held)) {
             ListItem(
@@ -83,7 +83,7 @@ fun NotNowOptions(held: HeldAction, onDeny: () -> Unit, onAlways: () -> Unit, mo
                 colors = clear,
                 leadingContent = { Icon(Icons.Outlined.AutoMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 headlineContent = { Text("Approve automatically from now on", style = MaterialTheme.clarityText.chat) },
-                supportingContent = { Text("Review the rule first; this one is approved when you save it", style = MaterialTheme.clarityText.chatSmall) },
+                supportingContent = { Text("Review the rule. Saving approves this one.", style = MaterialTheme.clarityText.chatSmall) },
             )
         }
     }
@@ -101,7 +101,7 @@ fun RuleDialog(held: HeldAction, onSave: (text: String, because: String) -> Unit
         title = { Text("Add this rule?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Hint("It goes in your constitution, and I’ll approve this one now.")
+                Hint("Adds it to your constitution and approves this one.")
                 OutlinedTextField(
                     value = text,
                     onValueChange = { typed = it },

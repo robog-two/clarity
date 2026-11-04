@@ -129,22 +129,20 @@ data class CallPermissionCopy(val icon: ImageVector, val title: String, val body
 fun callPermissionCopy(permission: CallPermission): CallPermissionCopy = when (permission) {
     CallPermission.Notifications -> CallPermissionCopy(
         Icons.Outlined.NotificationsActive,
-        "Let me reach you",
-        "Your morning call, its heads-up and anything urgent arrive as notifications. Without them I can’t ring you.",
+        "Allow notifications",
+        "Needed for the morning call and urgent items.",
         "Allow",
     )
     CallPermission.FullScreen -> CallPermissionCopy(
         Icons.Outlined.PhoneInTalk,
-        "Ring like a phone call",
-        "So the morning call fills the screen and rings, even when your phone is locked. " +
-            "Android keeps this switch in settings: turn on “Allow full screen notifications” for Clarity. " +
-            "Without it the call rings as a banner at the top.",
+        "Full screen calls",
+        "Turn on “Allow full screen notifications” for Clarity. Otherwise calls show as a banner.",
         "Open settings",
     )
     CallPermission.ExactAlarms -> CallPermissionCopy(
         Icons.Outlined.Alarm,
-        "Ring right on time",
-        "Without “Alarms & reminders”, Android may hold the call back by a few minutes. Turn it on for Clarity in settings.",
+        "On-time calls",
+        "Turn on “Alarms & reminders” for Clarity. Otherwise calls may run a few minutes late.",
         "Open settings",
     )
 }

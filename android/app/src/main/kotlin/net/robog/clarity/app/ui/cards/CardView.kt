@@ -230,7 +230,7 @@ fun ProposalBox(
         }
         Kicker(proposalKicker(held))
         Text(held.action.summary, style = MaterialTheme.typography.titleMedium)
-        Kicker("what I think", Modifier.padding(top = 6.dp))
+        Kicker("reasoning", Modifier.padding(top = 6.dp))
         Hint(held.agentView)
         Hint(held.verdict.rationale)
         val done = heldStatusLabel(held.status)

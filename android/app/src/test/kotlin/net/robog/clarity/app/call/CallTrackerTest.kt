@@ -65,8 +65,8 @@ class LiveCallTest {
     }
 
     @Test fun theOngoingLineNamesTheStage() {
-        assertEquals("morning meeting · hand off", ongoingCallText(CallStage.HAND_OFF))
-        assertEquals("morning meeting", ongoingCallText(null))
+        assertEquals("Morning meeting, handing off", ongoingCallText(CallStage.HAND_OFF))
+        assertEquals("Morning meeting", ongoingCallText(null))
     }
 
     @Test fun onlyACallPastItsFirstStageIsUnderWay() {

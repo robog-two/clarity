@@ -67,7 +67,7 @@ class FeedService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val graph = (application as ClarityApp).graph
         // Must happen within seconds of being started.
-        enterForeground(PushNotifications.connection(this, "Connecting…"))
+        enterForeground(PushNotifications.connection(this, "Connecting"))
         if (job == null) job = scope.launch { runPush(graph) }
         return START_STICKY
     }
@@ -225,7 +225,7 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
 
     override fun replied(text: String, sent: Boolean) {
         synchronized(conversation) {
-            conversation.addLast((if (sent) text else "Not sent: $text. Open Clarity to try again.") to true)
+            conversation.addLast((if (sent) text else "Not sent, $text. Try again in Clarity.") to true)
         }
         postConversation(alert = false)
     }

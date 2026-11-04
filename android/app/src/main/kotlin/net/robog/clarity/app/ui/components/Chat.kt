@@ -154,7 +154,7 @@ fun ChatComposer(
     mic: ComposerMic,
     onMic: () -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "Type, or tap the mic",
+    placeholder: String = "Type or tap the mic",
 ) {
     val buttonSize = IconButtonDefaults.mediumContainerSize()
     val interaction = remember { MutableInteractionSource() }

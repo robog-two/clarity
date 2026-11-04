@@ -45,8 +45,8 @@ data class HeldUiState(
     val allowed: List<AllowedRow> = emptyList(),
     val showAllowed: Boolean = false,
 ) {
-    /** "2 held today · 14 allowed" */
-    val kicker: String get() = heldLine(waiting) + (allowedCount?.let { " · $it allowed" } ?: "")
+    /** "2 waiting, 14 automatic" */
+    val kicker: String get() = (if (waiting == 0) "Nothing waiting" else "$waiting waiting") + (allowedCount?.let { ", $it automatic" } ?: "")
 }
 
 fun heldRows(held: List<HeldAction>, zone: TimeZone): List<HeldRow> =

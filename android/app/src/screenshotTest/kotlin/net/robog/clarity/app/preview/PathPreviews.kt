@@ -151,14 +151,14 @@ private val finishedItems: List<PathItem> = buildList {
     addAll(browserHelperItems)
     add(PathItem.Heard(t0 + 192.seconds, LEAD, 0, PathItem.Heard.Source.HELPER, "A helper finished: Sign in to shop.clarity.test with the saved Garden Shop login"))
     add(action(200.seconds, LEAD, 0, "send_to_user", "Sent you a message", "Your seeds shipped Monday and should arrive Thursday."))
-    add(action(204.seconds, LEAD, 0, "update_task", "Updated the task", "Check the Garden Shop seed order · done"))
+    add(action(204.seconds, LEAD, 0, "update_task", "Updated the task", "Check the Garden Shop seed order, done"))
 }
 
 private fun subject(kind: PathSubject.Kind, id: String, title: String, status: String, detail: String?) =
     PathSubject(kind, id, title, status, t0, null, detail)
 
 private val finished = AgentPath(
-    subject(PathSubject.Kind.TASK, "t1", "Check the Garden Shop seed order", "done", "web · shipped Monday, arrives Thursday"),
+    subject(PathSubject.Kind.TASK, "t1", "Check the Garden Shop seed order", "done", "Web, shipped Monday, arrives Thursday"),
     PathTotals(steps = finishedItems.count { it !is PathItem.Heard && it !is PathItem.Finished }, durationMillis = 204_000, modelCostMicros = 41_200, decisionCostMicros = 1_916),
     finishedItems,
 )
@@ -169,7 +169,7 @@ private val runningItems: List<PathItem> = finishedItems.take(3) +
     browserHelperItems.take(6) + action(120.seconds, BROWSER, 1, "ask_code", "Asked you for a code", outcome = Outcome.RUNNING)
 
 private val running = AgentPath(
-    subject(PathSubject.Kind.TASK, "t1", "Check the Garden Shop seed order", "working", "web · signing in"),
+    subject(PathSubject.Kind.TASK, "t1", "Check the Garden Shop seed order", "working", "Web, signing in"),
     PathTotals(steps = 9, durationMillis = 124_000, modelCostMicros = 18_400, decisionCostMicros = 1_193),
     runningItems,
     live = true,

@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.path
 
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.heading
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -184,7 +188,7 @@ fun PathContent(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(start = ScreenGutter, end = ScreenGutter, bottom = 32.dp),
             ) {
                 item(key = "header") { PathHeader(path, onReview, Modifier.padding(bottom = 18.dp)) }
-                if (state.rows.isEmpty() && !path.live) item(key = "empty") { Hint("Nothing recorded for this one yet.") }
+                if (state.rows.isEmpty() && !path.live) item(key = "empty") { Hint("Nothing recorded yet.") }
                 val lastIndex = state.rows.lastIndex
                 items(state.rows.size, key = { state.rows[it].key }) { i ->
                     val row = state.rows[i]
@@ -207,7 +211,7 @@ fun PathContent(
                 if (path.live) item(key = "working") { WorkingRow(state.rows.lastOrNull()?.depth ?: 0, Modifier.animateItem()) }
                 if (path.next != null) item(key = "more") {
                     TextButton(onClick = onLoadMore, enabled = !state.loadingMore, modifier = Modifier.padding(top = 8.dp)) {
-                        Text(if (state.loadingMore) "Loading…" else "Show more")
+                        Text(if (state.loadingMore) "Loading" else "Show more")
                     }
                 }
             }
@@ -224,13 +228,13 @@ private fun PathHeader(path: AgentPath, onReview: (HeldActionId) -> Unit, modifi
     val subject = path.subject
     val colors = MaterialTheme.colorScheme
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Kicker(if (subject.kind == PathSubject.Kind.TASK) "agent’s path" else "helper’s path")
+        Kicker(if (subject.kind == PathSubject.Kind.TASK) "task path" else "helper path")
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             val task = taskOf(subject)
             if (task != null) StatusGlyph(task, needsYou = subject.heldActionId != null)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(subject.title, style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                val line = listOfNotNull(sentenceCase(statusLabel(subject)), subject.detail?.takeIf { it.isNotBlank() }).joinToString(" · ")
+                Text(subject.title, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                val line = listOfNotNull(sentenceCase(statusLabel(subject)), subject.detail?.takeIf { it.isNotBlank() }).joinToString(", ")
                 Text(line, style = MaterialTheme.clarityText.chatSmall, color = colors.onSurfaceVariant)
             }
         }
@@ -238,16 +242,16 @@ private fun PathHeader(path: AgentPath, onReview: (HeldActionId) -> Unit, modifi
         val waiting = taskOf(subject)?.status.let { it == AgentTask.Status.DRAFTED || it == AgentTask.Status.WAITING_FOR_YOU }
         if (held != null && waiting) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Something here waits for your OK.", Modifier.weight(1f), style = MaterialTheme.clarityText.chatSmall)
-                ReviewButton { onReview(held) }
+                Text("Needs your OK.", Modifier.weight(1f), style = MaterialTheme.clarityText.chatSmall)
+                ReviewButton({ onReview(held) }, subject.title)
             }
         }
         val totals = path.totals
         val stats = listOfNotNull(
             stepsText(totals.steps).substringBefore(' ') to (if (totals.steps == 1) "step" else "steps"),
-            durationText(totals.durationMillis) to "time",
+            durationText(totals.durationMillis) to "taken",
             costText(totals.modelCostMicros)?.let { it to "thinking" },
-            costText(totals.decisionCostMicros)?.let { it to "decisions" },
+            costText(totals.decisionCostMicros)?.let { it to "checks" },
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
             stats.forEachIndexed { i, (value, label) ->
@@ -272,9 +276,9 @@ private fun horizontalGroupShape(index: Int, count: Int): RoundedCornerShape {
 @Composable
 private fun StatTile(value: String, label: String, shape: RoundedCornerShape, modifier: Modifier = Modifier) {
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainer, shape = shape) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp).semantics(mergeDescendants = true) {}) {
             Text(value, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), maxLines = 1)
-            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
         }
     }
 }
@@ -356,7 +360,7 @@ private fun WorkingRow(depth: Int, modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(Modifier.width(RAIL_X * 2), contentAlignment = Alignment.Center) { LoadingIndicator(Modifier.size(32.dp)) }
-        Hint("Still working…")
+        Hint("Still working")
     }
 }
 
@@ -383,15 +387,15 @@ private fun ItemContent(
         is PathItem.Heard -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Kicker(
                 when (item.from) {
-                    PathItem.Heard.Source.PERSON -> "you · $time"
-                    PathItem.Heard.Source.HELPER -> "a helper reported · $time"
-                    PathItem.Heard.Source.EVENT -> "came in · $time"
+                    PathItem.Heard.Source.PERSON -> "You, $time"
+                    PathItem.Heard.Source.HELPER -> "A helper reported, $time"
+                    PathItem.Heard.Source.EVENT -> "Came in, $time"
                 },
             )
             Text(item.text, style = MaterialTheme.clarityText.chat)
         }
         is PathItem.Said -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Kicker("${if (item.depth > 0 || helperRun) "helper" else "clarity"} · $time")
+            Kicker("${if (item.depth > 0 || helperRun) "helper" else "clarity"}, $time")
             Surface(color = colors.surfaceContainerLow, shape = RoundedCornerShape(topStart = 6.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp)) {
                 Text(item.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.clarityText.chatSmall)
             }
@@ -406,11 +410,11 @@ private fun ItemContent(
                     Outcome.OK -> Unit
                 }
             }
-            Text(listOfNotNull(time, item.detail).joinToString(" · "), style = MaterialTheme.clarityText.chatSmall, color = colors.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text(listOfNotNull(time, item.detail).joinToString(", "), style = MaterialTheme.clarityText.chatSmall, color = colors.onSurfaceVariant, maxLines = 3, overflow = TextOverflow.Ellipsis)
         }
         is PathItem.Helper -> HelperCard(item, time, onOpenRun)
         is PathItem.Finished -> Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Kicker(if (item.ok) "helper finished · $time" else "helper stopped · $time")
+            Kicker(if (item.ok) "helper finished, $time" else "helper stopped, $time")
             Text(item.text, style = MaterialTheme.clarityText.chatSmall)
         }
         is PathItem.Browser -> BrowserStep(item.step, time, frameBase, onOpenFrame, initialFramePage)
@@ -434,11 +438,11 @@ private fun HelperCard(item: PathItem.Helper, time: String, onOpenRun: (String) 
         shape = RoundedCornerShape(24.dp),
     ) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Kicker("started a ${item.role} · $time")
+            Kicker("started a ${item.role}, $time")
             Text(item.task, style = MaterialTheme.clarityText.chat, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    listOf(sentenceCase(item.status.let { if (it == "running") "working" else it }), helperLine(item)).joinToString(" · "),
+                    listOf(sentenceCase(item.status.let { if (it == "running") "working" else it }), helperLine(item)).joinToString(", "),
                     Modifier.weight(1f),
                     style = MaterialTheme.typography.labelLarge,
                     color = colors.onSurfaceVariant,
@@ -504,9 +508,10 @@ private fun Frames(step: BrowserStepView, base: String?, outcome: StepOutcome, o
                 val selected = pager.currentPage == i
                 Surface(
                     onClick = { scope.launch { pager.animateScrollToPage(i) } },
+                    modifier = Modifier.minimumInteractiveComponentSize().semantics { role = Role.Tab; this.selected = selected },
                     color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent,
                     contentColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                    border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     shape = RoundedCornerShape(50),
                 ) {
                     Text(label, Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
@@ -558,7 +563,7 @@ private fun ShotImage(url: String, box: JevBox?, boxColor: Color, description: S
                 .aspectRatio(ratio)
                 .clip(RoundedCornerShape(18.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .clickable(role = Role.Image, onClickLabel = "Open full screen", onClick = onClick)
+                .clickable(role = Role.Button, onClickLabel = "Open full screen", onClick = onClick)
                 .semantics { contentDescription = description },
         ) {
             AsyncImage(
@@ -595,7 +600,7 @@ private fun WithheldFrame(description: String, modifier: Modifier = Modifier) {
             .heightIn(min = 120.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(colors.surfaceContainer)
-            .semantics { contentDescription = "$description. Hidden while a password or code was on screen." },
+            .semantics { contentDescription = "$description. Hidden for privacy" },
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp)) {
@@ -603,7 +608,7 @@ private fun WithheldFrame(description: String, modifier: Modifier = Modifier) {
                 Icon(Icons.Outlined.Lock, contentDescription = null, tint = colors.onTertiaryContainer, modifier = Modifier.size(20.dp))
             }
             Text(
-                "Hidden while a password or code was on screen",
+                "Hidden for privacy",
                 style = MaterialTheme.clarityText.chatSmall,
                 color = colors.onSurfaceVariant,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,

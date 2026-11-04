@@ -139,7 +139,7 @@ class SessionScenarioTest : FunSpec({
         val chipCards = r.feed.page(0, 50).items.filter { f -> f.cards.any { it is Card.Chips } }
         chipCards shouldHaveSize 1
         (chipCards.single().cards.single() as Card.Chips).let {
-            it.label shouldBe "captured · 6"
+            it.label shouldBe "6 captured"
             it.items.map { c -> c.text } shouldContain "gym"
         }
 

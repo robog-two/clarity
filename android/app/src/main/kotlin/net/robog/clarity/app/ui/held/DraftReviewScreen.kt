@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.held
 
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
@@ -110,8 +112,8 @@ fun DraftReviewContent(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             val email = state.email
-            Kicker(outcome ?: "needs your OK · ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
-            Text(email?.subject ?: held.action.summary, style = MaterialTheme.typography.headlineSmall)
+            Kicker(outcome ?: "needs your OK, ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
+            Text(email?.subject ?: held.action.summary, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
 
             if (email != null) {
                 // Which address it goes from and who it goes to come first: it is sent as the person.
@@ -136,7 +138,7 @@ fun DraftReviewContent(
             extras(held)
             if (email == null && held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
 
-            Kicker("why I’m asking", Modifier.padding(top = 8.dp))
+            Kicker("why it asked", Modifier.padding(top = 8.dp))
             ReadingText(held.agentView)
             Hint(held.verdict.rationale)
             checkedLine(held)?.let { Kicker(it) }
@@ -157,8 +159,9 @@ fun DraftReviewContent(
             state.message?.let { ErrorBox(it) }
         }
         if (state.decided) {
-            Text(outcome ?: "Settled", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+            Text(outcome ?: "Done", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         } else {
+            if (held.needsCode && state.code.isBlank()) Hint("Enter the code.")
             SlideToConfirm(
                 slideLabel(held.action.kind),
                 onApprove,

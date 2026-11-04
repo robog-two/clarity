@@ -64,8 +64,8 @@ class ReactionTest {
     }
 
     @Test fun theScreenReaderHearsWhoReactedWithWhat() {
-        assertEquals("Clarity reacted 👍", reactionDescription(Reaction.THUMBS_UP))
-        assertEquals("Clarity reacted ❤️", reactionDescription(Reaction.HEART))
+        assertEquals("Clarity reacted with a thumbs up", reactionDescription(Reaction.THUMBS_UP))
+        assertEquals("Clarity reacted with a heart", reactionDescription(Reaction.HEART))
     }
 
     @Test fun aReactionNeverNotifiesEvenWithTheAppInTheBackground() {

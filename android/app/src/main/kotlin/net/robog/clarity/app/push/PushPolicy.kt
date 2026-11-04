@@ -85,10 +85,10 @@ class NetworkReconnector(private val syncState: () -> SyncState, private val rec
 
 fun statusText(state: SyncState, host: String): String = when (state) {
     SyncState.Live -> "Connected to $host"
-    SyncState.Connecting -> "Connecting to $host…"
-    SyncState.Offline -> "Offline, reconnecting…"
-    SyncState.Unauthorized -> "$host no longer accepts this phone"
-    SyncState.Unavailable -> "$host has no feed yet"
+    SyncState.Connecting -> "Connecting to $host"
+    SyncState.Offline -> "Offline. Reconnecting."
+    SyncState.Unauthorized -> "$host rejected this phone. Set it up again."
+    SyncState.Unavailable -> "$host isn’t ready yet."
 }
 
 // --- notifications from what arrives ---
@@ -117,7 +117,7 @@ enum class PushChannel(val id: String, val label: String, val description: Strin
     /** Urgent held actions that wait for the person's yes. */
     Urgent("urgent", "Urgent", "Things that need you now"),
     /** Messages from the agent that the notification policy said to push. */
-    Agent("agent", "From Clarity", "Messages from your agent"),
+    Agent("agent", "From Clarity", "Messages from Clarity"),
     /** The evening summary. */
     Evening("evening", "Evening summary", "Your evening summary"),
 }
@@ -235,7 +235,7 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
     item.cards.firstNotNullOfOrNull { it as? Card.Proposal }?.let { proposal ->
         // The same id as the held action's own notification, so the two never stack.
         return NotificationPlan(
-            heldNotificationId(proposal.heldActionId), channel, "Needs your ok",
+            heldNotificationId(proposal.heldActionId), channel, "Needs your OK",
             itemText(item, fallback = "Open Clarity to review it."), DeepLink.HeldItem(proposal.heldActionId),
         )
     }
@@ -276,7 +276,7 @@ private fun heldPlan(held: HeldAction, front: Front, now: Instant, maxAge: Durat
     return NotificationPlan(
         id = heldNotificationId(held.id),
         channel = PushChannel.Urgent,
-        title = "Needs your ok",
+        title = "Needs your OK",
         text = held.action.summary,
         link = DeepLink.HeldItem(held.id),
     )
@@ -332,13 +332,13 @@ fun summaryPlan(plans: List<NotificationPlan>): NotificationPlan {
     val others = plans.size - approvals
     val parts = buildList {
         if (others > 0) add(if (others == 1) "1 message" else "$others messages")
-        if (approvals > 0) add(if (approvals == 1) "1 thing needs your ok" else "$approvals things need your ok")
+        if (approvals > 0) add(if (approvals == 1) "1 thing needs your OK" else "$approvals things need your OK")
     }
     return NotificationPlan(
         id = SUMMARY_ID,
         channel = plans.minOf { it.channel }, // Urgent, then Agent, then Evening
         title = "While you were away",
-        text = parts.joinToString(", ") + ". Latest: " + plans.last().text,
+        text = parts.joinToString(", ") + ". Latest, " + plans.last().text,
         link = if (others == 0) DeepLink.Held else DeepLink.Today,
     )
 }

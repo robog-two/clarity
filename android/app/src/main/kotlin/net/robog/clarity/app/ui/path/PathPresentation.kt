@@ -32,7 +32,7 @@ fun stepOutcome(gate: String): StepOutcome = when (gate.substringBefore(' ').tri
 fun outcomeLabel(step: BrowserStepView): String = when (stepOutcome(step.gate)) {
     StepOutcome.PASSED -> "Passed"
     StepOutcome.HELD -> "Held for you"
-    StepOutcome.REFUSED -> if (step.gate.startsWith("code_guard")) "Refused · code guard" else "Refused"
+    StepOutcome.REFUSED -> if (step.gate.startsWith("code_guard")) "Blocked by the code guard" else "Refused"
     StepOutcome.NOT_FOUND -> "Not found"
     StepOutcome.FAILED -> "Failed"
 }
@@ -61,16 +61,16 @@ fun stepTitle(step: BrowserStepView): String {
     }.replaceFirstChar { it.uppercase() }
 }
 
-/** Pure: the element the step hit, "button · Sign in with Clarity ID"; null when none. */
+/** Pure: the element the step hit, "Sign in with Clarity ID, button"; null when none. */
 fun elementLine(step: BrowserStepView): String? {
     val name = step.hitName?.takeIf { it.isNotBlank() && it != "null" } ?: return null
     val role = step.hitRole?.takeIf { it.isNotBlank() && it != "null" }
-    return if (role == null) name else "$role · $name"
+    return if (role == null) name else "$name, $role"
 }
 
 private val SCHEME = Regex("https?://")
 
-private val JEV_P = Regex("""\(Jev p=([0-9.]+)\)""")
+private val JEV_P = Regex("""\s*\(Jev p=([0-9.]+)\)""")
 
 /** Hints the change report gives the agent, not the person. */
 private val AGENT_HINTS = listOf("Call look", "Use ask_code", "Pick one with act", "do not press", "continue with act", "then call sign_in")
@@ -82,16 +82,16 @@ private val AGENT_HINTS = listOf("Call look", "Use ask_code", "Pick one with act
 fun condenseReport(report: String?, parts: Int = 2): String? {
     if (report.isNullOrBlank()) return null
     val kept = report.split(" / ", ". ")
-        .map { it.trim().trimEnd('.').replace(SCHEME, "").replace("On the screen: looks like", "Looks like") }
+        .map { it.trim().trimEnd('.').replace(SCHEME, "").replace("On the screen: looks like", "Looks like").replace(" → ", " to ") }
         .filterNot { it.startsWith("Title:") || it.startsWith("Now on:") }
         .filter { part -> part.isNotEmpty() && AGENT_HINTS.none { part.contains(it, ignoreCase = true) } }
         .take(parts)
     // All of it was meant for the agent ("Refused: a code was sent at 15:29 – use ask_code …"): keep what happened.
     if (kept.isEmpty()) return report.substringBefore(" – ").substringBefore(" — ").trim().trimEnd('.').ifEmpty { null }
-    return kept.joinToString(" · ") { part -> JEV_P.replace(part) { m -> m.groupValues[1].toDoubleOrNull()?.let { "(${confidenceText(it)})" } ?: "" } }
+    return kept.joinToString(". ") { part -> JEV_P.replace(part) { m -> m.groupValues[1].toDoubleOrNull()?.let { ". ${confidenceText(it)}" } ?: "" } }
 }
 
-/** Pure: a probability in words: "Jev is very sure, 99%". */
+/** Pure: a probability in words: "Very sure, 99%". */
 fun confidenceText(p: Double): String {
     val pct = (p * 100).roundToInt().coerceIn(0, 100)
     val words = when {
@@ -100,7 +100,7 @@ fun confidenceText(p: Double): String {
         p >= 0.6 -> "leaning yes"
         else -> "unsure"
     }
-    return "Jev is $words, $pct%"
+    return "${words.replaceFirstChar { it.uppercase() }}, $pct%"
 }
 
 /** Pure: how sure Jev was that the step did what it should (its check, else its approval), if it answered. */
@@ -139,7 +139,7 @@ private val SIGN_IN_WORDS = listOf("login", "signin", "sign-in", "sign_in", "aut
 
 /**
  * Pure: the line that groups browser steps by tab: "On Garden Shop" for a run's first step,
- * "Opened the sign-in tab · Clarity ID" when the step works in a new place, "Back on Garden Shop"
+ * "Opened sign-in tab, Clarity ID" when the step works in a new place, "Back on Garden Shop"
  * when it returns; null while the step stays where the last one was. [seen] are the hosts the run
  * has been on, in order.
  */
@@ -150,7 +150,7 @@ fun tabChange(previous: BrowserStepView?, step: BrowserStepView, seen: List<Stri
     if (hostOf(previous.tabUrl) == host) return null
     if (host in seen) return "Back on $title"
     val signIn = SIGN_IN_WORDS.any { host.contains(it, ignoreCase = true) || step.tabUrl.orEmpty().contains(it, ignoreCase = true) }
-    return if (signIn) "Opened the sign-in tab · $title" else "Opened $title"
+    return if (signIn) "Opened sign-in tab, $title" else "Opened $title"
 }
 
 /** One row of the timeline: a node, or the line that says the agent moved to another tab. */
@@ -196,13 +196,13 @@ fun costText(micros: Long?): String? {
     return if (micros >= 10_000) "$" + "%.2f".format(java.util.Locale.US, dollars) else "$" + "%.4f".format(java.util.Locale.US, dollars)
 }
 
-/** Pure: a duration in words: "38 s", "4 min", "1 h 5 min". */
+/** Pure: a duration in words: "38 sec", "4 min", "1 hr 5 min". */
 fun durationText(millis: Long): String {
     val s = millis / 1000
     return when {
-        s < 60 -> "${s.coerceAtLeast(0)} s"
+        s < 60 -> "${s.coerceAtLeast(0)} sec"
         s < 3600 -> "${s / 60} min"
-        else -> "${s / 3600} h" + (s % 3600 / 60).let { if (it > 0) " $it min" else "" }
+        else -> "${s / 3600} hr" + (s % 3600 / 60).let { if (it > 0) " $it min" else "" }
     }
 }
 
@@ -221,10 +221,10 @@ fun statusLabel(subject: PathSubject): String =
 /** Pure: "7 steps", "1 step". */
 fun stepsText(n: Int): String = if (n == 1) "1 step" else "$n steps"
 
-/** Pure: a helper's one-line summary: "7 steps · 3 in the browser". */
+/** Pure: a helper's one-line summary: "7 steps, 3 in the browser". */
 fun helperLine(item: PathItem.Helper): String =
-    stepsText(item.steps) + if (item.browserSteps > 0) " · ${item.browserSteps} in the browser" else ""
+    stepsText(item.steps) + if (item.browserSteps > 0) ", ${item.browserSteps} in the browser" else ""
 
-/** Pure: the frame's accessible description: "Before: tapped the Sign in link, on link · Sign in". */
+/** Pure: the frame's accessible description: "Before: tapped the Sign in link, on Sign in, link". */
 fun frameDescription(step: BrowserStepView, after: Boolean): String =
-    (if (after) "After: " else "Before: ") + stepTitle(step).replaceFirstChar { it.lowercase() } + (elementLine(step)?.let { ", on $it" } ?: "")
+    (if (after) "After. " else "Before. ") + stepTitle(step)

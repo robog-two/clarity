@@ -111,7 +111,7 @@ class ModelsRulesTest {
     @Test fun aRefusalReadsTheServersFieldReasons() {
         val problem = Problem(title = "Settings not saved", status = 422, errors = listOf(FieldError("effort", "effort is one of low, medium")))
         assertEquals("Pick an effort from the list.", refusal(ApiError.Http(422, problem)))
-        assertEquals("Can’t reach your server. Check your connection.", refusal(ApiError.Unreachable(null)))
+        assertEquals("Can’t reach server. Check connection.", refusal(ApiError.Unreachable(null)))
     }
 }
 
