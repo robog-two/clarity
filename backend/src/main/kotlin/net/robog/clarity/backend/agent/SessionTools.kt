@@ -199,7 +199,7 @@ class SessionTools(
         val updated = sessions.updateData(session.id) { it.copy(captured = mergeCaptured(it.captured, added)) }
             .getOrElse { return@tool ToolResult.Error(it.text()) }
         val chips = updated.data.captured
-        val cards = listOf<Card>(Card.Chips("captured · ${chips.size}", chips))
+        val cards = listOf<Card>(Card.Chips("${chips.size} captured", chips))
         val itemId = updated.data.capturedItemId
         if (itemId == null) {
             val appended = feed.append(
@@ -356,7 +356,7 @@ class SessionTools(
         if (index != TIERS_QUESTION && input.tiers != null) return@tool ToolResult.Error("`tiers` belongs to question ${TIERS_QUESTION + 1} only.")
         sessions.mutate(session.id, quiet = true) { it.lineCaptured(line, tiers) }.getOrElse { return@tool ToolResult.Error(it.text()) }
         val cards = buildList<Card> {
-            add(Card.Chips("captured as · ${question?.label ?: "line"}", listOf(Chip(line.text, line.because?.let { "because $it" }.orEmpty()))))
+            add(Card.Chips("Captured as ${question?.label ?: "line"}", listOf(Chip(line.text, line.because?.let { "because $it" }.orEmpty()))))
             if (tiers.isNotEmpty()) add(Card.Chips("how much I do alone", tiers.map { Chip(it.examples, TIER_SUB.getValue(it.level)) }))
         }
         post(session, cards)

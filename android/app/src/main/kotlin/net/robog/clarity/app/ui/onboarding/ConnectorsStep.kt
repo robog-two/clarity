@@ -32,7 +32,7 @@ sealed interface ConnectorRow {
         override val key: String get() = summary.id.value
         override val title: String get() = summary.manifest?.displayName ?: connectorDisplayName(summary.id.value)
         override val proto: String
-            get() = if (notRunning) NOT_RUNNING else "${protocolLabel(summary.manifest?.kind ?: "connector")} · on your server"
+            get() = if (notRunning) NOT_RUNNING else "On your server"
 
         /** Its container has not started, so it never sent a manifest and there is nothing to set up yet. */
         val notRunning: Boolean get() = summary.manifest == null
@@ -46,6 +46,20 @@ sealed interface ConnectorRow {
 }
 
 const val NOT_RUNNING = "not running on your server"
+
+private val FAILURE_WORDS = listOf("reject", "fail", "error", "denied", "refused", "timed out", "timeout", "unreachable", "invalid", "wrong", "expired", "couldn")
+
+/**
+ * Pure: a server's failure line as a short subtitle. "Personal: password rejected by caldav.icloud.com (401)"
+ * becomes "Password rejected". The full line stays on the connector's own screen.
+ */
+fun friendlyFailure(raw: String): String {
+    val parts = raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+    val part = parts.lastOrNull { p -> FAILURE_WORDS.any { p.contains(it, ignoreCase = true) } } ?: parts.firstOrNull() ?: return raw
+    val noAccount = part.substringAfter(": ", part)
+    val core = noAccount.substringBefore(" by ").substringBefore(" (").substringBefore(" at ").trim()
+    return core.replaceFirstChar { it.titlecase() }.ifEmpty { raw }
+}
 
 /** Pure: a connector id as a readable name when it has no manifest ("dav" → "Dav", "apple-notes" → "Apple notes"). */
 fun connectorDisplayName(id: String): String =
@@ -80,19 +94,19 @@ data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: Te
     val status: String
         get() = when {
             notRunning -> "not running"
-            test is TestState.Testing -> "testing…"
+            test is TestState.Testing -> "Testing"
             test is TestState.Ok -> test.summary ?: "synced"
-            test is TestState.Failed -> "failed · fix →"
+            test is TestState.Failed -> "Fix it"
             saved -> "ready"
-            else -> "set up →"
+            else -> "Set up"
         }
 
     /** The caption under the name: the protocol, the failure reason, or "allowed" for phone items. */
     val caption: String
         get() = when {
-            notRunning -> NOT_RUNNING
-            test is TestState.Failed -> test.reason
-            saved && row is ConnectorRow.Phone -> "allowed · on this phone"
+            notRunning -> "" // the status on the right already says it
+            test is TestState.Failed -> friendlyFailure(test.reason)
+            saved && row is ConnectorRow.Phone -> "Allowed on this phone"
             else -> row.proto
         }
 }
@@ -113,7 +127,7 @@ data class ConnectorsState(
     val allSaved: Boolean get() = active.isNotEmpty() && active.all { it.saved }
     val canSync: Boolean get() = allSaved && !syncing && !anyFailed
 
-    /** "3 of 6 set up", "testing and syncing…", ... */
+    /** "3 of 6 set up", "Testing and syncing", ... */
     val summaryLine: String
         get() = connectorsSummaryLine(
             total = active.size,
@@ -127,12 +141,12 @@ data class ConnectorsState(
 
 fun connectorsSummaryLine(total: Int, saved: Int, synced: Int, syncing: Boolean, anyFailed: Boolean, notRunning: Int = 0): String {
     // Rows that are not running are listed too, so the count says where they went.
-    val skipped = if (notRunning > 0) " · $notRunning not running" else ""
+    val skipped = if (notRunning > 0) " $notRunning not running." else ""
     return when {
-        syncing -> "testing and syncing…"
-        anyFailed -> "$synced of $total synced$skipped · tap the failed one to fix it"
-        total > 0 && synced == total -> "all $total synced$skipped"
-        else -> "$saved of $total set up$skipped"
+        syncing -> "Testing and syncing"
+        anyFailed -> "$synced of $total synced.$skipped Fix the failed one."
+        total > 0 && synced == total -> "All $total synced.$skipped"
+        else -> "$saved of $total set up.$skipped"
     }
 }
 

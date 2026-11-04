@@ -64,7 +64,7 @@ private val waiting = held("h1", "Move call with Dana to Thursday 2:00", HeldAct
 private val done = held("h2", "Add “Devils with Nick” to Tuesday 8:30pm", HeldAction.Status.EXECUTED)
 
 private val context = Card.Context(
-    "“Dana’s contract” · 2 found",
+    "“Dana’s contract”, 2 found",
     listOf(ContextItem("mail · yesterday", "Re: Revised Terms"), ContextItem("files · tue", "Contract_v3.pdf")),
 )
 private val waitingOn = Card.Chips(
@@ -191,11 +191,11 @@ fun AskWithMeetingDark() = AskMeeting(dark = true)
 fun ChatPills() = Column {
     Frame(dark = false) {
         ChatPill("Ulta Hair Appt")
-        ChatPill("Morning meeting · 9:00 am")
+        ChatPill("Morning meeting at 9:00 am")
     }
     Frame(dark = true) {
         ChatPill("Ulta Hair Appt")
-        ChatPill("Morning meeting · Oct 26, 9:00 am")
+        ChatPill("Morning meeting on Oct 26 at 9:00 am")
     }
 }
 
@@ -204,6 +204,6 @@ fun ChatPills() = Column {
 @Preview(widthDp = 412)
 @Composable
 fun ComposerStates() = Frame(dark = false) {
-    ChatComposer("", {}, {}, ComposerMic(live = false, description = "talk"), {})
-    ChatComposer("", {}, {}, ComposerMic(live = false, muted = true, description = "Unmute"), {})
+    ChatComposer("", {}, {}, ComposerMic(live = false, description = "Microphone", state = "Off", action = "Talk"), {})
+    ChatComposer("", {}, {}, ComposerMic(live = false, muted = true, description = "Microphone", state = "Muted", action = "Unmute"), {})
 }

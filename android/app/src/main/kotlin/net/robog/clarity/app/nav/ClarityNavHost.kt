@@ -29,6 +29,9 @@ import net.robog.clarity.app.ui.path.RunPathScreen
 import net.robog.clarity.app.ui.path.TaskThreadScreen
 import net.robog.clarity.app.ui.goods.ReportScreen
 import net.robog.clarity.shared.feed.TaskId
+import androidx.navigation3.scene.Scene
+import net.robog.clarity.app.ui.components.springSwap
+import net.robog.clarity.app.ui.components.springSwapPredictive
 import net.robog.clarity.shared.governance.HeldActionId
 
 /**
@@ -80,8 +83,13 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
         backStack.add(key)
     }
 
+    val swap = springSwap<Scene<NavKey>>()
+    val swapBack = springSwapPredictive<Scene<NavKey>>()
     NavDisplay(
         backStack = backStack,
+        transitionSpec = swap,
+        popTransitionSpec = swap,
+        predictivePopTransitionSpec = swapBack,
         onBack = { if (backStack.size > 1) backStack.removeLastOrNull() },
         entryDecorators = listOf(
             rememberSaveableStateHolderNavEntryDecorator(),
@@ -114,7 +122,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
             entry<Amend> { key ->
                 AmendScreen(
                     heldId = key.heldId?.let(::HeldActionId),
-                    backLabel = if (key.heldId != null) "← held" else "← constitution",
+                    backLabel = if (key.heldId != null) "held" else "constitution",
                     onBack = { backStack.removeLastOrNull() },
                 )
             }
@@ -126,7 +134,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onSaved = { backStack.removeLastOrNull() },
                     onBack = { backStack.removeLastOrNull() },
                     step = null,
-                    backLabel = "← settings",
+                    backLabel = "settings",
                 )
             }
             entry<McpServersView> {

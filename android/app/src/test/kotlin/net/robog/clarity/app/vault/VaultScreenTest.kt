@@ -38,7 +38,7 @@ class VaultScreenTest {
 
     @Test fun rowsShowOnlyMetadata() {
         val card = credentialRow(meta("c1", CredentialKind.PAYMENT_CARD, mapOf("brand" to "visa", "last4" to "4242", "expiry_month" to "3")))
-        assertEquals("Visa ·· 4242 expires 3", card.detail)
+        assertEquals("Visa ending 4242, expires 3", card.detail)
         assertEquals("card", card.kind)
         assertEquals("dana", credentialRow(meta("c2", CredentialKind.LOGIN, mapOf("username" to "dana"))).detail)
         assertEquals("", credentialRow(meta("c3", CredentialKind.NOTE, emptyMap())).detail)

@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import net.robog.clarity.app.ui.theme.Space
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -69,12 +73,12 @@ fun TaskRow(
         Row(
             (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .heightIn(min = 72.dp)
-                .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(start = Space.Medium, end = Space.Medium, top = Space.Medium, bottom = Space.Medium),
+            horizontalArrangement = Arrangement.spacedBy(Space.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             glyph()
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(title, style = MaterialTheme.clarityText.chat)
                 Text(sentenceCase(detail), style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -84,15 +88,17 @@ fun TaskRow(
 }
 
 /**
- * A compact, quiet row for tasks folded under a group (Today's quieter tasks): smaller, one line of
- * title and detail, a small still shape, the status word and nothing to press.
+ * A compact row for Today's Inactive fold: a small still mark (one shape per state), the title and
+ * only a relative time. The state is spoken, not written. Tapping opens the task's Agent's Path.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun CompactTaskRow(
     title: String,
-    detail: String,
-    status: String,
+    /** A relative time ("3 days ago"), or empty when the row has none. */
+    time: String,
+    /** What the row's mark means, spoken with the time ("Failed, 3 days ago"). */
+    state: String,
     shape: Shape,
     mark: RoundedPolygon,
     markFill: Color,
@@ -100,20 +106,19 @@ fun CompactTaskRow(
     onClick: (() -> Unit)? = null,
 ) {
     val colors = MaterialTheme.colorScheme
+    val spoken = listOf(title, state, time).filter { it.isNotBlank() }.joinToString(", ")
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainerLow, contentColor = colors.onSurfaceVariant, shape = shape) {
         Row(
-            (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).heightIn(min = 48.dp).padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+                .clearAndSetSemantics { contentDescription = spoken }
+                .heightIn(min = 48.dp)
+                .padding(start = Space.Medium, end = Space.Medium, top = Space.Small, bottom = Space.Small),
+            horizontalArrangement = Arrangement.spacedBy(Space.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(14.dp).background(markFill, mark.toShape()))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (detail.isNotBlank()) {
-                    Text(sentenceCase(detail), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-            Text(sentenceCase(status), style = MaterialTheme.typography.labelMedium)
+            Text(title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = colors.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (time.isNotBlank()) Text(time, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -122,7 +127,7 @@ fun CompactTaskRow(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TaskShape(shape: RoundedPolygon, fill: Color) {
-    Box(Modifier.padding(8.dp).size(28.dp).background(fill, shape.toShape()))
+    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(28.dp).background(fill, shape.toShape())) }
 }
 
 /** The quiet status word on the right of a settled row. */
@@ -134,9 +139,11 @@ fun TaskStatus(text: String) {
 /** The Peach action on a row that needs the person. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun ReviewButton(onClick: () -> Unit) {
+/** [about] names the item (its title) so a screen reader tells the "Review" buttons apart. */
+fun ReviewButton(onClick: () -> Unit, about: String? = null) {
     Button(
         onClick = onClick,
+        modifier = if (about == null) Modifier else Modifier.semantics { contentDescription = "Review $about" },
         shapes = ButtonDefaults.shapes(),
         colors = ButtonDefaults.buttonColors(containerColor = ClarityPalette.Peach, contentColor = ClarityPalette.Charcoal),
     ) { Text("Review") }

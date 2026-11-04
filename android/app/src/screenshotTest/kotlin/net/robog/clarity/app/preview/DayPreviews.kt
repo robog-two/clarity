@@ -102,7 +102,7 @@ private fun task(id: String, title: String, detail: String, status: AgentTask.St
 
 private val todayFull = TodayUiState(
     loading = false,
-    kicker = "monday, October 26 · 2:04 pm",
+    kicker = "Monday, October 26, 2:04 pm",
     today = Today(
         date = LocalDate(2026, 10, 26),
         plan = listOf(
@@ -116,12 +116,12 @@ private val todayFull = TodayUiState(
     // Grouped by the app's own rule at t0: needs you, running, scheduled; stale ones folded away.
     doing = doingRows(
         listOf(
-            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("q1", "Follow up with Nick about The Devils", "Mail, waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
             task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
-            task("q2", "Find Ulta haircut openings", "web · no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
-            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
-            task("q3", "Sort the receipts folder", "files · started on Friday", AgentTask.Status.WORKING, ago = 3.days),
-            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            task("q2", "Find Ulta haircut openings", "Web, no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
+            task("t2", "Find a time with Nick for the Devils game", "Calendar, checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("q3", "Sort the receipts folder", "Files, started on Friday", AgentTask.Status.WORKING, ago = 3.days),
+            task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
         ),
         emptyMap(),
         t0,
@@ -129,19 +129,22 @@ private val todayFull = TodayUiState(
     heldWaiting = 2,
 )
 
-@Composable private fun TodayFull(dark: Boolean, quietOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, quietExpanded = quietOpen) }
+@Composable private fun TodayFull(dark: Boolean, inactiveOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, inactiveExpanded = inactiveOpen) }
 
-/** The full day with helpers that finished today: one done in 80 seconds, one failed, one cancelled. */
+/** The full day with helpers that finished: one failed today (in the main list), the rest in the Inactive fold with their relative times. */
 private val todayFinished = todayFull.copy(
     doing = doingRows(
         listOf(
-            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("q1", "Follow up with Nick about The Devils", "Mail, waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
             task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
-            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
-            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
-            task("f1", "Check the dentist’s opening hours", "web · open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
-            task("f2", "Book the car service", "web · the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
+            task("t2", "Find a time with Nick for the Devils game", "Calendar, checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            task("f1", "Check the dentist’s opening hours", "Web, open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
+            task("f2", "Book the car service", "Web, the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
             task("f3", "Remind Sam about the permission slip", "no longer needed", AgentTask.Status.CANCELLED, ago = 3.hours),
+            task("f4", "Order the printer ink", "Web, ordered", AgentTask.Status.DONE, ago = 26.hours),
+            task("f5", "Find Ulta haircut openings", "Web, the site was down", AgentTask.Status.FAILED, ago = 30.hours),
+            task("f6", "Sort the receipts folder", "Files, started on Friday", AgentTask.Status.WORKING, ago = 3.days),
         ),
         emptyMap(),
         t0,
@@ -149,22 +152,20 @@ private val todayFinished = todayFull.copy(
 )
 
 @Composable private fun TodayFinished(dark: Boolean, open: Boolean) = Screen(dark) {
-    TodayContent(todayFinished, {}, {}, {}, quietExpanded = open, finishedExpanded = open)
+    TodayContent(todayFinished, {}, {}, {}, inactiveExpanded = open)
 }
 @PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedLight() = TodayFinished(false, open = false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedDark() = TodayFinished(true, open = false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
 
-/** Only the bottom fold open: the quieter task, then the parked chips. */
-@Composable private fun TodayBottomOpen(dark: Boolean) = Screen(dark) {
-    TodayContent(todayFinished, {}, {}, {}, quietExpanded = true, finishedExpanded = false)
-}
-@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenLight() = TodayBottomOpen(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenDark() = TodayBottomOpen(true)
+/** A task that failed today sits in the main list, above the running work, until the next day. */
+@Composable private fun TodayFailedInList(dark: Boolean) = Screen(dark) { TodayContent(todayFinished, {}, {}, {}) }
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListLight() = TodayFailedInList(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListDark() = TodayFailedInList(true)
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
-    TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
+    TodayContent(TodayUiState(loading = false, kicker = "Monday, October 26, 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
 }
 
 @Composable private fun TodayError(dark: Boolean) = Screen(dark) {
@@ -173,9 +174,9 @@ private val todayFinished = todayFull.copy(
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullLight() = TodayFull(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullDark() = TodayFull(true)
-// The quieter tasks unfolded: compact, still rows with nothing to press.
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, quietOpen = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, quietOpen = true)
+// The Inactive fold open on the full day: a stale task and the parked items.
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, inactiveOpen = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, inactiveOpen = true)
 // The morning call, until it reaches the hand-off. (Done, with a plan and no button: TodayFull.)
 private val todayNoPlan = todayFull.copy(
     today = todayFull.today!!.copy(plan = emptyList(), parked = emptyList(), called = false),
@@ -205,8 +206,8 @@ private val everyStatus = todayFull.copy(
         main = AgentTask.Status.entries.mapIndexed { i, status ->
             val waiting = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
             val held = if (waiting) "s$i" else null
-            DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, held), held?.let { HeldActionId(it) })
-        } + DoingRow(task("sw", "A task that waits with nothing to review", "chat · asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
+            DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "Mail, detail line", status, held), held?.let { HeldActionId(it) })
+        } + DoingRow(task("sw", "A task that waits with nothing to review", "Chat, asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
     ),
 )
 @PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
@@ -240,8 +241,8 @@ private val emailHeld = HeldAction(
     verdict = GuardVerdict(Decision.ASK, lines = listOf(LineId("l2"), LineId("l5")), rationale = "I’m asking because it goes out as you and touches money (line 2)."),
     agentView = "She asked for a reply before Friday. I agreed to everything except the payment date, which clashes with your invoicing. I kept it short and offered Thursday 2:00, which is clear for both of you.",
     context = listOf(
-        ContextItem("mail · yesterday", "Re: Revised Terms — “Can you confirm by Friday? I’ve attached v3 with the changes we discussed.”"),
-        ContextItem("files · tue", "Contract_v3.pdf"),
+        ContextItem("Mail, yesterday", "Re: Revised Terms — “Can you confirm by Friday? I’ve attached v3 with the changes we discussed.”"),
+        ContextItem("Files, tue", "Contract_v3.pdf"),
     ),
     urgency = Urgency.NORMAL,
     status = HeldAction.Status.HELD,
@@ -415,7 +416,7 @@ private val callItems = listOf(
     fi(12, FeedItem.Author.AGENT, Card.Plan(listOf(IfThen("it’s 9:30", "spec at my desk until 12"), IfThen("Dana emails", "it waits until 12"))), Card.Tasks("setting up", listOf(TaskId("t1"), TaskId("t2"), TaskId("t3")))),
 )
 private val callTasks = listOf(
-    task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1"),
+    task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1"),
     task("t2", "Find a time with Nick for the Devils game", "calendar", AgentTask.Status.WORKING),
     task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED),
 ).associateBy { it.id }
@@ -442,8 +443,14 @@ private fun call(screen: CallScreen, stage: CallStage? = CallStage.CHOOSE, ended
 @Composable private fun Slide(dark: Boolean, progress: Float) = Screen(dark) {
     Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, initialProgress = progress) }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
-@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
+@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
+@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
+// With TalkBack on, the slide gives way to two buttons.
+@Composable private fun AnswerPlain(dark: Boolean) = Screen(dark) {
+    Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, touchExploration = true) }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsLight() = AnswerPlain(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsDark() = AnswerPlain(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedLight() = Call(false, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedDark() = Call(true, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallInCallLight() = Call(false, CallScreen.InCall)

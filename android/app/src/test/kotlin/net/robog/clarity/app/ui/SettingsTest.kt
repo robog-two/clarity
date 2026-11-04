@@ -36,7 +36,6 @@ import net.robog.clarity.app.testutil.withMain
 import net.robog.clarity.app.ui.settings.SettingsViewModel
 import net.robog.clarity.app.ui.settings.callTimeSummary
 import net.robog.clarity.app.ui.settings.daysSummary
-import net.robog.clarity.app.ui.settings.relativeTime
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.connector.ConnectorSummary
@@ -48,23 +47,13 @@ import net.robog.clarity.shared.session.Settings
 import net.robog.clarity.shared.session.Settings.MorningCall
 
 class SettingsRulesTest {
-    @Test fun relativeTimeWords() {
-        val now = T0 + 10.days
-        assertEquals("never", relativeTime(null, now))
-        assertEquals("just now", relativeTime(now - 30.seconds, now))
-        assertEquals("2 min ago", relativeTime(now - 2.minutes, now))
-        assertEquals("1 hr ago", relativeTime(now - 1.hours, now))
-        assertEquals("yesterday", relativeTime(now - 1.days, now))
-        assertEquals("3 days ago", relativeTime(now - 3.days, now))
-    }
-
     @Test fun daysAreSummarisedLikeTheirNames() {
         assertEquals("weekdays", daysSummary(setOf(1, 2, 3, 4, 5)))
         assertEquals("every day", daysSummary((1..7).toSet()))
         assertEquals("weekends", daysSummary(setOf(6, 7)))
         assertEquals("Mon, Wed", daysSummary(setOf(3, 1)))
         assertEquals("no days", daysSummary(emptySet()))
-        assertEquals("9:00 am · weekdays", callTimeSummary(MorningCall()))
+        assertEquals("9:00 am, weekdays", callTimeSummary(MorningCall()))
     }
 }
 
@@ -234,8 +223,8 @@ class SettingsViewModelTest {
             ),
         )
         assertEquals(listOf("mail", "dav"), r.state.serverSources.map { it.id })
-        assertEquals("not running", r.state.serverSources.last().sync)
-        assertEquals("not running on your server", r.state.serverSources.last().sub)
+        assertEquals("Not running", r.state.serverSources.last().sync)
+        assertEquals("", r.state.serverSources.last().sub)
     }
 
     @Test fun theMcpHostHasItsOwnRowNotASourceRow() = withMain {

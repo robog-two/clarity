@@ -25,18 +25,18 @@ data class ConstitutionEntry(val text: String, val because: String? = null)
 data class ConstitutionSectionView(val title: String, val entries: List<ConstitutionEntry>)
 
 private val sectionOrder = listOf(
-    Section.VALUES to "what I value",
-    Section.HARD_LINES to "hard lines · never crossed",
-    Section.AUTONOMY to "how much I do alone",
+    Section.VALUES to "what matters",
+    Section.HARD_LINES to "hard lines",
+    Section.AUTONOMY to "what it does alone",
     Section.COLLISIONS to "when things collide",
     Section.PEOPLE to "who gets through",
-    Section.REPAIR to "when I get it wrong",
+    Section.REPAIR to "when it gets it wrong",
 )
 
-/** "do it, then tell me: holds on calendar, drafts." */
+/** "Do, then report. Calendar holds, drafts." */
 fun tierLabel(tier: AutonomyTier): String = when (tier) {
-    AutonomyTier.DO_THEN_TELL -> "do it, then tell me"
-    AutonomyTier.ASK_FIRST -> "ask me first"
+    AutonomyTier.DO_THEN_TELL -> "do, then report"
+    AutonomyTier.ASK_FIRST -> "ask first"
     AutonomyTier.NEVER_ALONE -> "never alone"
     AutonomyTier.NEVER -> "never"
 }
@@ -50,7 +50,7 @@ fun actionKindLabel(kind: ActionKind): String = kind.name.lowercase().replace('_
 fun constitutionSections(c: Constitution): List<ConstitutionSectionView> {
     val tiers = AutonomyTier.entries.mapNotNull { tier ->
         val kinds = c.autonomy.filterValues { it == tier }.keys.sortedBy { it.ordinal }
-        if (kinds.isEmpty()) null else ConstitutionEntry("${tierLabel(tier)}: ${kinds.joinToString(", ") { actionKindLabel(it) }}.")
+        if (kinds.isEmpty()) null else ConstitutionEntry("${tierLabel(tier).replaceFirstChar { it.uppercase() }}. ${kinds.joinToString(", ") { actionKindLabel(it) }.replaceFirstChar { it.uppercase() }}.")
     }
     return sectionOrder.mapNotNull { (section, title) ->
         val lines = c.lines.filter { it.section == section }.map { ConstitutionEntry(it.text, it.because) }

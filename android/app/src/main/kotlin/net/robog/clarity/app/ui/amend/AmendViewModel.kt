@@ -46,22 +46,22 @@ import net.robog.clarity.shared.session.SessionKind
 
 /** The agent's opening question when it has not said anything yet. */
 fun fallbackQuestion(heldPresent: Boolean): String =
-    if (heldPresent) "This hit one of your lines. Should it have?" else "What would you like to change?"
+    if (heldPresent) "Broke a rule. Was that right?" else "What should change?"
 
 /** True once the agent has said something in the conversation. */
 fun agentHasSpoken(talk: List<FeedItem>): Boolean =
     talk.any { it.author == FeedItem.Author.AGENT && it.cards.any { c -> c is Card.Text } }
 
-/** "change to a line · writing" / "new line · people": the caption of the proposed change box. */
+/** "change to a line in writing" / "new line in people": the caption of the proposed change box. */
 fun proposalLabel(amendment: Amendment): String =
-    (if (amendment.lineId == null) "new line" else "change to a line") + " · " + amendment.proposed.section.name.lowercase().replace('_', ' ')
+    (if (amendment.lineId == null) "new line" else "change to a line") + " in " + amendment.proposed.section.name.lowercase().replace('_', ' ')
 
 /** "create event: do it, then tell me" */
 fun autonomyChangeLine(change: AutonomyChange): String =
-    change.kind.name.lowercase().replace('_', ' ') + ": " + tierLabel(change.tier)
+    change.kind.name.lowercase().replace('_', ' ') + ". " + tierLabel(change.tier)
 
 /** "Rule saved. Constitution v3." */
-fun ruleSavedToast(version: Int): String = "Rule saved. Constitution v$version."
+fun ruleSavedToast(version: Int): String = "Rule saved. Constitution version $version."
 
 data class AmendUiState(
     val loading: Boolean = true,

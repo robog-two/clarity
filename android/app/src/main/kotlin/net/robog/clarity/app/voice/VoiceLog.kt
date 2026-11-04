@@ -36,3 +36,6 @@ fun quoted(text: String?): String = when {
 
 /** "1.4 s" from samples at 16 kHz. Pure. */
 fun secondsOf(samples: Int): String = "%.1f s".format(java.util.Locale.ROOT, samples.toDouble() / SAMPLE_RATE)
+
+/** "minus 36 dB": a level for the log, with the sign in words so a screen reader does not say "dash". Pure. */
+fun dbText(db: Int): String = if (db < 0) "minus ${-db} dB" else "$db dB"

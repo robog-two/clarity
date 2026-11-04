@@ -1,9 +1,13 @@
 package net.robog.clarity.app.ui.goods
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -22,6 +26,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.CollectionInfo
+import androidx.compose.ui.semantics.CollectionItemInfo
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.collectionInfo
+import androidx.compose.ui.semantics.collectionItemInfo
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -91,8 +100,8 @@ private fun MarkdownBlocks(blocks: List<MdBlock>, modifier: Modifier = Modifier)
 /** Headings get room above them; everything else the paragraph gap. */
 private fun spaceBefore(block: MdBlock, first: Boolean) = when {
     first -> 0.dp
-    block is MdBlock.Heading -> if (block.level <= 2) 28.dp else 20.dp
-    else -> 14.dp
+    block is MdBlock.Heading -> if (block.level <= 2) Space.Large else Space.Medium
+    else -> Space.Medium
 }
 
 @Composable
@@ -115,21 +124,35 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
         is MdBlock.Quote -> Row(modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(colors.outlineVariant, MaterialTheme.shapes.extraSmall))
             androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.onSurfaceVariant) {
-                MarkdownBlocks(block.blocks, Modifier.padding(start = 14.dp))
+                MarkdownBlocks(block.blocks, Modifier.padding(start = Space.Medium))
             }
         }
-        is MdBlock.ListBlock -> Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        is MdBlock.ListBlock -> Column(
+            modifier.semantics { collectionInfo = CollectionInfo(rowCount = block.items.size, columnCount = 1) },
+            verticalArrangement = Arrangement.spacedBy(Space.Small),
+        ) {
             block.items.forEachIndexed { i, item ->
-                Row {
-                    Text(
-                        if (block.start == null) "•" else "${block.start + i}.",
-                        Modifier.widthIn(min = 24.dp).padding(end = 6.dp),
-                        style = reading,
-                        color = colors.onSurfaceVariant,
-                    )
+                Row(
+                    Modifier.semantics(mergeDescendants = true) {
+                        collectionItemInfo = CollectionItemInfo(rowIndex = i, rowSpan = 1, columnIndex = 0, columnSpan = 1)
+                    },
+                ) {
+                    if (block.start == null) {
+                        // A drawn dot, so a screen reader does not say "bullet" before every item.
+                        Box(Modifier.widthIn(min = 24.dp).padding(end = Space.Small, top = Space.Medium).clearAndSetSemantics {}) {
+                            Box(Modifier.size(6.dp).background(colors.onSurfaceVariant, CircleShape))
+                        }
+                    } else {
+                        Text(
+                            "${block.start + i}.",
+                            Modifier.widthIn(min = 24.dp).padding(end = Space.Small),
+                            style = reading,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
                     Column(Modifier.weight(1f)) {
                         InlineText(item.text, reading)
-                        if (item.children.isNotEmpty()) MarkdownBlocks(item.children, Modifier.padding(top = 6.dp))
+                        if (item.children.isNotEmpty()) MarkdownBlocks(item.children, Modifier.padding(top = Space.Small))
                     }
                 }
             }
@@ -140,11 +163,11 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .background(colors.surfaceContainer, MaterialTheme.shapes.small)
                 .horizontalScroll(rememberScrollState())
-                .padding(12.dp),
+                .padding(Space.Medium),
             style = type.bodySmall.copy(fontFamily = FontFamily.Monospace),
         )
         is MdBlock.Table -> MarkdownTable(block, modifier)
-        MdBlock.Rule -> HorizontalDivider(modifier.padding(vertical = 6.dp), color = colors.outlineVariant)
+        MdBlock.Rule -> HorizontalDivider(modifier.padding(vertical = Space.Small), color = colors.outlineVariant)
     }
 }
 
@@ -152,10 +175,18 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
 private fun MarkdownTable(table: MdBlock.Table, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     val columns = table.rows.maxOfOrNull { it.size } ?: return
-    Column(modifier.fillMaxWidth().background(colors.surfaceContainerLow, MaterialTheme.shapes.small)) {
+    Column(
+        modifier.fillMaxWidth().background(colors.surfaceContainerLow, MaterialTheme.shapes.small)
+            .semantics { collectionInfo = CollectionInfo(rowCount = table.rows.size, columnCount = columns) },
+    ) {
         table.rows.forEachIndexed { r, row ->
-            if (r > 0) HorizontalDivider(color = colors.outlineVariant)
-            Row(Modifier.padding(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            // A tinted header and alternating rows tell the rows apart, with no lines between them.
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(if (r == 0) colors.surfaceContainerHigh else if (r % 2 == 0) colors.surfaceContainer else Color.Transparent)
+                    .padding(horizontal = Space.Medium, vertical = Space.Small).then(if (r == 0) Modifier.semantics { heading() } else Modifier),
+                horizontalArrangement = Arrangement.spacedBy(Space.Medium),
+            ) {
                 for (c in 0 until columns) {
                     val style = MaterialTheme.typography.bodyMedium.let { if (r == 0) it.copy(fontWeight = FontWeight.SemiBold) else it }
                     InlineText(row.getOrElse(c) { emptyList() }, style, Modifier.weight(1f))

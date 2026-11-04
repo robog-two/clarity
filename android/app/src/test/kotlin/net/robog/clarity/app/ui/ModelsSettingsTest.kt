@@ -104,14 +104,14 @@ class ModelsRulesTest {
 
     @Test fun theLeadSaysWhenChangesApply() {
         val lead = modelRows(view()).first { it.role == "lead" }
-        assertEquals("Changes apply from its next turn. It summarizes its own thread when the thread gets long.", lead.note)
+        assertEquals("Applies to the next reply. Long chats are summarized.", lead.note)
         assertTrue(lead.isDefault)
     }
 
     @Test fun aRefusalReadsTheServersFieldReasons() {
         val problem = Problem(title = "Settings not saved", status = 422, errors = listOf(FieldError("effort", "effort is one of low, medium")))
-        assertEquals("Effort is one of low, medium.", refusal(ApiError.Http(422, problem)))
-        assertEquals("Can’t reach your server right now.", refusal(ApiError.Unreachable(null)))
+        assertEquals("Pick an effort from the list.", refusal(ApiError.Http(422, problem)))
+        assertEquals("Can’t reach server. Check connection.", refusal(ApiError.Unreachable(null)))
     }
 }
 

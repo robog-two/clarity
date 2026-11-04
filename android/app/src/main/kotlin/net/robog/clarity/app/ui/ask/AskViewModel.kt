@@ -69,7 +69,7 @@ fun askItems(items: List<FeedItem>, sessions: Map<SessionId, Session> = emptyMap
 /** The sessions [items] belong to. */
 fun sessionIds(items: List<FeedItem>): Set<SessionId> = items.mapNotNullTo(mutableSetOf()) { it.sessionId }
 
-/** "Morning meeting · 9:00 am", with the date when it was not [today]. */
+/** "Morning meeting at 9:00 am", with the date when it was not [today]. */
 fun sessionLabel(session: Session, zone: TimeZone, today: LocalDate): String {
     val name = when (session.kind) {
         SessionKind.MORNING_CALL -> "Morning meeting"
@@ -80,7 +80,7 @@ fun sessionLabel(session: Session, zone: TimeZone, today: LocalDate): String {
     val time = formatTime(local.time)
     val day = local.date
     val month = day.month.name.lowercase().replaceFirstChar { it.titlecase() }.take(3)
-    return if (day == today) "$name · $time" else "$name · $month ${day.day}, $time"
+    return if (day == today) "$name at $time" else "$name on $month ${day.day} at $time"
 }
 
 /**
@@ -241,7 +241,7 @@ class AskViewModel(
             val r = gate.authorize(held, ApprovalInput())
             if (r is ApprovalResult.Denied) { _state.update { it.copy(message = r.message) }; return@launch }
             (alwaysAllow.save(held, text, because) as? ApiResult.Failure)?.let { failed ->
-                _state.update { it.copy(message = "The rule wasn’t saved: ${failed.error.sentence()}") }
+                _state.update { it.copy(message = "Rule not saved. ${failed.error.sentence()}") }
                 if (r == ApprovalResult.Proceed) return@launch
             }
             if (r == ApprovalResult.Proceed) {

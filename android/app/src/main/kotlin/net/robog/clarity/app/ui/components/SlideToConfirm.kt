@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.components
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
@@ -7,7 +9,7 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -30,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -68,26 +71,30 @@ fun SlideToConfirm(
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
-            .height(knob + pad * 2)
-            .background(if (lit) colors.primaryContainer else colors.surfaceContainerHighest, CircleShape)
+            // Grows with the font size, so a long label wraps instead of being clipped.
+            .heightIn(min = knob + pad * 2)
+            .background(if (lit) colors.primaryContainer else colors.surfaceContainerHigh, CircleShape)
             .semantics {
                 role = Role.Button
+                // Disabled is announced; the label stays readable (onSurfaceVariant 5.15:1 light, 5.08:1 dark).
+                if (!enabled && !working) disabled()
                 if (enabled && !done) onClick(label = text) { done = true; onConfirm(); true }
             },
     ) {
         val max = with(LocalDensity.current) { (maxWidth - knob - pad * 2).toPx() }.coerceAtLeast(0f)
         Text(
             text,
-            Modifier.align(Alignment.Center).padding(start = knob),
-            color = if (lit) colors.onPrimaryContainer else colors.onSurface.copy(alpha = .38f),
+            Modifier.align(Alignment.Center).padding(start = knob + pad, end = pad * 2, top = Space.Small, bottom = Space.Small),
+            color = if (lit) colors.onPrimaryContainer else colors.onSurfaceVariant,
             style = MaterialTheme.typography.labelLarge,
         )
         Box(
             Modifier
+                .align(Alignment.CenterStart)
                 .padding(pad)
                 .offset { IntOffset(offset.value.roundToInt(), 0) }
                 .size(knob)
-                .background(if (lit) colors.primary else colors.onSurface.copy(alpha = .12f), CircleShape)
+                .background(if (lit) colors.primary else colors.outline, CircleShape)
                 .pointerInput(enabled, done, max) {
                     if (!enabled || done) return@pointerInput
                     detectHorizontalDragGestures(
@@ -117,7 +124,7 @@ fun SlideToConfirm(
                     Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
                         contentDescription = null,
-                        tint = if (lit) colors.onPrimary else colors.onSurface.copy(alpha = .38f),
+                        tint = if (lit) colors.onPrimary else colors.surface,
                     )
                 }
             }

@@ -145,7 +145,7 @@ class TwoPassSpeechInput(
                 if (chunks.trySend(chunk).isFailure) dropped.incrementAndGet()
             },
             onError = { kind -> post { failed(kind) } },
-            onOpened = { info -> log.add("Mic: $info") },
+            onOpened = { info -> log.add("Mic $info") },
         ).also { it.start() }
         val core = core ?: open() ?: return
         if (loop?.isActive != true) {
@@ -172,7 +172,7 @@ class TwoPassSpeechInput(
         var at = 0
         heard.forEach { it.copyInto(all, at); at += it.size }
         val lost = dropped.getAndSet(0)
-        log.add("Mic on: first audio $firstMs ms after the start, first second at ${levelDb(all)} dB" + if (lost > 0) ", $lost chunks dropped" else "")
+        log.add("Mic on. First audio after $firstMs ms. First second at ${dbText(levelDb(all))}." + if (lost > 0) " $lost chunks dropped." else "")
     }
 
     /** Logs the whole session's loudness against what the detector made of it (facts only). */
@@ -180,8 +180,8 @@ class TwoPassSpeechInput(
         val speech = (core.speechSamples - speechAtStart).toDouble() / SAMPLE_RATE
         val phrases = core.phrasesClosed - phrasesAtStart
         log.add(
-            "Mic session: %.0f s, level average %d dB, loudest %d dB; the detector heard speech for %.1f s in %d phrases"
-                .format(java.util.Locale.ROOT, levels.seconds, levels.averageDb, levels.peakDb, speech, phrases),
+            "Mic session %.0f s. Average level %s. Loudest %s. The detector heard speech for %.1f s in %d phrases."
+                .format(java.util.Locale.ROOT, levels.seconds, dbText(levels.averageDb), dbText(levels.peakDb), speech, phrases),
         )
     }
 
@@ -209,14 +209,14 @@ class TwoPassSpeechInput(
             val v = try { factory.vad(found) } catch (t: Throwable) { f.close(); throw t }
             Triple(found, f, v)
         } catch (t: Throwable) { // LinkageError included: no native library for this phone
-            log.add("Live words could not start (${t.javaClass.simpleName}); the phone’s recognizer takes over")
+            log.add("Live words failed to start (${t.javaClass.simpleName}). The phone’s recognizer is used.")
             stopReader()
             bus.reset()
             onUnavailable(keepOn, t)
             return null
         }
         // The audio that came in meanwhile waits in [chunks]: none of it is dropped.
-        log.add("Live words and speech detection loaded in ${(System.nanoTime() - loading) / 1_000_000} ms (${opened.first.tier} tier)")
+        log.add("Live words and speech detection loaded in ${(System.nanoTime() - loading) / 1_000_000} ms. Tier ${opened.first.tier}.")
         engines = opened.first
         first = opened.second
         vad = opened.third
@@ -250,10 +250,10 @@ class TwoPassSpeechInput(
                 second = it
                 val words = hotwordArg.split('/').count { w -> w.isNotBlank() }
                 val how = if (paths.bpeVocab != null) "beam search, $words hotwords" else "greedy search"
-                log.add("Second pass loaded in ${(System.nanoTime() - loading) / 1_000_000} ms (${paths.tier} tier, $how)")
+                log.add("Second pass loaded in ${(System.nanoTime() - loading) / 1_000_000} ms. Tier ${paths.tier}. $how")
             }
         } catch (t: Throwable) {
-            log.add("Second pass could not load (${t.javaClass.simpleName}); phrases keep their live words")
+            log.add("Second pass failed to load (${t.javaClass.simpleName}). Phrases keep their live words.")
             secondFailed = true
             null
         }
@@ -283,7 +283,7 @@ class TwoPassSpeechInput(
     private suspend fun failed(kind: SpeechError) {
         reader?.stop()
         reader = null
-        log.add("Mic error: $kind")
+        log.add("Mic error $kind")
         bus.emit(SpeechEvent.Error(kind))
         pending += bus.step(MicInput.Recognizer(SpeechEvent.Error(kind)))
         runPending()

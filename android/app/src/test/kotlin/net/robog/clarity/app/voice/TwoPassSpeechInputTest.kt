@@ -103,8 +103,8 @@ class TwoPassSpeechInputTest {
         withTimeout(15_000) { while (synchronized(finals) { finals.isEmpty() }) kotlinx.coroutines.delay(20) }
         assertEquals("W1 W2", synchronized(finals) { finals.first() }, "the first words, said before the models were ready, are in the first message")
         assertTrue(log.entries.value.any { it.text.startsWith("Live words and speech detection loaded in") }, log.entries.value.toString())
-        assertTrue(log.entries.value.any { it.text.startsWith("Mic on: first audio") }, log.entries.value.toString())
-        assertTrue(log.entries.value.any { it.text == "Mic: scripted mic" }, log.entries.value.toString())
+        assertTrue(log.entries.value.any { it.text.startsWith("Mic on. First audio") }, log.entries.value.toString())
+        assertTrue(log.entries.value.any { it.text == "Mic scripted mic" }, log.entries.value.toString())
         collector.cancel()
         input.release()
     }
@@ -147,8 +147,8 @@ class TwoPassSpeechInputTest {
         Thread.sleep(50)
         input.start(keepOn = false)
         withTimeout(10_000) { while (mic.closed.get() == 0) kotlinx.coroutines.delay(10) }
-        withTimeout(5_000) { while (log.entries.value.none { it.text.startsWith("Mic session:") }) kotlinx.coroutines.delay(10) }
-        val line = log.entries.value.first { it.text.startsWith("Mic session:") }.text
+        withTimeout(5_000) { while (log.entries.value.none { it.text.startsWith("Mic session") }) kotlinx.coroutines.delay(10) }
+        val line = log.entries.value.first { it.text.startsWith("Mic session") }.text
         assertTrue("in 1 phrases" in line && "heard speech for" in line, line)
         input.release()
     }

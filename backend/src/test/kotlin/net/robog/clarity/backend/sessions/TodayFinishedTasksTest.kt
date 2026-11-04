@@ -24,7 +24,7 @@ import net.robog.clarity.shared.session.Settings
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.testcontainers.postgresql.PostgreSQLContainer
 
-/** Today keeps the tasks that finished since the person's local midnight, so they stay openable. */
+/** Today keeps the tasks that finished since the start of the person's local day two days ago, so they stay openable. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class TodayFinishedTasksTest : FunSpec({
     val postgres = PostgreSQLContainer("postgres:18-alpine")
@@ -43,13 +43,27 @@ class TodayFinishedTasksTest : FunSpec({
         startOfDay(LocalDate(2026, 10, 25), "nowhere/odd") shouldBe Instant.parse("2026-10-25T00:00:00Z")
     }
 
-    test("Today lists open tasks and those finished today in the home zone, not yesterday's") {
+    test("the window starts at the local day two days back") {
+        todayKeepsSince(LocalDate(2026, 10, 25), "America/New_York") shouldBe Instant.parse("2026-10-23T04:00:00Z")
+        // Across the clocks going back (Nov 1 2026 in New York), local midnight shifts from 04:00Z to 05:00Z.
+        todayKeepsSince(LocalDate(2026, 11, 2), "America/New_York") shouldBe Instant.parse("2026-10-31T04:00:00Z")
+        todayKeepsSince(LocalDate(2026, 11, 3), "America/New_York") shouldBe Instant.parse("2026-11-01T04:00:00Z")
+        todayKeepsSince(LocalDate(2026, 11, 4), "America/New_York") shouldBe Instant.parse("2026-11-02T05:00:00Z")
+    }
+
+    test("Today lists open tasks and those finished in the last two local days, not older ones") {
         // 23:00 on Oct 24 in New York; local midnight is 04:00Z.
-        val clock = StepClock(Instant.parse("2026-10-25T03:00:00Z"))
+        val clock = StepClock(Instant.parse("2026-10-22T03:00:00Z"))
         val tasks = ExposedTaskStore(database, clock, FeedService(ExposedFeedStore(database, clock), FeedHub()))
+        val tooOld = tasks.upsert(null, "Renew the parking permit", "renewed", AgentTask.Status.DONE)!! // Oct 21, 23:00 local
+        clock.advance(26.hours) // 01:00 local, Oct 23: the first local day Today still lists
+        val twoDaysAgo = tasks.upsert(null, "Pay the water bill", "paid", AgentTask.Status.DONE)!!
+        clock.advance(46.hours) // 23:00 local, Oct 24
+
         val yesterday = tasks.upsert(null, "Book the dentist", "booked", AgentTask.Status.DONE)!!
+        clock.advance(1.minutes)
         val open = tasks.upsert(null, "Follow up with Nick", "waiting", AgentTask.Status.WAITING_FOR_YOU)!!
-        clock.advance(2.hours) // 01:00 local, Oct 25
+        clock.advance(2.hours) // about 01:00 local, Oct 25
         val failed = tasks.upsert(null, "Find haircut openings", "site was down", AgentTask.Status.FAILED)!!
         clock.advance(5.minutes)
         val done = tasks.upsert(null, "Draft Dana's reply", "drafted", AgentTask.Status.DONE)!!
@@ -61,10 +75,10 @@ class TodayFinishedTasksTest : FunSpec({
         val today = service.today()
 
         today.date shouldBe LocalDate(2026, 10, 25)
-        today.doing.map { it.id } shouldBe listOf(cancelled.id, done.id, failed.id, open.id)
-        (yesterday.id in today.doing.map { it.id }) shouldBe false
+        today.doing.map { it.id } shouldBe listOf(cancelled.id, done.id, failed.id, open.id, yesterday.id, twoDaysAgo.id)
+        (tooOld.id in today.doing.map { it.id }) shouldBe false
         // The store's other modes are unchanged.
         tasks.list().map { it.id } shouldBe listOf(open.id)
-        tasks.list(includeFinished = true).map { it.id }.toSet() shouldBe setOf(cancelled.id, done.id, failed.id, open.id, yesterday.id)
+        tasks.list(includeFinished = true).map { it.id }.toSet() shouldBe setOf(cancelled.id, done.id, failed.id, open.id, yesterday.id, twoDaysAgo.id, tooOld.id)
     }
 })

@@ -35,18 +35,18 @@ enum class OnboardingStep {
             Schedule -> 4
         }
 
-    /** "step 2 of 4 · values" (null on the welcome and done screens). */
+    /** "Step 2 of 4, values" (null on the welcome and done screens). */
     val kicker: String?
         get() = when (this) {
             Welcome, Done -> null
-            Server -> "step 1 of 4 · server"
-            Model -> "step 1 of 4 · model"
-            Connectors -> "step 1 of 4 · connectors"
-            ConnectorSetup -> "step 1 of 4 · connectors"
-            ValuesIntro -> "step 2 of 4 · values"
-            Values -> "step 2 of 4 · values"
-            Constitution -> "step 3 of 4 · your constitution"
-            Schedule -> "step 4 of 4 · morning call"
+            Server -> "Step 1 of 4, server"
+            Model -> "Step 1 of 4, model"
+            Connectors -> "Step 1 of 4, connectors"
+            ConnectorSetup -> "Step 1 of 4, connectors"
+            ValuesIntro -> "Step 2 of 4, values"
+            Values -> "Step 2 of 4, values"
+            Constitution -> "Step 3 of 4, constitution"
+            Schedule -> "Step 4 of 4, morning call"
         }
 }
 

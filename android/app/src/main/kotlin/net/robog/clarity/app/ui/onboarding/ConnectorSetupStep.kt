@@ -131,11 +131,11 @@ data class ConnectorSetupState(
 /** The screen of a server connector whose container has not started: it says so, and how to start it. */
 fun notRunningState(key: String, title: String): ConnectorSetupState = ConnectorSetupState(
     key = key, title = title, proto = NOT_RUNNING, notRunning = true,
-    blurb = "$title hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.",
+    blurb = "$title isn’t running on your server. Start it and check again.",
     adminHint = if (key == MCP_HOST) {
-        "It starts on its own with the rest of your server. If it doesn’t, whoever runs your server can update Clarity, or check that MCP servers aren’t turned off there."
+        "It starts with your server. Otherwise ask your admin to update Clarity."
     } else {
-        "Whoever runs your server can start it: it’s the “$key” profile in the server’s compose setup."
+        "Ask your admin to start it. Profile “$key” in the compose setup."
     },
 )
 
@@ -188,7 +188,7 @@ class ConnectorSetupViewModel(
                 } ?: row.summary.lastTest?.let { TestLine(it.message, it.ok) }
                 _state.value = ConnectorSetupState(
                     key = row.key, title = row.title, proto = row.proto,
-                    blurb = description ?: "Connect ${row.title} so I can read it.",
+                    blurb = description ?: "Connect ${row.title}.",
                     form = form, values = form.initialValues(), failedReason = failedReason, lastTest = last,
                 )
                 // Prefill what the server already has (secrets come back sealed and are kept as they are).
@@ -266,7 +266,7 @@ class ConnectorSetupViewModel(
 
     // --- collections (one card per account) ---
 
-    /** "add account": the presets first when the collection has any, else straight to the empty form. */
+    /** "Add account": the presets first when the collection has any, else straight to the empty form. */
     fun startAdd(collection: String) {
         val spec = _state.value.collectionField(collection)?.collection ?: return
         if (spec.presets.isEmpty()) beginItem(collection, null) else _state.update { it.copy(choosing = collection) }

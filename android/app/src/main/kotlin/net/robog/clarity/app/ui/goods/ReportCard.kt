@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.goods
 
+import net.robog.clarity.app.ui.theme.Space
+
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +17,8 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedCard
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -39,12 +43,12 @@ private val MaxCard = 340.dp
 fun ReportCardView(card: Card.Report, onOpen: ((String) -> Unit)?, modifier: Modifier = Modifier) {
     val body: @Composable () -> Unit = {
         Row(
-            Modifier.padding(start = 16.dp, end = 12.dp, top = 14.dp, bottom = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            Modifier.padding(start = Space.Medium, end = Space.Medium, top = Space.Medium, bottom = Space.Medium),
+            horizontalArrangement = Arrangement.spacedBy(Space.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             GoodsGlyph()
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Kicker("in your Goods")
                 Text(card.title, style = MaterialTheme.typography.titleMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Text("Document", style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -54,13 +58,14 @@ fun ReportCardView(card: Card.Report, onOpen: ((String) -> Unit)?, modifier: Mod
     }
     val cardModifier = modifier.widthIn(max = MaxCard).fillMaxWidth()
     if (onOpen != null) {
-        OutlinedCard(
+        Card(
             onClick = { onOpen(card.reportId) },
-            modifier = cardModifier.semantics { contentDescription = "${card.title}, a document in your Goods. Open it." },
+            modifier = cardModifier.semantics { contentDescription = "Open ${card.title}" },
             shape = MaterialTheme.shapes.large,
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) { body() }
     } else {
-        OutlinedCard(cardModifier, shape = MaterialTheme.shapes.large) { body() }
+        Card(cardModifier, shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { body() }
     }
 }
 

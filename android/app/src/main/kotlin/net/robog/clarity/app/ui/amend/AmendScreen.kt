@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.amend
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.springIn
+
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -32,6 +35,7 @@ import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
+import net.robog.clarity.app.ui.components.ScreenTitle
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.held.heldWhen
 import net.robog.clarity.app.ui.theme.clarityText
@@ -69,15 +73,15 @@ fun AmendContent(
     onSave: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().springIn(0)
+            .padding(horizontal = ScreenGutter, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         BackLink(backLabel, onBack)
-        Kicker("amend constitution")
+        ScreenTitle("Change a rule")
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             state.held?.let { held ->
                 InfoBox {
@@ -86,26 +90,28 @@ fun AmendContent(
                     Hint(held.verdict.rationale)
                 }
             }
-            if (state.settled) Hint("This one is settled. Nothing more to decide here.")
+            if (state.settled) Hint("This one is already settled.")
             else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
             val reactions = androidx.compose.runtime.remember(state.talk) { net.robog.clarity.shared.feed.latestReactions(state.talk) }
             state.talk.forEach { FeedItemView(it, reaction = reactions[it.id]) }
             state.live?.let { LiveBubble(it, confirmed = state.liveConfirmed) }
-            if (state.waitingAgent) Hint("Working on it…", italic = true)
+            if (state.waitingAgent) Hint("Working on it", italic = true)
             state.proposal?.let { p ->
-                Kicker("proposed change")
-                InfoBox(border = MaterialTheme.colorScheme.primary) {
+                Kicker("proposed change", heading = true)
+                InfoBox {
                     Kicker(proposalLabel(p))
                     p.old?.let {
+                        Kicker("Remove")
                         Text(
                             it,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .6f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.clarityText.reading.copy(textDecoration = TextDecoration.LineThrough),
                         )
                     }
+                    if (p.old != null) Kicker("Add")
                     ReadingText(p.proposed.text)
                     p.proposed.because?.let { Hint("Because $it") }
-                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = 4.dp)) }
+                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = Space.Small)) }
                 }
             }
             state.message?.let { ErrorBox(it) }
@@ -114,7 +120,7 @@ fun AmendContent(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             MicStateChip(state.mic)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
             SecondaryButton("keep as is", onKeep, Modifier.weight(1f), enabled = state.canKeep)
             PrimaryButton("save rule", onSave, Modifier.weight(1f), enabled = state.canSave)
         }

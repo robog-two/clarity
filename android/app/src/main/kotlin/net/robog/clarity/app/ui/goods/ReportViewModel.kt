@@ -113,7 +113,7 @@ class ReportViewModel(
     /** Turns the download link off: whoever has it can no longer download. */
     fun turnOffLink() = switchLink {
         when (val r = repository.turnOffLink(it)) {
-            is ApiResult.Success -> _state.update { s -> s.copy(switching = false, linkOn = false, linkDownloads = 0, linkNote = "Link turned off.") }
+            is ApiResult.Success -> _state.update { s -> s.copy(switching = false, linkOn = false, linkDownloads = 0, linkNote = "Link turned off") }
             is ApiResult.Failure -> _state.update { s -> s.copy(switching = false, linkNote = r.error.sentence()) }
         }
     }
@@ -130,7 +130,7 @@ class ReportViewModel(
 
     /** The screen handed [ReportUiState.open] over; [ok] false when nothing on the phone could take it. */
     fun opened(ok: Boolean = true) = _state.update {
-        it.copy(open = null, linkNote = if (ok) it.linkNote else "Nothing on this phone can open the link.")
+        it.copy(open = null, linkNote = if (ok) it.linkNote else "No app can open the link")
     }
 
     private suspend fun load(id: String) {

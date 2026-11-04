@@ -30,6 +30,6 @@ fun eveningSummaryCards(items: List<FeedItem>): List<Card> {
     val intro = if (items.size == 1) "One thing waited for tonight." else "${items.size} things waited for tonight."
     return listOf(
         Card.Text(intro),
-        Card.Chips("held for the evening · ${items.size}", items.map { Chip(headline(it)) }),
+        Card.Chips("${items.size} held for the evening", items.map { Chip(headline(it)) }),
     )
 }

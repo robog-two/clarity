@@ -66,7 +66,7 @@ class DecideMissedTest {
         assertEquals(SUMMARY_ID, summary.id)
         assertEquals("While you were away", summary.title)
         assertEquals(PushChannel.Urgent, summary.channel, "the most urgent of what it covers")
-        assertTrue(summary.text.startsWith("5 messages, 1 thing needs your ok."), summary.text)
+        assertTrue(summary.text.startsWith("5 messages, 1 thing needs your OK."), summary.text)
         assertEquals(DeepLink.Today, summary.link)
     }
 
@@ -74,7 +74,7 @@ class DecideMissedTest {
         val held = (1..4).map { Arrival.Held(urgent("h$it")) }
         val summary = decideMissed(held, Front.Background, true, now, since = null).single()
         assertEquals(DeepLink.Held, summary.link)
-        assertTrue(summary.text.startsWith("4 things need your ok."))
+        assertTrue(summary.text.startsWith("4 things need your OK."))
     }
 
     @Test fun missedThingsNotifyUpToADayOldNotOlder() {

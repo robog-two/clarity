@@ -72,19 +72,19 @@ fun heldOutcomeToasts(previous: List<HeldAction>, next: List<HeldAction>): List<
         when {
             was.status == now.status -> null
             now.status == HeldAction.Status.EXECUTED -> executedToast(now)
-            now.status == HeldAction.Status.FAILED -> "Couldn’t finish: ${now.action.summary}"
+            now.status == HeldAction.Status.FAILED -> "Failed, ${now.action.summary}"
             else -> null
         }
     }
 }
 
-/** Held rows are "when · what kind", e.g. "8:12 · send email". */
+/** Held rows are "when, what kind", e.g. "8:12, send email". */
 fun heldWhen(held: HeldAction, zone: TimeZone): String =
-    "${formatClock(held.createdAt, zone)} · ${held.action.kind.name.lowercase().replace('_', ' ')}"
+    "${formatClock(held.createdAt, zone)}, ${held.action.kind.name.lowercase().replace('_', ' ')}"
 
-/** The right-hand word of a held row: an arrow while it waits, else how it ended. */
+/** The right-hand word of a held row: "review" while it waits, else how it ended. */
 fun heldRowStatus(status: HeldAction.Status): String = when (status) {
-    HeldAction.Status.HELD, HeldAction.Status.BLOCKED -> "→"
+    HeldAction.Status.HELD, HeldAction.Status.BLOCKED -> "review"
     HeldAction.Status.APPROVED -> "approved"
     HeldAction.Status.EXECUTED -> "done"
     HeldAction.Status.DECLINED -> "not now"
@@ -100,10 +100,10 @@ val HeldAction.waiting: Boolean get() = status == HeldAction.Status.HELD || stat
 fun orderedHeld(held: List<HeldAction>): List<HeldAction> =
     held.sortedWith(compareByDescending<HeldAction> { it.waiting }.thenByDescending { it.createdAt })
 
-/** "Checked against your rules · 2 apply"; null when none apply (nothing worth saying). */
+/** "2 rules apply"; null when none apply (nothing worth saying). */
 fun checkedLine(held: HeldAction): String? {
     val n = held.verdict.lines.size
-    return if (n == 0) null else "Checked against your rules · $n apply"
+    return if (n == 0) null else if (n == 1) "1 rule applies" else "$n rules apply"
 }
 
 /** What became of a held action, for its review screen; null while it still waits. */
@@ -112,11 +112,11 @@ fun heldOutcome(status: HeldAction.Status): String? = when (status) {
     HeldAction.Status.BLOCKED -> null
     HeldAction.Status.APPROVED -> "Approved"
     HeldAction.Status.EXECUTED -> "Done"
-    HeldAction.Status.DECLINED -> "You said not now"
+    HeldAction.Status.DECLINED -> "Not now"
     HeldAction.Status.KEPT -> "Kept as is"
-    HeldAction.Status.RULE_UPDATED -> "Approved, and your rule was updated"
-    HeldAction.Status.FAILED -> "Approved, but it couldn’t finish"
-    HeldAction.Status.EXPIRED -> "Expired before you answered"
+    HeldAction.Status.RULE_UPDATED -> "Approved. Rule updated."
+    HeldAction.Status.FAILED -> "Approved, then failed."
+    HeldAction.Status.EXPIRED -> "Expired"
 }
 
 /** "Dana Whitfield <dana@example.com>", or just the address. */

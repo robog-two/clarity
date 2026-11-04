@@ -502,7 +502,7 @@ class McpServerEditorTest {
         vm.openById(MCP_HOST)
         assertTrue(vm.state.value.notRunning)
         val hint = vm.state.value.adminHint.orEmpty()
-        assertTrue("starts on its own" in hint && "profile" !in hint, hint)
+        assertTrue("starts with your server" in hint && "profile" !in hint, hint)
     }
 
     @Test fun theHostIsNotAnOnboardingStep() = withMain {

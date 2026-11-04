@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.goods
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -134,32 +136,31 @@ fun ReportContent(
         Column(Modifier.fillMaxSize().statusBarsPadding()) {
             BackLink(backLabel, onBack, Modifier.padding(horizontal = ScreenGutter))
             when {
-                state.loading -> LoadingSpinner(Modifier.padding(top = 48.dp))
-                state.error != null -> Column(Modifier.padding(horizontal = ScreenGutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ErrorBox("Can’t open this one", state.error)
+                state.loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
+                state.error != null -> Column(Modifier.padding(horizontal = ScreenGutter, vertical = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+                    ErrorBox("Can’t open this", state.error)
                     TextButton(onClick = onRetry) { Text("Try again") }
                 }
                 // The bottom padding keeps the end of the document clear of the FAB.
                 else -> LazyColumn(
                     Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = 8.dp, bottom = 120.dp),
+                    contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = Space.Small, bottom = Space.Large * 4),
                 ) {
-                    item(key = "header") { ReportHeader(state, Modifier.padding(bottom = 16.dp)) }
-                    item(key = "rule") { HorizontalDivider(Modifier.padding(bottom = 22.dp), color = MaterialTheme.colorScheme.outlineVariant) }
+                    item(key = "header") { ReportHeader(state, Modifier.padding(bottom = Space.Large)) }
                     val document = state.document
                     when {
                         document == null -> item(key = "no-text") {
-                            ErrorBox("Can’t show the text here", (state.sourceError ?: "It didn’t come through.") + " Download still works.")
+                            ErrorBox("Can’t show the text", (state.sourceError ?: "It didn’t load.") + " Download still works.")
                         }
-                        document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written in this one yet.") }
+                        document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written yet") }
                         else -> markdownItems(document.blocks)
                     }
                     if (state.sources.isNotEmpty()) {
                         item(key = "sources-title") {
-                            Kicker("sources · ${state.sources.size}", Modifier.padding(top = 32.dp, bottom = 8.dp).semantics { heading() })
+                            Kicker(if (state.sources.size == 1) "1 source" else "${state.sources.size} sources", Modifier.padding(top = Space.Large, bottom = Space.Small).semantics { heading() })
                         }
                         itemsIndexed(state.sources, key = { _, s -> "source-" + s.url }) { i, source ->
-                            SourceRow(source, groupShape(i, state.sources.size), Modifier.padding(bottom = 2.dp))
+                            SourceRow(source, groupShape(i, state.sources.size), Modifier.padding(bottom = Space.Small))
                         }
                     }
                 }
@@ -167,7 +168,7 @@ fun ReportContent(
         }
         if (!state.loading && state.error == null) {
             // A scrim while the menu is open: a tap outside it closes the menu.
-            AnimatedVisibility(menu, enter = fadeIn(), exit = fadeOut()) {
+            AnimatedVisibility(menu, enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()), exit = fadeOut(MaterialTheme.motionScheme.fastEffectsSpec())) {
                 Box(
                     Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
                         .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Close the menu") { menu = false },
@@ -175,7 +176,7 @@ fun ReportContent(
             }
             GoodsFabMenu(menu, { menu = it }, state, onLink, onShareSettings)
         }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = 16.dp, end = 96.dp, bottom = 16.dp))
+        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = Space.Medium, end = Space.Large * 3, bottom = Space.Medium))
     }
 }
 
@@ -248,32 +249,32 @@ fun fabMenuItemColor(): Color = lerp(MaterialTheme.colorScheme.primaryContainer,
  */
 @Composable
 fun ShareSettings(state: ReportUiState, onTurnOn: () -> Unit, onTurnOff: () -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = Space.Large), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Text("Share settings", style = MaterialTheme.typography.titleLarge, modifier = Modifier.semantics { heading() })
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 if (state.linkOn) Icons.Outlined.Link else Icons.Outlined.LinkOff,
                 contentDescription = null,
                 tint = if (state.linkOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(if (state.linkOn) "Link on" else "Link off", style = MaterialTheme.clarityText.chat)
                 Text(
-                    if (state.linkOn) "Anyone with the link can download it · ${downloadsText(state.linkDownloads)}"
-                    else "No one can download it from a link. Download or Share turns it on.",
+                    if (state.linkOn) "Anyone with the link can download. ${downloadsText(state.linkDownloads)}."
+                    else "Download or Share turns it on.",
                     style = MaterialTheme.clarityText.chatSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        if (state.linkOn) SecondaryButton("turn off link", onTurnOff, Modifier.fillMaxWidth(), busy = state.switching)
-        else PrimaryButton("turn on link", onTurnOn, Modifier.fillMaxWidth(), busy = state.switching)
+        if (state.linkOn) SecondaryButton("Turn off link", onTurnOff, Modifier.fillMaxWidth(), busy = state.switching)
+        else PrimaryButton("Turn on link", onTurnOn, Modifier.fillMaxWidth(), busy = state.switching)
     }
 }
 
 @Composable
 private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Kicker(state.subtitle)
         Text(
             state.title,
@@ -281,7 +282,7 @@ private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
             style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 34.sp),
         )
         val meta = state.document?.meta
-        val byline = listOfNotNull(meta?.author, meta?.date).joinToString(" · ")
+        val byline = listOfNotNull(meta?.author, meta?.date).joinToString(", ")
         if (byline.isNotEmpty()) Hint(byline)
     }
 }
@@ -290,8 +291,8 @@ private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
 private fun SourceRow(source: ReportCitation, shape: androidx.compose.ui.graphics.Shape, modifier: Modifier = Modifier) {
     val uri = LocalUriHandler.current
     Surface(onClick = { runCatching { uri.openUri(source.url) } }, modifier = modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceContainer, shape = shape) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Row(Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(source.title ?: sourceSite(source.url), style = MaterialTheme.clarityText.chat, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(sourceSite(source.url), style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }

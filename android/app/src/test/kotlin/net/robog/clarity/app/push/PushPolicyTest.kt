@@ -63,8 +63,8 @@ class ServiceDecisionTest {
 
     @Test fun statusLineNamesTheServer() {
         assertEquals("Connected to clarity.example", statusText(SyncState.Live, "clarity.example"))
-        assertEquals("Offline, reconnecting…", statusText(SyncState.Offline, "clarity.example"))
-        assertEquals("clarity.example no longer accepts this phone", statusText(SyncState.Unauthorized, "clarity.example"))
+        assertEquals("Offline. Reconnecting.", statusText(SyncState.Offline, "clarity.example"))
+        assertEquals("clarity.example rejected this phone. Set it up again.", statusText(SyncState.Unauthorized, "clarity.example"))
         assertEquals("your server", hostOf(null))
         assertEquals("clarity.example", hostOf("https://clarity.example/"))
     }
@@ -179,7 +179,7 @@ class NotificationDecisionTest {
         val p = plan(Arrival.Held(urgentHeld("h9")))!!
         assertEquals(PushChannel.Urgent, p.channel)
         assertEquals(DeepLink.HeldItem(HeldActionId("h9")), p.link)
-        assertEquals("Needs your ok", p.title)
+        assertEquals("Needs your OK", p.title)
         assertEquals("reply to dana@example.com", p.text)
     }
 
