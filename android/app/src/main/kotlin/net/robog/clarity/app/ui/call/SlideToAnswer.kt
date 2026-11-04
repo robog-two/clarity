@@ -121,7 +121,7 @@ fun SlideToAnswer(
             .fillMaxWidth()
             .height(knob + pad * 2)
             .semantics {
-                contentDescription = "Incoming call from Personal Agent"
+                contentDescription = "Incoming call from Clarity"
                 if (!enabled) stateDescription = "Connecting"
                 if (enabled && !done) {
                     customActions = listOf(

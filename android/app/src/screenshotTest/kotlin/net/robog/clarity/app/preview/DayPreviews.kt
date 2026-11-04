@@ -129,9 +129,9 @@ private val todayFull = TodayUiState(
     heldWaiting = 2,
 )
 
-@Composable private fun TodayFull(dark: Boolean, quietOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, quietExpanded = quietOpen) }
+@Composable private fun TodayFull(dark: Boolean, inactiveOpen: Boolean = false) = Screen(dark) { TodayContent(todayFull, {}, {}, {}, inactiveExpanded = inactiveOpen) }
 
-/** The full day with helpers that finished today: one done in 80 seconds, one failed, one cancelled. */
+/** The full day with helpers that finished: one failed today (in the main list), the rest in the Inactive fold with their relative times. */
 private val todayFinished = todayFull.copy(
     doing = doingRows(
         listOf(
@@ -142,6 +142,9 @@ private val todayFinished = todayFull.copy(
             task("f1", "Check the dentist’s opening hours", "Web, open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
             task("f2", "Book the car service", "Web, the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
             task("f3", "Remind Sam about the permission slip", "no longer needed", AgentTask.Status.CANCELLED, ago = 3.hours),
+            task("f4", "Order the printer ink", "Web, ordered", AgentTask.Status.DONE, ago = 26.hours),
+            task("f5", "Find Ulta haircut openings", "Web, the site was down", AgentTask.Status.FAILED, ago = 30.hours),
+            task("f6", "Sort the receipts folder", "Files, started on Friday", AgentTask.Status.WORKING, ago = 3.days),
         ),
         emptyMap(),
         t0,
@@ -149,19 +152,17 @@ private val todayFinished = todayFull.copy(
 )
 
 @Composable private fun TodayFinished(dark: Boolean, open: Boolean) = Screen(dark) {
-    TodayContent(todayFinished, {}, {}, {}, quietExpanded = open, finishedExpanded = open)
+    TodayContent(todayFinished, {}, {}, {}, inactiveExpanded = open)
 }
 @PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedLight() = TodayFinished(false, open = false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedDark() = TodayFinished(true, open = false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
 
-/** Only the bottom fold open: the quieter task, then the parked chips. */
-@Composable private fun TodayBottomOpen(dark: Boolean) = Screen(dark) {
-    TodayContent(todayFinished, {}, {}, {}, quietExpanded = true, finishedExpanded = false)
-}
-@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenLight() = TodayBottomOpen(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenDark() = TodayBottomOpen(true)
+/** A task that failed today sits in the main list, above the running work, until the next day. */
+@Composable private fun TodayFailedInList(dark: Boolean) = Screen(dark) { TodayContent(todayFinished, {}, {}, {}) }
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListLight() = TodayFailedInList(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListDark() = TodayFailedInList(true)
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
     TodayContent(TodayUiState(loading = false, kicker = "Monday, October 26, 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
@@ -173,9 +174,9 @@ private val todayFinished = todayFull.copy(
 
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullLight() = TodayFull(false)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullDark() = TodayFull(true)
-// The quieter tasks unfolded: compact, still rows with nothing to press.
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, quietOpen = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, quietOpen = true)
+// The Inactive fold open on the full day: a stale task and the parked items.
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, inactiveOpen = true)
+@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, inactiveOpen = true)
 // The morning call, until it reaches the hand-off. (Done, with a plan and no button: TodayFull.)
 private val todayNoPlan = todayFull.copy(
     today = todayFull.today!!.copy(plan = emptyList(), parked = emptyList(), called = false),

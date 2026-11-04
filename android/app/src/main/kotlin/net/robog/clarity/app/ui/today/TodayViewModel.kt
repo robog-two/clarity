@@ -41,84 +41,96 @@ import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.Today
 import kotlinx.datetime.isoDayNumber
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Instant
 
 /**
- * Where a row of "I’m doing" sits, top to bottom. [QUIET] rows are folded away under a small line;
- * [FINISHED] rows (done, failed or cancelled today) are folded under their own line below them.
+ * Where a row of "I’m doing" sits, top to bottom. [INACTIVE] rows (done, cancelled, failed on an
+ * earlier day, open with no update for [INACTIVE_AFTER]) are folded away under one small line.
  */
-enum class DoingGroup { NEEDS_YOU, RUNNING, SCHEDULED, QUIET, FINISHED }
+enum class DoingGroup { NEEDS_YOU, FAILED, RUNNING, SCHEDULED, INACTIVE }
 
-/** A waiting or drafted task with nothing held to review goes quiet after this long without an update. */
-val QUIET_WAITING_AFTER: Duration = 12.hours
+/** Today keeps finished tasks back to the start of the local day this long ago. Matches the server. */
+val TODAY_KEEPS: Duration = 2.days
 
-/** Any open task except a scheduled one goes quiet after this long without an update. */
-val QUIET_STALE_AFTER: Duration = 48.hours
+/** An open task (not scheduled, nothing to review) with no update for this long goes to Inactive. */
+val INACTIVE_AFTER: Duration = 2.days
+
+/** An open task with no update for this long is not shown at all. */
+val HIDDEN_AFTER: Duration = 4.days
+
+/** Why an Inactive row is there. It shows as the row's mark and is spoken, never written. */
+enum class InactiveState { DONE, FAILED, CANCELLED, STALE }
 
 /** A row of "I’m doing": the task, the held action to review when it is waiting for the person, and its group. */
-data class DoingRow(val task: AgentTask, val review: HeldActionId?, val group: DoingGroup = groupOf(task, review, task.updatedAt))
+data class DoingRow(val task: AgentTask, val review: HeldActionId?, val group: DoingGroup = groupOf(task, review, task.updatedAt) ?: DoingGroup.INACTIVE)
 
-/** The rows of "I’m doing", split into the main group, the quiet ones and those finished today. */
-data class Doing(val main: List<DoingRow> = emptyList(), val quiet: List<DoingRow> = emptyList(), val finished: List<DoingRow> = emptyList()) {
-    val isEmpty: Boolean get() = main.isEmpty() && quiet.isEmpty() && finished.isEmpty()
+/** The rows of "I’m doing": the main list, and the Inactive ones (newest first) behind one fold. */
+data class Doing(val main: List<DoingRow> = emptyList(), val inactive: List<DoingRow> = emptyList(), val now: Instant = Instant.fromEpochSeconds(0)) {
+    val isEmpty: Boolean get() = main.isEmpty() && inactive.isEmpty()
+}
+
+/** The state an Inactive [task] shows. */
+fun inactiveState(task: AgentTask): InactiveState = when (task.status) {
+    AgentTask.Status.DONE -> InactiveState.DONE
+    AgentTask.Status.FAILED -> InactiveState.FAILED
+    AgentTask.Status.CANCELLED -> InactiveState.CANCELLED
+    else -> InactiveState.STALE
 }
 
 /**
- * The group a task belongs in at [now]. A held action still waiting on the person always needs
- * them, however old (the Review button must stay reachable). A waiting or drafted task with nothing
- * to review (say the agent asked in chat) stays at the top while fresh, then goes quiet. Running work
- * goes quiet when nothing has touched it for a long while; scheduled work never does. Anything
- * already settled (done, failed, cancelled) is finished: it stays openable for its Agent's Path.
+ * The group a task belongs in at [now] in [zone], or null when it is not shown. A held action still
+ * waiting on the person always shows in the main list, however old. FAILED stays in the main list on
+ * the local day it failed (it needs the person), then moves to Inactive. DONE and CANCELLED go to
+ * Inactive. Finished tasks from before the start of the local day [TODAY_KEEPS] ago are hidden. An
+ * open task goes to Inactive after [INACTIVE_AFTER] without an update and is hidden after
+ * [HIDDEN_AFTER]; a scheduled one never ages out.
  */
-fun groupOf(task: AgentTask, review: HeldActionId?, now: Instant): DoingGroup {
+fun groupOf(task: AgentTask, review: HeldActionId?, now: Instant, zone: TimeZone = TimeZone.UTC): DoingGroup? {
     if (review != null) return DoingGroup.NEEDS_YOU
     val age = now - task.updatedAt
     return when (task.status) {
         AgentTask.Status.SCHEDULED -> DoingGroup.SCHEDULED
-        AgentTask.Status.WORKING -> if (age >= QUIET_STALE_AFTER) DoingGroup.QUIET else DoingGroup.RUNNING
-        AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU -> if (age >= QUIET_WAITING_AFTER) DoingGroup.QUIET else DoingGroup.NEEDS_YOU
-        AgentTask.Status.DONE, AgentTask.Status.FAILED, AgentTask.Status.CANCELLED -> DoingGroup.FINISHED
+        AgentTask.Status.WORKING, AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU -> when {
+            age >= HIDDEN_AFTER -> null
+            age >= INACTIVE_AFTER -> DoingGroup.INACTIVE
+            task.status == AgentTask.Status.WORKING -> DoingGroup.RUNNING
+            else -> DoingGroup.NEEDS_YOU
+        }
+        AgentTask.Status.DONE, AgentTask.Status.CANCELLED, AgentTask.Status.FAILED -> when {
+            task.updatedAt < keptSince(now, zone) -> null
+            task.status == AgentTask.Status.FAILED && task.updatedAt >= startOfLocalDay(now, zone) -> DoingGroup.FAILED
+            else -> DoingGroup.INACTIVE
+        }
     }
 }
+
+/** The start of the window Today keeps finished tasks in: the start of the local day [TODAY_KEEPS] before [now]. */
+fun keptSince(now: Instant, zone: TimeZone): Instant = startOfLocalDay(now - TODAY_KEEPS, zone)
 
 /**
  * The rows of "I’m doing" at [now]. A task that is drafted or waiting and carries a held action that
  * still needs the person gets a review target; anything the server settled since (or that never was
- * held) is a plain status row. Rows come grouped (needs you, running, scheduled), newest first within
- * a group, with the quiet and the finished ones apart.
+ * held) is a plain status row. Rows come grouped (needs you, failed, running, scheduled), newest
+ * first within a group, with the Inactive ones apart and tasks that aged out dropped.
  */
-fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: Instant): Doing {
-    val rows = tasks.map { task ->
+fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: Instant, zone: TimeZone = TimeZone.UTC): Doing {
+    val rows = tasks.mapNotNull { task ->
         val id = task.heldActionId
         val waitingForYou = task.status == AgentTask.Status.DRAFTED || task.status == AgentTask.Status.WAITING_FOR_YOU
         val needsReview = id != null && waitingForYou && (held[id]?.waiting ?: true)
         val review = if (needsReview) id else null
-        DoingRow(task, review, groupOf(task, review, now))
+        groupOf(task, review, now, zone)?.let { DoingRow(task, review, it) }
     }.sortedWith(compareBy<DoingRow> { it.group }.thenByDescending { it.task.updatedAt })
     return Doing(
-        main = rows.filter { it.group < DoingGroup.QUIET },
-        quiet = rows.filter { it.group == DoingGroup.QUIET },
-        finished = rows.filter { it.group == DoingGroup.FINISHED },
+        main = rows.filter { it.group < DoingGroup.INACTIVE },
+        inactive = rows.filter { it.group == DoingGroup.INACTIVE },
+        now = now,
     )
 }
 
-/** "3 quiet tasks" / "1 quiet task". */
-fun quietLine(count: Int): String = if (count == 1) "1 quiet task" else "$count quiet tasks"
-
-/**
- * The bottom fold's line, counting both: "5 quiet or parked", or "2 quiet tasks" /
- * "3 parked" when only one has anything; null (no fold) when both are empty.
- */
-fun quietAndParkedLine(quiet: Int, parked: Int): String? = when {
-    quiet > 0 && parked > 0 -> "${quiet + parked} quiet or parked"
-    quiet > 0 -> quietLine(quiet).replaceFirstChar { it.uppercase() }
-    parked > 0 -> "$parked parked"
-    else -> null
-}
-
-/** "3 finished today". */
-fun finishedLine(count: Int): String = "$count finished today"
+/** The Inactive fold's line: just the count of tasks and parked items, "6 inactive"; null (no fold) when empty. */
+fun inactiveLine(inactive: Int, parked: Int): String? = (inactive + parked).takeIf { it > 0 }?.let { "$it inactive" }
 
 /**
  * The server's tasks with anything fresher from the live feed laid over them (same id, newer
@@ -145,10 +157,6 @@ private fun monthName(month: Month): String = month.name.lowercase().replaceFirs
 
 /** "2 waiting" / "Nothing waiting". */
 fun heldLine(waiting: Int): String = if (waiting == 0) "Nothing waiting" else "$waiting waiting"
-
-/** "Feedback for Alex, expense report. Back tomorrow." */
-fun parkedLine(parked: List<String>): String? =
-    parked.takeIf { it.isNotEmpty() }?.joinToString(", ")?.replaceFirstChar { it.uppercase() }?.let { "$it. Back tomorrow." }
 
 data class TodayUiState(
     val loading: Boolean = true,
@@ -255,9 +263,9 @@ class TodayViewModel(
     private fun publish() = _state.update { s ->
         val now = clock.now()
         // Before the first fetch there is nothing to lay the feed over.
-        val since = fetched?.let { startOfLocalDay(now, clock.zone()) }
+        val since = fetched?.let { keptSince(now, clock.zone()) }
         s.copy(
-            doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks, since), liveHeld.associateBy { it.id }, now),
+            doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks, since), liveHeld.associateBy { it.id }, now, clock.zone()),
             heldWaiting = if (liveHeld.isEmpty()) fetched?.heldCount ?: 0 else liveHeld.count { it.status == HeldAction.Status.HELD },
         )
     }

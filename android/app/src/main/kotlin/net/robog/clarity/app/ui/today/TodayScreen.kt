@@ -98,6 +98,7 @@ import net.robog.clarity.app.ui.components.TaskShape
 import net.robog.clarity.app.ui.components.TaskStatus
 import net.robog.clarity.app.ui.components.groupShape
 import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.relativeTime
 import net.robog.clarity.app.ui.components.sentenceCase
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
@@ -134,10 +135,8 @@ fun TodayContent(
     onReview: (HeldActionId) -> Unit,
     onOpenHeld: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Whether the bottom fold (quieter tasks and parked items) starts unfolded (previews and screenshots). */
-    quietExpanded: Boolean = false,
-    /** Whether "Finished today" starts unfolded (previews and screenshots). */
-    finishedExpanded: Boolean = false,
+    /** Whether the Inactive fold starts unfolded (previews and screenshots). It starts closed on every visit. */
+    inactiveExpanded: Boolean = false,
     /** "Call now" / "Call again", until today's call reached the hand-off ([TodayUiState.callOffer]). */
     onCallAgain: () -> Unit = {},
     /** A task tapped: its thread (the Agent's Path). */
@@ -182,7 +181,7 @@ fun TodayContent(
                     Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
                     Phase.Unavailable -> Hint("Server isn’t ready for Today.")
                     Phase.Nothing -> Unit
-                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, finishedExpanded, onOpenTask, onCallAgain) }
+                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, inactiveExpanded, onOpenTask, onCallAgain) }
                 }
             }
         }
@@ -197,8 +196,7 @@ private fun DayBody(
     state: TodayUiState,
     onReview: (HeldActionId) -> Unit,
     onOpenHeld: () -> Unit,
-    quietExpanded: Boolean,
-    finishedExpanded: Boolean,
+    inactiveExpanded: Boolean,
     onOpenTask: (TaskId) -> Unit,
     onCall: () -> Unit,
 ) {
@@ -218,18 +216,10 @@ private fun DayBody(
             }
         }
         HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.main.isEmpty()) 10.dp else 4.dp).springIn(order++))
-        if (doing.finished.isNotEmpty()) {
-            Folded(finishedLine(doing.finished.size), "tasks finished today", finishedExpanded, Modifier.springIn(order++)) {
-                CompactRows(doing.finished, onOpenTask)
-            }
-        }
-        // Last: what can wait, the quieter tasks and the parked items under one fold.
-        quietAndParkedLine(doing.quiet.size, today.parked.size)?.let { line ->
-            Folded(line, "quieter tasks and parked items", quietExpanded, Modifier.springIn(order++)) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (doing.quiet.isNotEmpty()) CompactRows(doing.quiet, onOpenTask)
-                    if (today.parked.isNotEmpty()) ParkedChips(today.parked, Modifier.padding(top = 4.dp))
-                }
+        // Last: everything inactive under one fold, closed on every visit.
+        inactiveLine(doing.inactive.size, today.parked.size)?.let { line ->
+            Folded(line, "inactive items", inactiveExpanded, Modifier.springIn(order++)) {
+                InactiveRows(doing.inactive, today.parked, doing.now, onOpenTask)
             }
         }
     }
@@ -373,8 +363,8 @@ internal fun DoingRowView(
 }
 
 /**
- * A section folded under one small [line] with a turning chevron: today's finished tasks, and at the
- * bottom the quieter tasks with the parked items. [what] names the contents for the click label.
+ * A section folded under one small [line] with a turning chevron: Inactive, closed on every visit
+ * (plain `remember`, so no open state outlives the screen). [what] names the contents for the click label.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -385,7 +375,7 @@ private fun Folded(
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    var expanded by rememberSaveable { mutableStateOf(expandedInitially) }
+    var expanded by remember { mutableStateOf(expandedInitially) }
     val colors = MaterialTheme.colorScheme
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "fold chevron")
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -412,38 +402,55 @@ private fun Folded(
     }
 }
 
-/** Compact, still task rows (quieter or finished); tapping one opens its Agent's Path. */
+/**
+ * The Inactive fold's rows: the task's title and a relative time, newest first, then the parked
+ * items (no time). The mark's shape says why the row is here and TalkBack says it too. A task opens
+ * its Agent's Path.
+ */
 @Composable
-private fun CompactRows(rows: List<DoingRow>, onOpenTask: (TaskId) -> Unit) {
+private fun InactiveRows(rows: List<DoingRow>, parked: List<String>, now: Instant, onOpenTask: (TaskId) -> Unit) {
+    val count = rows.size + parked.size
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         rows.forEachIndexed { i, row ->
-            val (mark, fill) = quietMark(row.task.status)
+            val state = inactiveState(row.task)
+            val (mark, fill) = inactiveMark(state)
             CompactTaskRow(
-                row.task.title, row.task.detail, quietStatusLabel(row.task.status), groupShape(i, rows.size), mark, fill,
+                row.task.title, relativeTime(row.task.updatedAt, now), inactiveStateLabel(state), groupShape(i, count), mark, fill,
                 onClick = { onOpenTask(row.task.id) },
             )
+        }
+        parked.forEachIndexed { j, item ->
+            val (mark, fill) = parkedMark()
+            CompactTaskRow(sentenceCase(item), "", "Next call", groupShape(rows.size + j, count), mark, fill)
         }
     }
 }
 
-/** A quiet row's status word: a waiting row here has nothing to review, so it says only "waiting". */
-private fun quietStatusLabel(status: AgentTask.Status): String =
-    if (status == AgentTask.Status.WAITING_FOR_YOU) "waiting" else taskStatusLabel(status)
+/** What an Inactive row's mark means, for TalkBack. */
+private fun inactiveStateLabel(state: InactiveState): String = when (state) {
+    InactiveState.DONE -> "Done"
+    InactiveState.FAILED -> "Failed"
+    InactiveState.CANCELLED -> "Cancelled"
+    InactiveState.STALE -> "No update"
+}
 
-/** A quiet row's small still mark: never the "needs you" Cookie in Sage. */
+/** One shape per Inactive state, so the state never rests on color alone. All fills are >=3:1 on the row. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun quietMark(status: AgentTask.Status): Pair<RoundedPolygon, Color> {
+private fun inactiveMark(state: InactiveState): Pair<RoundedPolygon, Color> {
     val colors = MaterialTheme.colorScheme
-    val muted = colors.outline
-    return when (status) {
-        AgentTask.Status.WORKING -> MaterialShapes.Cookie9Sided to colors.secondary
-        AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to muted
-        AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondary
-        AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
-        else -> MaterialShapes.Circle to muted
+    return when (state) {
+        InactiveState.DONE -> MaterialShapes.Circle to colors.secondary
+        InactiveState.FAILED -> MaterialShapes.Burst to colors.error
+        InactiveState.CANCELLED -> MaterialShapes.Diamond to colors.outline
+        InactiveState.STALE -> MaterialShapes.Square to colors.outline
     }
 }
+
+/** A parked item's mark: its own shape, waiting for the next call. */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun parkedMark(): Pair<RoundedPolygon, Color> = MaterialShapes.Pentagon to MaterialTheme.colorScheme.outline
 
 /** The three solids, one per running task (picked by task id so a task keeps its solid). */
 private val solids = listOf(R.drawable.drawing_sphere, R.drawable.drawing_cube, R.drawable.drawing_pyramid)
@@ -528,21 +535,6 @@ private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = 
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun ParkedChips(parked: List<String>, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            parked.forEach { item ->
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.small, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                    Text(sentenceCase(item), Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
-                }
-            }
-        }
-        Hint("Back tomorrow.")
-    }
-}
-
 /** Today's section label: quiet and neutral, so Peach stays for the one action. */
 @Composable
 internal fun TodayLabel(text: String, modifier: Modifier = Modifier) {
@@ -591,9 +583,9 @@ private val previewState = TodayUiState(
 )
 
 @Composable
-private fun PreviewFrame(state: TodayUiState, quietOpen: Boolean = false) = ClarityTheme {
+private fun PreviewFrame(state: TodayUiState, inactiveOpen: Boolean = false) = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {
-        TodayContent(state, onRefresh = {}, onReview = {}, onOpenHeld = {}, quietExpanded = quietOpen, finishedExpanded = quietOpen)
+        TodayContent(state, onRefresh = {}, onReview = {}, onOpenHeld = {}, inactiveExpanded = inactiveOpen)
     }
 }
 
@@ -602,9 +594,13 @@ private fun PreviewFrame(state: TodayUiState, quietOpen: Boolean = false) = Clar
 @Composable
 private fun TodayPreview() = PreviewFrame(previewState)
 
-@Preview(name = "finished, quieter and parked open", widthDp = 390, heightDp = 1300)
+@Preview(name = "inactive open", widthDp = 390, heightDp = 1300)
 @Composable
-private fun TodayQuietOpenPreview() = PreviewFrame(previewState, quietOpen = true)
+private fun TodayInactiveOpenPreview() = PreviewFrame(previewState, inactiveOpen = true)
+
+@Preview(name = "failed task in the list", widthDp = 390, heightDp = 1100)
+@Composable
+private fun TodayFailedPreview() = PreviewFrame(previewState)
 
 @Preview(name = "loading", widthDp = 390, heightDp = 780)
 @Composable

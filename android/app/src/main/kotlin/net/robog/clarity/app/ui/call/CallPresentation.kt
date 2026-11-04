@@ -32,19 +32,17 @@ fun stageSegments(stage: CallStage?, ended: Boolean = false): List<SegmentState>
         }
     }
 
-/** The primary button names the next step: `Done talking` / `Commit` / `Hand off` / `End call`. */
+/** The primary button advances every stage with `Next` and ends the call on the last: `End call`. */
 fun primaryLabel(stage: CallStage?): String = when (stage) {
-    null, CallStage.CLEAR -> "Done talking"
-    CallStage.CHOOSE -> "Commit"
-    CallStage.COMMIT -> "Hand off"
+    null, CallStage.CLEAR, CallStage.CHOOSE, CallStage.COMMIT -> "Next"
     CallStage.HAND_OFF -> "End call"
 }
 
-/** What a screen reader says for the stage bar: "Step 2 of 4, choose". */
+/** What a screen reader says for the stage bar: "Step 2 of 4". The bar shows no labels. */
 fun stageDescription(stage: CallStage?, ended: Boolean = false): String {
     if (ended) return "All ${StageLabels.size} steps done"
     val index = stage?.ordinal ?: 0
-    return "Step ${index + 1} of ${StageLabels.size}, ${StageLabels[index]}"
+    return "Step ${index + 1} of ${StageLabels.size}"
 }
 
 /** "4:12" as "4 minutes" (and "1:05:00" as "1 hour 5 minutes"): the timer for a screen reader, changing once a minute. */

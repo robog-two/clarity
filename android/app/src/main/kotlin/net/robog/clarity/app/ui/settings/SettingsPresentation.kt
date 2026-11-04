@@ -1,26 +1,12 @@
 package net.robog.clarity.app.ui.settings
 
-import kotlin.time.Duration.Companion.days
-import kotlin.time.Duration.Companion.hours
-import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import net.robog.clarity.app.connector.SmsSyncProblem
 import net.robog.clarity.app.connector.SmsSyncStatus
+import net.robog.clarity.app.ui.components.relativeTime
 import net.robog.clarity.app.ui.onboarding.dayName
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.shared.session.Settings.MorningCall
-
-/** "2 min ago", "1 hr ago", "3 days ago"; "never" when there is no time. */
-fun relativeTime(then: Instant?, now: Instant): String {
-    if (then == null) return "never"
-    val ago = now - then
-    return when {
-        ago < 1.minutes -> "just now"
-        ago < 1.hours -> "${ago.inWholeMinutes} min ago"
-        ago < 1.days -> "${ago.inWholeHours} hr ago"
-        else -> ago.inWholeDays.let { if (it == 1L) "yesterday" else "$it days ago" }
-    }
-}
 
 /** "weekdays", "every day", "weekends" or the day names ("Mon, Wed"). */
 fun daysSummary(days: Set<Int>): String = when {

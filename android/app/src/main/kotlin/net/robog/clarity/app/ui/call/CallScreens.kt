@@ -108,8 +108,8 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Kicker(if (state.callTime.isEmpty()) "Incoming call" else "Incoming call, ${state.callTime}")
-        Text("Personal Agent", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
+        Kicker("Incoming call")
+        Text("Clarity", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
         Hint("About 8 minutes")
         Spacer(Modifier.weight(1f))
         RingingBell()
@@ -242,7 +242,7 @@ private fun callMic(state: CallUiState) = ComposerMic(
     },
 )
 
-/** The four stage segments: done and current filled, the rest muted, each with its label. */
+/** The four stage segments: done and current filled, the rest muted. No labels, TalkBack says "Step 2 of 4". */
 @Composable
 fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boolean = false) {
     val description = stageDescription(stage, ended)
@@ -253,33 +253,24 @@ fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boole
         },
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        stageSegments(stage, ended).forEachIndexed { i, segment ->
-            Segment(StageLabels[i], segment)
-        }
+        stageSegments(stage, ended).forEach { segment -> Segment(segment) }
     }
 }
 
 @Composable
-private fun RowScope.Segment(label: String, state: SegmentState) {
+private fun RowScope.Segment(state: SegmentState) {
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(
-            Modifier.fillMaxWidth().height(4.dp).background(
-                when (state) {
-                    // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
-                    SegmentState.Done -> scheme.onSurfaceVariant
-                    SegmentState.Current -> scheme.primary
-                    SegmentState.Todo -> scheme.outline
-                },
-                MaterialTheme.shapes.extraSmall,
-            ),
-        )
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.5.sp),
-            color = if (state == SegmentState.Current) scheme.onSurface else scheme.onSurfaceVariant,
-        )
-    }
+    Box(
+        Modifier.weight(1f).height(4.dp).background(
+            when (state) {
+                // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
+                SegmentState.Done -> scheme.onSurfaceVariant
+                SegmentState.Current -> scheme.primary
+                SegmentState.Todo -> scheme.outline
+            },
+            MaterialTheme.shapes.extraSmall,
+        ),
+    )
 }
 
 /** This call's feed items with the live bubble last (at the bottom); follows the newest line. */
