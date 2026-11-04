@@ -572,7 +572,7 @@ class ConnectorsStepViewModelTest {
         assertEquals(TestState.Ok("ok mail"), s.items[0].test)
         assertEquals(TestState.Failed("password rejected (401)"), s.items[1].test)
         assertEquals("Fix it", s.items[1].status)
-        assertEquals("password rejected (401)", s.items[1].caption)
+        assertEquals("Password rejected", s.items[1].caption)
         assertTrue(s.anyFailed && !s.syncing && !s.allSynced && !s.canSync)
         assertEquals("2 of 3 synced. Fix the failed one.", s.summaryLine)
     }

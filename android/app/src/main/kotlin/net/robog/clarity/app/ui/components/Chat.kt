@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.components
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -94,8 +96,8 @@ fun ChatTranscript(
         modifier.fillMaxWidth(),
         state = listState,
         reverseLayout = true,
-        contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+        contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium, Alignment.Bottom),
     ) {
         newest()
         live?.let { text -> item(key = "live") { LiveBubble(text, arrivingItem(), confirmed = liveConfirmed) } }
@@ -109,18 +111,17 @@ fun ChatTranscript(
     }
 }
 
-/** A small centred outlined pill, like a date chip in a messaging app. */
+/** A small centred pill, like a date chip in a messaging app. */
 @Composable
 fun ChatPill(label: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxWidth().padding(vertical = Space.Medium), contentAlignment = Alignment.Center) {
         Surface(
             shape = CircleShape,
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             Text(
                 label,
-                Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                Modifier.padding(horizontal = Space.Medium, vertical = Space.Small),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -160,8 +161,8 @@ fun ChatComposer(
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     Row(
-        modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = Space.Medium),
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
         verticalAlignment = Alignment.Bottom,
     ) {
         TextField(

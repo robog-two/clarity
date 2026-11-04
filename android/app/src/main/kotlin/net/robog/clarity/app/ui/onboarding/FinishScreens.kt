@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -74,26 +76,26 @@ fun ScheduleContent(
         footer = { PrimaryButton("finish", onFinish, Modifier.fillMaxWidth(), enabled = !state.loading, busy = state.saving) },
     ) {
         Hint("Pick the time and days.")
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
             state.times.forEach { t ->
                 PillChoice(formatTime(t), selected = t == state.call.at, onClick = { onPickTime(t) })
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
             DayOrder.forEach { d ->
                 PillChoice(dayInitial(d), selected = d in state.call.days, onClick = { onToggleDay(d) }, description = dayName(d))
             }
         }
-        Column(Modifier.padding(top = 8.dp)) {
+        Column(Modifier.padding(top = Space.Small)) {
             ToggleRow(
                 title = "heads-up ${state.call.headsUpMinutes ?: 10} min before",
                 caption = "A notification, then the call",
                 checked = state.call.headsUpMinutes != null,
                 onCheckedChange = { onToggleHeadsUp() },
             )
-            net.robog.clarity.app.ui.components.Kicker("contact method", Modifier.padding(top = 12.dp))
+            net.robog.clarity.app.ui.components.Kicker("contact method", Modifier.padding(top = Space.Medium))
             val calling = state.call.mode == MorningCall.Mode.CALL
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = Space.Small)) {
                 SegmentedButton(calling, { if (!calling) onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) {
                     androidx.compose.material3.Text("Call")
                 }
@@ -135,10 +137,10 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = ScreenGutter)
-            .padding(top = 72.dp, bottom = 20.dp),
+            .padding(top = Space.Large * 2, bottom = Space.Medium),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
             val connectors = if (state.connectors == 1) "1 connector" else "${state.connectors} connectors"
             Kicker("$connectors set up" + (state.constitutionVersion?.let { ". Constitution version $it" } ?: ""))
             Text(

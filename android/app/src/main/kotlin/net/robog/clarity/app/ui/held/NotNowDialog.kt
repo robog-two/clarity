@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -57,7 +59,7 @@ fun NotNow(
                 held,
                 onDeny = { sheet = false; onDeny() },
                 onAlways = { sheet = false; editing = true },
-                modifier = Modifier.padding(bottom = 24.dp),
+                modifier = Modifier.padding(bottom = Space.Large),
             )
         }
     }
@@ -69,7 +71,7 @@ fun NotNow(
 fun NotNowOptions(held: HeldAction, onDeny: () -> Unit, onAlways: () -> Unit, modifier: Modifier = Modifier) {
     val clear = ListItemDefaults.colors(containerColor = Color.Transparent)
     Column(modifier.fillMaxWidth()) {
-        Text(held.action.summary, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
+        Text(held.action.summary, Modifier.padding(horizontal = Space.Large, vertical = Space.Small), style = MaterialTheme.typography.titleMedium)
         ListItem(
             modifier = Modifier.clickable(onClick = onDeny),
             colors = clear,
@@ -100,7 +102,7 @@ fun RuleDialog(held: HeldAction, onSave: (text: String, because: String) -> Unit
         onDismissRequest = onBack,
         title = { Text("Add this rule?") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Hint("Adds it to your constitution and approves this one.")
                 OutlinedTextField(
                     value = text,

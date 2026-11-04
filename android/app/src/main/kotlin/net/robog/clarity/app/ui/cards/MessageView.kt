@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.cards
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,7 +102,7 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
     val actions = item.cards.filter { it is Card.Proposal || it is Card.CredentialRequest }
     val attachments = item.cards.filterNot { it.isMessage() || it in actions }
     var sheet by remember { mutableStateOf<List<Card>?>(null) }
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         item.cards.forEachIndexed { i, card ->
             when (card) {
                 is Card.Text -> AgentBubble(card.text, streaming = item.streaming && i == lastText)
@@ -134,7 +136,7 @@ fun AgentBubble(text: String, modifier: Modifier = Modifier, streaming: Boolean 
                 .streamingSemantics(text, streaming)
                 .widthIn(max = MaxBubble)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh, AgentShape)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .padding(horizontal = Space.Medium, vertical = Space.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.clarityText.chat,
         )
@@ -156,7 +158,7 @@ fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? 
                     .padding(start = if (reaction != null) ReactionOverhang else 0.dp, bottom = if (reaction != null) ReactionDrop else 0.dp)
                     .widthIn(max = MaxBubble)
                     .background(MaterialTheme.colorScheme.primaryContainer, YouShape)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = Space.Medium, vertical = Space.Medium),
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                 style = MaterialTheme.clarityText.chat,
             )
@@ -165,8 +167,8 @@ fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? 
     }
 }
 
-private val ReactionOverhang = 14.dp
-private val ReactionDrop = 16.dp
+private val ReactionOverhang = Space.Medium
+private val ReactionDrop = Space.Medium
 
 /** "Clarity reacted with a thumbs up": what a screen reader says for a reaction (words, not the emoji). */
 fun reactionDescription(reaction: Reaction): String = "Clarity reacted with " + when (reaction) {
@@ -200,7 +202,7 @@ fun ReactionBadge(reaction: Reaction, modifier: Modifier = Modifier) {
         ) {
             Text(
                 shown.emoji,
-                Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                Modifier.padding(horizontal = Space.Small, vertical = Space.Small),
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp, lineHeight = 20.sp),
             )
         }
@@ -229,8 +231,8 @@ fun LiveBubble(text: String, modifier: Modifier = Modifier, confirmed: Int = 0) 
             Modifier
                 .semantics { contentDescription = "Hearing, $text" }
                 .widthIn(max = MaxBubble)
-                .border(1.dp, scheme.outline, YouShape)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
+                .background(scheme.surfaceContainer, YouShape)
+                .padding(horizontal = Space.Medium, vertical = Space.Medium),
             style = MaterialTheme.clarityText.chat,
         )
     }
@@ -243,12 +245,11 @@ fun NoteBubble(text: String, modifier: Modifier = Modifier) {
         Surface(
             Modifier.widthIn(max = MaxBubble),
             shape = AgentShape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             Text(
                 text,
-                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.clarityText.chatSmall,
             )
@@ -286,10 +287,10 @@ private fun CredentialRequestRow(card: Card.CredentialRequest, sheetOpen: Boolea
 
 @Composable
 private fun RowCard(content: @Composable () -> Unit) {
-    OutlinedCard(
+    androidx.compose.material3.Card(
         Modifier.widthIn(max = MaxBubble).fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) { content() }
 }
 
@@ -344,11 +345,11 @@ internal fun attachmentSummary(cards: List<Card>): String = when {
 @Composable
 private fun AttachmentStack(cards: List<Card>, tasks: Map<TaskId, AgentTask>, onOpen: () -> Unit) {
     Column(Modifier.widthIn(max = MaxBubble).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        OutlinedCard(
+        androidx.compose.material3.Card(
             onClick = onOpen,
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
         ) {
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
@@ -358,7 +359,7 @@ private fun AttachmentStack(cards: List<Card>, tasks: Map<TaskId, AgentTask>, on
                     Text(attachmentSummary(cards), style = MaterialTheme.clarityText.chatSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 },
                 trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                         if (cards.size > 1) Badge(containerColor = MaterialTheme.colorScheme.secondaryContainer) { Text("${cards.size}") }
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = "open ${cards.size} attachments")
                     }
@@ -377,7 +378,6 @@ private fun StackEdge(width: Float, shape: RoundedCornerShape) {
         Modifier.fillMaxWidth(width).height(6.dp),
         shape = shape,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {}
 }
 
@@ -394,16 +394,16 @@ private fun AttachmentSheet(cards: List<Card>, tasks: Map<TaskId, AgentTask>, on
 @Composable
 fun AttachmentPager(cards: List<Card>, tasks: Map<TaskId, AgentTask>, modifier: Modifier = Modifier) {
     val pager = rememberPagerState { cards.size }
-    Column(modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+    Column(modifier.fillMaxWidth().padding(bottom = Space.Large)) {
         HorizontalPager(pager, Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top, pageSpacing = 16.dp) { page ->
             Column(
-                Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                Modifier.fillMaxWidth().heightIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(horizontal = Space.Small),
+                verticalArrangement = Arrangement.spacedBy(Space.Small),
             ) {
                 val card = cards[page]
                 Text(
                     attachmentTitle(card),
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).semantics { heading() },
+                    Modifier.padding(horizontal = Space.Medium, vertical = Space.Small).semantics { heading() },
                     style = MaterialTheme.typography.titleLarge,
                 )
                 AttachmentPage(card, tasks)
@@ -413,13 +413,13 @@ fun AttachmentPager(cards: List<Card>, tasks: Map<TaskId, AgentTask>, modifier: 
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(top = 12.dp)
+                    .padding(top = Space.Medium)
                     .clearAndSetSemantics { contentDescription = "Page ${pager.currentPage + 1} of ${cards.size}" },
                 horizontalArrangement = Arrangement.Center,
             ) {
                 repeat(cards.size) { i ->
                     Box(
-                        Modifier.padding(horizontal = 4.dp).size(8.dp).background(
+                        Modifier.padding(horizontal = Space.Small).size(8.dp).background(
                             if (i == pager.currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                             CircleShape,
                         ),
@@ -460,7 +460,7 @@ private fun AttachmentPage(card: Card, tasks: Map<TaskId, AgentTask>) {
                 trailingContent = task?.let { { Text(taskStatusLabel(it.status), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) } },
             )
         }
-        is Card.CredentialRequest -> CredentialFormCard(card.requestId, Modifier.padding(horizontal = 8.dp))
+        is Card.CredentialRequest -> CredentialFormCard(card.requestId, Modifier.padding(horizontal = Space.Small))
         else -> Unit
     }
 }

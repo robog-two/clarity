@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.amend
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.springIn
+
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -70,15 +73,15 @@ fun AmendContent(
     onSave: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().springIn(0)
+            .padding(horizontal = ScreenGutter, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         BackLink(backLabel, onBack)
         ScreenTitle("Change a rule")
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             state.held?.let { held ->
                 InfoBox {
@@ -95,7 +98,7 @@ fun AmendContent(
             if (state.waitingAgent) Hint("Working on it", italic = true)
             state.proposal?.let { p ->
                 Kicker("proposed change", heading = true)
-                InfoBox(border = MaterialTheme.colorScheme.primary) {
+                InfoBox {
                     Kicker(proposalLabel(p))
                     p.old?.let {
                         Kicker("Remove")
@@ -108,7 +111,7 @@ fun AmendContent(
                     if (p.old != null) Kicker("Add")
                     ReadingText(p.proposed.text)
                     p.proposed.because?.let { Hint("Because $it") }
-                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = 4.dp)) }
+                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = Space.Small)) }
                 }
             }
             state.message?.let { ErrorBox(it) }
@@ -117,7 +120,7 @@ fun AmendContent(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             MicStateChip(state.mic)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
             SecondaryButton("keep as is", onKeep, Modifier.weight(1f), enabled = state.canKeep)
             PrimaryButton("save rule", onSave, Modifier.weight(1f), enabled = state.canSave)
         }

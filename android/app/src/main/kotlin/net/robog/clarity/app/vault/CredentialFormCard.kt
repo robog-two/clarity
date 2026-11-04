@@ -1,5 +1,7 @@
 package net.robog.clarity.app.vault
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -151,7 +153,7 @@ fun CredentialFormContent(
     modifier: Modifier = Modifier,
     onRetry: () -> Unit = {},
 ) {
-    InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
+    InfoBox(modifier) {
         when (state) {
             FormCardState.Loading -> { Kicker("for you to fill in"); Hint("Loading the form") }
             is FormCardState.Failed -> {
@@ -176,7 +178,7 @@ private fun FormBody(state: FormCardState.Editing, onEdit: (FieldSpec, String) -
     Kicker("Fill in for ${request.site}")
     Text(request.purpose, style = MaterialTheme.typography.titleMedium)
     Hint("Locked on this phone before it leaves.")
-    Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.padding(top = Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         request.fields.forEach { field ->
             FieldRow(field, state.form.valueOf(field), state.form.shownError(field), enabled = !state.saving, onEdit, onTouch)
         }
@@ -185,7 +187,7 @@ private fun FormBody(state: FormCardState.Editing, onEdit: (FieldSpec, String) -
     PrimaryButton(
         if (state.saving) "Saving" else "Save",
         onSave,
-        Modifier.fillMaxWidth().padding(top = 8.dp),
+        Modifier.fillMaxWidth().padding(top = Space.Small),
         enabled = !state.saving,
     )
 }

@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -170,7 +172,7 @@ fun StringListEditor(
         if (v.isNotEmpty() && v !in entries) onChange(entries + v)
         draft = ""
     }
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
         entries.forEachIndexed { i, entry ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -181,7 +183,7 @@ fun StringListEditor(
                 ) { Text("Remove") }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalAlignment = Alignment.Top) {
             ClarityField(
                 label = "Add one",
                 value = draft,
@@ -193,7 +195,7 @@ fun StringListEditor(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { add() }),
             )
-            SecondaryButton("add", { add() }, Modifier.padding(top = 8.dp), enabled = draft.isNotBlank())
+            SecondaryButton("add", { add() }, Modifier.padding(top = Space.Small), enabled = draft.isNotBlank())
         }
     }
 }
@@ -211,7 +213,7 @@ fun CollectionSection(
 ) {
     val items = values.items(field.key)
     var removing by remember { mutableStateOf<ItemValues?>(null) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Kicker(field.label, heading = true)
         field.description?.let { Hint(it) }
         items.forEach { item ->
@@ -353,7 +355,7 @@ fun choiceOptions(input: PresetInput): List<Pair<String, String>> =
 /** "Advanced settings": every field of the item, folded away under the questions. */
 @Composable
 fun AdvancedToggle(open: Boolean, onToggle: () -> Unit) {
-    TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 12.dp)) {
+    TextButton(onClick = onToggle, contentPadding = PaddingValues(horizontal = 0.dp, vertical = Space.Medium)) {
         Text("Advanced settings")
         Icon(if (open) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, contentDescription = null)
     }
@@ -368,7 +370,7 @@ fun UnreachableHosts(hosts: List<String>, onAdd: (String) -> Unit) {
             "This server can’t reach ${hosts.joinToString()}. Add it to the allowed list.",
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small, Alignment.End)) {
             hosts.forEach { h -> TextButton(onClick = { onAdd(h) }) { Text("Add $h") } }
         }
     }

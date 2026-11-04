@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import net.robog.clarity.app.ui.theme.clarityText
@@ -54,15 +56,15 @@ fun HeldContent(
     onReview: (HeldActionId) -> Unit = onOpen,
 ) {
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         Kicker(state.kicker)
         Text("Held for you", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
         Hint("Stopped by your rules. Tap to review.")
         if (state.rows.isEmpty()) Hint("Nothing waiting.")
         // The same contained group as Today's "I'm doing". Rows spring up from below as they load.
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             state.rows.forEachIndexed { i, row ->
                 key(row.id) {
                     val open = { if (row.review) onReview(row.id) else onOpen(row.id) }
@@ -78,11 +80,11 @@ fun HeldContent(
                 }
             }
         }
-        Kicker("Low-urgency items wait until evening.", Modifier.padding(top = 8.dp))
+        Kicker("Low-urgency items wait until evening.", Modifier.padding(top = Space.Small))
         SecondaryButton(if (state.showAllowed) "Hide automatic actions" else "Show automatic actions", onToggleAllowed, Modifier.fillMaxWidth())
         if (state.showAllowed) {
             if (state.allowed.isEmpty()) Hint("None yet.")
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 state.allowed.forEachIndexed { i, a ->
                     TaskRow(
                         title = a.title,

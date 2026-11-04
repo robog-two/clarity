@@ -1,6 +1,7 @@
 package net.robog.clarity.app.ui.components
 
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import net.robog.clarity.app.ui.theme.Space
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.core.Animatable
@@ -72,12 +73,12 @@ fun TaskRow(
         Row(
             (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .heightIn(min = 72.dp)
-                .padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(start = Space.Medium, end = Space.Medium, top = Space.Medium, bottom = Space.Medium),
+            horizontalArrangement = Arrangement.spacedBy(Space.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             glyph()
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(title, style = MaterialTheme.clarityText.chat)
                 Text(sentenceCase(detail), style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -111,8 +112,8 @@ fun CompactTaskRow(
             (if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .clearAndSetSemantics { contentDescription = spoken }
                 .heightIn(min = 48.dp)
-                .padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(start = Space.Medium, end = Space.Medium, top = Space.Small, bottom = Space.Small),
+            horizontalArrangement = Arrangement.spacedBy(Space.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(14.dp).background(markFill, mark.toShape()))
@@ -126,7 +127,7 @@ fun CompactTaskRow(
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun TaskShape(shape: RoundedPolygon, fill: Color) {
-    Box(Modifier.padding(8.dp).size(28.dp).background(fill, shape.toShape()))
+    Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { Box(Modifier.size(28.dp).background(fill, shape.toShape())) }
 }
 
 /** The quiet status word on the right of a settled row. */

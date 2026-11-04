@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.call
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -109,7 +111,7 @@ fun SlideToAnswer(
     var dragging by remember { mutableStateOf(false) }
     var armed by remember { mutableStateOf(SlideOutcome.None) }
 
-    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
     Text(
         "Slide to answer",
         style = MaterialTheme.typography.labelLarge,
@@ -147,7 +149,7 @@ fun SlideToAnswer(
                 ),
         )
         Row(
-            Modifier.fillMaxSize().padding(horizontal = 28.dp),
+            Modifier.fillMaxSize().padding(horizontal = Space.Large),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -248,7 +250,7 @@ fun AnswerButtons(onAnswer: () -> Unit, onDecline: () -> Unit, modifier: Modifie
     var done by remember { mutableStateOf(false) }
     Column(
         modifier.fillMaxWidth().semantics { if (!enabled) stateDescription = "Connecting" },
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         PrimaryButton("Answer", { done = true; onAnswer() }, Modifier.fillMaxWidth().heightIn(min = 56.dp), enabled = enabled && !done)
         SecondaryButton(
@@ -266,7 +268,7 @@ private fun EndLabel(icon: androidx.compose.ui.graphics.vector.ImageVector, text
     Column(
         Modifier.graphicsLayer { alpha = visible.coerceIn(0f, 1f) },
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(Space.Small),
     ) {
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
         Text(text, style = MaterialTheme.typography.labelMedium, color = color)

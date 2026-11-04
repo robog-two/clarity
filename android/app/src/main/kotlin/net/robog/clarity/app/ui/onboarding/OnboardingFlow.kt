@@ -1,5 +1,10 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+import androidx.compose.animation.AnimatedContent
+import net.robog.clarity.app.ui.components.springSwap
+import net.robog.clarity.app.ui.components.springIn
+
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -64,7 +69,8 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
     var openConnector by rememberSaveable { mutableStateOf<String?>(null) }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        when (step) {
+        AnimatedContent(targetState = step, transitionSpec = springSwap(), label = "onboarding step") { shown ->
+        when (shown) {
             OnboardingStep.Welcome -> WelcomeScreen(onBegin = { flow.go(OnboardingStep.Server) })
             OnboardingStep.Server -> ServerScreen(onNext = flow::next, onBack = flow::back)
             OnboardingStep.Model -> ModelScreen(onNext = flow::next, onBack = flow::back)
@@ -112,6 +118,7 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
             OnboardingStep.Schedule -> ScheduleScreen(onFinished = { flow.go(OnboardingStep.Done) })
             OnboardingStep.Done -> DoneScreen()
         }
+        }
     }
 }
 
@@ -137,20 +144,20 @@ fun StepScaffold(
             .navigationBarsPadding()
             .imePadding()
             .padding(horizontal = ScreenGutter)
-            .padding(top = 24.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(top = Space.Large, bottom = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         if (step != null) StepBar(step.segments)
         if (backLabel != null && onBack != null) BackLink(backLabel, onBack)
         Column(
-            Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            Modifier.weight(1f).fillMaxWidth().springIn(0).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             if (kicker != null) Kicker(kicker)
             if (title != null) ScreenTitle(title)
             body()
         }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) { footer() }
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) { footer() }
     }
 }
 
@@ -164,10 +171,10 @@ fun WelcomeScreen(onBegin: () -> Unit) {
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = ScreenGutter)
-            .padding(top = 72.dp, bottom = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(32.dp),
+            .padding(top = Space.Large * 2, bottom = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Large),
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
             Text("Personal agent", style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             Text("You set the priorities.", style = MaterialTheme.clarityText.hero)
             ReadingText(
@@ -176,7 +183,7 @@ fun WelcomeScreen(onBegin: () -> Unit) {
             )
         }
         // The four steps ahead, so the screen says what "ten minutes" is made of.
-        Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
             Kicker("What we’ll do")
             WELCOME_STEPS.forEachIndexed { i, (title, caption) -> WelcomeStep(i + 1, title, caption) }
         }
@@ -195,7 +202,7 @@ private val WELCOME_STEPS = listOf(
 @Composable
 private fun WelcomeStep(number: Int, title: String, caption: String) {
     androidx.compose.foundation.layout.Row(
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(Space.Medium),
         verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
     ) {
         androidx.compose.foundation.layout.Box(
@@ -206,7 +213,7 @@ private fun WelcomeStep(number: Int, title: String, caption: String) {
         ) {
             Text("$number", color = MaterialTheme.colorScheme.onSecondaryContainer, style = MaterialTheme.typography.labelLarge)
         }
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Hint(caption)
         }
@@ -247,7 +254,7 @@ fun ServerContent(
         val urlError = (state.error as? ServerError.InvalidUrl)?.reason
         if (state.enrolled) {
             // Already connected: the address reads as plain text, not a faint disabled field.
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Kicker("Server address")
                 Text(state.url, style = MaterialTheme.typography.titleMedium)
             }
@@ -339,7 +346,7 @@ fun ModelContent(state: ModelState, onCheck: () -> Unit, onNext: () -> Unit, onB
             ModelResult.ServerNotReady -> Hint("Server setup can’t be checked. You can continue.")
             null -> if (state.checking) StatusLine("Checking")
         }
-        Spacer(Modifier.height(1.dp))
+        Spacer(Modifier.height(Space.Small))
     }
 }
 

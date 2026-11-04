@@ -31,7 +31,7 @@ import net.robog.clarity.app.ui.components.relativeTime
 import net.robog.clarity.app.ui.onboarding.toggleDay
 import net.robog.clarity.app.ui.onboarding.toggledMode
 import net.robog.clarity.app.ui.onboarding.withHeadsUp
-import net.robog.clarity.app.ui.onboarding.NOT_RUNNING
+import net.robog.clarity.app.ui.onboarding.friendlyFailure
 import net.robog.clarity.app.ui.onboarding.isDeviceConnector
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.ui.mcp.isMcpHost
@@ -154,12 +154,12 @@ class SettingsViewModel(
                             .map { c ->
                                 val m = c.manifest
                                 if (m == null) {
-                                    SourceRow(c.id.value, NOT_RUNNING, "not running", c.id.value)
+                                    SourceRow(c.id.value, "", "Not running", c.id.value)
                                 } else {
                                     val failedTest = c.lastTest?.takeIf { t -> !t.ok }
                                     SourceRow(
                                         m.displayName,
-                                        failedTest?.message ?: "On your server",
+                                        failedTest?.message?.let(::friendlyFailure) ?: "",
                                         if (failedTest != null) "Failed" else relativeTime(c.lastSeenAt, now),
                                         c.id.value,
                                     )
