@@ -61,7 +61,12 @@ class SpeechBus {
  * to turn that off (short of muting audio streams, which this app does not do), so the fallback keeps
  * restarts to the minimum: one per segment, never two at once.
  */
-class AndroidSpeechInput(private val context: Context, private val bus: SpeechBus = SpeechBus()) : SpeechInput {
+class AndroidSpeechInput(
+    private val context: Context,
+    private val bus: SpeechBus = SpeechBus(),
+    /** Names to bias the recognizer towards (Android 13 and later); never waits. */
+    private val biasing: () -> List<String> = { emptyList() },
+) : SpeechInput {
     private val main = Handler(Looper.getMainLooper())
     override val events: Flow<SpeechEvent> = bus.events
     override val mic: StateFlow<MicState> = bus.mic
@@ -217,6 +222,11 @@ class AndroidSpeechInput(private val context: Context, private val bus: SpeechBu
         // Hints only (many recognizers ignore them); the pause grace above is what makes pauses safe.
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
         putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, PAUSE_GRACE_MS)
+        // Recognizers that do not support biasing ignore it; older Android has no such extra.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val words = runCatching { biasing() }.getOrDefault(emptyList())
+            if (words.isNotEmpty()) putStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS, ArrayList(words))
+        }
     }
 
     private fun onMain(block: () -> Unit) {

@@ -45,6 +45,8 @@ data class VoicePrefsState(
     val useBuiltIn: Boolean = false,
     /** Download over mobile data too (default: Wi-Fi or another unmetered network only). */
     val mobileData: Boolean = false,
+    /** Hint the recognizers with the names of the contacts texted most (read on this phone only). On until switched off, and it only works once both permissions are granted. */
+    val useContactNames: Boolean = true,
     /** The person asked for the download (it is never started without that). */
     val requested: Boolean = false,
     val speeds: Map<VoiceTier, Double> = emptyMap(),
@@ -62,6 +64,7 @@ class DataStoreVoicePrefs(private val store: DataStore<Preferences>) : VoicePref
             benchmarkedDown = p[DOWN] == true,
             useBuiltIn = p[BUILT_IN] == true,
             mobileData = p[MOBILE] == true,
+            useContactNames = p[CONTACTS] != false,
             requested = p[REQUESTED] == true,
             speeds = VoiceTier.entries.mapNotNull { t -> p[speedKey(t)]?.let { t to it } }.toMap(),
         )
@@ -75,6 +78,7 @@ class DataStoreVoicePrefs(private val store: DataStore<Preferences>) : VoicePref
                     benchmarkedDown = p[DOWN] == true,
                     useBuiltIn = p[BUILT_IN] == true,
                     mobileData = p[MOBILE] == true,
+                    useContactNames = p[CONTACTS] != false,
                     requested = p[REQUESTED] == true,
                     speeds = VoiceTier.entries.mapNotNull { t -> p[speedKey(t)]?.let { t to it } }.toMap(),
                 ),
@@ -83,6 +87,7 @@ class DataStoreVoicePrefs(private val store: DataStore<Preferences>) : VoicePref
             p[DOWN] = now.benchmarkedDown
             p[BUILT_IN] = now.useBuiltIn
             p[MOBILE] = now.mobileData
+            p[CONTACTS] = now.useContactNames
             p[REQUESTED] = now.requested
             VoiceTier.entries.forEach { t -> now.speeds[t]?.let { p[speedKey(t)] = it } ?: p.remove(speedKey(t)) }
         }
@@ -93,10 +98,13 @@ class DataStoreVoicePrefs(private val store: DataStore<Preferences>) : VoicePref
         val DOWN = booleanPreferencesKey("voice_benchmarked_down")
         val BUILT_IN = booleanPreferencesKey("voice_use_built_in")
         val MOBILE = booleanPreferencesKey("voice_mobile_data")
+        val CONTACTS = booleanPreferencesKey("voice_use_contact_names")
         val REQUESTED = booleanPreferencesKey("voice_download_requested")
         fun speedKey(t: VoiceTier) = doublePreferencesKey("voice_speed_${t.name.lowercase()}")
     }
 }
+
+private const val CONTACT_CACHE_MS = 10 * 60 * 1000L
 
 /** Settings → Voice. */
 data class VoiceUiState(
@@ -107,6 +115,8 @@ data class VoiceUiState(
     val status: ModelStatus = ModelStatus.NotDownloaded(VoiceCatalog.downloadBytes(VoiceTier.Light)),
     val useBuiltIn: Boolean = false,
     val mobileData: Boolean = false,
+    /** Switched on and both permissions are there. */
+    val useContactNames: Boolean = false,
     /** The models are there but could not run on this phone. */
     val engineFailed: Boolean = false,
     val benchmarkedDown: Boolean = false,
@@ -124,6 +134,7 @@ class VoiceModels(
     private val context: Context,
     private val prefs: VoicePrefs,
     private val feed: FeedStore,
+    private val contacts: RecentContactNames = RecentContactNames.of(context),
 ) {
     val store = ModelStore(File(context.noBackupFilesDir, "voice-models"))
     /** What on-phone recognition did lately, for Settings → Voice. Memory only. */
@@ -156,6 +167,7 @@ class VoiceModels(
             status = modelStatus(store.installed(tier), work?.takeIf { p.requested }, VoiceCatalog.downloadBytes(tier)),
             useBuiltIn = p.useBuiltIn,
             mobileData = p.mobileData,
+            useContactNames = p.useContactNames && contactsPermitted(),
             engineFailed = failed,
             benchmarkedDown = p.benchmarkedDown,
         )
@@ -168,8 +180,42 @@ class VoiceModels(
 
     fun nativeFailed() { engineFailed.value = true }
 
-    /** Names, courses and places from the task titles already cached on this phone. */
-    suspend fun hotwords(): List<String> = runCatching { hotwordsFrom(feed.tasks.first().map { it.title }) }.getOrDefault(emptyList())
+    private val contactCache = TimedCache<List<String>>(CONTACT_CACHE_MS)
+    private val hintCache = TimedCache<List<String>>(CONTACT_CACHE_MS)
+
+    private fun contactsPermitted(): Boolean = RecentContactNames.permitted(context)
+
+    /** The saved contacts texted most recently, kept for ten minutes. Empty when switched off or not allowed. */
+    private suspend fun contactNames(): List<String> {
+        if (!current.value.useContactNames) return emptyList()
+        return withContext(Dispatchers.IO) { contactCache.get { contacts.names() } }
+    }
+
+    /** Contact names, then names, courses and places from the task titles already cached on this phone. */
+    suspend fun hotwords(): List<String> {
+        val words = runCatching {
+            mergeHotwords(contactNames(), hotwordsFrom(feed.tasks.first().map { it.title }))
+        }.getOrDefault(emptyList())
+        hintCache.get { words }
+        return words
+    }
+
+    /**
+     * The same list without waiting, for the phone's own recognizer on Android 13 and later. It hands back
+     * the last one worked out and refreshes it in the background once it is older than ten minutes.
+     */
+    fun cachedHotwords(): List<String> {
+        val hit = hintCache.peek()
+        if (hit == null) scope.launch { hotwords() }
+        return hit ?: emptyList()
+    }
+
+    fun setUseContactNames(on: Boolean) = scope.launch {
+        prefs.update { it.copy(useContactNames = on) }
+        installedTick.value++
+        contactCache.clear()
+        hintCache.clear()
+    }
 
     val speeds: SpeedStore = object : SpeedStore {
         override fun speed(tier: VoiceTier): Double? = current.value.speeds[tier]
