@@ -23,7 +23,7 @@ import net.robog.clarity.app.ui.Toasts
 import net.robog.clarity.app.ui.held.heldOutcomeToasts
 import net.robog.clarity.shared.governance.HeldAction
 
-/** What the tab bar needs: the number on "held · N" and whether the connection is up. */
+/** What the tab bar needs: the number on the Held tab and whether the connection is up. */
 data class MainUiState(
     val held: List<HeldAction> = emptyList(),
     val sync: SyncState = SyncState.Connecting,
@@ -33,8 +33,8 @@ data class MainUiState(
     val heldWaiting: Int get() = held.count { it.status == HeldAction.Status.HELD }
 }
 
-/** Tab labels in the prototype: "today", "ask", "held · 2", "settings". */
-fun heldTabLabel(waiting: Int): String = if (waiting > 0) "held · $waiting" else "held"
+/** What a screen reader adds to the Held tab: "2 waiting". */
+fun heldTabLabel(waiting: Int): String = "$waiting waiting"
 
 /**
  * The signed-in shell: the held badge, the confirmation toasts when held actions run, and the

@@ -71,6 +71,11 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -96,6 +101,7 @@ import net.robog.clarity.app.ui.components.springIn
 import net.robog.clarity.app.ui.components.sentenceCase
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
+import net.robog.clarity.app.ui.theme.onSecondaryContainerMuted
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.IfThen
 import net.robog.clarity.shared.feed.TaskId
@@ -132,7 +138,7 @@ fun TodayContent(
     quietExpanded: Boolean = false,
     /** Whether "Finished today" starts unfolded (previews and screenshots). */
     finishedExpanded: Boolean = false,
-    /** "Call me now" / "Call me again", until today's call reached the hand-off ([TodayUiState.callOffer]). */
+    /** "Call now" / "Call again", until today's call reached the hand-off ([TodayUiState.callOffer]). */
     onCallAgain: () -> Unit = {},
     /** A task tapped: its thread (the Agent's Path). */
     onOpenTask: (TaskId) -> Unit = {},
@@ -152,7 +158,7 @@ fun TodayContent(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
-            Text("Today", style = MaterialTheme.clarityText.heroTitle)
+            Text("Today", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
             AnimatedVisibility(state.callOffer == CallOffer.REJOIN) { CallAgainCard(state.callAgainProblem, onCallAgain) }
             state.error?.let {
                 ErrorBox(it)
@@ -174,7 +180,7 @@ fun TodayContent(
             ) { p ->
                 when (p) {
                     Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
-                    Phase.Unavailable -> Hint("Your server can’t show today yet. Your plan, what I’m doing and what’s parked will appear here.")
+                    Phase.Unavailable -> Hint("Server isn’t ready for Today.")
                     Phase.Nothing -> Unit
                     Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, finishedExpanded, onOpenTask, onCallAgain) }
                 }
@@ -204,7 +210,7 @@ private fun DayBody(
         }
         val doing = state.doing
         if (doing.main.isNotEmpty()) {
-            TodayLabel("I’m doing", Modifier.padding(top = 10.dp).springIn(order++))
+            TodayLabel("Doing", Modifier.padding(top = 10.dp).springIn(order++))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 doing.main.forEachIndexed { i, row ->
                     DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
@@ -240,12 +246,12 @@ private fun CallAgainCard(problem: String?, onCallAgain: () -> Unit, modifier: M
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Call, contentDescription = null)
                 Column(Modifier.weight(1f)) {
-                    Text("Our meeting isn’t finished", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
-                    Text("I’ll call you back and we pick up where we left off.", style = MaterialTheme.clarityText.chatSmall)
+                    Text("Meeting not finished", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
+                    Text("Call again to continue.", style = MaterialTheme.clarityText.chatSmall)
                 }
             }
             problem?.let { Text(it, style = MaterialTheme.clarityText.chatSmall, color = colors.error) }
-            FilledTonalButton(onClick = onCallAgain, Modifier.align(Alignment.End)) { Text("Call me again") }
+            FilledTonalButton(onClick = onCallAgain, Modifier.align(Alignment.End)) { Text("Call again") }
         }
     }
 }
@@ -268,14 +274,14 @@ internal fun PlanHero(plan: List<IfThen>, modifier: Modifier = Modifier) {
     ) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(verticalAlignment = Alignment.Bottom) {
-                Text("Your plan", Modifier.weight(1f), style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
+                Text("Your plan", Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
                 Text(if (plan.size == 1) "1 step" else "${plan.size} steps", style = MaterialTheme.typography.labelLarge)
             }
             plan.forEachIndexed { i, step ->
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
                     StepBadge(i + 1, stepShapes[i % stepShapes.size].toShape())
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(sentenceCase("if ${step.cue}"), style = MaterialTheme.typography.labelLarge, color = colors.onSecondaryContainer.copy(alpha = 0.72f))
+                        Text(sentenceCase("if ${step.cue}"), style = MaterialTheme.typography.labelLarge, color = colors.onSecondaryContainerMuted)
                         Text(sentenceCase(step.action), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
                     }
                 }
@@ -319,9 +325,9 @@ private fun NoPlanYet(offer: CallOffer, problem: String?, onCall: () -> Unit, mo
             )
             Kicker("Frederick, Leo Lionni")
             val (title, hint, action) = when (offer) {
-                CallOffer.START -> Triple("Start our morning meeting", "Your plan appears here once we’ve talked.", "Call me now")
-                CallOffer.RESTART -> Triple("We didn’t finish this morning", "Your plan appears here once we’ve been through it.", "Call me again")
-                CallOffer.NONE, CallOffer.REJOIN -> Triple("No plan yet", "It appears here after your morning call.", null)
+                CallOffer.START -> Triple("Start morning meeting", "Plan appears after the call.", "Call now")
+                CallOffer.RESTART -> Triple("Meeting not finished", "Plan appears when it ends.", "Call again")
+                CallOffer.NONE, CallOffer.REJOIN -> Triple("No plan yet", "Plan appears after the morning call.", null)
             }
             Text(
                 title,
@@ -360,7 +366,7 @@ internal fun DoingRowView(
         shape = shape,
         glyph = { StatusGlyph(row.task, needsYou) },
         // The one Peach element on the screen: the action that needs the person.
-        trailing = { if (row.review != null) ReviewButton { onReview(row.review) } else TaskStatus(taskStatusLabel(row.task.status)) },
+        trailing = { if (row.review != null) ReviewButton({ onReview(row.review) }, row.task.title) else TaskStatus(taskStatusLabel(row.task.status)) },
         modifier = modifier,
         onClick = onOpen,
     )
@@ -387,6 +393,7 @@ private fun Folded(
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
+                .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
                 .clickable(role = Role.Button, onClickLabel = if (expanded) "Hide $what" else "Show $what") { expanded = !expanded }
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp),
@@ -428,11 +435,11 @@ private fun quietStatusLabel(status: AgentTask.Status): String =
 @Composable
 private fun quietMark(status: AgentTask.Status): Pair<RoundedPolygon, Color> {
     val colors = MaterialTheme.colorScheme
-    val muted = colors.onSurfaceVariant.copy(alpha = 0.35f)
+    val muted = colors.outline
     return when (status) {
-        AgentTask.Status.WORKING -> MaterialShapes.Cookie9Sided to colors.secondaryContainer
+        AgentTask.Status.WORKING -> MaterialShapes.Cookie9Sided to colors.secondary
         AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to muted
-        AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondaryContainer
+        AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondary
         AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
         else -> MaterialShapes.Circle to muted
     }
@@ -462,19 +469,19 @@ internal fun StatusGlyph(task: AgentTask, needsYou: Boolean) {
             val shape = MaterialShapes.Cookie9Sided.toShape()
             Box(size, contentAlignment = Alignment.Center) {
                 // Only the shape turns; the drawing stays upright.
-                Box(Modifier.matchParentSize().graphicsLayer { rotationZ = turn }.background(colors.secondaryContainer, shape))
-                Drawing(solidFor(task.id), Modifier.matchParentSize(), tint = colors.onSecondaryContainer)
+                Box(Modifier.matchParentSize().graphicsLayer { rotationZ = turn }.background(colors.secondary, shape))
+                Drawing(solidFor(task.id), Modifier.matchParentSize(), tint = colors.onSecondary)
             }
         }
         else -> {
             val (shape, fill) = when (task.status) {
                 // The Sage Cookie means there is something to review; a waiting row without one stays plain.
                 AgentTask.Status.DRAFTED, AgentTask.Status.WAITING_FOR_YOU ->
-                    if (needsYou) MaterialShapes.Cookie4Sided to colors.secondary else MaterialShapes.Circle to colors.outlineVariant
-                AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to colors.onSurfaceVariant.copy(alpha = 0.35f)
-                AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondaryContainer
+                    if (needsYou) MaterialShapes.Cookie4Sided to colors.secondary else MaterialShapes.Circle to colors.outline
+                AgentTask.Status.SCHEDULED -> MaterialShapes.Clover4Leaf to colors.outline
+                AgentTask.Status.DONE -> MaterialShapes.Circle to colors.secondary
                 AgentTask.Status.FAILED -> MaterialShapes.Burst to colors.error
-                else -> MaterialShapes.Circle to colors.onSurfaceVariant.copy(alpha = 0.35f)
+                else -> MaterialShapes.Circle to colors.outline
             }
             TaskShape(shape, fill)
         }
@@ -495,6 +502,7 @@ private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = 
         modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }
+            .semantics(mergeDescendants = true) { contentDescription = "Held for you, ${heldLine(waiting)}" }
             .clickable(interaction, indication = null, role = Role.Button, onClick = onOpenHeld),
         color = colors.surfaceContainerHigh,
         shape = RoundedCornerShape(24.dp),
@@ -506,6 +514,7 @@ private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = 
             ) {
                 Text(
                     "$waiting",
+                    Modifier.clearAndSetSemantics {},
                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = if (waiting > 0) colors.onTertiaryContainer else colors.onSurfaceVariant,
                 )
@@ -530,24 +539,24 @@ private fun ParkedChips(parked: List<String>, modifier: Modifier = Modifier) {
                 }
             }
         }
-        Hint("Back in tomorrow’s call.")
+        Hint("Back tomorrow.")
     }
 }
 
 /** Today's section label: quiet and neutral, so Peach stays for the one action. */
 @Composable
 internal fun TodayLabel(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface)
+    Text(text, modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold), color = MaterialTheme.colorScheme.onSurface)
 }
 
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.padding(top = 6.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Text(text, modifier.padding(top = 6.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 
 private val previewTime = Instant.parse("2026-10-26T14:04:00Z")
 private val previewDate = LocalDate(2026, 10, 26)
-private const val PREVIEW_KICKER = "monday, October 26 · 2:04 pm"
+private const val PREVIEW_KICKER = "Monday, October 26, 2:04 pm"
 
 private fun previewTask(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null, ago: Duration = Duration.ZERO) =
     AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, previewTime - ago)
@@ -567,13 +576,13 @@ private val previewState = TodayUiState(
     ),
     doing = doingRows(
         listOf(
-            previewTask("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            previewTask("q1", "Follow up with Nick about The Devils", "Mail, waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
             previewTask("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
-            previewTask("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
-            previewTask("q2", "Find Ulta haircut openings", "web · no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
-            previewTask("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
-            previewTask("f1", "Check the dentist’s opening hours", "web · open until 6 today", AgentTask.Status.DONE, ago = 40.minutes),
-            previewTask("f2", "Book the car service", "web · the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
+            previewTask("t2", "Find a time with Nick for the Devils game", "Calendar, checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            previewTask("q2", "Find Ulta haircut openings", "Web, no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
+            previewTask("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            previewTask("f1", "Check the dentist’s opening hours", "Web, open until 6 today", AgentTask.Status.DONE, ago = 40.minutes),
+            previewTask("f2", "Book the car service", "Web, the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
         ),
         emptyMap(),
         previewTime,
@@ -604,7 +613,7 @@ private fun TodayLoadingPreview() = PreviewFrame(TodayUiState(kicker = PREVIEW_K
 @Preview(name = "before call", widthDp = 390, heightDp = 780)
 @Composable
 private fun TodayBeforeCallPreview() = PreviewFrame(
-    TodayUiState(loading = false, kicker = "monday, October 26 · 7:12 am", today = Today(date = previewDate)),
+    TodayUiState(loading = false, kicker = "Monday, October 26, 7:12 am", today = Today(date = previewDate)),
 )
 
 @Preview(name = "call unfinished", widthDp = 390, heightDp = 1000)
@@ -625,7 +634,7 @@ private fun TodayEveryStatusPreview() = PreviewFrame(
             main = AgentTask.Status.entries.mapIndexed { i, status ->
                 val held = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
                 val review = if (held) HeldActionId("h$i") else null
-                DoingRow(previewTask("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, review?.value), review)
+                DoingRow(previewTask("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "Mail, detail line", status, review?.value), review)
             },
         ),
     ),

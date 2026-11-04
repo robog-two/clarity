@@ -103,22 +103,22 @@ fun doingRows(tasks: List<AgentTask>, held: Map<HeldActionId, HeldAction>, now: 
     )
 }
 
-/** "3 quieter tasks" / "1 quieter task". */
-fun quietLine(count: Int): String = if (count == 1) "1 quieter task" else "$count quieter tasks"
+/** "3 quiet tasks" / "1 quiet task". */
+fun quietLine(count: Int): String = if (count == 1) "1 quiet task" else "$count quiet tasks"
 
 /**
- * The bottom fold's line, counting both: "Quieter and parked · 5", or "2 quieter tasks" /
- * "Parked · 3" when only one has anything; null (no fold) when both are empty.
+ * The bottom fold's line, counting both: "5 quiet or parked", or "2 quiet tasks" /
+ * "3 parked" when only one has anything; null (no fold) when both are empty.
  */
 fun quietAndParkedLine(quiet: Int, parked: Int): String? = when {
-    quiet > 0 && parked > 0 -> "Quieter and parked · ${quiet + parked}"
+    quiet > 0 && parked > 0 -> "${quiet + parked} quiet or parked"
     quiet > 0 -> quietLine(quiet).replaceFirstChar { it.uppercase() }
-    parked > 0 -> "Parked · $parked"
+    parked > 0 -> "$parked parked"
     else -> null
 }
 
-/** "Finished today · 3". */
-fun finishedLine(count: Int): String = "Finished today · $count"
+/** "3 finished today". */
+fun finishedLine(count: Int): String = "$count finished today"
 
 /**
  * The server's tasks with anything fresher from the live feed laid over them (same id, newer
@@ -137,18 +137,18 @@ fun mergeTasks(fromToday: List<AgentTask>, live: List<AgentTask>, since: Instant
 /** The instant the local day of [now] began in [zone]. */
 fun startOfLocalDay(now: Instant, zone: TimeZone): Instant = now.toLocalDateTime(zone).date.atStartOfDayIn(zone)
 
-/** "monday, october 26 · 10:04" */
+/** "Monday, October 26, 10:04 am" */
 fun dateKicker(date: LocalDate, time: LocalTime): String =
-    "${dayName(date.dayOfWeek.isoDayNumber).lowercase()}, ${monthName(date.month)} ${date.day} · ${formatTime(time)}"
+    "${dayName(date.dayOfWeek.isoDayNumber)}, ${monthName(date.month)} ${date.day}, ${formatTime(time)}"
 
 private fun monthName(month: Month): String = month.name.lowercase().replaceFirstChar { it.titlecase() }
 
-/** "2 held today" / "nothing held today". */
-fun heldLine(waiting: Int): String = if (waiting == 0) "nothing held today" else "$waiting held today"
+/** "2 waiting" / "Nothing waiting". */
+fun heldLine(waiting: Int): String = if (waiting == 0) "Nothing waiting" else "$waiting waiting"
 
-/** "Feedback for Alex, expense report. Back in tomorrow’s call." */
+/** "Feedback for Alex, expense report. Back tomorrow." */
 fun parkedLine(parked: List<String>): String? =
-    parked.takeIf { it.isNotEmpty() }?.joinToString(", ")?.replaceFirstChar { it.uppercase() }?.let { "$it. Back in tomorrow’s call." }
+    parked.takeIf { it.isNotEmpty() }?.joinToString(", ")?.replaceFirstChar { it.uppercase() }?.let { "$it. Back tomorrow." }
 
 data class TodayUiState(
     val loading: Boolean = true,
@@ -242,7 +242,7 @@ class TodayViewModel(
         // Posting the call is a binder call to the system: off the main thread.
         viewModelScope.launch(Dispatchers.Default) {
             val rang = callService.ringAgain()
-            _state.update { it.copy(callAgainProblem = if (rang) null else "Turn on notifications for Clarity so I can call.") }
+            _state.update { it.copy(callAgainProblem = if (rang) null else "Turn on notifications for Clarity.") }
         }
     }
 

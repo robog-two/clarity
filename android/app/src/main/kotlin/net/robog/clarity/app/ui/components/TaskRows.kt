@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -134,9 +136,11 @@ fun TaskStatus(text: String) {
 /** The Peach action on a row that needs the person. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-fun ReviewButton(onClick: () -> Unit) {
+/** [about] names the item (its title) so a screen reader tells the "Review" buttons apart. */
+fun ReviewButton(onClick: () -> Unit, about: String? = null) {
     Button(
         onClick = onClick,
+        modifier = if (about == null) Modifier else Modifier.semantics { contentDescription = "Review $about" },
         shapes = ButtonDefaults.shapes(),
         colors = ButtonDefaults.buttonColors(containerColor = ClarityPalette.Peach, contentColor = ClarityPalette.Charcoal),
     ) { Text("Review") }

@@ -23,9 +23,16 @@ import net.robog.clarity.shared.session.SessionKind
 
 // --- what counts as a call still going on (pure) ---
 
-/** The line under the ongoing call: "morning meeting · choose". */
+/** The line under the ongoing call: "Morning meeting, choosing". */
 fun ongoingCallText(stage: CallStage?): String =
-    "morning meeting" + (stage?.let { " · " + it.name.lowercase().replace('_', ' ') } ?: "")
+    "Morning meeting" + (stage?.let { ", " + stageWords(it) } ?: "")
+
+private fun stageWords(stage: CallStage): String = when (stage) {
+    CallStage.CLEAR -> "gathering"
+    CallStage.CHOOSE -> "choosing"
+    CallStage.COMMIT -> "committing"
+    CallStage.HAND_OFF -> "handing off"
+}
 
 /** A call that crosses midnight stays resumable this long after it started. */
 val RESUMABLE_ACROSS_MIDNIGHT: Duration = 3.hours

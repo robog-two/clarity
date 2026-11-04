@@ -8,7 +8,7 @@ import net.robog.clarity.shared.governance.HeldAction
 fun taskStatusLabel(status: AgentTask.Status): String = when (status) {
     AgentTask.Status.WORKING -> "working"
     AgentTask.Status.DRAFTED -> "drafted"
-    AgentTask.Status.WAITING_FOR_YOU -> "waits for you"
+    AgentTask.Status.WAITING_FOR_YOU -> "needs you"
     AgentTask.Status.SCHEDULED -> "scheduled"
     AgentTask.Status.DONE -> "done"
     AgentTask.Status.FAILED -> "failed"
@@ -29,20 +29,20 @@ fun approveLabel(kind: ActionKind): String = when (kind) {
     ActionKind.PAYMENT -> "review"
     ActionKind.USE_CREDENTIAL -> "approve"
     ActionKind.TWO_FACTOR_CODE -> "send code"
-    else -> "ok"
+    else -> "approve"
 }
 
 /** What a proposal box shows in place of its buttons once it is no longer waiting. */
 fun heldStatusLabel(status: HeldAction.Status): String? = when (status) {
     HeldAction.Status.HELD -> null
-    HeldAction.Status.BLOCKED -> "blocked by your lines"
+    HeldAction.Status.BLOCKED -> "blocked by your rules"
     HeldAction.Status.APPROVED, HeldAction.Status.EXECUTED -> "done"
     HeldAction.Status.DECLINED -> "not now"
     HeldAction.Status.KEPT -> "kept as is"
-    HeldAction.Status.RULE_UPDATED -> "line updated"
+    HeldAction.Status.RULE_UPDATED -> "rule updated"
     HeldAction.Status.FAILED -> "failed"
     HeldAction.Status.EXPIRED -> "expired"
 }
 
-/** Caption above a proposal: "Needs your OK: sends Dana an update". */
-fun proposalKicker(held: HeldAction): String = "Needs your OK: ${held.action.summary}"
+/** Caption above a proposal: "Needs your OK, sends Dana an update". */
+fun proposalKicker(held: HeldAction): String = "Needs your OK, ${held.action.summary}"

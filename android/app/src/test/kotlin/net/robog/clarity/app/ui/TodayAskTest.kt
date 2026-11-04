@@ -129,10 +129,10 @@ class TodayRulesTest {
     }
 
     @Test fun textsMatchThePrototype() {
-        assertEquals("monday, October 26 · 10:04 am", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
-        assertEquals("nothing held today", heldLine(0))
-        assertEquals("2 held today", heldLine(2))
-        assertEquals("Feedback for Alex, expense report. Back in tomorrow’s call.", parkedLine(listOf("feedback for Alex", "expense report")))
+        assertEquals("Monday, October 26, 10:04 am", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
+        assertEquals("Nothing waiting", heldLine(0))
+        assertEquals("2 waiting", heldLine(2))
+        assertEquals("Feedback for Alex, expense report. Back tomorrow.", parkedLine(listOf("feedback for Alex", "expense report")))
         assertNull(parkedLine(emptyList()))
     }
 }
@@ -218,12 +218,12 @@ class DoingGroupsTest {
     }
 
     @Test fun quietLineCountsTasks() {
-        assertEquals("1 quieter task", quietLine(1))
-        assertEquals("3 quieter tasks", quietLine(3))
-        assertEquals("Finished today · 3", finishedLine(3))
-        assertEquals("Quieter and parked · 5", quietAndParkedLine(2, 3))
-        assertEquals("2 quieter tasks", quietAndParkedLine(2, 0))
-        assertEquals("Parked · 3", quietAndParkedLine(0, 3))
+        assertEquals("1 quiet task", quietLine(1))
+        assertEquals("3 quiet tasks", quietLine(3))
+        assertEquals("3 finished today", finishedLine(3))
+        assertEquals("5 quiet or parked", quietAndParkedLine(2, 3))
+        assertEquals("2 quiet tasks", quietAndParkedLine(2, 0))
+        assertEquals("3 parked", quietAndParkedLine(0, 3))
         assertNull(quietAndParkedLine(0, 0))
     }
 }
@@ -248,7 +248,7 @@ class TodayViewModelTest {
         assertEquals(HeldActionId("h1"), s.doing.main.single().review)
         assertEquals(1, s.heldWaiting)
         assertFalse(s.loading)
-        assertTrue(s.kicker.startsWith("monday, October 26"))
+        assertTrue(s.kicker.startsWith("Monday, October 26"))
     }
 
     @Test fun staleTasksFoldIntoQuietByTheInjectedClock() = withMain {

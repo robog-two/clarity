@@ -281,7 +281,7 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
     return when (tool) {
         "send_to_user" -> "Sent you a message" to (input["cards"]?.let { feedText(it.toString()) })
         "react" -> "Reacted to your message" to arg("reaction")?.let { net.robog.clarity.shared.feed.Reaction.fromWire(it)?.emoji ?: it }
-        "update_task" -> (if (input["id"] == null) "Added a task" else "Updated the task") to listOfNotNull(arg("title"), arg("detail")).joinToString(" · ").ifEmpty { null }
+        "update_task" -> (if (input["id"] == null) "Added a task" else "Updated the task") to listOfNotNull(arg("title"), arg("detail")).joinToString(", ").ifEmpty { null }
         "delegate" -> "Started a helper" to null
         "list_helpers" -> "Checked on helpers" to null
         "message_helper" -> "Messaged a helper" to null
@@ -300,10 +300,10 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "read_document" -> "Read a document" to arg("path", "title")
         "save_draft" -> "Drafted an email" to arg("subject")
         "send_email" -> "Sent an email" to arg("subject")
-        "create_event" -> "Added an event" to listOfNotNull(arg("title", "summary"), arg("start")).joinToString(" · ").ifEmpty { null }
+        "create_event" -> "Added an event" to listOfNotNull(arg("title", "summary"), arg("start")).joinToString(", ").ifEmpty { null }
         "move_event" -> "Moved an event" to arg("start")
         "respond_to_invite" -> "Answered an invite" to arg("response")
-        "create_reminder" -> "Set a reminder" to listOfNotNull(arg("title"), arg("due", "at", "time")).joinToString(" · ").ifEmpty { null }
+        "create_reminder" -> "Set a reminder" to listOfNotNull(arg("title"), arg("due", "at", "time")).joinToString(", ").ifEmpty { null }
         "set_do_not_disturb" -> "Changed Do Not Disturb" to null
         "remember_fact" -> "Remembered something about you" to null
         "write_journal" -> "Wrote in the journal" to null

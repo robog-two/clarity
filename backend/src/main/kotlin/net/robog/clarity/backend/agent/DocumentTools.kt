@@ -81,7 +81,7 @@ class GatedDocumentFetcher(
         val outcome = gate.propose(
             action = action,
             agentView = "I need the full text of ${document.payload.path} to answer.",
-            context = listOf(ContextItem(tag = "document · ${document.payload.store}", title = document.payload.title, entity = document.id)),
+            context = listOf(ContextItem(tag = "document, ${document.payload.store}", title = document.payload.title, entity = document.id)),
             provenance = Provenance(runId = "read-document", untrustedInput = false),
             urgency = Urgency.NORMAL,
         )

@@ -139,12 +139,12 @@ class HeadsUpTextTest {
     private val now = at("2026-10-26T08:50:00Z")
 
     @Test fun titleIsThePrototypeLine() {
-        assertEquals("We’re scheduled in 10! :)", headsUpTitle(10))
-        assertEquals("We’re scheduled in 5! :)", headsUpTitle(5))
+        assertEquals("Your call is in 10 minutes", headsUpTitle(10))
+        assertEquals("Your call is in 5 minutes", headsUpTitle(5))
     }
 
     @Test fun fixedLineWhenThePrepJobLeftNothing() {
-        assertEquals("I’ll call at 9:00 am.", headsUpBody(LocalTime(9, 0), emptyList(), now))
+        assertEquals("Call at 9:00 am.", headsUpBody(LocalTime(9, 0), emptyList(), now))
     }
 
     @Test fun usesTheAgentsFirstLineFromTheFeed() {
@@ -161,7 +161,7 @@ class HeadsUpTextTest {
             agentItem(2, "Yesterday").copy(at = at("2026-10-25T08:00:00Z")),
             agentItem(3, "Still typing", streaming = true).copy(at = at("2026-10-26T08:45:00Z")),
         )
-        assertEquals("I’ll call at 9:30 am.", headsUpBody(LocalTime(9, 30), items, now))
+        assertEquals("Call at 9:30 am.", headsUpBody(LocalTime(9, 30), items, now))
     }
 }
 
@@ -259,7 +259,7 @@ class CallAlarmHandlerTest {
 
     @Test fun headsUpUsesTheFixedLineWithoutAPreparedOne() = runBlocking {
         handler.onAlarm(AlarmSlot.HeadsUp)
-        assertEquals(listOf("headsUp:We’re scheduled in 10! :)|I’ll call at 9:00 am."), notifier.log)
+        assertEquals(listOf("headsUp:Your call is in 10 minutes|Call at 9:00 am."), notifier.log)
     }
 
     @Test fun snoozedCallDoesNotMoveTheRegularAlarms() = runBlocking {

@@ -167,8 +167,13 @@ fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? 
 private val ReactionOverhang = 14.dp
 private val ReactionDrop = 16.dp
 
-/** "Clarity reacted 👍": what a screen reader says for a reaction. */
-fun reactionDescription(reaction: Reaction): String = "Clarity reacted ${reaction.emoji}"
+/** "Clarity reacted with a thumbs up": what a screen reader says for a reaction (words, not the emoji). */
+fun reactionDescription(reaction: Reaction): String = "Clarity reacted with " + when (reaction) {
+    Reaction.THUMBS_UP -> "a thumbs up"
+    Reaction.HEART -> "a heart"
+    Reaction.LAUGH -> "a laugh"
+    Reaction.THUMBS_DOWN -> "a thumbs down"
+}
 
 /**
  * Clarity's tapback: the emoji in a small tonal pill, ringed in the surface colour so it reads as

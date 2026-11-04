@@ -102,7 +102,7 @@ private fun task(id: String, title: String, detail: String, status: AgentTask.St
 
 private val todayFull = TodayUiState(
     loading = false,
-    kicker = "monday, October 26 · 2:04 pm",
+    kicker = "Monday, October 26, 2:04 pm",
     today = Today(
         date = LocalDate(2026, 10, 26),
         plan = listOf(
@@ -116,12 +116,12 @@ private val todayFull = TodayUiState(
     // Grouped by the app's own rule at t0: needs you, running, scheduled; stale ones folded away.
     doing = doingRows(
         listOf(
-            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("q1", "Follow up with Nick about The Devils", "Mail, waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
             task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
-            task("q2", "Find Ulta haircut openings", "web · no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
-            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
-            task("q3", "Sort the receipts folder", "files · started on Friday", AgentTask.Status.WORKING, ago = 3.days),
-            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            task("q2", "Find Ulta haircut openings", "Web, no openings this week", AgentTask.Status.WAITING_FOR_YOU, ago = 14.hours),
+            task("t2", "Find a time with Nick for the Devils game", "Calendar, checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("q3", "Sort the receipts folder", "Files, started on Friday", AgentTask.Status.WORKING, ago = 3.days),
+            task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
         ),
         emptyMap(),
         t0,
@@ -135,12 +135,12 @@ private val todayFull = TodayUiState(
 private val todayFinished = todayFull.copy(
     doing = doingRows(
         listOf(
-            task("q1", "Follow up with Nick about The Devils", "mail · waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
+            task("q1", "Follow up with Nick about The Devils", "Mail, waiting for the sent-mail sync fix", AgentTask.Status.WAITING_FOR_YOU, ago = 20.hours),
             task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED, ago = 2.hours),
-            task("t2", "Find a time with Nick for the Devils game", "calendar · checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
-            task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
-            task("f1", "Check the dentist’s opening hours", "web · open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
-            task("f2", "Book the car service", "web · the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
+            task("t2", "Find a time with Nick for the Devils game", "Calendar, checking both calendars", AgentTask.Status.WORKING, ago = 5.minutes),
+            task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1", ago = 20.minutes),
+            task("f1", "Check the dentist’s opening hours", "Web, open until 6 today", AgentTask.Status.DONE, ago = 12.minutes),
+            task("f2", "Book the car service", "Web, the booking page timed out", AgentTask.Status.FAILED, ago = 1.hours),
             task("f3", "Remind Sam about the permission slip", "no longer needed", AgentTask.Status.CANCELLED, ago = 3.hours),
         ),
         emptyMap(),
@@ -164,7 +164,7 @@ private val todayFinished = todayFull.copy(
 @PreviewTest @Preview(widthDp = 412, heightDp = 1150) @Composable fun TodayBottomOpenDark() = TodayBottomOpen(true)
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
-    TodayContent(TodayUiState(loading = false, kicker = "monday, October 26 · 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
+    TodayContent(TodayUiState(loading = false, kicker = "Monday, October 26, 2:04 pm", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
 }
 
 @Composable private fun TodayError(dark: Boolean) = Screen(dark) {
@@ -205,8 +205,8 @@ private val everyStatus = todayFull.copy(
         main = AgentTask.Status.entries.mapIndexed { i, status ->
             val waiting = status == AgentTask.Status.DRAFTED || status == AgentTask.Status.WAITING_FOR_YOU
             val held = if (waiting) "s$i" else null
-            DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "mail · detail line", status, held), held?.let { HeldActionId(it) })
-        } + DoingRow(task("sw", "A task that waits with nothing to review", "chat · asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
+            DoingRow(task("s$i", "A task that is ${status.name.lowercase().replace('_', ' ')}", "Mail, detail line", status, held), held?.let { HeldActionId(it) })
+        } + DoingRow(task("sw", "A task that waits with nothing to review", "Chat, asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
     ),
 )
 @PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
@@ -240,8 +240,8 @@ private val emailHeld = HeldAction(
     verdict = GuardVerdict(Decision.ASK, lines = listOf(LineId("l2"), LineId("l5")), rationale = "I’m asking because it goes out as you and touches money (line 2)."),
     agentView = "She asked for a reply before Friday. I agreed to everything except the payment date, which clashes with your invoicing. I kept it short and offered Thursday 2:00, which is clear for both of you.",
     context = listOf(
-        ContextItem("mail · yesterday", "Re: Revised Terms — “Can you confirm by Friday? I’ve attached v3 with the changes we discussed.”"),
-        ContextItem("files · tue", "Contract_v3.pdf"),
+        ContextItem("Mail, yesterday", "Re: Revised Terms — “Can you confirm by Friday? I’ve attached v3 with the changes we discussed.”"),
+        ContextItem("Files, tue", "Contract_v3.pdf"),
     ),
     urgency = Urgency.NORMAL,
     status = HeldAction.Status.HELD,
@@ -415,7 +415,7 @@ private val callItems = listOf(
     fi(12, FeedItem.Author.AGENT, Card.Plan(listOf(IfThen("it’s 9:30", "spec at my desk until 12"), IfThen("Dana emails", "it waits until 12"))), Card.Tasks("setting up", listOf(TaskId("t1"), TaskId("t2"), TaskId("t3")))),
 )
 private val callTasks = listOf(
-    task("t1", "Reply to Dana about the revised contract terms", "mail · waits for your review", AgentTask.Status.DRAFTED, "h1"),
+    task("t1", "Reply to Dana about the revised contract terms", "Mail, waits for your review", AgentTask.Status.DRAFTED, "h1"),
     task("t2", "Find a time with Nick for the Devils game", "calendar", AgentTask.Status.WORKING),
     task("t3", "Nudge to leave for pickup", "nudge at 3:45", AgentTask.Status.SCHEDULED),
 ).associateBy { it.id }

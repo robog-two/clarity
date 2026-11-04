@@ -116,12 +116,12 @@ class HeldRulesTest {
     }
 
     @Test fun rowWordsMatchThePrototype() {
-        assertEquals("→", heldRowStatus(HeldAction.Status.HELD))
-        assertEquals("→", heldRowStatus(HeldAction.Status.BLOCKED))
+        assertEquals("review", heldRowStatus(HeldAction.Status.HELD))
+        assertEquals("review", heldRowStatus(HeldAction.Status.BLOCKED))
         assertEquals("kept", heldRowStatus(HeldAction.Status.KEPT))
         assertEquals("rule updated", heldRowStatus(HeldAction.Status.RULE_UPDATED))
         val rows = heldRows(listOf(heldAction()), TimeZone.UTC)
-        assertEquals("9:00 am · send email", rows.single().whenText)
+        assertEquals("9:00 am, send email", rows.single().whenText)
     }
 
     @Test fun everyWaitingRowOpensTheReviewScreenWithApprove() {
@@ -161,7 +161,7 @@ class HeldRulesTest {
     }
 
     @Test fun checkedLineCountsTheLinesThatApply() {
-        assertEquals("Checked against your rules · 1 apply", checkedLine(heldAction()))
+        assertEquals("1 rule applies", checkedLine(heldAction()))
         assertEquals(null, checkedLine(heldAction(lines = emptyList())))
     }
 
@@ -201,7 +201,7 @@ class HeldViewModelTest {
         val s = vm.state.value
         assertEquals(2, s.rows.size)
         assertEquals(1, s.waiting)
-        assertEquals("1 held today · 1 allowed", s.kicker)
+        assertEquals("1 waiting, 1 automatic", s.kicker)
         assertFalse(s.showAllowed)
         vm.toggleAllowed()
         assertTrue(vm.state.value.showAllowed)
@@ -211,7 +211,7 @@ class HeldViewModelTest {
     @Test fun updatesWhenTheFeedChanges() = withMain {
         val feed = ScreenFeed()
         val vm = HeldViewModel(feed, FakeHeldRepo())
-        assertEquals("nothing held today · 0 allowed", vm.state.value.kicker)
+        assertEquals("Nothing waiting, 0 automatic", vm.state.value.kicker)
         feed.heldFlow.value = listOf(heldAction())
         assertEquals(1, vm.state.value.waiting)
     }

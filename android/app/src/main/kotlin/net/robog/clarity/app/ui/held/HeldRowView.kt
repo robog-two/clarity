@@ -24,7 +24,7 @@ import net.robog.clarity.app.ui.theme.clarityText
 @Composable
 fun HeldRowView(row: HeldRow, onClick: () -> Unit, modifier: Modifier = Modifier, container: Color = Color.Transparent) {
     ListItem(
-        modifier = modifier.clickable(onClick = onClick),
+        modifier = modifier.clickable(onClickLabel = "Review", onClick = onClick),
         colors = ListItemDefaults.colors(containerColor = container),
         leadingContent = {
             Icon(
@@ -33,11 +33,11 @@ fun HeldRowView(row: HeldRow, onClick: () -> Unit, modifier: Modifier = Modifier
                 tint = if (row.waiting) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         },
-        overlineContent = { Text(sentenceCase(if (row.waiting) "needs your OK · ${row.whenText}" else row.whenText)) },
+        overlineContent = { Text(sentenceCase(if (row.waiting) "needs your OK, ${row.whenText}" else row.whenText)) },
         headlineContent = { Text(row.title, style = MaterialTheme.clarityText.chat, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
             if (row.waiting) {
-                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = "review", tint = MaterialTheme.colorScheme.primary)
+                Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             } else {
                 Text(sentenceCase(row.status), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

@@ -144,7 +144,7 @@ fun ChatComposer(
     mic: ComposerMic,
     onMic: () -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "Type, or tap the mic",
+    placeholder: String = "Type or tap the mic",
 ) {
     val buttonSize = IconButtonDefaults.mediumContainerSize()
     val interaction = remember { MutableInteractionSource() }
@@ -168,7 +168,7 @@ fun ChatComposer(
                     if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                     MaterialTheme.shapes.extraLarge,
                 )
-                .semantics { contentDescription = "message" },
+                .semantics { contentDescription = "Message" },
             placeholder = { Text(placeholder, style = MaterialTheme.clarityText.chat) },
             textStyle = MaterialTheme.clarityText.chat,
             shape = MaterialTheme.shapes.extraLarge,
@@ -201,7 +201,7 @@ fun ChatComposer(
             shapes = IconButtonDefaults.shapes(),
             modifier = Modifier.size(buttonSize),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send message", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
         }
     }
 }
