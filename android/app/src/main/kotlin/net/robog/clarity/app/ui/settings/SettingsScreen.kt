@@ -311,13 +311,11 @@ fun SettingsContent(
 @Composable
 private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, onOpenConstitution: () -> Unit, onOpenMcp: () -> Unit) {
     val settings = state.settings
-    ClarityScreen(title = "Settings", level = ScreenLevel.Top) {
-        Image(
-            painterResource(R.drawable.settings_coffee),
-            contentDescription = null,
-            modifier = Modifier.size(144.dp),
-            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
-        )
+    ClarityScreen(
+        title = "Settings",
+        level = ScreenLevel.Top,
+        art = { Drawing(R.drawable.settings_coffee, Modifier.size(88.dp), tint = MaterialTheme.colorScheme.primary) },
+    ) {
         // One state at a time: a problem outranks the local-only note, and either outranks the spinner.
         when {
             state.message != null -> ErrorBox(state.message)
@@ -454,8 +452,12 @@ private fun CardGroupScope.groupRow(
 
 @Composable
 private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable () -> Unit) {
-    ClarityScreen(title = title, backLabel = "settings", onBack = onBack) {
-        drawing?.let { Drawing(it, Modifier.size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
+    ClarityScreen(
+        title = title,
+        backLabel = "settings",
+        onBack = onBack,
+        art = drawing?.let { res -> { Drawing(res, Modifier.size(88.dp), tint = MaterialTheme.colorScheme.secondary) } },
+    ) {
         content()
     }
 }

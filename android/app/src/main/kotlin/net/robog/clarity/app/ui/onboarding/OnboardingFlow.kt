@@ -3,6 +3,7 @@ package net.robog.clarity.app.ui.onboarding
 import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.ClarityScreen
 import net.robog.clarity.app.ui.components.PhaseSwap
+import net.robog.clarity.app.ui.components.ScreenArrangement
 import net.robog.clarity.app.ui.components.ScreenLevel
 
 import net.robog.clarity.app.ui.components.ScreenGutter
@@ -183,6 +184,7 @@ fun WelcomeScreen(onBegin: () -> Unit) {
         title = "You set the priorities.",
         level = ScreenLevel.Top,
         kicker = "Personal agent",
+        arrangement = ScreenArrangement.Centered,
         footer = { PrimaryButton("begin", onBegin, Modifier.fillMaxWidth()) },
     ) {
         ReadingText(

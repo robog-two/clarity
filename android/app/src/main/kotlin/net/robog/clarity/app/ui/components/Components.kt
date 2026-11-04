@@ -91,11 +91,18 @@ fun sentenceCase(text: String): String {
 
 /** `.k`: the small caption line. Pass [heading] when it labels a section, so screen readers can jump to it. */
 @Composable
-fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, heading: Boolean = false) {
+fun Kicker(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    heading: Boolean = false,
+    textAlign: androidx.compose.ui.text.style.TextAlign? = null,
+) {
     Text(
         sentenceCase(text),
         if (heading) modifier.semantics { heading() } else modifier,
         color = color,
+        textAlign = textAlign,
         style = MaterialTheme.clarityText.kicker,
     )
 }
@@ -123,8 +130,8 @@ fun LoadingSpinner(modifier: Modifier = Modifier) {
 
 /** `.h`: the screen heading. */
 @Composable
-fun ScreenTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
+fun ScreenTitle(text: String, modifier: Modifier = Modifier, textAlign: androidx.compose.ui.text.style.TextAlign? = null) {
+    Text(text, modifier.semantics { heading() }, textAlign = textAlign, style = MaterialTheme.typography.headlineMedium)
 }
 
 /** `.sm`: the quiet explanatory paragraph under a heading. */

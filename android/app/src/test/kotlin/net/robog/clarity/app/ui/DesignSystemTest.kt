@@ -177,6 +177,32 @@ class DesignSystemTest {
         )
     }
 
+    // ---- Illustrations ----
+
+    private val drawingCalls = Regex("""\b(Drawing|painterResource)\(""")
+
+    /** Files where a drawing is part of a component, not a screen's illustration. */
+    private val drawingAllowlist = mapOf(
+        "ui/components/Drawing.kt" to "the drawing widget itself",
+        "ui/call/CallScreens.kt" to "the ringing bell is the incoming call's animated centrepiece",
+        "ui/today/TodayScreen.kt" to "the empty-plan card's drawing and the running task's solid, which are components",
+    )
+
+    @Test
+    fun `screen illustrations sit in the art slot`() {
+        val offenders = sources.filter { it.path !in drawingAllowlist }.flatMap { s ->
+            drawingCalls.findAll(s.code).filter { call ->
+                // Fine only inside the braces of an `art = ...` argument.
+                val from = s.code.lastIndexOf("art =", call.range.first)
+                from < 0 || s.code.substring(from, call.range.first).let { it.count { c -> c == '{' } - it.count { c -> c == '}' } } <= 0
+            }.map { "${s.path}:${s.lineOf(it.range.first)} draws an illustration outside the art slot" }.toList()
+        }
+        assertTrue(
+            offenders.isEmpty(),
+            "A screen's illustration goes in ClarityScreen's art = { } slot, at the end of the title row, never in the body:\n" + offenders.joinToString("\n"),
+        )
+    }
+
     // ---- Cards and lines ----
 
     private val cardTokens = Regex("""\b(Card|ElevatedCard|OutlinedCard|HorizontalDivider|Divider)\(|\bshadowElevation\s*=\s*(?!0\.dp\b|0f\b)""")

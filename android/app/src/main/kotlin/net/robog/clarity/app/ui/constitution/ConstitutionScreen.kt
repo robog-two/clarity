@@ -192,9 +192,9 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
         kicker = c?.let { versionKicker(it.version) },
         backLabel = "Settings",
         onBack = onBack,
+        art = { Drawing(R.drawable.drawing_quill_scroll, Modifier.size(88.dp)) },
         phase = state.loading,
     ) { loading ->
-        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = Space.Small).size(120.dp))
         state.error?.let { ErrorBox(it) }
         when {
             loading -> LoadingSpinner()

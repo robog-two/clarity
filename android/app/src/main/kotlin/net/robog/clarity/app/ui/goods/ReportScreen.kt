@@ -54,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
@@ -225,6 +226,8 @@ private fun BoxScope.GoodsFabMenu(
         },
     ) {
         FloatingActionButtonMenuItem(
+            // Collapsed, the items still sit under the button; hide them so no pill peeks out.
+            modifier = Modifier.alpha(if (open) 1f else 0f),
             onClick = { onOpen(false); onLink(LinkAction.Download) },
             text = { Text("Download") },
             icon = { Icon(Icons.Outlined.FileDownload, contentDescription = null) },
@@ -232,6 +235,8 @@ private fun BoxScope.GoodsFabMenu(
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         FloatingActionButtonMenuItem(
+            // Collapsed, the items still sit under the button; hide them so no pill peeks out.
+            modifier = Modifier.alpha(if (open) 1f else 0f),
             onClick = { onOpen(false); onLink(LinkAction.Share) },
             text = { Text("Share") },
             icon = { Icon(Icons.Outlined.Share, contentDescription = null) },
@@ -239,6 +244,8 @@ private fun BoxScope.GoodsFabMenu(
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         )
         FloatingActionButtonMenuItem(
+            // Collapsed, the items still sit under the button; hide them so no pill peeks out.
+            modifier = Modifier.alpha(if (open) 1f else 0f),
             onClick = { onOpen(false); onShareSettings() },
             text = { Text(shareSettingsLabel(state.linkOn, state.linkDownloads)) },
             icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },

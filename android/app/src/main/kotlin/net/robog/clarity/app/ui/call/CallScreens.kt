@@ -65,6 +65,7 @@ import net.robog.clarity.app.ui.cards.CardEnv
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.ChatLayout
 import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.ScreenArrangement
 import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
@@ -113,11 +114,12 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         title = "Clarity",
         level = ScreenLevel.Top,
         kicker = "Incoming call",
-        horizontalAlignment = Alignment.CenterHorizontally,
+        arrangement = ScreenArrangement.Centered,
+        gutter = Space.Large,
         footer = { SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working) },
     ) {
         Hint("About 8 minutes")
-        RingingBell(Modifier.padding(vertical = Space.Large))
+        RingingBell()
         state.message?.let { ErrorBox(it) }
         Hint("Replies appear on screen")
     }
@@ -160,6 +162,8 @@ private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
     ClarityScreen(
         title = state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
         kicker = "Not now",
+        arrangement = ScreenArrangement.Centered,
+        gutter = Space.Large,
         footer = { PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working) },
     ) {
         Hint("Yesterday’s plan stays")
@@ -295,6 +299,7 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
     ClarityScreen(
         title = "Your morning",
         level = ScreenLevel.Top,
+        gutter = Space.Large,
         kicker = if (elapsed == null) "Call ended" else "Call ended after $elapsed",
         footer = {
             PrimaryButton("Open app", onOpenApp, Modifier.fillMaxWidth())

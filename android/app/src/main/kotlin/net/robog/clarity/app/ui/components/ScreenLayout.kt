@@ -4,6 +4,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
@@ -25,6 +28,9 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -48,16 +54,35 @@ enum class ScreenLevel {
     Sub,
 }
 
+/** How a screen's content sits in the viewport. */
+enum class ScreenArrangement {
+    /** Packed under the header (most screens). */
+    Top,
+
+    /**
+     * A full-screen moment (an incoming call, a welcome): the header text is centered and, when the
+     * content is shorter than the viewport, the body is centered vertically between the header and
+     * the footer. It still scrolls when taller.
+     */
+    Centered,
+}
+
 /** A screen's title at its [level]'s size. */
 @Composable
-fun ScreenHeading(text: String, level: ScreenLevel, modifier: Modifier = Modifier) {
+fun ScreenHeading(text: String, level: ScreenLevel, modifier: Modifier = Modifier, textAlign: TextAlign? = null) {
     when (level) {
-        ScreenLevel.Top -> Text(text, modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
-        ScreenLevel.Sub -> ScreenTitle(text, modifier)
+        ScreenLevel.Top -> Text(text, modifier.semantics { heading() }, textAlign = textAlign, style = MaterialTheme.clarityText.heroTitle)
+        ScreenLevel.Sub -> ScreenTitle(text, modifier, textAlign)
     }
 }
 
-/** The header, in this order and only these pieces: step bar, back link, kicker, title. */
+/** How tall the [ClarityScreen] `art` slot is. */
+private val ArtHeight = 88.dp
+
+/**
+ * The header, in this order and only these pieces: step bar, back link, kicker, title. [art] is an
+ * illustration at the end of the title row, centered on the title and decorative (no description).
+ */
 @Composable
 private fun headerPieces(
     title: String?,
@@ -66,17 +91,31 @@ private fun headerPieces(
     backLabel: String?,
     onBack: (() -> Unit)?,
     stepSegments: Int?,
+    centered: Boolean = false,
+    art: (@Composable () -> Unit)? = null,
 ): List<@Composable () -> Unit> = buildList {
+    val align = if (centered) TextAlign.Center else null
+    val fill = if (centered) Modifier.fillMaxWidth() else Modifier
     if (stepSegments != null) add { StepBar(stepSegments) }
     if (backLabel != null && onBack != null) add { BackLink(backLabel, onBack) }
-    if (kicker != null) add { Kicker(kicker) }
-    if (!title.isNullOrBlank()) add { ScreenHeading(title, level) }
+    if (kicker != null) add { Kicker(kicker, fill, textAlign = align) }
+    if (!title.isNullOrBlank()) add {
+        if (art == null) {
+            ScreenHeading(title, level, fill, align)
+        } else {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+                ScreenHeading(title, level, Modifier.weight(1f))
+                Box(Modifier.height(ArtHeight).clearAndSetSemantics {}, contentAlignment = Alignment.Center) { art() }
+            }
+        }
+    }
 }
 
 /**
  * A scrolling screen. Everything in [body] arrives with the header in one staggered rise, so a
  * block added to a screen animates without being told to. [footer] is pinned under the scroll (the
- * primary button). [onRefresh] adds pull to refresh.
+ * primary button). [onRefresh] adds pull to refresh. [art] is the screen's illustration, at the end
+ * of the title row. [arrangement] centers a full-screen moment, and [gutter] is the side margin.
  */
 @Composable
 fun ClarityScreen(
@@ -89,12 +128,15 @@ fun ClarityScreen(
     /** The onboarding step bar's filled segments. */
     stepSegments: Int? = null,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
+    art: (@Composable () -> Unit)? = null,
+    arrangement: ScreenArrangement = ScreenArrangement.Top,
+    gutter: Dp = ScreenGutter,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     body: @Composable () -> Unit,
 ) = ClarityScreen(
-    title, modifier, level, kicker, backLabel, onBack, stepSegments, horizontalAlignment,
+    title, modifier, level, kicker, backLabel, onBack, stepSegments, horizontalAlignment, art, arrangement, gutter,
     phase = Unit, refreshing = refreshing, onRefresh = onRefresh, footer = footer,
 ) { body() }
 
@@ -113,33 +155,72 @@ fun <P> ClarityScreen(
     onBack: (() -> Unit)? = null,
     stepSegments: Int? = null,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
+    art: (@Composable () -> Unit)? = null,
+    arrangement: ScreenArrangement = ScreenArrangement.Top,
+    gutter: Dp = ScreenGutter,
     phase: P,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     body: @Composable (P) -> Unit,
 ) {
-    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments)
+    val centered = arrangement == ScreenArrangement.Centered
+    val align = if (centered) Alignment.CenterHorizontally else horizontalAlignment
+    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments, centered, art)
     Column(
         modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().navigationBarsPadding().imePadding(),
     ) {
         Refreshable(refreshing, onRefresh, Modifier.weight(1f)) {
-            Column(
-                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
-            ) {
-                StaggeredColumn(Modifier.fillMaxWidth(), horizontalAlignment) {
-                    header.forEach { it() }
-                    PhaseSwap(phase, Modifier.fillMaxWidth().staggerExempt(), label = "screen phase") { shown ->
-                        StaggeredColumn(Modifier.fillMaxWidth(), horizontalAlignment, startIndex = header.size, replayKey = shown) { body(shown) }
+            val content: @Composable (Dp) -> Unit = { viewport ->
+                Column(
+                    Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = gutter, vertical = Space.Large),
+                ) {
+                    if (centered) {
+                        CenteredColumn(
+                            Modifier.fillMaxWidth(),
+                            minHeight = (viewport - Space.Large * 2).coerceAtLeast(0.dp),
+                            header = { StaggeredColumn(Modifier.fillMaxWidth(), align) { header.forEach { it() } } },
+                            body = {
+                                PhaseSwap(phase, Modifier.fillMaxWidth(), label = "screen phase") { shown ->
+                                    StaggeredColumn(Modifier.fillMaxWidth(), align, startIndex = header.size, replayKey = shown) { body(shown) }
+                                }
+                            },
+                        )
+                    } else {
+                        StaggeredColumn(Modifier.fillMaxWidth(), align) {
+                            header.forEach { it() }
+                            PhaseSwap(phase, Modifier.fillMaxWidth().staggerExempt(), label = "screen phase") { shown ->
+                                StaggeredColumn(Modifier.fillMaxWidth(), align, startIndex = header.size, replayKey = shown) { body(shown) }
+                            }
+                        }
                     }
                 }
             }
+            if (centered) BoxWithConstraints(Modifier.fillMaxSize()) { content(maxHeight) } else content(0.dp)
         }
         if (footer != null) {
             Column(
-                Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = Space.Medium, bottom = Space.Medium),
+                Modifier.fillMaxWidth().padding(start = gutter, end = gutter, top = Space.Medium, bottom = Space.Medium),
                 verticalArrangement = Arrangement.spacedBy(Space.Medium),
             ) { footer() }
+        }
+    }
+}
+
+/** The header at the top and the body centered in the room under it; at least [minHeight] tall. */
+@Composable
+private fun CenteredColumn(modifier: Modifier, minHeight: Dp, header: @Composable () -> Unit, body: @Composable () -> Unit) {
+    Layout({ header(); body() }, modifier) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val head = measurables[0].measure(loose)
+        val main = measurables[1].measure(loose)
+        val gap = Space.Medium.roundToPx()
+        val used = head.height + gap + main.height
+        val height = maxOf(minHeight.roundToPx(), used)
+        val width = if (constraints.hasBoundedWidth) constraints.maxWidth else maxOf(head.width, main.width)
+        layout(width, height) {
+            head.place((width - head.width) / 2, 0)
+            main.place((width - main.width) / 2, head.height + gap + (height - used) / 2)
         }
     }
 }
@@ -159,6 +240,7 @@ fun ClarityListScreen(
     kicker: String? = null,
     backLabel: String? = null,
     onBack: (() -> Unit)? = null,
+    art: (@Composable () -> Unit)? = null,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     itemSpacing: Dp = Space.Medium,
@@ -167,7 +249,7 @@ fun ClarityListScreen(
     overlay: @Composable BoxScope.() -> Unit = {},
     content: StaggeredListScope.() -> Unit,
 ) {
-    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments = null)
+    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments = null, art = art)
     val clock = rememberStaggerClock(Unit)
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
