@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.components
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
@@ -82,7 +84,7 @@ fun SlideToConfirm(
         val max = with(LocalDensity.current) { (maxWidth - knob - pad * 2).toPx() }.coerceAtLeast(0f)
         Text(
             text,
-            Modifier.align(Alignment.Center).padding(start = knob + pad, end = pad * 2, top = 8.dp, bottom = 8.dp),
+            Modifier.align(Alignment.Center).padding(start = knob + pad, end = pad * 2, top = Space.Small, bottom = Space.Small),
             color = if (lit) colors.onPrimaryContainer else colors.onSurfaceVariant,
             style = MaterialTheme.typography.labelLarge,
         )

@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.cards
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.SegmentCard
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -134,13 +138,15 @@ fun ContextBox(card: Card.Context, modifier: Modifier = Modifier) {
             Modifier
                 .widthIn(max = 268.dp)
                 .background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(horizontal = Space.Medium, vertical = Space.Medium),
+            verticalArrangement = Arrangement.spacedBy(Space.Small),
         ) {
             Kicker(card.label)
             card.items.forEach { item ->
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(Modifier.padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Column(
+                    Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerHigh, MaterialTheme.shapes.small).padding(Space.Medium),
+                    verticalArrangement = Arrangement.spacedBy(Space.Small),
+                ) {
                     Text(
                         item.tag.uppercase(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -156,20 +162,14 @@ fun ContextBox(card: Card.Context, modifier: Modifier = Modifier) {
 /** `.chip` list under a caption. */
 @Composable
 fun ChipList(card: Card.Chips, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Kicker(card.label)
-        card.items.forEach { chip ->
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.small)
-                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(chip.text, Modifier.weight(1f), style = MaterialTheme.clarityText.readingSmall, color = MaterialTheme.colorScheme.onSurface)
-                if (chip.sub.isNotBlank()) Kicker(chip.sub)
+        CardGroup(card.items) { chip, shape, _ ->
+            SegmentCard(shape) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalAlignment = Alignment.CenterVertically) {
+                    Text(chip.text, Modifier.weight(1f), style = MaterialTheme.clarityText.readingSmall, color = MaterialTheme.colorScheme.onSurface)
+                    if (chip.sub.isNotBlank()) Kicker(chip.sub)
+                }
             }
         }
     }
@@ -178,14 +178,14 @@ fun ChipList(card: Card.Chips, modifier: Modifier = Modifier) {
 /** The plan box: if-then sentences on the primary container. */
 @Composable
 fun PlanBox(card: Card.Plan, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Kicker("your plan")
         Column(
             Modifier
                 .fillMaxWidth()
                 .background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.large)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(Space.Medium),
+            verticalArrangement = Arrangement.spacedBy(Space.Small),
         ) {
             card.items.forEach {
                 Text(
@@ -206,7 +206,7 @@ fun NoteBox(text: String, modifier: Modifier = Modifier) {
         modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.shapes.medium)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = Space.Medium, vertical = Space.Medium),
         color = MaterialTheme.colorScheme.onTertiaryContainer,
         style = MaterialTheme.clarityText.readingSmall.copy(fontStyle = FontStyle.Italic),
     )
@@ -222,7 +222,7 @@ fun ProposalBox(
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
     resetKey: Any? = null,
 ) {
-    InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
+    InfoBox(modifier) {
         if (held == null) {
             Kicker("needs your OK")
             Hint("Loading details")
@@ -230,15 +230,15 @@ fun ProposalBox(
         }
         Kicker(proposalKicker(held))
         Text(held.action.summary, style = MaterialTheme.typography.titleMedium)
-        Kicker("reasoning", Modifier.padding(top = 6.dp))
+        Kicker("reasoning", Modifier.padding(top = Space.Small))
         Hint(held.agentView)
         Hint(held.verdict.rationale)
         val done = heldStatusLabel(held.status)
         if (done == null) {
             if (held.needsCode) {
-                PrimaryButton("enter the code", { onReview(held.id) }, Modifier.fillMaxWidth().padding(top = 6.dp))
+                PrimaryButton("enter the code", { onReview(held.id) }, Modifier.fillMaxWidth().padding(top = Space.Small))
             } else {
-                SlideToConfirm(slideLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.padding(top = 6.dp), resetKey = held to resetKey)
+                SlideToConfirm(slideLabel(held.action.kind), { onDecision(held.id, HeldDecision.Approve()) }, Modifier.padding(top = Space.Small), resetKey = held to resetKey)
             }
             NotNow(held, onDeny = { onDecision(held.id, HeldDecision.Decline) }, onAlways = { t, b -> onAlways(held.id, t, b) })
         } else {
@@ -250,22 +250,19 @@ fun ProposalBox(
 /** Progress of tasks the agent is doing: title, detail, status. */
 @Composable
 fun TaskList(card: Card.Tasks, tasks: Map<TaskId, AgentTask>, modifier: Modifier = Modifier) {
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Kicker(card.label)
-        card.taskIds.forEach { id ->
+        CardGroup(card.taskIds) { id, shape, _ ->
             val task = tasks[id]
-            HorizontalDivider(Modifier.padding(top = 6.dp), color = MaterialTheme.colorScheme.outlineVariant)
-            Row(
-                Modifier.fillMaxWidth().heightIn(min = 52.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(task?.title ?: "Loading task", style = MaterialTheme.clarityText.reading.copy(fontSize = MaterialTheme.clarityText.reading.fontSize * 15 / 16))
-                    if (task != null) Kicker(task.detail)
-                }
-                if (task != null) {
-                    Text(taskStatusLabel(task.status), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            SegmentCard(shape) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                        Text(task?.title ?: "Loading task", style = MaterialTheme.clarityText.reading.copy(fontSize = MaterialTheme.clarityText.reading.fontSize * 15 / 16))
+                        if (task != null) Kicker(task.detail)
+                    }
+                    if (task != null) {
+                        Text(taskStatusLabel(task.status), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                    }
                 }
             }
         }
@@ -295,8 +292,8 @@ private val sampleTask = AgentTask(TaskId("t1"), "reply to Dana", "drafted · wa
 private fun PreviewColumn(content: @Composable () -> Unit) {
     ClarityTheme {
         Column(
-            Modifier.background(MaterialTheme.colorScheme.surface).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.background(MaterialTheme.colorScheme.surface).padding(Space.Medium),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) { content() }
     }
 }

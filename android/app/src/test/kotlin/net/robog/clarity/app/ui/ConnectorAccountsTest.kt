@@ -559,7 +559,7 @@ class NotRunningTest {
         vm.refresh()
         val item = vm.state.value.items.first { it.row.key == "dav" }
         assertTrue(item.notRunning)
-        assertEquals(NOT_RUNNING, item.caption)
+        assertEquals("", item.caption)
         assertEquals("not running", item.status)
         assertEquals(NOT_RUNNING, item.row.proto)
     }

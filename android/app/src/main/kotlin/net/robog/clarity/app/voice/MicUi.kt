@@ -1,5 +1,7 @@
 package net.robog.clarity.app.voice
 
+import net.robog.clarity.app.ui.theme.Space
+
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -54,8 +56,8 @@ fun MicStateChip(state: MicChipState, modifier: Modifier = Modifier) {
         modifier
             .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
             .background(container, MaterialTheme.shapes.small)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(horizontal = Space.Medium, vertical = Space.Small),
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The text names the state, so the icon is only a picture.
@@ -119,7 +121,7 @@ fun MicRationale(refused: Boolean, onAllow: () -> Unit, onOpenSettings: () -> Un
 @Composable
 private fun MicChipsPreview() {
     ClarityTheme {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             MicStateChip(MicChipState.Listening)
             MicStateChip(MicChipState.MicOn)
             MicStateChip(MicChipState.Muted)

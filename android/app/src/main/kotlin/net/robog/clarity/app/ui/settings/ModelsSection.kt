@@ -1,5 +1,10 @@
 package net.robog.clarity.app.ui.settings
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.SegmentCard
+import androidx.compose.ui.graphics.Shape
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,7 +18,6 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -70,19 +74,19 @@ fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions, showTitle
         return
     }
     if (showTitle) SectionTitle("Models", Modifier.semantics { heading() })
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Hint("Model for each job, by OpenRouter name. Saved on your server.")
         state.message?.let { ErrorBox(it) }
-        state.rows.forEach { row -> RoleModelItem(row, state.efforts, actions) }
+        CardGroup(state.rows) { row, shape, _ -> RoleModelItem(row, state.efforts, actions, shape) }
     }
 }
 
 @Composable
-private fun RoleModelItem(row: RoleModelRow, efforts: List<String>, actions: ModelsActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+private fun RoleModelItem(row: RoleModelRow, efforts: List<String>, actions: ModelsActions, shape: Shape) {
+    SegmentCard(shape) {
+      Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f).padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(sentenceCase(row.title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal))
                 Kicker(row.caption)
             }
@@ -100,6 +104,7 @@ private fun RoleModelItem(row: RoleModelRow, efforts: List<String>, actions: Mod
         )
         row.note?.let { Hint(it) }
         row.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+      }
     }
 }
 

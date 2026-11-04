@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.settings
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -112,7 +115,8 @@ fun VoiceModelsContent(
     zone: ZoneId = ZoneId.systemDefault(),
     logOpen: Boolean = false,
 ) {
-    Column(modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    Column(modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(Space.Large)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         SectionTitle("Speech recognition", Modifier.semantics { heading() })
         InfoBox {
             when (val status = state.status) {
@@ -136,11 +140,11 @@ fun VoiceModelsContent(
                             "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
                     )
                     Hint("Phone recognizer in use until then.")
-                    PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = 4.dp))
+                    PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = Space.Small))
                 }
                 is ModelStatus.Downloading -> {
                     Text("Downloading speech models", style = MaterialTheme.typography.titleMedium)
-                    LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp))
+                    LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = Space.Small))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Kicker("${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)}", Modifier.weight(1f))
                         SecondaryButton("cancel", actions.onCancel)
@@ -152,29 +156,38 @@ fun VoiceModelsContent(
                         if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
                         else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
                     )
-                    SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = 4.dp))
+                    SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = Space.Small))
                 }
                 is ModelStatus.Failed -> {
                     ErrorBox("The download stopped", status.problem)
-                    PrimaryButton("try again", actions.onDownload, Modifier.padding(top = 4.dp))
+                    PrimaryButton("try again", actions.onDownload, Modifier.padding(top = Space.Small))
                 }
             }
         }
+        }
 
-        Kicker("Model size", heading = true)
-        TierPicker(state, actions.onChoice)
-        Hint(tierCaption(state))
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+            Kicker("Model size", heading = true)
+            TierPicker(state, actions.onChoice)
+            Hint(tierCaption(state))
+        }
 
-        ToggleRow(
-            "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
-            state.mobileData, actions.onMobileData,
-        )
-        ToggleRow(
-            "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
-            state.useBuiltIn, actions.onUseBuiltIn,
-        )
+        CardGroup {
+            segment {
+                ToggleRow(
+                    "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
+                    state.mobileData, actions.onMobileData, shape = it,
+                )
+            }
+            segment {
+                ToggleRow(
+                    "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
+                    state.useBuiltIn, actions.onUseBuiltIn, shape = it,
+                )
+            }
+        }
         if (state.status == ModelStatus.Ready) {
-            SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = 4.dp))
+            SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = Space.Small))
         }
         if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
     }
@@ -187,8 +200,7 @@ fun VoiceModelsContent(
 @Composable
 private fun VoiceLogPanel(log: List<VoiceLogEntry>, onClear: () -> Unit, zone: ZoneId, startOpen: Boolean) {
     var open by rememberSaveable { mutableStateOf(startOpen) }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Voice log", style = MaterialTheme.typography.titleMedium)
@@ -205,7 +217,7 @@ private fun VoiceLogPanel(log: List<VoiceLogEntry>, onClear: () -> Unit, zone: Z
                     Hint("Nothing yet.")
                 } else {
                     log.asReversed().forEach { entry ->
-                        Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(Space.Medium)) {
                             Text(
                                 logTime(entry.atMs, zone),
                                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),

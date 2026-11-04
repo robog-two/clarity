@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.springIn
+
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import net.robog.clarity.app.ui.components.LoadingSpinner
@@ -92,9 +95,9 @@ fun DraftReviewContent(
 ) {
     val held = state.held
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()
-            .padding(horizontal = ScreenGutter, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().springIn(0)
+            .padding(horizontal = ScreenGutter, vertical = Space.Small),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         BackLink("Back", onBack)
         if (held == null) {
@@ -102,14 +105,14 @@ fun DraftReviewContent(
                 ErrorBox("Can’t open this one", state.message)
                 onRetry?.let { TextButton(onClick = it) { Text("Try again") } }
             } else {
-                LoadingSpinner(Modifier.padding(top = 48.dp))
+                LoadingSpinner(Modifier.padding(top = Space.Large))
             }
             return@Column
         }
         val outcome = heldOutcome(held.status)
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             val email = state.email
             Kicker(outcome ?: "needs your OK, ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
@@ -117,7 +120,7 @@ fun DraftReviewContent(
 
             if (email != null) {
                 // Which address it goes from and who it goes to come first: it is sent as the person.
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                     RecipientLine("From", senderLine(email))
                     RecipientLine("To", email.to.joinToString { handleLine(it) })
                     if (email.cc.isNotEmpty()) RecipientLine("Cc", email.cc.joinToString { handleLine(it) })
@@ -126,7 +129,7 @@ fun DraftReviewContent(
                 OutlinedTextField(
                     value = state.body,
                     onValueChange = onEdit,
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = Space.Small),
                     enabled = !state.decided,
                     label = { Text("Draft") },
                     textStyle = MaterialTheme.clarityText.chat,
@@ -138,17 +141,17 @@ fun DraftReviewContent(
             extras(held)
             if (email == null && held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
 
-            Kicker("why it asked", Modifier.padding(top = 8.dp))
+            Kicker("why it asked", Modifier.padding(top = Space.Small))
             ReadingText(held.agentView)
             Hint(held.verdict.rationale)
             checkedLine(held)?.let { Kicker(it) }
 
             if (held.context.isNotEmpty()) {
-                Kicker(email?.let { recipientName(it) }?.let { "what $it asked" } ?: "what prompted this", Modifier.padding(top = 8.dp))
+                Kicker(email?.let { recipientName(it) }?.let { "what $it asked" } ?: "what prompted this", Modifier.padding(top = Space.Small))
                 held.context.forEach { item ->
                     Column(
-                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium).padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer, MaterialTheme.shapes.medium).padding(horizontal = Space.Medium, vertical = Space.Medium),
+                        verticalArrangement = Arrangement.spacedBy(Space.Small),
                     ) {
                         Kicker(item.tag)
                         Hint(item.title)
@@ -159,7 +162,7 @@ fun DraftReviewContent(
             state.message?.let { ErrorBox(it) }
         }
         if (state.decided) {
-            Text(outcome ?: "Done", Modifier.padding(vertical = 12.dp), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+            Text(outcome ?: "Done", Modifier.padding(vertical = Space.Medium), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
         } else {
             if (held.needsCode && state.code.isBlank()) Hint("Enter the code.")
             SlideToConfirm(
@@ -176,7 +179,7 @@ fun DraftReviewContent(
 
 @Composable
 private fun RecipientLine(label: String, value: String) {
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
         Text(label, Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
         Text(value, style = MaterialTheme.clarityText.chatSmall)
     }
@@ -191,8 +194,8 @@ private fun ThreadPill(reply: Boolean, text: String) {
                 if (reply) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.tertiaryContainer,
                 MaterialTheme.shapes.extraLarge,
             )
-            .padding(start = 10.dp, end = 14.dp, top = 6.dp, bottom = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(start = Space.Medium, end = Space.Medium, top = Space.Small, bottom = Space.Small),
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         val tint = if (reply) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onTertiaryContainer

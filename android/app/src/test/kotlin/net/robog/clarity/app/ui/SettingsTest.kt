@@ -234,8 +234,8 @@ class SettingsViewModelTest {
             ),
         )
         assertEquals(listOf("mail", "dav"), r.state.serverSources.map { it.id })
-        assertEquals("not running", r.state.serverSources.last().sync)
-        assertEquals("not running on your server", r.state.serverSources.last().sub)
+        assertEquals("Not running", r.state.serverSources.last().sync)
+        assertEquals("", r.state.serverSources.last().sub)
     }
 
     @Test fun theMcpHostHasItsOwnRowNotASourceRow() = withMain {

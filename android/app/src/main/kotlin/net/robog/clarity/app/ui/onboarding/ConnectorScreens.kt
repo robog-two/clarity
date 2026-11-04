@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +26,7 @@ import net.robog.clarity.app.connector.ItemPreset
 import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
 import net.robog.clarity.app.ui.components.ErrorBox
+import net.robog.clarity.app.ui.components.CardGroup
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.LoadingSpinner
@@ -85,27 +88,21 @@ fun ConnectorsContent(
         },
     ) {
         if (!nothingListed) Hint("Set up each one. Then sync all.")
-        if (state.notRunning.isNotEmpty()) {
-            Hint(
-                "${state.notRunning.joinToString { it.row.title }} not running on your server. Skip for now.",
-            )
-        }
         if (state.unavailable) Hint("Server connectors unavailable. Showing this phone only.")
         state.error?.let { ErrorBox("Couldn’t load the connectors.", "Check your connection and try again.") }
-        Column {
-            state.items.forEach { item ->
-                SelectRow(
-                    title = item.row.title,
-                    caption = item.caption,
-                    status = item.status,
-                                        onClick = { onOpen(item) },
-                    statusColor = when {
-                        item.notRunning -> MaterialTheme.colorScheme.onSurfaceVariant
-                        item.test is TestState.Failed -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
+        CardGroup(state.items) { item, shape, _ ->
+            SelectRow(
+                title = item.row.title,
+                caption = item.caption,
+                status = item.status,
+                onClick = { onOpen(item) },
+                statusColor = when {
+                    item.notRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                    item.test is TestState.Failed -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+                shape = shape,
+            )
         }
     }
 }
@@ -315,7 +312,7 @@ private fun HowToFix(detail: String) {
     Column {
         androidx.compose.material3.TextButton(
             onClick = { open = !open },
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = Space.Medium),
         ) {
             Text("How to fix")
             androidx.compose.material3.Icon(

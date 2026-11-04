@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.today
 
+import net.robog.clarity.app.ui.theme.Space
+
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
@@ -98,6 +100,8 @@ import net.robog.clarity.app.ui.components.TaskShape
 import net.robog.clarity.app.ui.components.TaskStatus
 import net.robog.clarity.app.ui.components.groupShape
 import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.springEnter
+import net.robog.clarity.app.ui.components.springExit
 import net.robog.clarity.app.ui.components.sentenceCase
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
@@ -154,12 +158,12 @@ fun TodayContent(
         },
     ) {
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             if (state.kicker.isNotEmpty()) Kicker(state.kicker)
             Text("Today", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
-            AnimatedVisibility(state.callOffer == CallOffer.REJOIN) { CallAgainCard(state.callAgainProblem, onCallAgain) }
+            AnimatedVisibility(state.callOffer == CallOffer.REJOIN, enter = springEnter(), exit = springExit()) { CallAgainCard(state.callAgainProblem, onCallAgain) }
             state.error?.let {
                 ErrorBox(it)
                 TextButton(onClick = onRefresh) { Text("Try again") }
@@ -179,7 +183,7 @@ fun TodayContent(
                 label = "today phase",
             ) { p ->
                 when (p) {
-                    Phase.Loading -> LoadingSpinner(Modifier.padding(top = 32.dp))
+                    Phase.Loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
                     Phase.Unavailable -> Hint("Server isn’t ready for Today.")
                     Phase.Nothing -> Unit
                     Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, quietExpanded, finishedExpanded, onOpenTask, onCallAgain) }
@@ -202,7 +206,7 @@ private fun DayBody(
     onOpenTask: (TaskId) -> Unit,
     onCall: () -> Unit,
 ) {
-    Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         var order = 0
         when {
             today.plan.isNotEmpty() -> PlanHero(today.plan, Modifier.springIn(order++))
@@ -210,14 +214,14 @@ private fun DayBody(
         }
         val doing = state.doing
         if (doing.main.isNotEmpty()) {
-            TodayLabel("Doing", Modifier.padding(top = 10.dp).springIn(order++))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            TodayLabel("Doing", Modifier.padding(top = Space.Medium).springIn(order++))
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 doing.main.forEachIndexed { i, row ->
                     DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
                 }
             }
         }
-        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = if (doing.main.isEmpty()) 10.dp else 4.dp).springIn(order++))
+        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = Space.Medium).springIn(order++))
         if (doing.finished.isNotEmpty()) {
             Folded(finishedLine(doing.finished.size), "tasks finished today", finishedExpanded, Modifier.springIn(order++)) {
                 CompactRows(doing.finished, onOpenTask)
@@ -226,9 +230,9 @@ private fun DayBody(
         // Last: what can wait, the quieter tasks and the parked items under one fold.
         quietAndParkedLine(doing.quiet.size, today.parked.size)?.let { line ->
             Folded(line, "quieter tasks and parked items", quietExpanded, Modifier.springIn(order++)) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
                     if (doing.quiet.isNotEmpty()) CompactRows(doing.quiet, onOpenTask)
-                    if (today.parked.isNotEmpty()) ParkedChips(today.parked, Modifier.padding(top = 4.dp))
+                    if (today.parked.isNotEmpty()) ParkedChips(today.parked, Modifier.padding(top = Space.Small))
                 }
             }
         }
@@ -242,8 +246,8 @@ private fun DayBody(
 private fun CallAgainCard(problem: String?, onCallAgain: () -> Unit, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainerHigh, shape = RoundedCornerShape(24.dp)) {
-        Column(Modifier.padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Call, contentDescription = null)
                 Column(Modifier.weight(1f)) {
                     Text("Meeting not finished", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
@@ -272,15 +276,15 @@ internal fun PlanHero(plan: List<IfThen>, modifier: Modifier = Modifier) {
         contentColor = colors.onSecondaryContainer,
         shape = RoundedCornerShape(28.dp),
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 22.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.padding(horizontal = Space.Medium, vertical = Space.Large), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
             Row(verticalAlignment = Alignment.Bottom) {
                 Text("Your plan", Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.SemiBold))
                 Text(if (plan.size == 1) "1 step" else "${plan.size} steps", style = MaterialTheme.typography.labelLarge)
             }
             plan.forEachIndexed { i, step ->
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.Top) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.Top) {
                     StepBadge(i + 1, stepShapes[i % stepShapes.size].toShape())
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                         Text(sentenceCase("if ${step.cue}"), style = MaterialTheme.typography.labelLarge, color = colors.onSecondaryContainerMuted)
                         Text(sentenceCase(step.action), style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold))
                     }
@@ -312,14 +316,14 @@ private fun NoPlanYet(offer: CallOffer, problem: String?, onCall: () -> Unit, mo
     val colors = MaterialTheme.colorScheme
     Surface(modifier.fillMaxWidth(), color = colors.surfaceContainer, shape = RoundedCornerShape(28.dp)) {
         Column(
-            Modifier.padding(horizontal = 24.dp, vertical = 24.dp),
+            Modifier.padding(horizontal = Space.Large, vertical = Space.Large),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(Space.Small),
         ) {
             Drawing(R.drawable.drawing_cheese, Modifier.size(120.dp), tint = colors.onSurface)
             Text(
                 "“I gather words. For the winter days are long and many, and we’ll run out of things to say.”",
-                Modifier.padding(top = 4.dp),
+                Modifier.padding(top = Space.Small),
                 style = MaterialTheme.clarityText.reading.copy(fontFamily = ClarityFonts.reading, fontStyle = FontStyle.Italic),
                 textAlign = TextAlign.Center,
             )
@@ -331,14 +335,14 @@ private fun NoPlanYet(offer: CallOffer, problem: String?, onCall: () -> Unit, mo
             }
             Text(
                 title,
-                Modifier.padding(top = 14.dp),
+                Modifier.padding(top = Space.Medium),
                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                 textAlign = TextAlign.Center,
             )
             Hint(hint)
             if (action != null) {
                 problem?.let { Text(it, style = MaterialTheme.clarityText.chatSmall, color = colors.error, textAlign = TextAlign.Center) }
-                FilledTonalButton(onClick = onCall, shapes = ButtonDefaults.shapes(), modifier = Modifier.padding(top = 10.dp)) {
+                FilledTonalButton(onClick = onCall, shapes = ButtonDefaults.shapes(), modifier = Modifier.padding(top = Space.Medium)) {
                     Icon(Icons.Outlined.Call, contentDescription = null, Modifier.size(ButtonDefaults.IconSize))
                     Text(action, Modifier.padding(start = ButtonDefaults.IconSpacing))
                 }
@@ -388,7 +392,7 @@ private fun Folded(
     var expanded by rememberSaveable { mutableStateOf(expandedInitially) }
     val colors = MaterialTheme.colorScheme
     val turn by animateFloatAsState(if (expanded) 180f else 0f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "fold chevron")
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -396,8 +400,8 @@ private fun Folded(
                 .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
                 .clickable(role = Role.Button, onClickLabel = if (expanded) "Hide $what" else "Show $what") { expanded = !expanded }
                 .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .padding(horizontal = Space.Medium),
+            horizontalArrangement = Arrangement.spacedBy(Space.Small),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(line, style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
@@ -408,14 +412,14 @@ private fun Folded(
                 modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
             )
         }
-        AnimatedVisibility(expanded) { content() }
+        AnimatedVisibility(expanded, enter = springEnter(), exit = springExit()) { content() }
     }
 }
 
 /** Compact, still task rows (quieter or finished); tapping one opens its Agent's Path. */
 @Composable
 private fun CompactRows(rows: List<DoingRow>, onOpenTask: (TaskId) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         rows.forEachIndexed { i, row ->
             val (mark, fill) = quietMark(row.task.status)
             CompactTaskRow(
@@ -507,7 +511,7 @@ private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = 
         color = colors.surfaceContainerHigh,
         shape = RoundedCornerShape(24.dp),
     ) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(40.dp).background(if (waiting > 0) colors.tertiaryContainer else colors.surfaceContainerHighest, MaterialShapes.Cookie9Sided.toShape()),
                 contentAlignment = Alignment.Center,
@@ -531,11 +535,11 @@ private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ParkedChips(parked: List<String>, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             parked.forEach { item ->
-                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.small, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-                    Text(sentenceCase(item), Modifier.padding(horizontal = 12.dp, vertical = 8.dp), style = MaterialTheme.typography.labelLarge)
+                Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.small) {
+                    Text(sentenceCase(item), Modifier.padding(horizontal = Space.Medium, vertical = Space.Small), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -551,7 +555,7 @@ internal fun TodayLabel(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.padding(top = 6.dp).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Text(text, modifier.padding(top = Space.Small).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
 }
 
 private val previewTime = Instant.parse("2026-10-26T14:04:00Z")

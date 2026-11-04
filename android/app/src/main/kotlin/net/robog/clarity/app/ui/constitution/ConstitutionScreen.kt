@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.constitution
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.springIn
+
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import net.robog.clarity.R
@@ -139,17 +142,17 @@ fun ConstitutionScreen(onBack: () -> Unit, onAmend: () -> Unit, viewModel: Const
 /** One numbered line; a hard line carries a lock and a "Hard line" label so it reads as non-negotiable. */
 @Composable
 private fun ConstitutionLineRow(number: Int, line: Line) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth().padding(vertical = Space.Small).semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Text(
             "$number",
             Modifier.width(20.dp).alignByBaseline(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelLarge,
         )
-        Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             ReadingText(line.text)
             if (line.hard) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                     Icon(Icons.Outlined.Lock, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                     Text("Hard line", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                 }
@@ -162,17 +165,16 @@ private fun ConstitutionLineRow(number: Int, line: Line) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PermissionChips(items: List<String>, icon: ImageVector) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         items.forEach { label ->
             Surface(
                 shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                color = MaterialTheme.colorScheme.surfaceContainer,
             ) {
                 Row(
-                    Modifier.heightIn(min = 32.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.heightIn(min = 32.dp).padding(horizontal = Space.Medium, vertical = Space.Small),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Space.Small),
                 ) {
                     Icon(icon, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(label, style = MaterialTheme.typography.labelLarge)
@@ -185,12 +187,12 @@ private fun PermissionChips(items: List<String>, icon: ImageVector) {
 @Composable
 fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().springIn(0).verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         BackLink("Settings", onBack)
         val c = state.constitution
-        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = 4.dp).size(120.dp))
+        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = Space.Small).size(120.dp))
         if (c != null) Kicker(versionKicker(c.version))
         ScreenTitle("Constitution")
         state.error?.let { ErrorBox(it) }
@@ -202,14 +204,14 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
                 c.lines.forEachIndexed { i, line -> ConstitutionLineRow(i + 1, line) }
                 val summary = autonomySummary(c)
                 if (summary.alone.isNotEmpty()) {
-                    Kicker("does alone", Modifier.padding(top = 12.dp), heading = true)
+                    Kicker("does alone", Modifier.padding(top = Space.Medium), heading = true)
                     PermissionChips(summary.alone, Icons.Outlined.Check)
                 }
                 if (summary.afterReview.isNotEmpty()) {
-                    Kicker("always after review", Modifier.padding(top = 12.dp), heading = true)
+                    Kicker("always after review", Modifier.padding(top = Space.Medium), heading = true)
                     PermissionChips(summary.afterReview, Icons.Outlined.Visibility)
                 }
-                SecondaryButton("amend by talking", onAmend, Modifier.fillMaxWidth().padding(top = 12.dp))
+                SecondaryButton("amend by talking", onAmend, Modifier.fillMaxWidth().padding(top = Space.Medium))
             }
         }
     }

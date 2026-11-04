@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.components
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -32,7 +34,6 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -66,7 +67,7 @@ import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.theme.clarityText
 
 /** The one horizontal margin of content screens (the call screens keep their own, roomier layout). */
-val ScreenGutter = 20.dp
+val ScreenGutter = Space.Medium
 
 /** Material's ListItem pads its content by 16dp; this widens it so its text lines up with the content edge. */
 fun Modifier.alignListItemToContent(): Modifier = layout { measurable, constraints ->
@@ -115,7 +116,7 @@ fun SageSurface(modifier: Modifier = Modifier, shape: Shape = MaterialTheme.shap
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun LoadingSpinner(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(vertical = 16.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxWidth().padding(vertical = Space.Medium), contentAlignment = Alignment.Center) {
         LoadingIndicator()
     }
 }
@@ -221,7 +222,7 @@ fun FollowNewest(listState: LazyListState, count: Int) {
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun WorkingLine(text: String, modifier: Modifier = Modifier) {
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
         LoadingIndicator(Modifier.size(32.dp))
         Hint(text)
     }
@@ -236,14 +237,12 @@ fun BackLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
             .offset(x = (-12).dp)
             .heightIn(min = 48.dp)
             .clickable(role = Role.Button, onClickLabel = "Go back to ${sentenceCase(text)}", onClick = onClick)
-            .padding(end = 12.dp),
+            .padding(end = Space.Medium),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        androidx.compose.material3.Icon(
-            Icons.AutoMirrored.Outlined.ArrowBack,
-            contentDescription = null,
-            modifier = Modifier.padding(12.dp),
-        )
+        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+            androidx.compose.material3.Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
+        }
         Text(sentenceCase(text.trim()), style = MaterialTheme.typography.titleMedium)
     }
 }
@@ -251,7 +250,7 @@ fun BackLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
 /** The 4-segment progress bar at the top of the onboarding screens. */
 @Composable
 fun StepBar(activeSegments: Int, modifier: Modifier = Modifier, segments: Int = 4) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
         repeat(segments) { i ->
             Box(
                 Modifier
@@ -266,13 +265,13 @@ fun StepBar(activeSegments: Int, modifier: Modifier = Modifier, segments: Int = 
     }
 }
 
-/** `.bx`: a bordered, tinted box. */
+/** `.bx`: a tinted box. Only a box that needs attention passes a [border]. */
 @Composable
 fun InfoBox(
     modifier: Modifier = Modifier,
-    container: Color = MaterialTheme.colorScheme.surfaceContainerLow,
+    container: Color = MaterialTheme.colorScheme.surfaceContainer,
     content: Color = MaterialTheme.colorScheme.onSurface,
-    border: Color? = MaterialTheme.colorScheme.outlineVariant,
+    border: Color? = null,
     shape: Shape = MaterialTheme.shapes.medium,
     body: @Composable ColumnScope.() -> Unit,
 ) {
@@ -281,8 +280,8 @@ fun InfoBox(
             .fillMaxWidth()
             .background(container, shape)
             .let { if (border != null) it.border(1.dp, border, shape) else it }
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Small),
     ) {
         androidx.compose.runtime.CompositionLocalProvider(
             androidx.compose.material3.LocalContentColor provides content,
@@ -299,8 +298,8 @@ fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifie
             .semantics { liveRegion = LiveRegionMode.Polite }
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.medium)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = Space.Medium, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Small),
     ) {
         Text(title, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
         if (detail != null) Hint(detail, color = MaterialTheme.colorScheme.onErrorContainer)
@@ -308,7 +307,7 @@ fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifie
         if (raw != null) {
             Text(
                 raw,
-                Modifier.padding(top = 2.dp),
+                Modifier.padding(top = Space.Small),
                 color = MaterialTheme.colorScheme.onErrorContainer,
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -330,22 +329,14 @@ fun SelectRow(
     chevron: Boolean = false,
     /** Spoken state for a row in trouble, e.g. "Needs attention". */
     stateDescription: String? = null,
+    /** Its place in a [CardGroup]; alone, a card with big corners all round. */
+    shape: Shape = groupShape(0, 1),
 ) {
-    Column(modifier) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 64.dp)
-                .clickable(onClick = onClick)
-                .semantics { if (stateDescription != null) this.stateDescription = stateDescription }
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    SegmentCard(shape, modifier.semantics { if (stateDescription != null) this.stateDescription = stateDescription }, onClick = onClick, minHeight = 64.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-                Kicker(caption)
+                if (caption.isNotEmpty()) Kicker(caption)
             }
             if (status.isNotEmpty()) Text(sentenceCase(status), color = statusColor.copy(alpha = statusAlpha), style = MaterialTheme.typography.labelLarge)
             if (chevron) androidx.compose.material3.Icon(
@@ -357,22 +348,24 @@ fun SelectRow(
     }
 }
 
-/** `.tg`: a labelled switch row. */
+/** `.tg`: a labelled switch row, a card of its own (or a segment of a [CardGroup] through [shape]). */
 @Composable
-fun ToggleRow(title: String, caption: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .heightIn(min = 64.dp)
-                .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+fun ToggleRow(
+    title: String,
+    caption: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = groupShape(0, 1),
+) {
+    SegmentCard(
+        shape, modifier, minHeight = 64.dp,
+        interaction = Modifier.toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-                Kicker(caption)
+                if (caption.isNotEmpty()) Kicker(caption)
             }
             Switch(checked = checked, onCheckedChange = null)
         }

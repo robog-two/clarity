@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.goods
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -53,9 +55,9 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
         modifier = modifier.fillMaxSize(),
         indicator = { PullToRefreshDefaults.LoadingIndicator(state = pull, isRefreshing = state.refreshing, modifier = Modifier.align(Alignment.TopCenter)) },
     ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 32.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = Space.Large, bottom = Space.Large)) {
             item(key = "header") {
-                Column(Modifier.padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(Modifier.padding(bottom = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
                     Kicker("Made for you")
                     Text("Goods", style = MaterialTheme.clarityText.heroTitle)
                     Hint("Reports and write-ups appear here")
@@ -64,7 +66,7 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
             when {
                 state.loading -> item(key = "loading") { LoadingSpinner() }
                 state.rows.isEmpty() && state.error != null -> item(key = "error") {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                         ErrorBox("Can’t load Goods", state.error)
                         TextButton(onClick = onRefresh) { Text("Try again") }
                     }
@@ -73,7 +75,7 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
                     Hint("Nothing yet. Ask for a write-up.", italic = true)
                 }
                 else -> {
-                    state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh", error, Modifier.padding(bottom = 12.dp)) } }
+                    state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh", error, Modifier.padding(bottom = Space.Medium)) } }
                     itemsIndexed(state.rows, key = { _, row -> row.id }) { i, row ->
                         TaskRow(
                             title = row.title,
@@ -81,7 +83,7 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
                             shape = groupShape(i, state.rows.size),
                             glyph = { GoodsGlyph() },
                             trailing = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            modifier = Modifier.padding(bottom = 2.dp).springIn(i, rise = 320.dp, stagger = 60L),
+                            modifier = Modifier.padding(bottom = Space.Small).springIn(i, rise = 320.dp, stagger = 60L),
                             onClick = { onOpen(row.id) },
                         )
                     }

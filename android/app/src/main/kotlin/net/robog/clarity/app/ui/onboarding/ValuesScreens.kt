@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.SegmentCard
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -116,7 +120,7 @@ fun ValuesContent(
                     }),
                 )
                 Hint("Just talk. The mic stays on until you move on.")
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                     SecondaryButton("reword", onReword, Modifier.weight(1f), enabled = state.canDecide)
                     PrimaryButton("keep", onKeep, Modifier.weight(1f), enabled = state.canDecide)
                 }
@@ -159,8 +163,8 @@ private fun InterviewBody(
     onMicReady: () -> Unit,
 ) {
     state.question?.let { Text(it, style = MaterialTheme.typography.headlineSmall) }
-    if (state.live != null) LiveBubble(state.live, Modifier.padding(start = 32.dp), confirmed = state.liveConfirmed)
-    if (state.live == null && state.said != null) SaidBubble(state.said, Modifier.padding(start = 32.dp))
+    if (state.live != null) LiveBubble(state.live, Modifier.padding(start = Space.Large), confirmed = state.liveConfirmed)
+    if (state.live == null && state.said != null) SaidBubble(state.said, Modifier.padding(start = Space.Large))
     state.captured?.let { CapturedLine(it) }
     MicPermissionGate {
         LaunchedEffect(Unit) { onMicReady() }
@@ -170,10 +174,10 @@ private fun InterviewBody(
 /** "captured as": the line written from the answer, in its reason's words. */
 @Composable
 fun CapturedLine(line: Line, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Kicker("captured as", Modifier.padding(top = 4.dp))
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        Kicker("captured as", Modifier.padding(top = Space.Small))
         // Neutral and outlined, so it doesn't read as another chat bubble next to the answer.
-        InfoBox(border = MaterialTheme.colorScheme.primary) {
+        InfoBox {
             Kicker(sectionLabel(line.section), color = MaterialTheme.colorScheme.primary)
             ReadingText(line.text)
             line.because?.let { Hint("Because $it", italic = true) }
@@ -203,7 +207,7 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
         title = "Your constitution",
         footer = {
             when (state) {
-                is ConstitutionUi.Loaded -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                is ConstitutionUi.Loaded -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                     SecondaryButton("redo", onRedo, Modifier.weight(1f))
                     PrimaryButton("looks right", onNext, Modifier.weight(1f))
                 }
@@ -218,14 +222,15 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
             ConstitutionUi.Unavailable -> Hint("Constitution unavailable on this server.")
             is ConstitutionUi.Failed -> ErrorBox("Could not load the constitution.", "Check your connection and try again.")
             is ConstitutionUi.Loaded -> {
-                state.sections.forEach { section ->
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        Kicker(section.title, Modifier.padding(top = 4.dp))
-                        section.entries.forEach { entry ->
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                ReadingText(entry.text)
-                                entry.because?.let { Hint("Because $it", italic = true) }
+                CardGroup(state.sections) { section, shape, _ ->
+                    SegmentCard(shape) {
+                        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+                            Kicker(section.title)
+                            section.entries.forEach { entry ->
+                                Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                                    ReadingText(entry.text)
+                                    entry.because?.let { Hint("Because $it", italic = true) }
+                                }
                             }
                         }
                     }

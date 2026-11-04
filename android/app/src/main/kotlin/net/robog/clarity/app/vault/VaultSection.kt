@@ -1,5 +1,7 @@
 package net.robog.clarity.app.vault
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,6 +32,10 @@ import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import net.robog.clarity.app.ui.components.sentenceCase
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.SegmentCard
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.today.SectionTitle
 
@@ -53,7 +59,7 @@ fun VaultSectionContent(
 ) {
     var deleting by remember { mutableStateOf<CredentialRow?>(null) }
     if (showTitle) SectionTitle("Vault", Modifier.semantics { heading() })
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Hint("Logins and cards stay locked on this phone. Each use needs your approval.")
         state.message?.let { ErrorBox(it) }
         state.notice?.let { Hint(it) }
@@ -64,22 +70,21 @@ fun VaultSectionContent(
             }
             VaultKeyStatus.MISSING, VaultKeyStatus.READY -> Unit
         }
-        Column {
-            if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet.")
-            state.rows.forEach { row ->
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                ListItem(
-                    colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-                    headlineContent = { Text(credentialTitle(row.name), style = MaterialTheme.clarityText.chat) },
-                    supportingContent = {
-                        Text(sentenceCase(listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(", ")), style = MaterialTheme.clarityText.chatSmall)
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { deleting = row }) {
-                            Icon(Icons.Outlined.Delete, contentDescription = "Delete ${credentialTitle(row.name)}")
-                        }
-                    },
-                )
+        if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet.")
+        CardGroup(state.rows) { row, shape, _ ->
+            SegmentCard(shape) {
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                        Text(credentialTitle(row.name), style = MaterialTheme.clarityText.chat)
+                        Text(
+                            sentenceCase(listOf(row.kind, row.site, row.detail).filter { it.isNotBlank() }.joinToString(", ")),
+                            style = MaterialTheme.clarityText.chatSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = { deleting = row }) {
+                        Icon(Icons.Outlined.Delete, contentDescription = "Delete ${credentialTitle(row.name)}")
+                    }
+                }
             }
         }
     }

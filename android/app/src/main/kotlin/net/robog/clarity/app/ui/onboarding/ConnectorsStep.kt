@@ -47,6 +47,20 @@ sealed interface ConnectorRow {
 
 const val NOT_RUNNING = "not running on your server"
 
+private val FAILURE_WORDS = listOf("reject", "fail", "error", "denied", "refused", "timed out", "timeout", "unreachable", "invalid", "wrong", "expired", "couldn")
+
+/**
+ * Pure: a server's failure line as a short subtitle. "Personal: password rejected by caldav.icloud.com (401)"
+ * becomes "Password rejected". The full line stays on the connector's own screen.
+ */
+fun friendlyFailure(raw: String): String {
+    val parts = raw.split(';').map { it.trim() }.filter { it.isNotEmpty() }
+    val part = parts.lastOrNull { p -> FAILURE_WORDS.any { p.contains(it, ignoreCase = true) } } ?: parts.firstOrNull() ?: return raw
+    val noAccount = part.substringAfter(": ", part)
+    val core = noAccount.substringBefore(" by ").substringBefore(" (").substringBefore(" at ").trim()
+    return core.replaceFirstChar { it.titlecase() }.ifEmpty { raw }
+}
+
 /** Pure: a connector id as a readable name when it has no manifest ("dav" → "Dav", "apple-notes" → "Apple notes"). */
 fun connectorDisplayName(id: String): String =
     id.replace('-', ' ').replace('_', ' ').trim().replaceFirstChar { it.titlecase() }
@@ -90,8 +104,8 @@ data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: Te
     /** The caption under the name: the protocol, the failure reason, or "allowed" for phone items. */
     val caption: String
         get() = when {
-            notRunning -> NOT_RUNNING
-            test is TestState.Failed -> test.reason
+            notRunning -> "" // the status on the right already says it
+            test is TestState.Failed -> friendlyFailure(test.reason)
             saved && row is ConnectorRow.Phone -> "Allowed on this phone"
             else -> row.proto
         }
