@@ -138,14 +138,14 @@ class CredentialFormTest {
     }
 
     @Test fun aFailedSaveKeepsWhatWasTypedAndSaysWhy() = runTest {
-        val vault = FakeVault(outcome = SaveOutcome.Failed("Can’t reach your server right now."))
+        val vault = FakeVault(outcome = SaveOutcome.Failed("Can’t reach your server. Check your connection."))
         val model = CredentialFormModel(cardRequest.id, vault, now = { 2026 to 10 })
         vault.request = ApiResult.Success(cardRequest)
         model.load()
         model.edit(cardFields[0], "4242424242424242"); model.edit(cardFields[1], "03/28"); model.edit(cardFields[2], "123")
         model.save()
         val s = assertIs<FormCardState.Editing>(model.state)
-        assertEquals("Can’t reach your server right now.", s.error)
+        assertEquals("Can’t reach your server. Check your connection.", s.error)
         assertFalse(s.saving)
         assertEquals("4242424242424242", s.form.valueOf(cardFields[0]))
     }

@@ -53,7 +53,7 @@ import net.robog.clarity.shared.governance.Section
 fun ValuesIntroScreen(onStart: () -> Unit, onBack: () -> Unit) {
     StepScaffold(
         step = OnboardingStep.ValuesIntro,
-        backLabel = "← connectors",
+        backLabel = "connectors",
         onBack = onBack,
         title = "How you work",
         footer = { PrimaryButton("start", onStart, Modifier.fillMaxWidth()) },

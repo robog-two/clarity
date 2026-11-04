@@ -255,7 +255,7 @@ class ReportViewModelTest {
         val s = vm.state.value
         assertNull(s.error)
         assertNull(s.document)
-        assertEquals("Can’t reach your server right now.", s.sourceError)
+        assertEquals("Can’t reach your server. Check your connection.", s.sourceError)
         assertEquals("The Devils", s.title)
     }
 
@@ -312,7 +312,7 @@ class ReportViewModelTest {
         advanceUntilIdle()
         vm.link(LinkAction.Download)
         advanceUntilIdle()
-        assertEquals("Can’t reach your server right now.", vm.state.value.linkNote)
+        assertEquals("Can’t reach your server. Check your connection.", vm.state.value.linkNote)
         assertNull(vm.state.value.open)
         assertNull(vm.state.value.busy)
     }
@@ -350,7 +350,7 @@ class GoodsViewModelTest {
         vm.refresh()
         advanceUntilIdle()
         assertEquals(1, vm.state.value.rows.size)
-        assertEquals("Can’t reach your server right now.", vm.state.value.error)
+        assertEquals("Can’t reach your server. Check your connection.", vm.state.value.error)
         assertFalse(vm.state.value.refreshing)
     }
 }

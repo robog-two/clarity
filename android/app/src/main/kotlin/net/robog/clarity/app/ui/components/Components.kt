@@ -5,6 +5,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material3.Button
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
@@ -39,6 +41,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.ExposedDropdownMenu
@@ -48,6 +51,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.constrainWidth
 import androidx.compose.ui.semantics.contentDescription
@@ -74,14 +81,33 @@ fun Modifier.alignListItemToContent(): Modifier = layout { measurable, constrain
  */
 fun sentenceCase(text: String): String {
     val first = text.substringBefore(' ')
+    // An address, a link or an id keeps its case ("alex@example.com", "secure.chase.com", "api_key").
+    if (first.trimEnd('.', ',', ':', ';', '!', '?').any { it in "@./_:" }) return text
     if (first.drop(1).any { it.isUpperCase() } || first.any { it.isDigit() }) return text
     return text.replaceFirstChar { it.titlecase() }
 }
 
-/** `.k`: the small caption line. */
+/** `.k`: the small caption line. Pass [heading] when it labels a section, so screen readers can jump to it. */
 @Composable
-fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
-    Text(sentenceCase(text), modifier, color = color, style = MaterialTheme.clarityText.kicker)
+fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, heading: Boolean = false) {
+    Text(
+        sentenceCase(text),
+        if (heading) modifier.semantics { heading() } else modifier,
+        color = color,
+        style = MaterialTheme.clarityText.kicker,
+    )
+}
+
+/**
+ * A Sage surface. Text and icons inside follow [ColorScheme.onSecondaryContainer] (6.12:1); use
+ * [onSecondaryContainerMuted] (4.75:1) for a quieter line.
+ */
+@Composable
+fun SageSurface(modifier: Modifier = Modifier, shape: Shape = MaterialTheme.shapes.large, content: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(modifier.background(colors.secondaryContainer, shape)) {
+        CompositionLocalProvider(LocalContentColor provides colors.onSecondaryContainer, content = content)
+    }
 }
 
 /** The Material 3 Expressive loading indicator, centred in the width it is given. */
@@ -96,7 +122,7 @@ fun LoadingSpinner(modifier: Modifier = Modifier) {
 /** `.h`: the screen heading. */
 @Composable
 fun ScreenTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier, style = MaterialTheme.typography.headlineMedium)
+    Text(text, modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
 }
 
 /** `.sm`: the quiet explanatory paragraph under a heading. */
@@ -200,12 +226,16 @@ fun WorkingLine(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** `.back`: the "← previous step" text button. */
+/** `.back`: the button that goes to the previous step. [text] names where it goes ("Settings"). */
 @Composable
 fun BackLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     // A top-bar style back row: the arrow icon lines up with the content edge, the label names where it goes.
     Row(
-        modifier.offset(x = (-12).dp).heightIn(min = 48.dp).clickable(onClick = onClick).padding(end = 12.dp),
+        modifier
+            .offset(x = (-12).dp)
+            .heightIn(min = 48.dp)
+            .clickable(role = Role.Button, onClickLabel = "Go back to ${sentenceCase(text)}", onClick = onClick)
+            .padding(end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         androidx.compose.material3.Icon(
@@ -213,7 +243,7 @@ fun BackLink(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
             contentDescription = null,
             modifier = Modifier.padding(12.dp),
         )
-        Text(sentenceCase(text.removePrefix("←").trim()), style = MaterialTheme.typography.titleMedium)
+        Text(sentenceCase(text.trim()), style = MaterialTheme.typography.titleMedium)
     }
 }
 
@@ -227,7 +257,7 @@ fun StepBar(activeSegments: Int, modifier: Modifier = Modifier, segments: Int = 
                     .weight(1f)
                     .height(4.dp)
                     .background(
-                        if (i < activeSegments) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer,
+                        if (i < activeSegments) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                         MaterialTheme.shapes.extraSmall,
                     ),
             )
@@ -263,7 +293,9 @@ fun InfoBox(
 @Composable
 fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifier, raw: String? = null) {
     Column(
+        // Polite live region: a failure that shows up after a tap is read out.
         modifier
+            .semantics { liveRegion = LiveRegionMode.Polite }
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.errorContainer, MaterialTheme.shapes.medium)
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -276,7 +308,7 @@ fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifie
             Text(
                 raw,
                 Modifier.padding(top = 2.dp),
-                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.72f),
+                color = MaterialTheme.colorScheme.onErrorContainer,
                 style = MaterialTheme.typography.labelSmall,
             )
         }
@@ -323,7 +355,7 @@ fun ToggleRow(title: String, caption: String, checked: Boolean, onCheckedChange:
             Modifier
                 .fillMaxWidth()
                 .heightIn(min = 64.dp)
-                .clickable { onCheckedChange(!checked) },
+                .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -351,6 +383,11 @@ fun RowScope.PillChoice(label: String, selected: Boolean, onClick: () -> Unit, m
             )
         },
         shape = MaterialTheme.shapes.small,
+        border = androidx.compose.material3.FilterChipDefaults.filterChipBorder(
+            enabled = true,
+            selected = selected,
+            borderColor = MaterialTheme.colorScheme.outline,
+        ),
         colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
             selectedContainerColor = MaterialTheme.colorScheme.primary,
             selectedLabelColor = MaterialTheme.colorScheme.onPrimary,

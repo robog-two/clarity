@@ -1,6 +1,11 @@
 package net.robog.clarity.app.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -109,7 +114,7 @@ fun ChatPill(label: String, modifier: Modifier = Modifier) {
         Surface(
             shape = CircleShape,
             color = Color.Transparent,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Text(
                 label,
@@ -142,6 +147,8 @@ fun ChatComposer(
     placeholder: String = "Type, or tap the mic",
 ) {
     val buttonSize = IconButtonDefaults.mediumContainerSize()
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Row(
         modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -150,7 +157,18 @@ fun ChatComposer(
         TextField(
             value = draft,
             onValueChange = onDraft,
-            modifier = Modifier.weight(1f).heightIn(min = buttonSize.height).semantics { contentDescription = "message" },
+            interactionSource = interaction,
+            // The field sits on a container 1.1:1 from the page, so it gets an outline (3.83:1 light) and,
+            // while focused, a thicker primary one (6.03:1 light).
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = buttonSize.height)
+                .border(
+                    if (focused) 2.dp else 1.dp,
+                    if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    MaterialTheme.shapes.extraLarge,
+                )
+                .semantics { contentDescription = "message" },
             placeholder = { Text(placeholder, style = MaterialTheme.clarityText.chat) },
             textStyle = MaterialTheme.clarityText.chat,
             shape = MaterialTheme.shapes.extraLarge,

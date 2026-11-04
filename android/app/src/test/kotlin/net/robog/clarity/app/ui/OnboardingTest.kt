@@ -307,6 +307,9 @@ class OnboardingStepTest {
         assertEquals("iCloud", net.robog.clarity.app.ui.components.sentenceCase("iCloud"))
         assertEquals("v3 · 14 lines", net.robog.clarity.app.ui.components.sentenceCase("v3 · 14 lines"))
         assertEquals("Not now", net.robog.clarity.app.ui.components.sentenceCase("not now"))
+        assertEquals("alex.morgan@example.com", net.robog.clarity.app.ui.components.sentenceCase("alex.morgan@example.com"))
+        assertEquals("secure.chase.com", net.robog.clarity.app.ui.components.sentenceCase("secure.chase.com"))
+        assertEquals("api_key rotated", net.robog.clarity.app.ui.components.sentenceCase("api_key rotated"))
     }
 
     @Test fun aConnectorIsSetUpWhenEveryProducedNounIsGranted() {

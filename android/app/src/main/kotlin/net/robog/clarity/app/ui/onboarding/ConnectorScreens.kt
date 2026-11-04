@@ -63,7 +63,7 @@ fun ConnectorsContent(
     val nothingListed = state.items.isEmpty() && !state.loading
     StepScaffold(
         step = OnboardingStep.Connectors,
-        backLabel = "← model",
+        backLabel = "model",
         onBack = onBack,
         title = "Where your day lives",
         footer = {
@@ -124,7 +124,7 @@ fun ConnectorSetupScreen(
     onSaved: () -> Unit,
     onBack: () -> Unit,
     step: OnboardingStep? = OnboardingStep.ConnectorSetup,
-    backLabel: String = "← connectors",
+    backLabel: String = "connectors",
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.saved) {
@@ -191,7 +191,7 @@ fun ConnectorSetupContent(
     state: ConnectorSetupState,
     actions: SetupActions,
     step: OnboardingStep? = OnboardingStep.ConnectorSetup,
-    backLabel: String = "← connectors",
+    backLabel: String = "connectors",
 ) {
     val editor = state.editor
     val choosing = state.choosing

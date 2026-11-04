@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -316,7 +317,7 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
         verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
         Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painterResource(R.drawable.settings_coffee), contentDescription = null, modifier = Modifier.size(144.dp))
+            Image(painterResource(R.drawable.settings_coffee), contentDescription = null, modifier = Modifier.size(144.dp), colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary))
             Text(
                 "Settings",
                 Modifier.padding(top = 20.dp),

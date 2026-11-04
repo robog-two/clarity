@@ -59,6 +59,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.datetime.TimeZone
@@ -77,7 +79,6 @@ import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.Reaction
 import net.robog.clarity.shared.feed.TaskId
 
-private const val CURSOR = "▍"
 private val MaxBubble = 340.dp
 private val AgentShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 4.dp)
 private val YouShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp, bottomEnd = 4.dp, bottomStart = 20.dp)
@@ -128,8 +129,9 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
 fun AgentBubble(text: String, modifier: Modifier = Modifier, streaming: Boolean = false) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
         Text(
-            if (streaming) text + CURSOR else text,
+            if (streaming) text + STREAM_CURSOR else text,
             Modifier
+                .streamingSemantics(text, streaming)
                 .widthIn(max = MaxBubble)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh, AgentShape)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
@@ -234,7 +236,7 @@ fun NoteBubble(text: String, modifier: Modifier = Modifier) {
             Modifier.widthIn(max = MaxBubble),
             shape = AgentShape,
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) {
             Text(
                 text,
@@ -251,7 +253,7 @@ fun NoteBubble(text: String, modifier: Modifier = Modifier) {
 private fun ApprovalRow(card: Card.Proposal, env: CardEnv) {
     val held = env.held[card.heldActionId]
     if (held == null) {
-        ActionRow(Icons.Outlined.Description, "needs your OK", "Loading the details…", { env.onReview(card.heldActionId) })
+        ActionRow(Icons.Outlined.Description, "needs your OK", "Loading details", { env.onReview(card.heldActionId) })
         return
     }
     val row = remember(held) { heldRows(listOf(held), TimeZone.currentSystemDefault()).single() }
@@ -276,7 +278,11 @@ private fun CredentialRequestRow(card: Card.CredentialRequest, sheetOpen: Boolea
 
 @Composable
 private fun RowCard(content: @Composable () -> Unit) {
-    OutlinedCard(Modifier.widthIn(max = MaxBubble).fillMaxWidth(), shape = MaterialTheme.shapes.large) { content() }
+    OutlinedCard(
+        Modifier.widthIn(max = MaxBubble).fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+    ) { content() }
 }
 
 @Composable
@@ -315,13 +321,13 @@ private fun attachmentIcon(card: Card): ImageVector = when (card) {
 
 /** "3 items" under the title of a one-card stack; the other titles when there are more. */
 internal fun attachmentSummary(cards: List<Card>): String = when {
-    cards.size > 1 -> cards.drop(1).joinToString(" · ") { attachmentTitle(it) }
+    cards.size > 1 -> cards.drop(1).joinToString(", ") { attachmentTitle(it) }
     else -> when (val c = cards.single()) {
-        is Card.Context -> c.items.joinToString(" · ") { it.title }
-        is Card.Chips -> c.items.joinToString(" · ") { it.text }
-        is Card.Plan -> c.items.joinToString(" · ") { it.action }
+        is Card.Context -> c.items.joinToString(", ") { it.title }
+        is Card.Chips -> c.items.joinToString(", ") { it.text }
+        is Card.Plan -> c.items.joinToString(", ") { it.action }
         is Card.Tasks -> "${c.taskIds.size} tasks"
-        is Card.Report -> c.formats.joinToString(" · ")
+        is Card.Report -> c.formats.joinToString(", ")
         else -> ""
     }
 }
@@ -330,7 +336,12 @@ internal fun attachmentSummary(cards: List<Card>): String = when {
 @Composable
 private fun AttachmentStack(cards: List<Card>, tasks: Map<TaskId, AgentTask>, onOpen: () -> Unit) {
     Column(Modifier.widthIn(max = MaxBubble).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        OutlinedCard(onClick = onOpen, modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large) {
+        OutlinedCard(
+            onClick = onOpen,
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.large,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        ) {
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 leadingContent = { Icon(attachmentIcon(cards.first()), contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
@@ -384,18 +395,24 @@ fun AttachmentPager(cards: List<Card>, tasks: Map<TaskId, AgentTask>, modifier: 
                 val card = cards[page]
                 Text(
                     attachmentTitle(card),
-                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    Modifier.padding(horizontal = 16.dp, vertical = 8.dp).semantics { heading() },
                     style = MaterialTheme.typography.titleLarge,
                 )
                 AttachmentPage(card, tasks)
             }
         }
         if (cards.size > 1) {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.Center) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp)
+                    .clearAndSetSemantics { contentDescription = "Page ${pager.currentPage + 1} of ${cards.size}" },
+                horizontalArrangement = Arrangement.Center,
+            ) {
                 repeat(cards.size) { i ->
                     Box(
                         Modifier.padding(horizontal = 4.dp).size(8.dp).background(
-                            if (i == pager.currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant,
+                            if (i == pager.currentPage) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                             CircleShape,
                         ),
                     )
@@ -430,7 +447,7 @@ private fun AttachmentPage(card: Card, tasks: Map<TaskId, AgentTask>) {
             val task = tasks[id]
             ListItem(
                 colors = clear,
-                headlineContent = { Text(task?.title ?: "…", style = MaterialTheme.clarityText.chat) },
+                headlineContent = { Text(task?.title ?: "Loading task", style = MaterialTheme.clarityText.chat) },
                 supportingContent = task?.let { { Text(it.detail, style = MaterialTheme.clarityText.chatSmall) } },
                 trailingContent = task?.let { { Text(taskStatusLabel(it.status), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) } },
             )

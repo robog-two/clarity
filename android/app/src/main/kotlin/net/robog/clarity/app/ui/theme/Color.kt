@@ -27,6 +27,12 @@ object ClarityPalette {
     /** Near-black with a hint of sage, for text on [Sage]. */
     private val OnSage = Color(0xFF121716)
 
+    /**
+     * Quiet text on [Sage], for a cue under a title. 222E2B on 7F9C96 is 4.75:1 (the full tone is 6.12:1).
+     * Sage is the same in both themes, so this is too. Read it as [onSecondaryContainerMuted].
+     */
+    val OnSageMuted = Color(0xFF222E2B)
+
     val light: ColorScheme = lightColorScheme(
         // Peach: deep tone for text and icons, the brand peach as the filled container.
         primary = Color(0xFF8A4C14),
@@ -62,7 +68,9 @@ object ClarityPalette {
         surfaceContainer = Bone,
         surfaceContainerHigh = Color(0xFFE6E0D7),
         surfaceContainerHighest = Color(0xFFE0D9CF),
-        outline = Color(0xFF85817A),
+        // Darker than the Material default so borders and marks reach 3:1 on the page (3.83:1)
+        // and on the top container (E0D9CF, 3.05:1).
+        outline = Color(0xFF7E7A73),
         outlineVariant = Color(0xFFD3CCC1),
         inverseSurface = Charcoal,
         inverseOnSurface = Bone,
@@ -103,10 +111,14 @@ object ClarityPalette {
         surfaceContainer = Color(0xFF3F3F3F),
         surfaceContainerHigh = Color(0xFF474747),
         surfaceContainerHighest = Color(0xFF505050),
-        outline = Color(0xFF9A968F),
+        // Lighter so marks reach 3:1 on the top container (505050, 3.25:1); on the page 5.01:1.
+        outline = Color(0xFFA8A49C),
         outlineVariant = Color(0xFF545250),
         inverseSurface = Bone,
         inverseOnSurface = Charcoal,
         scrim = Color.Black,
     )
 }
+
+/** Quiet text on a [ColorScheme.secondaryContainer] (Sage) surface: [ClarityPalette.OnSageMuted], 4.75:1. */
+val ColorScheme.onSecondaryContainerMuted: Color get() = ClarityPalette.OnSageMuted

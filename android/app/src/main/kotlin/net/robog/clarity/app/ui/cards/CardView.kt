@@ -15,6 +15,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.text
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontStyle
@@ -68,7 +78,24 @@ data class CardEnv(
     val onOpenReport: ((String) -> Unit)? = null,
 )
 
-private const val AGENT_CURSOR = "▍"
+/** The block drawn after a reply that is still being written. Screen readers never hear it. */
+internal const val STREAM_CURSOR = "▍"
+
+/**
+ * Semantics for a reply that may still be streaming: the spoken text is [text] without the cursor,
+ * the state reads "Writing" while it streams, and once it finishes (after being seen streaming)
+ * it is announced once, politely.
+ */
+@Composable
+internal fun Modifier.streamingSemantics(text: String, streaming: Boolean): Modifier {
+    var sawStreaming by remember { mutableStateOf(false) }
+    if (streaming) sawStreaming = true
+    return clearAndSetSemantics {
+        this.text = AnnotatedString(text)
+        if (streaming) stateDescription = "Writing"
+        else if (sawStreaming) liveRegion = LiveRegionMode.Polite
+    }
+}
 
 /** One renderer for every [Card] type, shared by the call, ask and feed screens. */
 @Composable
@@ -93,8 +120,8 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
 @Composable
 fun AgentText(text: String, modifier: Modifier = Modifier, streaming: Boolean = false) {
     Text(
-        if (streaming) text + AGENT_CURSOR else text,
-        modifier.fillMaxWidth(),
+        if (streaming) text + STREAM_CURSOR else text,
+        modifier.fillMaxWidth().streamingSemantics(text, streaming),
         style = MaterialTheme.clarityText.agent,
     )
 }
@@ -136,7 +163,7 @@ fun ChipList(card: Card.Chips, modifier: Modifier = Modifier) {
                 Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.small)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
+                    .border(1.dp, MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -198,7 +225,7 @@ fun ProposalBox(
     InfoBox(modifier, border = MaterialTheme.colorScheme.primary) {
         if (held == null) {
             Kicker("needs your OK")
-            Hint("Loading the details…")
+            Hint("Loading details")
             return@InfoBox
         }
         Kicker(proposalKicker(held))
@@ -234,7 +261,7 @@ fun TaskList(card: Card.Tasks, tasks: Map<TaskId, AgentTask>, modifier: Modifier
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(task?.title ?: "…", style = MaterialTheme.clarityText.reading.copy(fontSize = MaterialTheme.clarityText.reading.fontSize * 15 / 16))
+                    Text(task?.title ?: "Loading task", style = MaterialTheme.clarityText.reading.copy(fontSize = MaterialTheme.clarityText.reading.fontSize * 15 / 16))
                     if (task != null) Kicker(task.detail)
                 }
                 if (task != null) {

@@ -44,5 +44,5 @@ fun heldStatusLabel(status: HeldAction.Status): String? = when (status) {
     HeldAction.Status.EXPIRED -> "expired"
 }
 
-/** Caption above a proposal: "needs your OK · sends Dana an update". */
-fun proposalKicker(held: HeldAction): String = "needs your OK · ${held.action.summary}"
+/** Caption above a proposal: "Needs your OK: sends Dana an update". */
+fun proposalKicker(held: HeldAction): String = "Needs your OK: ${held.action.summary}"

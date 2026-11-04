@@ -114,7 +114,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
             entry<Amend> { key ->
                 AmendScreen(
                     heldId = key.heldId?.let(::HeldActionId),
-                    backLabel = if (key.heldId != null) "← held" else "← constitution",
+                    backLabel = if (key.heldId != null) "held" else "constitution",
                     onBack = { backStack.removeLastOrNull() },
                 )
             }
@@ -126,7 +126,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onSaved = { backStack.removeLastOrNull() },
                     onBack = { backStack.removeLastOrNull() },
                     step = null,
-                    backLabel = "← settings",
+                    backLabel = "settings",
                 )
             }
             entry<McpServersView> {

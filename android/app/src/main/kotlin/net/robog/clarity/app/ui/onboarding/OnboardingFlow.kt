@@ -232,7 +232,7 @@ fun ServerContent(
 ) {
     StepScaffold(
         step = OnboardingStep.Server,
-        backLabel = "← welcome",
+        backLabel = "welcome",
         onBack = onBack,
         title = "Your server",
         footer = {
@@ -308,7 +308,7 @@ fun ModelScreen(onNext: () -> Unit, onBack: () -> Unit, viewModel: ModelStepView
 fun ModelContent(state: ModelState, onCheck: () -> Unit, onNext: () -> Unit, onBack: () -> Unit) {
     StepScaffold(
         step = OnboardingStep.Model,
-        backLabel = "← server",
+        backLabel = "server",
         onBack = onBack,
         title = "Your model",
         footer = {
