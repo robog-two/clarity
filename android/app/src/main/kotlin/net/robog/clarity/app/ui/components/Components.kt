@@ -196,15 +196,6 @@ private fun Modifier.busySemantics(busy: Boolean): Modifier =
     if (busy) semantics { stateDescription = "Working" } else this
 
 /**
- * For a lazy list item: fades in as it arrives and glides when the items around it move, on the
- * expressive motion scheme's springs, so new messages settle in instead of popping.
- */
-@Composable
-fun LazyItemScope.arrivingItem(): Modifier = with(MaterialTheme.motionScheme) {
-    Modifier.animateItem(fadeInSpec = defaultEffectsSpec(), placementSpec = defaultSpatialSpec(), fadeOutSpec = fastEffectsSpec())
-}
-
-/**
  * For a bottom-up chat list (`reverseLayout`, newest item first): when a new message arrives while
  * the person has scrolled up, glide back down to it. The first load needs nothing, since a reversed
  * list already starts at the bottom.

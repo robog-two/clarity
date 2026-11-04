@@ -1,7 +1,7 @@
 package net.robog.clarity.app.ui.constitution
 
 import net.robog.clarity.app.ui.theme.Space
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
 
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
@@ -186,18 +186,18 @@ private fun PermissionChips(items: List<String>, icon: ImageVector) {
 
 @Composable
 fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().springIn(0).verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-    ) {
-        BackLink("Settings", onBack)
-        val c = state.constitution
+    val c = state.constitution
+    ClarityScreen(
+        title = "Constitution",
+        kicker = c?.let { versionKicker(it.version) },
+        backLabel = "Settings",
+        onBack = onBack,
+        phase = state.loading,
+    ) { loading ->
         Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = Space.Small).size(120.dp))
-        if (c != null) Kicker(versionKicker(c.version))
-        ScreenTitle("Constitution")
         state.error?.let { ErrorBox(it) }
         when {
-            state.loading -> LoadingSpinner()
+            loading -> LoadingSpinner()
             c == null -> Hint(if (state.unavailable) "No constitution on this server yet." else "Can’t load it.")
             else -> {
                 Kicker("lines", heading = true)

@@ -3,9 +3,6 @@ package net.robog.clarity.app.ui.goods
 import net.robog.clarity.app.ui.theme.Space
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -71,6 +68,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
+import net.robog.clarity.app.ui.components.ClarityListScreen
+import net.robog.clarity.app.ui.components.Fade
 import net.robog.clarity.app.ui.components.BackLink
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
@@ -132,51 +131,61 @@ fun ReportContent(
 ) {
     var menu by rememberSaveable { mutableStateOf(initialMenuOpen) }
     BackHandler(enabled = menu) { menu = false }
-    Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            BackLink(backLabel, onBack, Modifier.padding(horizontal = ScreenGutter))
-            when {
-                state.loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
-                state.error != null -> Column(Modifier.padding(horizontal = ScreenGutter, vertical = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+    val ready = !state.loading && state.error == null
+    ClarityListScreen(
+        title = state.title.takeIf { ready },
+        modifier = modifier,
+        kicker = state.subtitle.takeIf { ready },
+        backLabel = backLabel,
+        onBack = onBack,
+        // Blocks of the document space themselves.
+        itemSpacing = 0.dp,
+        // The bottom padding keeps the end of the document clear of the FAB.
+        bottomClearance = Space.Large * 3,
+        overlay = {
+            if (ready) {
+                // A scrim while the menu is open: a tap outside it closes the menu.
+                Fade(menu) {
+                    Box(
+                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
+                            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Close the menu") { menu = false },
+                    )
+                }
+                GoodsFabMenu(menu, { menu = it }, state, onLink, onShareSettings)
+            }
+            SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = Space.Medium, end = Space.Large * 3, bottom = Space.Medium))
+        },
+    ) {
+        when {
+            state.loading -> item(key = "loading") { LoadingSpinner() }
+            state.error != null -> item(key = "error") {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
                     ErrorBox("Can’t open this", state.error)
                     TextButton(onClick = onRetry) { Text("Try again") }
                 }
-                // The bottom padding keeps the end of the document clear of the FAB.
-                else -> LazyColumn(
-                    Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = Space.Small, bottom = Space.Large * 4),
-                ) {
-                    item(key = "header") { ReportHeader(state, Modifier.padding(bottom = Space.Large)) }
-                    val document = state.document
-                    when {
-                        document == null -> item(key = "no-text") {
-                            ErrorBox("Can’t show the text", (state.sourceError ?: "It didn’t load.") + " Download still works.")
-                        }
-                        document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written yet") }
-                        else -> markdownItems(document.blocks)
+            }
+            else -> {
+                val meta = state.document?.meta
+                val byline = listOfNotNull(meta?.author, meta?.date).joinToString(", ")
+                if (byline.isNotEmpty()) item(key = "byline") { Hint(byline, Modifier.padding(bottom = Space.Large)) }
+                val document = state.document
+                when {
+                    document == null -> item(key = "no-text") {
+                        ErrorBox("Can’t show the text", (state.sourceError ?: "It didn’t load.") + " Download still works.")
                     }
-                    if (state.sources.isNotEmpty()) {
-                        item(key = "sources-title") {
-                            Kicker(if (state.sources.size == 1) "1 source" else "${state.sources.size} sources", Modifier.padding(top = Space.Large, bottom = Space.Small).semantics { heading() })
-                        }
-                        itemsIndexed(state.sources, key = { _, s -> "source-" + s.url }) { i, source ->
-                            SourceRow(source, groupShape(i, state.sources.size), Modifier.padding(bottom = Space.Small))
-                        }
+                    document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written yet") }
+                    else -> markdownItems(document.blocks)
+                }
+                if (state.sources.isNotEmpty()) {
+                    item(key = "sources-title") {
+                        Kicker(if (state.sources.size == 1) "1 source" else "${state.sources.size} sources", Modifier.padding(top = Space.Large, bottom = Space.Small).semantics { heading() })
+                    }
+                    itemsIndexed(state.sources, key = { _, s -> "source-" + s.url }) { i, source ->
+                        SourceRow(source, groupShape(i, state.sources.size), Modifier.padding(bottom = Space.Small))
                     }
                 }
             }
         }
-        if (!state.loading && state.error == null) {
-            // A scrim while the menu is open: a tap outside it closes the menu.
-            AnimatedVisibility(menu, enter = fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()), exit = fadeOut(MaterialTheme.motionScheme.fastEffectsSpec())) {
-                Box(
-                    Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.32f))
-                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClickLabel = "Close the menu") { menu = false },
-                )
-            }
-            GoodsFabMenu(menu, { menu = it }, state, onLink, onShareSettings)
-        }
-        SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(start = Space.Medium, end = Space.Large * 3, bottom = Space.Medium))
     }
 }
 
@@ -269,21 +278,6 @@ fun ShareSettings(state: ReportUiState, onTurnOn: () -> Unit, onTurnOff: () -> U
         }
         if (state.linkOn) SecondaryButton("Turn off link", onTurnOff, Modifier.fillMaxWidth(), busy = state.switching)
         else PrimaryButton("Turn on link", onTurnOn, Modifier.fillMaxWidth(), busy = state.switching)
-    }
-}
-
-@Composable
-private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-        Kicker(state.subtitle)
-        Text(
-            state.title,
-            Modifier.semantics { heading() },
-            style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 34.sp),
-        )
-        val meta = state.document?.meta
-        val byline = listOfNotNull(meta?.author, meta?.date).joinToString(", ")
-        if (byline.isNotEmpty()) Hint(byline)
     }
 }
 

@@ -4,7 +4,9 @@ import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.CardGroup
 import net.robog.clarity.app.ui.components.CardGroupScope
 import net.robog.clarity.app.ui.components.SegmentCard
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.PhaseSwap
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.springSwap
 import androidx.compose.ui.graphics.Shape
 import net.robog.clarity.app.ui.components.groupShape
@@ -12,12 +14,6 @@ import net.robog.clarity.app.ui.components.groupShape
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -272,26 +268,21 @@ fun SettingsContent(
 
     BackHandler(enabled = page != SettingsPage.Home) { page = SettingsPage.Home }
 
-    AnimatedContent(
-        targetState = page,
-        modifier = modifier.fillMaxSize(),
-        transitionSpec = springSwap(),
-        label = "settings page",
-    ) { shown ->
+    PhaseSwap(page, modifier.fillMaxSize(), label = "settings page") { shown ->
         if (shown == SettingsPage.Home) {
             SettingsHome(state, open = { page = it }, onOpenConstitution = actions.onOpenConstitution, onOpenMcp = actions.onOpenMcp)
         } else {
             SettingsSubPage(shown.title, shown.drawing, onBack = { page = SettingsPage.Home }) {
                 when (shown) {
                     SettingsPage.Home -> Unit
-                    SettingsPage.MorningCall -> settings?.let { MorningCallPage(state, it, actions) { pickingTime = TIME_CALL } } ?: LoadingSpinner()
-                    SettingsPage.Voice -> settings?.let { VoicePage(it, actions, voiceModels) } ?: LoadingSpinner()
-                    SettingsPage.HeldActions -> settings?.let { HeldActionsPage(it, actions) { pickingTime = TIME_EVENING } } ?: LoadingSpinner()
-                    SettingsPage.Push -> PushPage(state, actions)
+                    SettingsPage.MorningCall -> settings?.let { MorningCallSettings(state, it, actions) { pickingTime = TIME_CALL } } ?: LoadingSpinner()
+                    SettingsPage.Voice -> settings?.let { VoiceSettings(it, actions, voiceModels) } ?: LoadingSpinner()
+                    SettingsPage.HeldActions -> settings?.let { HeldActionsSettings(it, actions) { pickingTime = TIME_EVENING } } ?: LoadingSpinner()
+                    SettingsPage.Push -> PushSettings(state, actions)
                     SettingsPage.Vault -> vault()
-                    SettingsPage.Sources -> SourcesPage(state, actions)
+                    SettingsPage.Sources -> SourcesSettings(state, actions)
                     SettingsPage.Models -> models()
-                    SettingsPage.Server -> ServerPage(state, actions) { confirming = true }
+                    SettingsPage.Server -> ServerSettings(state, actions) { confirming = true }
                 }
             }
         }
@@ -320,19 +311,13 @@ fun SettingsContent(
 @Composable
 private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, onOpenConstitution: () -> Unit, onOpenMcp: () -> Unit) {
     val settings = state.settings
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
-        verticalArrangement = Arrangement.spacedBy(Space.Large),
-    ) {
-        Column(Modifier.fillMaxWidth().springIn(0), horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painterResource(R.drawable.settings_coffee), contentDescription = null, modifier = Modifier.size(144.dp), colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary))
-            Text(
-                "Settings",
-                Modifier.padding(top = Space.Medium),
-                style = MaterialTheme.clarityText.heroTitle,
-                textAlign = TextAlign.Center,
-            )
-        }
+    ClarityScreen(title = "Settings", level = ScreenLevel.Top) {
+        Image(
+            painterResource(R.drawable.settings_coffee),
+            contentDescription = null,
+            modifier = Modifier.size(144.dp),
+            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+        )
         // One state at a time: a problem outranks the local-only note, and either outranks the spinner.
         when {
             state.message != null -> ErrorBox(state.message)
@@ -340,7 +325,7 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
             settings == null -> LoadingSpinner()
         }
 
-        SettingsGroup("Your day", Modifier.springIn(1)) {
+        SettingsGroup("Your day") {
             val call = settings?.morningCall
             val callWarning = when {
                 !state.notificationsOn -> "Notifications off. Calls can’t reach you."
@@ -365,14 +350,14 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
             ) { open(SettingsPage.HeldActions) }
         }
 
-        SettingsGroup("Behavior", Modifier.springIn(2)) {
+        SettingsGroup("Behavior") {
             groupRow(Icons.Outlined.Gavel, "Constitution", state.constitution?.let(::sentenceCase) ?: "Not written yet", onClick = onOpenConstitution)
             groupRow(Icons.Outlined.Memory, "Models", "Model for each job") { open(SettingsPage.Models) }
         }
 
         val mcpTitle = stringResource(R.string.mcp_title)
         val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
-        SettingsGroup("Connections", Modifier.springIn(3)) {
+        SettingsGroup("Connections") {
             val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
             groupRow(
                 Icons.Outlined.Hub, "Sources",
@@ -396,7 +381,7 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
             groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
         }
 
-        SettingsGroup("This phone", Modifier.springIn(4)) {
+        SettingsGroup("This phone") {
             groupRow(Icons.Outlined.Dns, "Server", state.instanceUrl.removePrefix("https://").ifEmpty { "Not connected" }) { open(SettingsPage.Server) }
         }
     }
@@ -416,7 +401,8 @@ private fun sourcesSummary(state: SettingsUiState): String {
 /** A titled group of cards, the same grouped style as Today's task list. */
 @Composable
 private fun SettingsGroup(title: String, modifier: Modifier = Modifier, build: CardGroupScope.() -> Unit) {
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+    // The screen's gap is Medium; a group sits Large (Medium plus this) from the one above.
+    Column(modifier.padding(top = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Text(title, Modifier.padding(start = Space.Medium).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         CardGroup(build = build)
     }
@@ -467,20 +453,15 @@ private fun CardGroupScope.groupRow(
 // --- the pages ---
 
 @Composable
-private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Medium),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-    ) {
-        BackLink("settings", onBack, Modifier.springIn(0))
-        drawing?.let { Drawing(it, Modifier.springIn(0).size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
-        ScreenTitle(title, Modifier.springIn(1))
-        Column(Modifier.springIn(2), verticalArrangement = Arrangement.spacedBy(Space.Large), content = content)
+private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable () -> Unit) {
+    ClarityScreen(title = title, backLabel = "settings", onBack = onBack) {
+        drawing?.let { Drawing(it, Modifier.size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
+        content()
     }
 }
 
 @Composable
-private fun MorningCallPage(state: SettingsUiState, settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
+private fun MorningCallSettings(state: SettingsUiState, settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
     val calling = settings.morningCall.mode == MorningCall.Mode.CALL
     CardGroup {
         segment { SelectRow("time", callTimeSummary(settings.morningCall), "change", onPickTime, shape = it) }
@@ -518,7 +499,7 @@ private fun MorningCallPage(state: SettingsUiState, settings: Settings, actions:
 }
 
 @Composable
-private fun VoicePage(settings: Settings, actions: SettingsActions, voiceModels: @Composable () -> Unit = {}) {
+private fun VoiceSettings(settings: Settings, actions: SettingsActions, voiceModels: @Composable () -> Unit = {}) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         ToggleRow(
             "Mic on during calls", if (settings.micAlwaysOn) "Always listening" else "Push to talk",
@@ -530,7 +511,7 @@ private fun VoicePage(settings: Settings, actions: SettingsActions, voiceModels:
 }
 
 @Composable
-private fun HeldActionsPage(settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
+private fun HeldActionsSettings(settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
     CardGroup {
         segment {
             ToggleRow(
@@ -551,7 +532,7 @@ private fun HeldActionsPage(settings: Settings, actions: SettingsActions, onPick
 }
 
 @Composable
-private fun PushPage(state: SettingsUiState, actions: SettingsActions) {
+private fun PushSettings(state: SettingsUiState, actions: SettingsActions) {
     CardGroup {
         segment {
             ToggleRow(
@@ -571,7 +552,7 @@ private fun PushPage(state: SettingsUiState, actions: SettingsActions) {
 }
 
 @Composable
-private fun SourcesPage(state: SettingsUiState, actions: SettingsActions) {
+private fun SourcesSettings(state: SettingsUiState, actions: SettingsActions) {
     Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         SectionTitle("On your server", Modifier.padding(start = Space.Medium).semantics { heading() })
         if (state.serverSources.isEmpty()) Hint("No sources connected yet.", Modifier.padding(start = Space.Medium))
@@ -608,7 +589,7 @@ private fun SourcesPage(state: SettingsUiState, actions: SettingsActions) {
 }
 
 @Composable
-private fun ServerPage(state: SettingsUiState, actions: SettingsActions, onForget: () -> Unit) {
+private fun ServerSettings(state: SettingsUiState, actions: SettingsActions, onForget: () -> Unit) {
     SegmentCard(groupShape(0, 1)) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Kicker("connected to", heading = true)

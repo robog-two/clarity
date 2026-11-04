@@ -34,7 +34,8 @@ import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import net.robog.clarity.app.ui.components.TaskRow
 import net.robog.clarity.app.ui.components.groupShape
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityListScreen
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.theme.clarityText
 
 /** The Goods tab: the documents Clarity made for the person. */
@@ -47,46 +48,39 @@ fun GoodsScreen(onOpen: (String) -> Unit, modifier: Modifier = Modifier, viewMod
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () -> Unit, modifier: Modifier = Modifier) {
-    val pull = rememberPullToRefreshState()
-    PullToRefreshBox(
-        isRefreshing = state.refreshing,
+    ClarityListScreen(
+        title = "Goods",
+        modifier = modifier,
+        level = ScreenLevel.Top,
+        kicker = "Made for you",
+        refreshing = state.refreshing,
         onRefresh = onRefresh,
-        state = pull,
-        modifier = modifier.fillMaxSize(),
-        indicator = { PullToRefreshDefaults.LoadingIndicator(state = pull, isRefreshing = state.refreshing, modifier = Modifier.align(Alignment.TopCenter)) },
     ) {
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = Space.Large, bottom = Space.Large)) {
-            item(key = "header") {
-                Column(Modifier.padding(bottom = Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-                    Kicker("Made for you")
-                    Text("Goods", style = MaterialTheme.clarityText.heroTitle)
-                    Hint("Reports and write-ups appear here")
+        item(key = "hint") { Hint("Reports and write-ups appear here") }
+        when {
+            state.loading -> item(key = "loading") { LoadingSpinner() }
+            state.rows.isEmpty() && state.error != null -> item(key = "error") {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                    ErrorBox("Can’t load Goods", state.error)
+                    TextButton(onClick = onRefresh) { Text("Try again") }
                 }
             }
-            when {
-                state.loading -> item(key = "loading") { LoadingSpinner() }
-                state.rows.isEmpty() && state.error != null -> item(key = "error") {
-                    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-                        ErrorBox("Can’t load Goods", state.error)
-                        TextButton(onClick = onRefresh) { Text("Try again") }
-                    }
-                }
-                state.rows.isEmpty() -> item(key = "empty") {
-                    Hint("Nothing yet. Ask for a write-up.", italic = true)
-                }
-                else -> {
-                    state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh", error, Modifier.padding(bottom = Space.Medium)) } }
-                    itemsIndexed(state.rows, key = { _, row -> row.id }) { i, row ->
-                        TaskRow(
-                            title = row.title,
-                            detail = row.detail,
-                            shape = groupShape(i, state.rows.size),
-                            glyph = { GoodsGlyph() },
-                            trailing = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                            modifier = Modifier.padding(bottom = Space.Small).springIn(i, rise = 320.dp, stagger = 60L),
-                            onClick = { onOpen(row.id) },
-                        )
-                    }
+            state.rows.isEmpty() -> item(key = "empty") {
+                Hint("Nothing yet. Ask for a write-up.", italic = true)
+            }
+            else -> {
+                state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh", error) } }
+                // The rows are one grouped card, so they sit Small apart.
+                gap = Space.Small
+                itemsIndexed(state.rows, key = { _, row -> row.id }) { i, row ->
+                    TaskRow(
+                        title = row.title,
+                        detail = row.detail,
+                        shape = groupShape(i, state.rows.size),
+                        glyph = { GoodsGlyph() },
+                        trailing = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                        onClick = { onOpen(row.id) },
+                    )
                 }
             }
         }

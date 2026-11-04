@@ -2,12 +2,7 @@ package net.robog.clarity.app.ui.cards
 
 import net.robog.clarity.app.ui.theme.Space
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.togetherWith
+import net.robog.clarity.app.ui.components.PhaseSwap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,7 +38,6 @@ import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -180,17 +174,14 @@ fun reactionDescription(reaction: Reaction): String = "Clarity reacted with " + 
 
 /**
  * Clarity's tapback: the emoji in a small tonal pill, ringed in the surface colour so it reads as
- * cut out of the bubble's corner. A new reaction swaps in on the expressive spatial spring.
+ * cut out of the bubble's corner. A new reaction swaps in with PhaseSwap.
  */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun ReactionBadge(reaction: Reaction, modifier: Modifier = Modifier) {
-    val spatial = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
-    val effects = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
-    AnimatedContent(
+    PhaseSwap(
         reaction,
         modifier.clearAndSetSemantics { contentDescription = reactionDescription(reaction) },
-        transitionSpec = { (scaleIn(spatial, initialScale = 0.4f) + fadeIn(effects)) togetherWith (scaleOut(spatial) + fadeOut(effects)) },
         label = "reaction",
     ) { shown ->
         Surface(
@@ -198,7 +189,6 @@ fun ReactionBadge(reaction: Reaction, modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.secondaryContainer,
             contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
             border = BorderStroke(2.dp, MaterialTheme.colorScheme.surface),
-            shadowElevation = 1.dp,
         ) {
             Text(
                 shown.emoji,
@@ -287,10 +277,10 @@ private fun CredentialRequestRow(card: Card.CredentialRequest, sheetOpen: Boolea
 
 @Composable
 private fun RowCard(content: @Composable () -> Unit) {
-    androidx.compose.material3.Card(
+    Surface(
         Modifier.widthIn(max = MaxBubble).fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        color = MaterialTheme.colorScheme.surfaceContainer,
     ) { content() }
 }
 
@@ -345,11 +335,11 @@ internal fun attachmentSummary(cards: List<Card>): String = when {
 @Composable
 private fun AttachmentStack(cards: List<Card>, tasks: Map<TaskId, AgentTask>, onOpen: () -> Unit) {
     Column(Modifier.widthIn(max = MaxBubble).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-        androidx.compose.material3.Card(
+        Surface(
             onClick = onOpen,
             modifier = Modifier.fillMaxWidth(),
             shape = MaterialTheme.shapes.large,
-            colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             ListItem(
                 colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
@@ -406,7 +396,7 @@ fun AttachmentPager(cards: List<Card>, tasks: Map<TaskId, AgentTask>, modifier: 
                     Modifier.padding(horizontal = Space.Medium, vertical = Space.Small).semantics { heading() },
                     style = MaterialTheme.typography.titleLarge,
                 )
-                AttachmentPage(card, tasks)
+                AttachmentBody(card, tasks)
             }
         }
         if (cards.size > 1) {
@@ -431,7 +421,7 @@ fun AttachmentPager(cards: List<Card>, tasks: Map<TaskId, AgentTask>, modifier: 
 }
 
 @Composable
-private fun AttachmentPage(card: Card, tasks: Map<TaskId, AgentTask>) {
+private fun AttachmentBody(card: Card, tasks: Map<TaskId, AgentTask>) {
     val clear = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent)
     when (card) {
         is Card.Context -> card.items.forEach { item ->

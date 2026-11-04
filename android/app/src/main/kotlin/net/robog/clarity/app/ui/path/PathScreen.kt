@@ -1,7 +1,7 @@
 package net.robog.clarity.app.ui.path
 
 import net.robog.clarity.app.ui.theme.Space
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityListScreen
 
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.ui.semantics.selected
@@ -120,18 +120,18 @@ fun TaskThreadScreen(
     viewModel: PathViewModel = metroViewModel(),
 ) {
     LaunchedEffect(taskId) { viewModel.open(PathTarget.Task(taskId)) }
-    PathScreenFrame(viewModel, onBack, "Today", onReview, onOpenRun)
+    PathScreenContent(viewModel, onBack, "Today", onReview, onOpenRun)
 }
 
 /** One helper run's Agent's Path, stepped into from its task. */
 @Composable
 fun RunPathScreen(runId: String, onBack: () -> Unit, onOpenRun: (String) -> Unit, viewModel: PathViewModel = metroViewModel()) {
     LaunchedEffect(runId) { viewModel.open(PathTarget.Run(runId)) }
-    PathScreenFrame(viewModel, onBack, "Back", onReview = {}, onOpenRun = onOpenRun)
+    PathScreenContent(viewModel, onBack, "Back", onReview = {}, onOpenRun = onOpenRun)
 }
 
 @Composable
-private fun PathScreenFrame(viewModel: PathViewModel, onBack: () -> Unit, backLabel: String, onReview: (HeldActionId) -> Unit, onOpenRun: (String) -> Unit) {
+private fun PathScreenContent(viewModel: PathViewModel, onBack: () -> Unit, backLabel: String, onReview: (HeldActionId) -> Unit, onOpenRun: (String) -> Unit) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     BackHandler { onBack() }
     // A running path refreshes while it is on screen, never in the background.
@@ -142,7 +142,7 @@ private fun PathScreenFrame(viewModel: PathViewModel, onBack: () -> Unit, backLa
 }
 
 /** A screenshot opened full screen. */
-private data class OpenFrame(val url: String, val box: JevBox?, val boxColor: Color, val description: String)
+internal data class OpenFrame(val url: String, val box: JevBox?, val boxColor: Color, val description: String)
 
 /**
  * The Agent's Path: a header with the totals, then one node per step on a rail, newest last. A
@@ -165,58 +165,53 @@ fun PathContent(
     initialFramePage: Int = 0,
 ) {
     var open by remember { mutableStateOf<OpenFrame?>(null) }
-    Column(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding()) {
-        BackLink(backLabel, onBack, Modifier.padding(horizontal = ScreenGutter))
-        val path = state.path
+    val path = state.path
+    ClarityListScreen(
+        title = null,
+        modifier = modifier,
+        backLabel = backLabel,
+        onBack = onBack,
+        refreshing = state.refreshing,
+        onRefresh = onRefresh.takeIf { path != null },
+        // The rail runs unbroken from row to row.
+        itemSpacing = 0.dp,
+    ) {
         if (path == null) {
-            Column(Modifier.padding(horizontal = ScreenGutter), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-                if (state.loading) LoadingSpinner(Modifier.padding(top = Space.Large).align(Alignment.CenterHorizontally))
-                else {
-                    ErrorBox("Can’t show this path", state.error)
-                    TextButton(onClick = onRefresh) { Text("Try again") }
-                }
-            }
-            return@Column
-        }
-        val pull = rememberPullToRefreshState()
-        PullToRefreshBox(
-            isRefreshing = state.refreshing,
-            onRefresh = onRefresh,
-            state = pull,
-            modifier = Modifier.fillMaxSize(),
-            indicator = { PullToRefreshDefaults.LoadingIndicator(state = pull, isRefreshing = state.refreshing, modifier = Modifier.align(Alignment.TopCenter)) },
-        ) {
-            LazyColumn(
-                Modifier.fillMaxSize(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(start = ScreenGutter, end = ScreenGutter, bottom = Space.Large),
-            ) {
-                item(key = "header") { PathHeader(path, onReview, Modifier.padding(bottom = Space.Medium).springIn(0)) }
-                if (state.rows.isEmpty() && !path.live) item(key = "empty") { Hint("Nothing recorded yet.") }
-                val lastIndex = state.rows.lastIndex
-                items(state.rows.size, key = { state.rows[it].key }) { i ->
-                    val row = state.rows[i]
-                    val nextDepth = state.rows.getOrNull(i + 1)?.depth
-                    TimelineRow(
-                        row = row,
-                        first = i == 0,
-                        last = i == lastIndex && !path.live,
-                        continuesBelow = nextDepth != null && nextDepth >= row.depth,
-                        zone = zone,
-                        frameBase = state.frameBase,
-                        onOpenRun = onOpenRun,
-                        onOpenFrame = { open = it },
-                        initialFramePage = initialFramePage,
-                        live = path.live && i == lastIndex,
-                        helperRun = path.subject.kind == PathSubject.Kind.RUN,
-                        modifier = Modifier.animateItem(),
-                    )
-                }
-                if (path.live) item(key = "working") { WorkingRow(state.rows.lastOrNull()?.depth ?: 0, Modifier.animateItem()) }
-                if (path.next != null) item(key = "more") {
-                    TextButton(onClick = onLoadMore, enabled = !state.loadingMore, modifier = Modifier.padding(top = Space.Small)) {
-                        Text(if (state.loadingMore) "Loading" else "Show more")
+            item(key = "state") {
+                Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+                    if (state.loading) LoadingSpinner(Modifier.padding(top = Space.Large).align(Alignment.CenterHorizontally))
+                    else {
+                        ErrorBox("Can’t show this path", state.error)
+                        TextButton(onClick = onRefresh) { Text("Try again") }
                     }
                 }
+            }
+            return@ClarityListScreen
+        }
+        item(key = "header") { PathHeader(path, onReview, Modifier.padding(bottom = Space.Medium)) }
+        if (state.rows.isEmpty() && !path.live) item(key = "empty") { Hint("Nothing recorded yet.") }
+        val lastIndex = state.rows.lastIndex
+        items(state.rows.size, key = { state.rows[it].key }) { i ->
+            val row = state.rows[i]
+            val nextDepth = state.rows.getOrNull(i + 1)?.depth
+            TimelineRow(
+                row = row,
+                first = i == 0,
+                last = i == lastIndex && !path.live,
+                continuesBelow = nextDepth != null && nextDepth >= row.depth,
+                zone = zone,
+                frameBase = state.frameBase,
+                onOpenRun = onOpenRun,
+                onOpenFrame = { open = it },
+                initialFramePage = initialFramePage,
+                live = path.live && i == lastIndex,
+                helperRun = path.subject.kind == PathSubject.Kind.RUN,
+            )
+        }
+        if (path.live) item(key = "working") { WorkingRow(state.rows.lastOrNull()?.depth ?: 0) }
+        if (path.next != null) item(key = "more") {
+            TextButton(onClick = onLoadMore, enabled = !state.loadingMore, modifier = Modifier.padding(top = Space.Small)) {
+                Text(if (state.loadingMore) "Loading" else "Show more")
             }
         }
     }
@@ -554,7 +549,7 @@ private fun FrameView(frame: Frame, onOpenFrame: (OpenFrame) -> Unit, modifier: 
 }
 
 /** The usual browser window shape, until the image says otherwise. */
-private const val DEFAULT_RATIO = 1280f / 714f
+internal const val DEFAULT_RATIO = 1280f / 714f
 
 @Composable
 private fun ShotImage(url: String, box: JevBox?, boxColor: Color, description: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -582,7 +577,7 @@ private fun ShotImage(url: String, box: JevBox?, boxColor: Color, description: S
 }
 
 @Composable
-private fun JevBoxOverlay(box: JevBox, color: Color, modifier: Modifier = Modifier) {
+internal fun JevBoxOverlay(box: JevBox, color: Color, modifier: Modifier = Modifier) {
     Canvas(modifier) {
         val topLeft = Offset(box.left * size.width, box.top * size.height)
         val boxSize = androidx.compose.ui.geometry.Size((box.right - box.left) * size.width, (box.bottom - box.top) * size.height)
@@ -620,56 +615,4 @@ private fun WithheldFrame(description: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A screenshot full screen: pinch to zoom, drag to look around, double-tap to zoom in or back out. */
-@Composable
-private fun FullScreenFrame(frame: OpenFrame, onDismiss: () -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        var scale by remember { mutableFloatStateOf(1f) }
-        var offset by remember { mutableStateOf(Offset.Zero) }
-        var ratio by remember { mutableFloatStateOf(DEFAULT_RATIO) }
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .pointerInputZoom(
-                    onZoom = { zoom, pan ->
-                        scale = (scale * zoom).coerceIn(1f, 6f)
-                        offset = if (scale == 1f) Offset.Zero else offset + pan
-                    },
-                    onDoubleTap = {
-                        scale = if (scale > 1f) 1f else 2.5f
-                        if (scale == 1f) offset = Offset.Zero
-                    },
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(ratio)
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    },
-            ) {
-                AsyncImage(
-                    model = frame.url,
-                    contentDescription = frame.description,
-                    contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.matchParentSize(),
-                    onSuccess = { s -> s.painter.intrinsicSize.takeIf { it.width > 0f && it.height > 0f }?.let { ratio = it.width / it.height } },
-                )
-                frame.box?.let { JevBoxOverlay(it, frame.boxColor, Modifier.matchParentSize()) }
-            }
-            IconButton(onClick = onDismiss, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(Space.Small)) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close", tint = Color.White)
-            }
-        }
-    }
-}
 
-private fun Modifier.pointerInputZoom(onZoom: (Float, Offset) -> Unit, onDoubleTap: () -> Unit): Modifier = this
-    .pointerInput("zoom") { detectTransformGestures { _, pan, zoom, _ -> onZoom(zoom, pan) } }
-    .pointerInput("tap") { detectTapGestures(onDoubleTap = { onDoubleTap() }) }

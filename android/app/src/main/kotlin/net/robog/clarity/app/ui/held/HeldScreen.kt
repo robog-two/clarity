@@ -32,7 +32,8 @@ import net.robog.clarity.app.ui.components.TaskRow
 import net.robog.clarity.app.ui.components.TaskShape
 import net.robog.clarity.app.ui.components.TaskStatus
 import net.robog.clarity.app.ui.components.groupShape
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 
@@ -55,15 +56,10 @@ fun HeldContent(
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = onOpen,
 ) {
-    Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-    ) {
-        Kicker(state.kicker)
-        Text("Held for you", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
+    ClarityScreen(title = "Held for you", modifier = modifier, level = ScreenLevel.Top, kicker = state.kicker) {
         Hint("Stopped by your rules. Tap to review.")
         if (state.rows.isEmpty()) Hint("Nothing waiting.")
-        // The same contained group as Today's "I'm doing". Rows spring up from below as they load.
+        // The same contained group as Today's "I'm doing".
         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             state.rows.forEachIndexed { i, row ->
                 key(row.id) {
@@ -74,7 +70,6 @@ fun HeldContent(
                         shape = groupShape(i, state.rows.size),
                         glyph = { HeldGlyph(row.state) },
                         trailing = { if (row.waiting) ReviewButton(open, row.title) else TaskStatus(row.status) },
-                        modifier = Modifier.springIn(i, rise = RISE, stagger = 60L),
                         onClick = open,
                     )
                 }
@@ -92,16 +87,12 @@ fun HeldContent(
                         shape = groupShape(i, state.allowed.size),
                         glyph = { HeldGlyph(if (a.ok) HeldAction.Status.EXECUTED else HeldAction.Status.FAILED) },
                         trailing = { TaskStatus(if (a.ok) "done" else "failed") },
-                        modifier = Modifier.springIn(i, rise = RISE, stagger = 60L),
                     )
                 }
             }
         }
     }
 }
-
-/** How far a row rises as it springs in: from about the bottom of the screen. */
-private val RISE = 320.dp
 
 /**
  * A still shape per state, matching Today's tasks: waiting on the person is the same shape as a

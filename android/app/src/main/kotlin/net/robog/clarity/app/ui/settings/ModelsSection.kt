@@ -74,11 +74,9 @@ fun ModelsSectionContent(state: ModelsUiState, actions: ModelsActions, showTitle
         return
     }
     if (showTitle) SectionTitle("Models", Modifier.semantics { heading() })
-    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-        Hint("Model for each job, by OpenRouter name. Saved on your server.")
-        state.message?.let { ErrorBox(it) }
-        CardGroup(state.rows) { row, shape, _ -> RoleModelItem(row, state.efforts, actions, shape) }
-    }
+    Hint("Model for each job, by OpenRouter name. Saved on your server.")
+    state.message?.let { ErrorBox(it) }
+    CardGroup(state.rows) { row, shape, _ -> RoleModelItem(row, state.efforts, actions, shape) }
 }
 
 @Composable

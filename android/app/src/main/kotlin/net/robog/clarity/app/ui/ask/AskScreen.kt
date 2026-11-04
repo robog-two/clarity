@@ -29,6 +29,9 @@ import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.data.feed.SyncState
 import net.robog.clarity.app.ui.cards.CardEnv
 import net.robog.clarity.app.ui.components.ChatComposer
+import net.robog.clarity.app.ui.components.ChatLayout
+import net.robog.clarity.app.ui.components.ScreenHeading
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.ChatTranscript
 import net.robog.clarity.app.ui.components.ComposerMic
 import net.robog.clarity.app.ui.components.ErrorBox
@@ -86,26 +89,51 @@ fun AskContent(
 ) {
     val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
-    Column(modifier.fillMaxSize().imePadding()) {
-        Row(
-            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(start = ScreenGutter, end = ScreenGutter, top = Space.Large, bottom = Space.Medium),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Ask", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 24.sp, lineHeight = 30.sp))
-            if (listening) MicStateChip(state.mic)
-            else if (state.busy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
-                LoadingIndicator(Modifier.size(24.dp))
-                Kicker("Working")
+    ChatLayout(
+        modifier = modifier,
+        header = {
+            Row(
+                Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = Space.Large, bottom = Space.Medium),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ScreenHeading("Ask", ScreenLevel.Top)
+                if (listening) MicStateChip(state.mic)
+                else if (state.busy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
+                    LoadingIndicator(Modifier.size(24.dp))
+                    Kicker("Working")
+                }
+                else Kicker("Replies in text")
             }
-            else Kicker("Replies in text")
-        }
+        },
+        footer = {
+            if (state.sync == SyncState.Unauthorized) {
+                ErrorBox("Server rejected this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
+            }
+            state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) }
+            if (mic.refused && !mic.granted) {
+                MicRationale(mic.refused, mic.request, mic.openSettings, Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
+            }
+            ChatComposer(
+                draft = state.draft,
+                onDraft = onDraft,
+                onSend = onSubmit,
+                mic = ComposerMic(
+                    live = listening,
+                    description = "Microphone",
+                    state = if (listening) "Listening" else "Off",
+                    action = if (state.mic == MicChipState.Off) "Talk" else "Stop",
+                ),
+                onMic = onTalk,
+            )
+        },
+    ) { transcript ->
         ChatTranscript(
             entries = state.entries,
             live = state.live,
             liveConfirmed = state.liveConfirmed,
             env = env,
-            modifier = Modifier.weight(1f),
+            modifier = transcript,
             newest = {
                 if (state.suggestions.isNotEmpty()) {
                     item(key = "suggestions") {
@@ -128,26 +156,5 @@ fun AskContent(
                 }
             },
         )
-        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-            if (state.sync == SyncState.Unauthorized) {
-                ErrorBox("Server rejected this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
-            }
-            state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) }
-            if (mic.refused && !mic.granted) {
-                MicRationale(mic.refused, mic.request, mic.openSettings, Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
-            }
-            ChatComposer(
-                draft = state.draft,
-                onDraft = onDraft,
-                onSend = onSubmit,
-                mic = ComposerMic(
-                    live = listening,
-                    description = "Microphone",
-                    state = if (listening) "Listening" else "Off",
-                    action = if (state.mic == MicChipState.Off) "Talk" else "Stop",
-                ),
-                onMic = onTalk,
-            )
-        }
     }
 }

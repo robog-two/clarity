@@ -2,7 +2,6 @@ package net.robog.clarity.app.ui.components
 
 import net.robog.clarity.app.ui.theme.Space
 
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -117,7 +116,7 @@ fun SlideToConfirm(
                 },
             contentAlignment = Alignment.Center,
         ) {
-            Crossfade(working, animationSpec = MaterialTheme.motionScheme.fastEffectsSpec(), label = "knob") { busy ->
+            PhaseSwap(working, label = "knob") { busy ->
                 if (busy) {
                     LoadingIndicator(Modifier.size(36.dp), color = colors.onPrimary)
                 } else {
