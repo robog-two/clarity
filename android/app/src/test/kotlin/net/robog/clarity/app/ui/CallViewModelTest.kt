@@ -118,8 +118,8 @@ class CallStageRulesTest {
     }
 
     @Test fun stageBarAndTimerReadAloud() {
-        assertEquals("Step 2 of 4", net.robog.clarity.app.ui.call.stageDescription(CallStage.CHOOSE))
-        assertEquals("Step 1 of 4", net.robog.clarity.app.ui.call.stageDescription(null))
+        assertEquals("Step 2 of 4, Identify", net.robog.clarity.app.ui.call.stageDescription(CallStage.CHOOSE))
+        assertEquals("Step 1 of 4, Ideate", net.robog.clarity.app.ui.call.stageDescription(null))
         assertEquals("All 4 steps done", net.robog.clarity.app.ui.call.stageDescription(CallStage.HAND_OFF, ended = true))
         assertEquals("4 minutes", net.robog.clarity.app.ui.call.spokenElapsed("4:12"))
         assertEquals("1 minute", net.robog.clarity.app.ui.call.spokenElapsed("1:59"))
@@ -128,7 +128,7 @@ class CallStageRulesTest {
     }
 
     @Test fun segmentsMarkDoneCurrentAndTodo() {
-        assertEquals(listOf("clear", "choose", "commit", "hand off"), StageLabels)
+        assertEquals(listOf("Ideate", "Identify", "Unblock", "Delegate"), StageLabels)
         assertEquals(
             listOf(SegmentState.Done, SegmentState.Current, SegmentState.Todo, SegmentState.Todo),
             stageSegments(CallStage.CHOOSE),

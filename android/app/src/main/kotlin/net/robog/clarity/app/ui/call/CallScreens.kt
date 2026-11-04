@@ -247,7 +247,7 @@ private fun callMic(state: CallUiState) = ComposerMic(
     },
 )
 
-/** The four stage segments: done and current filled, the rest muted. No labels, TalkBack says "Step 2 of 4". */
+/** The four stage segments, each with its one-word label: done and current filled, the rest muted. */
 @Composable
 fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boolean = false) {
     val description = stageDescription(stage, ended)
@@ -258,24 +258,31 @@ fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boole
         },
         horizontalArrangement = Arrangement.spacedBy(Space.Small),
     ) {
-        stageSegments(stage, ended).forEach { segment -> Segment(segment) }
+        stageSegments(stage, ended).forEachIndexed { i, segment -> Segment(StageLabels[i], segment) }
     }
 }
 
 @Composable
-private fun RowScope.Segment(state: SegmentState) {
+private fun RowScope.Segment(label: String, state: SegmentState) {
     val scheme = MaterialTheme.colorScheme
-    Box(
-        Modifier.weight(1f).height(4.dp).background(
-            when (state) {
-                // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
-                SegmentState.Done -> scheme.onSurfaceVariant
-                SegmentState.Current -> scheme.primary
-                SegmentState.Todo -> scheme.outline
-            },
-            MaterialTheme.shapes.extraSmall,
-        ),
-    )
+    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        Box(
+            Modifier.fillMaxWidth().height(4.dp).background(
+                when (state) {
+                    // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
+                    SegmentState.Done -> scheme.onSurfaceVariant
+                    SegmentState.Current -> scheme.primary
+                    SegmentState.Todo -> scheme.outline
+                },
+                MaterialTheme.shapes.extraSmall,
+            ),
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (state == SegmentState.Current) scheme.onSurface else scheme.onSurfaceVariant,
+        )
+    }
 }
 
 /** This call's feed items with the live bubble last (at the bottom); follows the newest line. */
@@ -298,7 +305,7 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             var order = 0
-            Kicker(if (elapsed == null) "Call ended" else "Call ended, $elapsed")
+            Kicker(if (elapsed == null) "Call ended" else "Call ended after $elapsed")
             Text("Your morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
             if (state.plan.isNotEmpty()) PlanHero(state.plan, Modifier.springIn(order++))
             TodayLabel("Setting up", Modifier.padding(top = Space.Medium).springIn(order++))

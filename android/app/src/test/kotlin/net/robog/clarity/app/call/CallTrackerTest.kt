@@ -65,7 +65,7 @@ class LiveCallTest {
     }
 
     @Test fun theOngoingLineNamesTheStage() {
-        assertEquals("Morning meeting, handing off", ongoingCallText(CallStage.HAND_OFF))
+        assertEquals("Delegate", ongoingCallText(CallStage.HAND_OFF))
         assertEquals("Morning meeting", ongoingCallText(null))
     }
 

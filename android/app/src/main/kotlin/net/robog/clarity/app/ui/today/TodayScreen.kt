@@ -208,6 +208,8 @@ private fun DayBody(
             today.plan.isNotEmpty() -> PlanHero(today.plan, Modifier.springIn(order++))
             !today.called -> NoPlanYet(state.callOffer, state.callAgainProblem, onCall, Modifier.springIn(order++))
         }
+        // Held first: anything waiting on an OK must be seen.
+        HeldCard(state.heldWaiting, onOpenHeld, Modifier.springIn(order++))
         val doing = state.doing
         if (doing.main.isNotEmpty()) {
             TodayLabel("Doing", Modifier.padding(top = Space.Medium).springIn(order++))
@@ -217,7 +219,6 @@ private fun DayBody(
                 }
             }
         }
-        HeldCard(state.heldWaiting, onOpenHeld, Modifier.padding(top = Space.Medium).springIn(order++))
         // Last: everything inactive under one fold, closed on every visit.
         inactiveLine(doing.inactive.size, today.parked.size)?.let { line ->
             Folded(line, "inactive items", inactiveExpanded, Modifier.springIn(order++)) {

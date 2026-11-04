@@ -86,12 +86,12 @@ class PathPresentationTest {
 
     @Test fun reportsAreCondensedAndJevSpeaksInWords() {
         assertEquals(
-            "Page changed: shop.clarity.test/ to login.clarity.test/signin. Looks like \"a sign-in form\" happened. Very sure, 99%",
+            "Page changed: shop.clarity.test/ to login.clarity.test/signin. Looks like \"a sign-in form\" happened. 99% sure",
             condenseReport("Page changed: https://shop.clarity.test/ → https://login.clarity.test/signin / Title: \"Garden Shop\" → \"Clarity ID\" / On the screen: looks like \"a sign-in form\" happened (Jev p=0.99)."),
         )
         assertEquals("Refused: a code was sent at 3:29 pm", condenseReport("Refused: a code was sent at 3:29 pm – use ask_code (then type it with act or sign_in)."))
         assertNull(condenseReport(" "))
-        assertEquals("Fairly sure, 88%", confidenceText(0.88))
+        assertEquals("88% sure", confidenceText(0.88))
     }
 
     @Test fun jevsBoxAndConfidenceComeFromItsAnswers() {
@@ -112,7 +112,7 @@ class PathPresentationTest {
             PathItem.Browser(at, "h1", 1, step(4, "https://shop.clarity.test/account", "Garden Shop")),
         )
         val tabs = pathRows(items).filterIsInstance<PathRow.Tab>().map { it.label }
-        assertEquals(listOf("On Garden Shop", "Opened sign-in tab, Clarity ID", "Back on Garden Shop"), tabs)
+        assertEquals(listOf("On Garden Shop", "Opened Clarity ID to sign in", "Back on Garden Shop"), tabs)
     }
 
     @Test fun totalsReadAtAGlance() {

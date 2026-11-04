@@ -191,11 +191,11 @@ fun AskWithMeetingDark() = AskMeeting(dark = true)
 fun ChatPills() = Column {
     Frame(dark = false) {
         ChatPill("Ulta Hair Appt")
-        ChatPill("Morning meeting, 9:00 am")
+        ChatPill("Morning meeting at 9:00 am")
     }
     Frame(dark = true) {
         ChatPill("Ulta Hair Appt")
-        ChatPill("Morning meeting, Oct 26 at 9:00 am")
+        ChatPill("Morning meeting on Oct 26 at 9:00 am")
     }
 }
 

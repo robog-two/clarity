@@ -390,9 +390,9 @@ private fun ItemContent(
         is PathItem.Heard -> Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Kicker(
                 when (item.from) {
-                    PathItem.Heard.Source.PERSON -> "You, $time"
-                    PathItem.Heard.Source.HELPER -> "A helper reported, $time"
-                    PathItem.Heard.Source.EVENT -> "Came in, $time"
+                    PathItem.Heard.Source.PERSON -> "You at $time"
+                    PathItem.Heard.Source.HELPER -> "Helper at $time"
+                    PathItem.Heard.Source.EVENT -> "Came in at $time"
                 },
             )
             Text(item.text, style = MaterialTheme.clarityText.chat)
@@ -417,7 +417,7 @@ private fun ItemContent(
         }
         is PathItem.Helper -> HelperCard(item, time, onOpenRun)
         is PathItem.Finished -> Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-            Kicker(if (item.ok) "helper finished, $time" else "helper stopped, $time")
+            Kicker(if (item.ok) "Helper finished at $time" else "Helper stopped at $time")
             Text(item.text, style = MaterialTheme.clarityText.chatSmall)
         }
         is PathItem.Browser -> BrowserStep(item.step, time, frameBase, onOpenFrame, initialFramePage)

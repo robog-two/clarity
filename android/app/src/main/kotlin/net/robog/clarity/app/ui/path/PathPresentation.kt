@@ -91,17 +91,8 @@ fun condenseReport(report: String?, parts: Int = 2): String? {
     return kept.joinToString(". ") { part -> JEV_P.replace(part) { m -> m.groupValues[1].toDoubleOrNull()?.let { ". ${confidenceText(it)}" } ?: "" } }
 }
 
-/** Pure: a probability in words: "Very sure, 99%". */
-fun confidenceText(p: Double): String {
-    val pct = (p * 100).roundToInt().coerceIn(0, 100)
-    val words = when {
-        p >= 0.95 -> "very sure"
-        p >= 0.8 -> "fairly sure"
-        p >= 0.6 -> "leaning yes"
-        else -> "unsure"
-    }
-    return "${words.replaceFirstChar { it.uppercase() }}, $pct%"
-}
+/** Pure: a probability as "99% sure". */
+fun confidenceText(p: Double): String = "${(p * 100).roundToInt().coerceIn(0, 100)}% sure"
 
 /** Pure: how sure Jev was that the step did what it should (its check, else its approval), if it answered. */
 fun stepConfidence(step: BrowserStepView): Double? {
@@ -150,7 +141,7 @@ fun tabChange(previous: BrowserStepView?, step: BrowserStepView, seen: List<Stri
     if (hostOf(previous.tabUrl) == host) return null
     if (host in seen) return "Back on $title"
     val signIn = SIGN_IN_WORDS.any { host.contains(it, ignoreCase = true) || step.tabUrl.orEmpty().contains(it, ignoreCase = true) }
-    return if (signIn) "Opened sign-in tab, $title" else "Opened $title"
+    return if (signIn) "Opened $title to sign in" else "Opened $title"
 }
 
 /** One row of the timeline: a node, or the line that says the agent moved to another tab. */
