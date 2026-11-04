@@ -114,14 +114,14 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         title = "Clarity",
         level = ScreenLevel.Top,
         kicker = "Incoming call",
+        subtitle = "About 8 minutes",
         arrangement = ScreenArrangement.Centered,
         gutter = Space.Large,
         footer = { SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working) },
     ) {
-        Hint("About 8 minutes")
-        RingingBell()
+        Box(Modifier.fillMaxWidth().padding(vertical = Space.Large), contentAlignment = Alignment.Center) { RingingBell() }
         state.message?.let { ErrorBox(it) }
-        Hint("Replies appear on screen")
+        Hint("Replies appear on screen", Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
@@ -162,7 +162,6 @@ private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
     ClarityScreen(
         title = state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
         kicker = "Not now",
-        arrangement = ScreenArrangement.Centered,
         gutter = Space.Large,
         footer = { PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working) },
     ) {

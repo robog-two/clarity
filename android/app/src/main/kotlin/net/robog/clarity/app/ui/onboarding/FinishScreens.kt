@@ -138,7 +138,6 @@ fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> U
     ClarityScreen(
         title = state.nextDay?.let { "Talk $it at ${formatTime(state.call.at)}." } ?: "You’re all set.",
         level = ScreenLevel.Top,
-        arrangement = ScreenArrangement.Centered,
         kicker = "$connectors set up" + (state.constitutionVersion?.let { ". Constitution version $it" } ?: ""),
         footer = { PrimaryButton("open the app", onOpenApp, Modifier.fillMaxWidth()) },
     ) {

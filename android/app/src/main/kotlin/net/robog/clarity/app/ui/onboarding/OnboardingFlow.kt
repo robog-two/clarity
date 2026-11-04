@@ -184,7 +184,6 @@ fun WelcomeScreen(onBegin: () -> Unit) {
         title = "You set the priorities.",
         level = ScreenLevel.Top,
         kicker = "Personal agent",
-        arrangement = ScreenArrangement.Centered,
         footer = { PrimaryButton("begin", onBegin, Modifier.fillMaxWidth()) },
     ) {
         ReadingText(

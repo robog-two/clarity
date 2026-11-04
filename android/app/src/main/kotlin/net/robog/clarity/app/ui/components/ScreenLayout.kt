@@ -61,8 +61,9 @@ enum class ScreenArrangement {
 
     /**
      * A full-screen moment (an incoming call, a welcome): the header text is centered and, when the
-     * content is shorter than the viewport, the body is centered vertically between the header and
-     * the footer. It still scrolls when taller.
+     * content is shorter than the viewport, the header and body are centered together vertically
+     * between the top inset and the footer. Body children keep their own alignment. It still
+     * scrolls when taller.
      */
     Centered,
 }
@@ -93,6 +94,7 @@ private fun headerPieces(
     stepSegments: Int?,
     centered: Boolean = false,
     art: (@Composable () -> Unit)? = null,
+    subtitle: String? = null,
 ): List<@Composable () -> Unit> = buildList {
     val align = if (centered) TextAlign.Center else null
     val fill = if (centered) Modifier.fillMaxWidth() else Modifier
@@ -109,6 +111,7 @@ private fun headerPieces(
             }
         }
     }
+    if (subtitle != null) add { Hint(subtitle, fill, textAlign = align) }
 }
 
 /**
@@ -131,12 +134,13 @@ fun ClarityScreen(
     art: (@Composable () -> Unit)? = null,
     arrangement: ScreenArrangement = ScreenArrangement.Top,
     gutter: Dp = ScreenGutter,
+    subtitle: String? = null,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     body: @Composable () -> Unit,
 ) = ClarityScreen(
-    title, modifier, level, kicker, backLabel, onBack, stepSegments, horizontalAlignment, art, arrangement, gutter,
+    title, modifier, level, kicker, backLabel, onBack, stepSegments, horizontalAlignment, art, arrangement, gutter, subtitle,
     phase = Unit, refreshing = refreshing, onRefresh = onRefresh, footer = footer,
 ) { body() }
 
@@ -158,6 +162,7 @@ fun <P> ClarityScreen(
     art: (@Composable () -> Unit)? = null,
     arrangement: ScreenArrangement = ScreenArrangement.Top,
     gutter: Dp = ScreenGutter,
+    subtitle: String? = null,
     phase: P,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
@@ -165,8 +170,8 @@ fun <P> ClarityScreen(
     body: @Composable (P) -> Unit,
 ) {
     val centered = arrangement == ScreenArrangement.Centered
-    val align = if (centered) Alignment.CenterHorizontally else horizontalAlignment
-    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments, centered, art)
+    val align = horizontalAlignment
+    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments, centered, art, subtitle)
     Column(
         modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().navigationBarsPadding().imePadding(),
     ) {
@@ -207,7 +212,7 @@ fun <P> ClarityScreen(
     }
 }
 
-/** The header at the top and the body centered in the room under it; at least [minHeight] tall. */
+/** The header and the body as one block, centered vertically; at least [minHeight] tall. */
 @Composable
 private fun CenteredColumn(modifier: Modifier, minHeight: Dp, header: @Composable () -> Unit, body: @Composable () -> Unit) {
     Layout({ header(); body() }, modifier) { measurables, constraints ->
@@ -219,8 +224,9 @@ private fun CenteredColumn(modifier: Modifier, minHeight: Dp, header: @Composabl
         val height = maxOf(minHeight.roundToPx(), used)
         val width = if (constraints.hasBoundedWidth) constraints.maxWidth else maxOf(head.width, main.width)
         layout(width, height) {
-            head.place((width - head.width) / 2, 0)
-            main.place((width - main.width) / 2, head.height + gap + (height - used) / 2)
+            val top = (height - used) / 2
+            head.place((width - head.width) / 2, top)
+            main.place((width - main.width) / 2, top + head.height + gap)
         }
     }
 }

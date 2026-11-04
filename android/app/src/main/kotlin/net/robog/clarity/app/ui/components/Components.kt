@@ -136,11 +136,18 @@ fun ScreenTitle(text: String, modifier: Modifier = Modifier, textAlign: androidx
 
 /** `.sm`: the quiet explanatory paragraph under a heading. */
 @Composable
-fun Hint(text: String, modifier: Modifier = Modifier, italic: Boolean = false, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+fun Hint(
+    text: String,
+    modifier: Modifier = Modifier,
+    italic: Boolean = false,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    textAlign: androidx.compose.ui.text.style.TextAlign? = null,
+) {
     Text(
         text,
         modifier,
         color = color,
+        textAlign = textAlign,
         style = MaterialTheme.clarityText.readingSmall.let {
             if (italic) it.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) else it
         },
