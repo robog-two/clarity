@@ -439,7 +439,7 @@ private fun previewState(editing: Boolean = false, choosing: Boolean = false): C
     )
     val values = FormValues().withItems("accounts", listOf(item("k3j9x2p1", "Work", "sam@work.example"), item("m4n8q7r2", "Personal", "sam@icloud.com")))
     return ConnectorSetupState(
-        key = "mail", title = "Mail", proto = "On your server", blurb = "Reads your inbox and saves drafts.",
+        key = "mail", title = "Mail", proto = "On your server", blurb = "Send emails on your behalf or use them for personal context. Set the rules in your constitution.",
         form = form, values = values, lastTest = TestLine("Work: 4,218 messages; Personal: password rejected", ok = false),
         editor = if (editing) ItemEdit("accounts", "k3j9x2p1", false, values.items("accounts").first().values, showErrors = true) else null,
         choosing = if (choosing) "accounts" else null,

@@ -608,7 +608,7 @@ class ConnectorsStepViewModelTest {
 
 class ConnectorSetupViewModelTest {
     private val schema = """
-        {"description":"I read your inbox.","required":["host","password"],
+        {"description":"Reads your inbox.","required":["host","password"],
          "properties":{"host":{"type":"string"},"password":{"type":"string","format":"password"},"port":{"type":"integer","default":993}}}
     """
 
@@ -619,7 +619,7 @@ class ConnectorSetupViewModelTest {
         vm.open(row(), failedReason = null)
         val s = vm.state.value
         assertEquals("Mail", s.title)
-        assertEquals("I read your inbox.", s.blurb)
+        assertEquals("Reads your inbox.", s.blurb)
         assertEquals(listOf("host", "password", "port"), s.form.fields.map { it.key })
         assertEquals(mapOf("port" to "993"), s.values.texts)
         assertFalse(s.canSave, "required fields are empty")

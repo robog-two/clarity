@@ -602,7 +602,7 @@ private fun hostState(edit: ItemEdit? = null): ConnectorSetupState {
     val form = ConfigForms.parse(SCHEMA)
     val values = FormValues().withItems("servers", listOf(ItemValues(github.id, githubItem)))
     return ConnectorSetupState(
-        key = MCP_HOST, title = "MCP servers", proto = "on your server", form = form, values = values, direct = true,
+        key = MCP_HOST, title = "MCP servers", proto = "On your server", form = form, values = values, direct = true,
         editor = edit, choosing = if (edit == null) "servers" else null,
     )
 }

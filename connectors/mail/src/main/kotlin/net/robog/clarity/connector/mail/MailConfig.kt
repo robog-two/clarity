@@ -211,6 +211,8 @@ private val mailAccountItem = buildJsonObject {
  */
 val mailConfigSchema: JsonObject = buildJsonObject {
     put("type", "object")
+    // Shown under the title on the app's setup screen.
+    put("description", "Send emails on your behalf or use them for personal context. Set the rules in your constitution.")
     putJsonArray("required") { add(JsonPrimitive(ACCOUNTS)) }
     putJsonObject("properties") {
         putJsonObject(ACCOUNTS) {
