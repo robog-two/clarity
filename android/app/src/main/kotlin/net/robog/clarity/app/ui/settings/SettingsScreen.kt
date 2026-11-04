@@ -173,8 +173,9 @@ fun SettingsTab(
         onDispose { lifecycle.removeObserver(observer) }
     }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { viewModel.refreshDevice() }
-    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
-        if (ok) {
+    // One step grants both: texts, and the saved contacts that let voice spell the names right.
+    val sms = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted[Manifest.permission.READ_SMS] == true) {
             viewModel.onSmsGranted()
         } else {
             viewModel.refreshDevice()
@@ -212,7 +213,7 @@ fun SettingsTab(
             onAllowFullScreen = {
                 if (Build.VERSION.SDK_INT >= 34) context.openSystem(AndroidSettings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true)
             },
-            onAllowSms = { sms.launch(Manifest.permission.READ_SMS) },
+            onAllowSms = { sms.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CONTACTS)) },
             onAllowSmsOnServer = viewModel::onSmsGranted,
             onAllowDnd = { context.openSystem(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
             onRedoOnboarding = viewModel::redoOnboarding,

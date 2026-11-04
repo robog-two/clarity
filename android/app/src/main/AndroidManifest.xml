@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- The "messages" connector (read only); the phone connector itself is a later workstream. -->
     <uses-permission android:name="android.permission.READ_SMS" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- The heads-up and the call (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The call rings at the minute set, not "around" it. The person allows it in settings. -->

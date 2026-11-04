@@ -3,6 +3,11 @@ package net.robog.clarity.app.ui.settings
 import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.CardGroup
 
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import net.robog.clarity.app.voice.RecentContactNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -76,6 +81,7 @@ class VoiceModelsViewModel(private val voice: VoiceModels) : ViewModel() {
         onChoice = { voice.setChoice(it) },
         onUseBuiltIn = { voice.setUseBuiltIn(it) },
         onMobileData = { voice.setMobileData(it) },
+        onUseContactNames = { voice.setUseContactNames(it) },
         onDelete = { voice.deleteModels() },
     )
 }
@@ -87,6 +93,7 @@ data class VoiceModelActions(
     val onChoice: (TierChoice) -> Unit = {},
     val onUseBuiltIn: (Boolean) -> Unit = {},
     val onMobileData: (Boolean) -> Unit = {},
+    val onUseContactNames: (Boolean) -> Unit = {},
     val onDelete: () -> Unit = {},
     val onClearLog: () -> Unit = {},
 )
@@ -95,7 +102,23 @@ data class VoiceModelActions(
 fun VoiceModelsSection(viewModel: VoiceModelsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
-    VoiceModelsContent(state, viewModel.actions, log = log)
+    // One step grants both: names come from the texts and the saved contacts.
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted[Manifest.permission.READ_CONTACTS] == true && granted[Manifest.permission.READ_SMS] == true) {
+            viewModel.actions.onUseContactNames(true)
+        }
+    }
+    val context = LocalContext.current
+    val actions = viewModel.actions.copy(
+        onUseContactNames = { on ->
+            if (on && !RecentContactNames.permitted(context)) {
+                ask.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS))
+            } else {
+                viewModel.actions.onUseContactNames(on)
+            }
+        },
+    )
+    VoiceModelsContent(state, actions, log = log)
 }
 
 fun tierTitle(tier: VoiceTier): String = when (tier) {
@@ -174,6 +197,12 @@ fun VoiceModelsContent(
             ToggleRow(
                 "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
                 state.mobileData, actions.onMobileData, shape = it,
+            )
+        }
+        segment {
+            ToggleRow(
+                "Use contact names", "Helps it spell the names you text most.",
+                state.useContactNames, actions.onUseContactNames, shape = it,
             )
         }
         segment {

@@ -252,7 +252,7 @@ interface AppGraph : ViewModelGraph {
     @Provides @SingleIn(AppScope::class)
     fun speechInput(context: Context, voice: VoiceModels): SpeechInput {
         val bus = SpeechBus()
-        val builtIn = AndroidSpeechInput(context, bus)
+        val builtIn = AndroidSpeechInput(context, bus, biasing = voice::cachedHotwords)
         lateinit var switching: SwitchingSpeechInput
         val own = TwoPassSpeechInput(
             bus = bus,
