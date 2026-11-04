@@ -15,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.robog.clarity.backend.persistence.ContactNameIndex
 import net.robog.clarity.backend.persistence.MessageSearch
 import net.robog.clarity.backend.persistence.NounReader
 import net.robog.clarity.backend.persistence.OpenRange
@@ -67,7 +68,7 @@ class DomainTools(
     class ListMessagesInput(
         @Description("Start of the window. $LOCAL_TIME_HINT A plain date (2026-10-26) means the start of that day.") val from: String,
         @Description("End of the window (exclusive), local time like `from`. A plain date means the end of that day, so from=until=2026-10-26 is that whole day.") val until: String,
-        @Description("Only messages sent or received by this address/number (exact, case-insensitive)") val participant: String? = null,
+        @Description("Only messages sent or received by this address/number (any formatting, case-insensitive), or by a saved contact's name") val participant: String? = null,
         @Description("Maximum messages to return (1-$MAX_LIMIT, default 50)") val limit: Int = 50,
         @Description("Email folder or label: INBOX (default), Sent, Junk, Spam, Archive, a label, or \"*\" for every folder. SMS and chat are always included.")
         val folder: String = "INBOX",
@@ -88,7 +89,8 @@ class DomainTools(
             val found = reader.messages(range, input.participant?.takeIf { it.isNotBlank() }, input.limit.clampLimit(), folder)
             if (found.isEmpty() && folder != null) return@withRange emptyFolderAnswer(folder, reader.emailFolders())
             val folders = reader.messageFolders(found.map { it.id })
-            ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty(), zone) }.asJsonArray().toString())
+            val names = reader.contactNames(found.flatMap { it.payload.handles() })
+            ToolResult.Ok(found.map { it.messageJson(folders[it.id].orEmpty(), zone, names = names) }.asJsonArray().toString())
         }
     }
 
@@ -129,7 +131,8 @@ class DomainTools(
         val hits = reader.searchMessages(MessageSearch(terms, OpenRange(from, until), channel, folder, input.limit.clampLimit()))
         if (hits.messages.isEmpty() && folder != null) return@tool emptyFolderAnswer(folder, reader.emailFolders())
         val folders = reader.messageFolders(hits.messages.map { it.id })
-        val json = hits.messages.map { it.messageJson(folders[it.id].orEmpty(), zone, snippetOf = terms) }.asJsonArray().toString()
+        val names = reader.contactNames(hits.messages.flatMap { it.payload.handles() })
+        val json = hits.messages.map { it.messageJson(folders[it.id].orEmpty(), zone, snippetOf = terms, names = names) }.asJsonArray().toString()
         ToolResult.Ok(if (hits.partial) "$json\nNo message matched every word; these match some of them." else json)
     }
 
@@ -277,14 +280,19 @@ private fun Iterable<JsonElement>.asJsonArray() = JsonArray(toList())
 
 private fun Handle.label(): String = if (displayName.isNullOrBlank()) value else "$displayName <$value>"
 
+private fun MessagePayload.handles(): List<Handle> = listOf(sender) + recipients
+
+/** With the saved contact name when the message carries none. */
+private fun Handle.label(names: ContactNameIndex): String = names.named(this).label()
+
 /** A message as the agent reads it; with [snippetOf], a short [snippet] around those terms instead of the body. */
-private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: TimeZone, snippetOf: List<SearchTerm>? = null): JsonElement = buildJsonObject {
+private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: TimeZone, snippetOf: List<SearchTerm>? = null, names: ContactNameIndex = ContactNameIndex()): JsonElement = buildJsonObject {
     put("id", id.value)
     if (folders.isNotEmpty()) put("folders", JsonArray(folders.map(::JsonPrimitive)))
     put("channel", payload.channel.name.lowercase())
     put("account", payload.account.value) // the person's own address it arrived at (a reply goes from it)
-    put("from", payload.sender.label())
-    put("to", JsonArray(payload.recipients.map { JsonPrimitive(it.label()) }))
+    put("from", payload.sender.label(names))
+    put("to", JsonArray(payload.recipients.map { JsonPrimitive(it.label(names)) }))
     payload.subject?.let { put("subject", it) }
     put("sentAt", agentTime(payload.sentAt, zone))
     payload.threadRef?.let { put("thread", it) }
