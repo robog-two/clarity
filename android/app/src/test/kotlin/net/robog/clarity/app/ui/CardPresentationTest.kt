@@ -20,7 +20,7 @@ import net.robog.clarity.shared.governance.Urgency
 
 class CardPresentationTest {
     @Test fun taskStatusWords() {
-        assertEquals("waits for you", taskStatusLabel(AgentTask.Status.WAITING_FOR_YOU))
+        assertEquals("needs you", taskStatusLabel(AgentTask.Status.WAITING_FOR_YOU))
         assertEquals("done", taskStatusLabel(AgentTask.Status.DONE))
         assertEquals(AgentTask.Status.entries.size, AgentTask.Status.entries.map(::taskStatusLabel).toSet().size)
     }
@@ -28,14 +28,14 @@ class CardPresentationTest {
     @Test fun approveButtonSaysWhatItDoes() {
         assertEquals("send update", approveLabel(ActionKind.MOVE_EVENT))
         assertEquals("send", approveLabel(ActionKind.SEND_EMAIL))
-        assertEquals("ok", approveLabel(ActionKind.READ_DOCUMENT))
+        assertEquals("approve", approveLabel(ActionKind.READ_DOCUMENT))
     }
 
     @Test fun proposalsShowButtonsOnlyWhileHeld() {
         assertNull(heldStatusLabel(HeldAction.Status.HELD))
         assertEquals("done", heldStatusLabel(HeldAction.Status.EXECUTED))
         assertEquals("not now", heldStatusLabel(HeldAction.Status.DECLINED))
-        assertEquals("blocked by your lines", heldStatusLabel(HeldAction.Status.BLOCKED))
+        assertEquals("blocked by your rules", heldStatusLabel(HeldAction.Status.BLOCKED))
     }
 
     @Test fun kickerUsesTheActionSummary() {
@@ -44,6 +44,6 @@ class CardPresentationTest {
             ProposedAction.MoveEvent("k", "sends Dana an update", EntityId("e"), T0, T0, true),
             GuardVerdict(Decision.ASK, rationale = "r"), "view", urgency = Urgency.NORMAL, status = HeldAction.Status.HELD,
         )
-        assertEquals("needs your OK · sends Dana an update", proposalKicker(held))
+        assertEquals("Needs your OK, sends Dana an update", proposalKicker(held))
     }
 }

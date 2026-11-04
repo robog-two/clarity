@@ -116,7 +116,7 @@ class DraftReviewViewModel(
             }
             if (rule != null) {
                 (alwaysAllow.save(held, rule.first, rule.second) as? ApiResult.Failure)?.let { failed ->
-                    _state.update { it.copy(requesting = false, message = "The rule wasn’t saved: ${failed.error.sentence()}") }
+                    _state.update { it.copy(requesting = false, message = "Rule not saved. ${failed.error.sentence()}") }
                     if (r == ApprovalResult.Proceed) return@launch
                 }
             }

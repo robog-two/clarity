@@ -60,8 +60,8 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
                 ID_INCOMING,
                 NotificationCompat.Builder(context, style.channel)
                     .setSmallIcon(R.drawable.ic_notification)
-                    .setContentTitle("Time for your morning meeting")
-                    .setContentText("Open the app when you’re ready.")
+                    .setContentTitle("Morning meeting time")
+                    .setContentText("Tap to open Clarity.")
                     .setCategory(NotificationCompat.CATEGORY_REMINDER)
                     .setPriority(NotificationCompat.PRIORITY_HIGH)
                     .setAutoCancel(true)
@@ -72,7 +72,7 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
         }
         val builder = NotificationCompat.Builder(context, style.channel)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentText("morning meeting · about 8 min")
+            .setContentText("Morning meeting, about 8 minutes")
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
@@ -104,14 +104,14 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
     override fun missed() {
         val notification = NotificationCompat.Builder(context, CallChannels.HEADS_UP)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Missed call from $AGENT_NAME")
-            .setContentText("morning meeting · call back when you’re ready")
+            .setContentTitle("Missed morning meeting")
+            .setContentText("Call back when ready.")
             .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
             .setSilent(true)
             .setAutoCancel(true)
             .setContentIntent(callScreen(answer = true, code = 11))
             .addAction(0, "Call back", callScreen(answer = true, code = 12))
-            .addAction(0, "Ring in $SNOOZE_MINUTES min", decline())
+            .addAction(0, "Ring in $SNOOZE_MINUTES minutes", decline())
             .build()
         manager.notify(ID_MISSED, notification)
     }
@@ -176,7 +176,7 @@ class AndroidCallNotifier(private val context: Context) : CallNotifier {
         /** The ongoing call notification, which [OngoingCallService] runs in the foreground with. */
         const val ID_ONGOING = 9103
         private const val TAG = "CallNotifier"
-        private const val AGENT_NAME = "Personal Agent"
+        private const val AGENT_NAME = "Clarity"
         private const val ID_HEADS_UP = 9101
         private const val ID_INCOMING = 9102
         private const val ID_MISSED = 9104

@@ -59,14 +59,14 @@ class VoiceLoopTest {
         val r = Rig(FakeFirstPass(), decode = { "" })
         r.feed(speech(4) + silence(3_600))
         assertEquals(listOf("w4"), r.finals)
-        assertTrue(r.log.any { "second pass nothing" in it && "kept the live words" in it }, r.log.toString())
+        assertTrue(r.log.any { "second pass nothing" in it && "Kept the live words" in it }, r.log.toString())
     }
 
     @Test fun theLogTellsEachPhraseAndWhatBothPassesHeard() {
         val r = Rig(FakeFirstPass())
         r.feed(speech(3) + silence(3_600))
-        assertTrue(r.log.any { it.startsWith("Phrase 0.0 closed") && "live “w3”" in it }, r.log.toString())
-        assertTrue(r.log.any { it == "Phrase 0.0: second pass “W3”" }, r.log.toString())
-        assertTrue(r.log.any { it == "Message 0 sent: “W3”" }, r.log.toString())
+        assertTrue(r.log.any { it.startsWith("Phrase 0.0 closed") && "Live “w3”" in it }, r.log.toString())
+        assertTrue(r.log.any { it == "Phrase 0.0 second pass “W3”" }, r.log.toString())
+        assertTrue(r.log.any { it == "Message 0 sent “W3”" }, r.log.toString())
     }
 }

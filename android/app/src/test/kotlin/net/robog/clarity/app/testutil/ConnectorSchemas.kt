@@ -8,7 +8,7 @@ import kotlinx.serialization.json.jsonObject
 val MAIL_ACCOUNTS_SCHEMA_JSON = """
 {
   "type": "object",
-  "description": "I read your inboxes and save drafts.",
+  "description": "Reads your inboxes and saves drafts.",
   "required": ["accounts"],
   "properties": {
     "accounts": {

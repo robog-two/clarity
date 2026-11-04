@@ -317,7 +317,7 @@ class OwnStateTools(
     class UpdateTaskInput(
         @Description("Existing task id; omit to create a task.") val id: String? = null,
         @Description("Short title, e.g. \"Reply to Dana\".") val title: String? = null,
-        @Description("One line of status, e.g. \"mail · waits for your review\".") val detail: String? = null,
+        @Description("One line of status, e.g. \"mail, waits for your review\".") val detail: String? = null,
         val status: AgentTask.Status? = null,
         @Description("The held action this task waits on, if any.") val heldActionId: String? = null,
     )

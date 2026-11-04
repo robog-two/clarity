@@ -84,12 +84,12 @@ object CallChannels {
         ChannelSpec(HEADS_UP, "Heads-up before the call", ChannelSpec.Importance.DEFAULT),
         ChannelSpec(
             RING, "Morning call", ChannelSpec.Importance.HIGH,
-            description = "Rings like a phone call when your morning meeting starts",
+            description = "Rings for the morning meeting",
             ringtone = true, vibration = RING_VIBRATION, publicOnLockScreen = true,
         ),
         ChannelSpec(
             NOTICE, "Morning call reminder", ChannelSpec.Importance.HIGH,
-            description = "When you chose “Notify me” instead of a call", publicOnLockScreen = true,
+            description = "Reminder instead of a call", publicOnLockScreen = true,
         ),
         ChannelSpec(ONGOING, "Call in progress", ChannelSpec.Importance.LOW),
     )
@@ -119,9 +119,10 @@ fun incomingStyle(presentation: IncomingPresentation): IncomingStyle? = when (pr
 }
 
 /** The heads-up title from the prototype. */
-const val HEADS_UP_TITLE = "We’re scheduled in 10! :)"
+const val HEADS_UP_TITLE = "Your call is in 10 minutes"
 
-fun headsUpTitle(minutes: Int): String = if (minutes == 10) HEADS_UP_TITLE else "We’re scheduled in $minutes! :)"
+fun headsUpTitle(minutes: Int): String =
+    if (minutes == 10) HEADS_UP_TITLE else if (minutes == 1) "Your call is in 1 minute" else "Your call is in $minutes minutes"
 
 /**
  * The heads-up body: the agent's own first line if the prep job left one in the feed (newest agent
@@ -133,5 +134,5 @@ fun headsUpBody(callAt: LocalTime, items: List<FeedItem>, now: Instant, window: 
         .maxByOrNull { it.seq }
         ?.cards?.filterIsInstance<Card.Text>()?.firstOrNull()?.text
         ?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim()
-    return prepared?.takeIf { it.isNotEmpty() } ?: "I’ll call at ${formatTime(callAt)}."
+    return prepared?.takeIf { it.isNotEmpty() } ?: "Call at ${formatTime(callAt)}."
 }

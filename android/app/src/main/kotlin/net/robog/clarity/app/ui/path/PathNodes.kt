@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.path
 
+import androidx.compose.foundation.border
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -64,7 +65,7 @@ import net.robog.clarity.shared.path.Outcome
 import net.robog.clarity.shared.path.PathItem
 
 /** What a node looks like: its shape, fill, the glyph on it, and whether it turns (work going on). */
-data class NodeLook(val shape: RoundedPolygon, val fill: Color, val onFill: Color, val icon: ImageVector?, val spinning: Boolean = false)
+data class NodeLook(val shape: RoundedPolygon, val fill: Color, val onFill: Color, val icon: ImageVector?, val spinning: Boolean = false, val ring: Boolean = false)
 
 /**
  * The node of an item, in the status language Today uses: Sage cookies for work done, the Sage
@@ -76,7 +77,7 @@ data class NodeLook(val shape: RoundedPolygon, val fill: Color, val onFill: Colo
 @Composable
 fun nodeLook(item: PathItem, running: Boolean = false): NodeLook {
     val c = MaterialTheme.colorScheme
-    val quiet = NodeLook(MaterialShapes.Circle, c.surfaceContainerHighest, c.onSurfaceVariant, null)
+    val quiet = NodeLook(MaterialShapes.Circle, c.surfaceContainerHighest, c.onSurfaceVariant, null, ring = true)
     return when (item) {
         is PathItem.Heard -> quiet.copy(
             icon = when (item.from) {
@@ -85,7 +86,7 @@ fun nodeLook(item: PathItem, running: Boolean = false): NodeLook {
                 PathItem.Heard.Source.EVENT -> Icons.Outlined.Notifications
             },
         )
-        is PathItem.Said -> NodeLook(MaterialShapes.Puffy, c.surfaceContainerHigh, c.onSurface, Icons.Outlined.ChatBubbleOutline)
+        is PathItem.Said -> NodeLook(MaterialShapes.Puffy, c.surfaceContainerHigh, c.onSurface, Icons.Outlined.ChatBubbleOutline, ring = true)
         is PathItem.Action -> when (item.outcome) {
             Outcome.OK -> NodeLook(MaterialShapes.Cookie6Sided, c.secondaryContainer, c.onSecondaryContainer, actionIcon(item.tool))
             Outcome.HELD -> NodeLook(MaterialShapes.Cookie4Sided, c.secondary, c.onSecondary, Icons.Outlined.PanTool)
@@ -95,7 +96,7 @@ fun nodeLook(item: PathItem, running: Boolean = false): NodeLook {
         is PathItem.Browser -> browserLook(item, running)
         is PathItem.Helper -> NodeLook(
             MaterialShapes.Flower, c.tertiaryContainer, c.onTertiaryContainer, Icons.Outlined.AccountTree,
-            spinning = item.status == "running" || item.status == "queued",
+            spinning = item.status == "running" || item.status == "queued", ring = true,
         )
         is PathItem.Finished ->
             if (item.ok) NodeLook(MaterialShapes.Circle, c.secondaryContainer, c.onSecondaryContainer, Icons.Outlined.Check)
@@ -120,7 +121,7 @@ private fun browserLook(item: PathItem.Browser, running: Boolean): NodeLook {
         )
         StepOutcome.HELD -> NodeLook(MaterialShapes.Cookie4Sided, c.secondary, c.onSecondary, Icons.Outlined.PanTool)
         StepOutcome.REFUSED -> NodeLook(MaterialShapes.Diamond, c.primaryContainer, c.onPrimaryContainer, Icons.Outlined.Shield)
-        StepOutcome.NOT_FOUND -> NodeLook(MaterialShapes.Ghostish, c.surfaceContainerHighest, c.onSurfaceVariant, Icons.Outlined.SearchOff)
+        StepOutcome.NOT_FOUND -> NodeLook(MaterialShapes.Ghostish, c.surfaceContainerHighest, c.onSurfaceVariant, Icons.Outlined.SearchOff, ring = true)
         StepOutcome.FAILED -> NodeLook(MaterialShapes.Burst, c.error, c.onError, Icons.Outlined.Close)
     }
 }
@@ -173,7 +174,10 @@ fun PathNode(look: NodeLook, modifier: Modifier = Modifier, size: Dp = 32.dp) {
     }
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
         // Only the shape turns; the glyph stays upright.
-        Box(Modifier.matchParentSize().graphicsLayer { rotationZ = turn }.background(fill, MorphShape(morph, progress.value)))
+        val nodeShape = MorphShape(morph, progress.value)
+        // Fills this close to the page colour get a ring so the node itself is visible (3:1).
+        val ringed = if (look.ring) Modifier.border(1.5.dp, MaterialTheme.colorScheme.outline, nodeShape) else Modifier
+        Box(Modifier.matchParentSize().graphicsLayer { rotationZ = turn }.background(fill, nodeShape).then(ringed))
         look.icon?.let { Icon(it, contentDescription = null, tint = look.onFill, modifier = Modifier.size(size * 0.5f)) }
     }
 }

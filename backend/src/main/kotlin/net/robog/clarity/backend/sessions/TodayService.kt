@@ -5,7 +5,9 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
 import kotlin.time.Instant
+import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.minus
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.backend.agent.NudgeStore
@@ -26,7 +28,7 @@ fun localDate(now: Instant, zoneId: String): LocalDate = now.toLocalDateTime(zon
 fun startOfDay(date: LocalDate, zoneId: String): Instant = date.atStartOfDayIn(zoneOrUtc(zoneId))
 
 /**
- * Pure: Today from the day's plan, the open tasks and those finished today, the number of held
+ * Pure: Today from the day's plan, the open tasks and those finished in the last two local days, the number of held
  * actions, the pending nudges and whether a morning call started today ([callStarted]).
  */
 fun todayOf(
@@ -48,6 +50,12 @@ fun todayOf(
     nudges = nudges,
 )
 
+/** Today lists tasks that finished since the start of the person's local day this many days ago. The app hides older ones; the tasks and audit rows stay on the server. */
+val TODAY_KEEPS: DatePeriod = DatePeriod(days = 2)
+
+/** Pure: the instant Today starts listing finished tasks from, the start of the local day [TODAY_KEEPS] before [date]. */
+fun todayKeepsSince(date: LocalDate, zoneId: String): Instant = startOfDay(date.minus(TODAY_KEEPS), zoneId)
+
 /** `GET /api/v1/today`. */
 @Inject
 @SingleIn(AppScope::class)
@@ -63,9 +71,9 @@ class TodayService(
     suspend fun today(): Today {
         val zone = settings.current().homeZone
         val date = localDate(clock.now(), zone)
-        // Open tasks plus those finished since local midnight, so a quick helper stays openable.
+        // Open tasks plus those finished in the last two local days, so a task stays openable to catch up on.
         val midnight = startOfDay(date, zone)
-        val doing = tasks.list(finishedSince = midnight)
+        val doing = tasks.list(finishedSince = todayKeepsSince(date, zone))
         val callStarted = sessions.startedSince(SessionKind.MORNING_CALL, midnight)
         return todayOf(date, plans.get(date), doing, held.count(PENDING_STATUSES).toInt(), nudges.pending(), callStarted)
     }

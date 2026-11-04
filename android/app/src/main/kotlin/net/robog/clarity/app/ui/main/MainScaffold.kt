@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.main
 
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -114,10 +117,11 @@ fun TabBar(selected: MainTab, heldWaiting: Int, onSelect: (MainTab) -> Unit) {
             NavigationBarItem(
                 selected = t == selected,
                 onClick = { onSelect(t) },
+                modifier = if (t == MainTab.Held && heldWaiting > 0) Modifier.semantics { stateDescription = heldTabLabel(heldWaiting) } else Modifier,
                 icon = {
                     if (t == MainTab.Held && heldWaiting > 0) {
-                        androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge { Text("$heldWaiting") } }) {
-                            Icon(t.icon(), contentDescription = heldTabLabel(heldWaiting))
+                        androidx.compose.material3.BadgedBox(badge = { androidx.compose.material3.Badge(Modifier.clearAndSetSemantics {}) { Text("$heldWaiting") } }) {
+                            Icon(t.icon(), contentDescription = null)
                         }
                     } else {
                         Icon(t.icon(), contentDescription = null)

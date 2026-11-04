@@ -1,5 +1,7 @@
 package net.robog.clarity.app.voice
 
+import net.robog.clarity.app.ui.theme.Space
+
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -10,6 +12,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MicOff
+import androidx.compose.material3.Icon
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -30,24 +42,33 @@ import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.theme.ClarityTheme
 import net.robog.clarity.app.ui.theme.clarityText
 
-/** "● Listening" / "● Mic on" / "○ Muted" (`.lis`, idle variant when not hearing). */
+/** A mic icon and "Listening" / "Mic on" / "Muted" (`.lis`, idle variant when not hearing); a change is announced. */
 @Composable
 fun MicStateChip(state: MicChipState, modifier: Modifier = Modifier) {
     val scheme = MaterialTheme.colorScheme
     val (label, container, content) = when (state) {
-        MicChipState.Listening -> Triple("● Listening", scheme.tertiaryContainer, scheme.onTertiaryContainer)
-        MicChipState.MicOn -> Triple("● Mic on", scheme.surfaceContainer, scheme.onSurfaceVariant)
-        MicChipState.Muted -> Triple("○ Muted", scheme.surfaceContainer, scheme.onSurfaceVariant)
+        MicChipState.Listening -> Triple("Listening", scheme.tertiaryContainer, scheme.onTertiaryContainer)
+        MicChipState.MicOn -> Triple("Mic on", scheme.surfaceContainer, scheme.onSurfaceVariant)
+        MicChipState.Muted -> Triple("Muted", scheme.surfaceContainer, scheme.onSurfaceVariant)
         MicChipState.Off -> return
     }
-    Text(
-        label,
+    Row(
         modifier
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
             .background(container, MaterialTheme.shapes.small)
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        color = content,
-        style = MaterialTheme.clarityText.kicker,
-    )
+            .padding(horizontal = Space.Medium, vertical = Space.Small),
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // The text names the state, so the icon is only a picture.
+        Icon(
+            if (state == MicChipState.Muted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
+            contentDescription = null,
+            tint = content,
+            modifier = Modifier.size(16.dp),
+        )
+        Text(label, color = content, style = MaterialTheme.clarityText.kicker)
+    }
 }
 
 /**
@@ -83,15 +104,15 @@ fun MicPermissionGate(modifier: Modifier = Modifier, content: @Composable () -> 
 @Composable
 fun MicRationale(refused: Boolean, onAllow: () -> Unit, onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
     InfoBox(modifier) {
-        Text("Allow the microphone?", style = MaterialTheme.typography.titleMedium)
+        Text("Allow microphone?", style = MaterialTheme.typography.titleMedium)
         Hint(
-            "I turn your speech into text on this phone. Only the words are sent to your server, never the audio.",
+            "Speech becomes text on this phone. Audio never leaves it.",
         )
         if (refused) {
-            Hint("The microphone is blocked. Turn it on in the app settings to talk to me.")
-            PrimaryButton("open settings", onOpenSettings)
+            Hint("Microphone blocked. Turn it on in settings.")
+            PrimaryButton("Open settings", onOpenSettings)
         } else {
-            PrimaryButton("allow microphone", onAllow)
+            PrimaryButton("Allow", onAllow)
         }
     }
 }
@@ -100,7 +121,7 @@ fun MicRationale(refused: Boolean, onAllow: () -> Unit, onOpenSettings: () -> Un
 @Composable
 private fun MicChipsPreview() {
     ClarityTheme {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(Space.Medium), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             MicStateChip(MicChipState.Listening)
             MicStateChip(MicChipState.MicOn)
             MicStateChip(MicChipState.Muted)

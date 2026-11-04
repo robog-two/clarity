@@ -21,12 +21,12 @@ fun kindLabel(kind: ReportKind): String = when (kind) {
     ReportKind.SITE -> "Site"
 }
 
-/** Pure: when, the way a list of things says it: "Today, 9:41", "Yesterday", "Oct 26", "Oct 26, 2025". */
+/** Pure: when, the way a list of things says it: "Today at 9:41", "Yesterday", "Oct 26", "Oct 26, 2025". */
 fun goodsWhen(at: Instant, now: Instant, zone: TimeZone): String {
     val day = at.toLocalDateTime(zone).date
     val today = now.toLocalDateTime(zone).date
     return when {
-        day == today -> "Today, ${formatClock(at, zone)}"
+        day == today -> "Today at ${formatClock(at, zone)}"
         day == today.minus(1, kotlinx.datetime.DateTimeUnit.DAY) -> "Yesterday"
         day.year == today.year -> shortDate(day)
         else -> "${shortDate(day)}, ${day.year}"
@@ -36,19 +36,19 @@ fun goodsWhen(at: Instant, now: Instant, zone: TimeZone): String {
 private fun shortDate(day: LocalDate): String =
     day.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3) + " " + day.day
 
-/** Pure: the Goods tab's rows, the most recently changed first: "Document · Today, 9:41 · revision 2". */
+/** Pure: the Goods tab's rows, the most recently changed first: "Document. Today at 9:41. Revision 2". */
 fun goodsRows(reports: List<ReportSummary>, now: Instant, zone: TimeZone): List<GoodsRow> =
     reports.sortedByDescending { it.updatedAt }.map { r ->
-        val revised = if (r.latestRevision > 1) " · revision ${r.latestRevision}" else ""
-        GoodsRow(r.id, r.title, "${kindLabel(r.kind)} · ${goodsWhen(r.updatedAt, now, zone)}$revised")
+        val revised = if (r.latestRevision > 1) ". Revision ${r.latestRevision}" else ""
+        GoodsRow(r.id, r.title, "${kindLabel(r.kind)}. ${goodsWhen(r.updatedAt, now, zone)}$revised")
     }
 
-/** Pure: the line under the viewer's title: "Document · revision 3 · Today, 9:41", or when it was written. */
+/** Pure: the line under the viewer's title: "Document. Revision 3. Today at 9:41", or when it was written. */
 fun revisionLine(detail: ReportDetail, now: Instant, zone: TimeZone): String {
     val latest = detail.revisions.maxByOrNull { it.n }
     val kind = kindLabel(detail.kind)
-    return if (latest == null || latest.n == 1) "$kind · ${goodsWhen(detail.createdAt, now, zone)}"
-    else "$kind · revision ${latest.n} · ${goodsWhen(latest.createdAt, now, zone)}"
+    return if (latest == null || latest.n == 1) "$kind. ${goodsWhen(detail.createdAt, now, zone)}"
+    else "$kind. Revision ${latest.n}. ${goodsWhen(latest.createdAt, now, zone)}"
 }
 
 /** Pure: "1 download", "3 downloads". */

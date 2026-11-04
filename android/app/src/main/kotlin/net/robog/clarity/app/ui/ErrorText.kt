@@ -2,13 +2,13 @@ package net.robog.clarity.app.ui
 
 import net.robog.clarity.app.data.ApiError
 
-/** One plain sentence for the person, for any failed call. */
+/** One plain sentence for the person, for any failed call. Active voice, and what to do comes first. */
 fun ApiError.sentence(): String = when (this) {
-    is ApiError.Unreachable -> "Can’t reach your server right now."
-    is ApiError.Unauthorized, is ApiError.Forbidden -> "Your server doesn’t accept this phone. Set it up again in settings."
-    is ApiError.NotFound -> "Your server doesn’t have this yet."
-    is ApiError.Http -> if (status == 409) "I’m still working on the last step. Try again in a moment." else
-        problem?.detail ?: problem?.title ?: "Your server answered with an error ($status)."
-    is ApiError.Malformed -> "Your server sent something I couldn’t read."
-    ApiError.NotConfigured -> "This phone isn’t connected to a server yet."
+    is ApiError.Unreachable -> "Can’t reach server. Check connection."
+    is ApiError.Unauthorized, is ApiError.Forbidden -> "Server rejected this phone. Set it up again in Settings."
+    is ApiError.NotFound -> "Server can’t show this yet. Update it and try again."
+    is ApiError.Http -> if (status == 409) "Still busy. Try again shortly." else
+        problem?.detail ?: problem?.title ?: "Server error ($status). Try again."
+    is ApiError.Malformed -> "Couldn’t read the server’s answer. Try again."
+    ApiError.NotConfigured -> "Connect to your server in Settings."
 }

@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.onboarding
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,6 +26,7 @@ import net.robog.clarity.app.connector.ItemPreset
 import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PhoneConnectorKind
 import net.robog.clarity.app.ui.components.ErrorBox
+import net.robog.clarity.app.ui.components.CardGroup
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.LoadingSpinner
@@ -63,7 +66,7 @@ fun ConnectorsContent(
     val nothingListed = state.items.isEmpty() && !state.loading
     StepScaffold(
         step = OnboardingStep.Connectors,
-        backLabel = "← model",
+        backLabel = "model",
         onBack = onBack,
         title = "Where your day lives",
         footer = {
@@ -80,34 +83,26 @@ fun ConnectorsContent(
             if (state.allSynced) {
                 PrimaryButton("continue", onContinue, Modifier.fillMaxWidth())
             } else {
-                PrimaryButton(if (state.syncing) "syncing…" else "sync all", onSyncAll, Modifier.fillMaxWidth(), enabled = state.canSync)
+                PrimaryButton(if (state.syncing) "syncing" else "sync all", onSyncAll, Modifier.fillMaxWidth(), enabled = state.canSync)
             }
         },
     ) {
-        if (!nothingListed) Hint("Tap each one to set it up. Then sync, and I’ll test them all.")
-        if (state.notRunning.isNotEmpty()) {
-            Hint(
-                "${state.notRunning.joinToString { it.row.title }} isn’t running on your server. " +
-                    "You can set it up later; it won’t stop you here.",
-            )
-        }
-        if (state.unavailable) Hint("This server can’t list its connectors yet. Only the ones on this phone are shown.")
+        if (!nothingListed) Hint("Set up each one. Then sync all.")
+        if (state.unavailable) Hint("Server connectors unavailable. Showing this phone only.")
         state.error?.let { ErrorBox("Couldn’t load the connectors.", "Check your connection and try again.") }
-        Column {
-            state.items.forEach { item ->
-                SelectRow(
-                    title = item.row.title,
-                    caption = item.caption,
-                    status = item.status,
-                    statusAlpha = if (item.saved || item.test != null) 1f else 0.72f,
-                    onClick = { onOpen(item) },
-                    statusColor = when {
-                        item.notRunning -> MaterialTheme.colorScheme.onSurfaceVariant
-                        item.test is TestState.Failed -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.primary
-                    },
-                )
-            }
+        CardGroup(state.items) { item, shape, _ ->
+            SelectRow(
+                title = item.row.title,
+                caption = item.caption,
+                status = item.status,
+                onClick = { onOpen(item) },
+                statusColor = when {
+                    item.notRunning -> MaterialTheme.colorScheme.onSurfaceVariant
+                    item.test is TestState.Failed -> MaterialTheme.colorScheme.error
+                    else -> MaterialTheme.colorScheme.primary
+                },
+                shape = shape,
+            )
         }
     }
 }
@@ -124,7 +119,7 @@ fun ConnectorSetupScreen(
     onSaved: () -> Unit,
     onBack: () -> Unit,
     step: OnboardingStep? = OnboardingStep.ConnectorSetup,
-    backLabel: String = "← connectors",
+    backLabel: String = "connectors",
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(state.saved) {
@@ -191,7 +186,7 @@ fun ConnectorSetupContent(
     state: ConnectorSetupState,
     actions: SetupActions,
     step: OnboardingStep? = OnboardingStep.ConnectorSetup,
-    backLabel: String = "← connectors",
+    backLabel: String = "connectors",
 ) {
     val editor = state.editor
     val choosing = state.choosing
@@ -239,9 +234,9 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
         val failed = state.failedReason
         if (failed != null) {
             ErrorBox(
-                "Sync failed · $failed",
+                "Sync failed. $failed",
                 listOfNotNull(
-                    if (state.form.hasSecrets) "Open the account, or tap the password, to enter it again." else null,
+                    if (state.form.hasSecrets) "Enter the password again." else null,
                     problem,
                 ).joinToString("\n").ifEmpty { null },
             )
@@ -270,13 +265,13 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
             )
         }
         if (state.form.fields.any { it.kind == FieldKind.COLLECTION }) {
-            Hint("${sentenceCase(state.noun.many)} are stored when you tap ${state.saveLabel}.")
+            Hint("${sentenceCase(state.noun.many)} save when you tap ${sentenceCase(state.saveLabel)}.")
         }
         if (state.phone != null) {
             InfoBox {
                 Text(if (state.allowed) "Access allowed" else "Allow access to ${state.title}?", style = MaterialTheme.typography.titleMedium)
-                Hint("Read only. You can turn this off in settings.")
-                if (state.allowed) StatusLine("● Allowed")
+                Hint("Read only. Change it in Settings.")
+                if (state.allowed) StatusLine("Allowed")
             }
         }
     }
@@ -299,12 +294,13 @@ private fun PresetChooserContent(state: ConnectorSetupState, collection: String,
             presets.forEach { p ->
                 SelectRow(
                     p.title,
-                    p.description.orEmpty().ifEmpty { "I fill in ${p.title}’s server settings" },
-                    "→",
+                    p.description.orEmpty().ifEmpty { "Fills in server settings" },
+                    "",
                     { actions.onChoosePreset(collection, p) },
+                    chevron = true,
                 )
             }
-            SelectRow(noun.otherTitle, noun.otherCaption, "→", { actions.onChoosePreset(collection, null) })
+            SelectRow(noun.otherTitle, noun.otherCaption, "", { actions.onChoosePreset(collection, null) }, chevron = true)
         }
     }
 }
@@ -316,7 +312,7 @@ private fun HowToFix(detail: String) {
     Column {
         androidx.compose.material3.TextButton(
             onClick = { open = !open },
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 12.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = Space.Medium),
         ) {
             Text("How to fix")
             androidx.compose.material3.Icon(
@@ -343,7 +339,7 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
         step = step,
         backLabel = backTo(state),
         onBack = actions.onCancelItem,
-        kicker = if (editor.isNew) "new ${noun.one}" else "edit ${noun.one}",
+        kicker = if (title == null) null else if (editor.isNew) "new ${noun.one}" else "edit ${noun.one}",
         title = title ?: sentenceCase(if (editor.isNew) "new ${noun.one}" else noun.one),
         footer = {
             PrimaryButton("save ${noun.one}", actions.onSaveItem, Modifier.fillMaxWidth(), busy = state.saving)
@@ -365,11 +361,11 @@ private fun ItemEditorContent(state: ConnectorSetupState, editor: ItemEdit, acti
             val changed = simple.diverged(editor.values)
             if (changed.isNotEmpty()) {
                 val names = form.fields.filter { it.key in changed }.joinToString { "“${it.label}”" }
-                Hint("$names changed under Advanced settings, so the answers above no longer change ${if (changed.size == 1) "it" else "them"}.")
+                Hint("$names changed under Advanced settings. The answers above no longer apply.")
             }
             AdvancedToggle(simple.advanced, actions.onToggleAdvanced)
             if (simple.advanced) {
-                Hint("Everything this ${noun.one} is set up with. What you change here is kept as it is.")
+                Hint("All settings for this ${noun.one}.")
                 ItemFields(form, editor, errors, actions, noun, skip = simple.form.inputs.mapNotNull { it.property }.toSet())
             }
         }
@@ -406,13 +402,13 @@ private fun ItemFields(form: ConfigForm, editor: ItemEdit, errors: Map<String, n
 }
 
 /** Where back goes from an item: the connector, or (opened for one item) the screen that opened it. */
-private fun backTo(state: ConnectorSetupState): String = if (state.direct && state.noun == ItemNoun.Server) "MCP servers" else state.title
+private fun backTo(state: ConnectorSetupState): String = if (state.direct && state.noun == ItemNoun.Server) "Tool servers" else state.title
 
 private fun SetupProblem.message(): String = when (this) {
-    SetupProblem.NoSealingKey -> "This connector hasn’t published its encryption key yet, so I can’t send the password safely. Try again in a minute."
-    SetupProblem.NotAvailable -> "This server can’t store connector settings yet."
-    SetupProblem.Unreachable -> "Could not reach the server."
-    SetupProblem.Other -> "The server did not accept the settings."
+    SetupProblem.NoSealingKey -> "Can’t send the password securely yet. Try again soon."
+    SetupProblem.NotAvailable -> "Your server can’t store connector settings yet."
+    SetupProblem.Unreachable -> "Can’t reach server."
+    SetupProblem.Other -> "Server rejected the settings."
 }
 
 // --- previews ---
@@ -425,9 +421,9 @@ private val PREVIEW_SCHEMA = Json.parseToJsonElement(
       "items":{"type":"object","required":["label","imapHost","username","password"],"properties":{
         "id":{"type":"string","readOnly":true},
         "label":{"type":"string","title":"Name","examples":["Work"]},
-        "imapHost":{"type":"string","title":"IMAP host"},
-        "imapPort":{"type":"integer","title":"IMAP port","default":993},
-        "imapSecurity":{"type":"string","title":"IMAP security","enum":["ssl","starttls","none"],"x-enum-titles":["SSL","STARTTLS","None"],"default":"ssl"},
+        "imapHost":{"type":"string","title":"Mail server"},
+        "imapPort":{"type":"integer","title":"Mail port","default":993},
+        "imapSecurity":{"type":"string","title":"Mail security","enum":["ssl","starttls","none"],"x-enum-titles":["SSL","STARTTLS","None"],"default":"ssl"},
         "username":{"type":"string"},
         "password":{"type":"string","format":"password"},
         "folders":{"type":"array","items":{"type":"string"},"default":["INBOX"]}}}}}}
@@ -443,8 +439,8 @@ private fun previewState(editing: Boolean = false, choosing: Boolean = false): C
     )
     val values = FormValues().withItems("accounts", listOf(item("k3j9x2p1", "Work", "sam@work.example"), item("m4n8q7r2", "Personal", "sam@icloud.com")))
     return ConnectorSetupState(
-        key = "mail", title = "Mail", proto = "imap · on your server", blurb = "I read your inbox and save drafts.",
-        form = form, values = values, lastTest = TestLine("Work: 4,218 messages · Personal: password rejected", ok = false),
+        key = "mail", title = "Mail", proto = "On your server", blurb = "Send emails on your behalf or use them for personal context. Set the rules in your constitution.",
+        form = form, values = values, lastTest = TestLine("Work: 4,218 messages; Personal: password rejected", ok = false),
         editor = if (editing) ItemEdit("accounts", "k3j9x2p1", false, values.items("accounts").first().values, showErrors = true) else null,
         choosing = if (choosing) "accounts" else null,
     )
@@ -481,8 +477,8 @@ private fun NotRunningPreview() = ClarityTheme {
         ConnectorSetupContent(
             ConnectorSetupState(
                 key = "dav", title = "Dav", proto = NOT_RUNNING, notRunning = true,
-                blurb = "Dav hasn’t started on your server yet, so there’s nothing to set up. Once it’s running, tap Check again.",
-                adminHint = "Whoever runs your server can start it: it’s the “dav” profile in the server’s compose setup.",
+                blurb = "Dav isn’t running on your server. Start it and check again.",
+                adminHint = "Ask your admin to start it. Profile “dav” in the compose setup.",
             ),
             SetupActions(),
         )

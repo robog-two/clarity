@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -57,7 +59,7 @@ fun NotNow(
                 held,
                 onDeny = { sheet = false; onDeny() },
                 onAlways = { sheet = false; editing = true },
-                modifier = Modifier.padding(bottom = 24.dp),
+                modifier = Modifier.padding(bottom = Space.Large),
             )
         }
     }
@@ -69,13 +71,13 @@ fun NotNow(
 fun NotNowOptions(held: HeldAction, onDeny: () -> Unit, onAlways: () -> Unit, modifier: Modifier = Modifier) {
     val clear = ListItemDefaults.colors(containerColor = Color.Transparent)
     Column(modifier.fillMaxWidth()) {
-        Text(held.action.summary, Modifier.padding(horizontal = 24.dp, vertical = 8.dp), style = MaterialTheme.typography.titleMedium)
+        Text(held.action.summary, Modifier.padding(horizontal = Space.Large, vertical = Space.Small), style = MaterialTheme.typography.titleMedium)
         ListItem(
             modifier = Modifier.clickable(onClick = onDeny),
             colors = clear,
             leadingContent = { Icon(Icons.Outlined.Block, contentDescription = null) },
             headlineContent = { Text("Deny", style = MaterialTheme.clarityText.chat) },
-            supportingContent = { Text("I won’t do it, and nothing changes in your rules", style = MaterialTheme.clarityText.chatSmall) },
+            supportingContent = { Text("Rules stay the same.", style = MaterialTheme.clarityText.chatSmall) },
         )
         if (canAlwaysAllow(held)) {
             ListItem(
@@ -83,7 +85,7 @@ fun NotNowOptions(held: HeldAction, onDeny: () -> Unit, onAlways: () -> Unit, mo
                 colors = clear,
                 leadingContent = { Icon(Icons.Outlined.AutoMode, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
                 headlineContent = { Text("Approve automatically from now on", style = MaterialTheme.clarityText.chat) },
-                supportingContent = { Text("Review the rule first; this one is approved when you save it", style = MaterialTheme.clarityText.chatSmall) },
+                supportingContent = { Text("Review the rule. Saving approves this one.", style = MaterialTheme.clarityText.chatSmall) },
             )
         }
     }
@@ -100,8 +102,8 @@ fun RuleDialog(held: HeldAction, onSave: (text: String, because: String) -> Unit
         onDismissRequest = onBack,
         title = { Text("Add this rule?") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Hint("It goes in your constitution, and I’ll approve this one now.")
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                Hint("Adds it to your constitution and approves this one.")
                 OutlinedTextField(
                     value = text,
                     onValueChange = { typed = it },

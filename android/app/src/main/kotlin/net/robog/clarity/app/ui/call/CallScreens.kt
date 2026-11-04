@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.call
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +29,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.remember
@@ -99,18 +107,18 @@ fun CallContent(
 @Composable
 private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 120.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().padding(start = Space.Large, end = Space.Large, top = Space.Large * 4, bottom = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Kicker(if (state.callTime.isEmpty()) "incoming call" else "incoming call · ${state.callTime}")
-        Text("Personal Agent", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
-        Hint("Morning call · about 8 min")
+        Kicker("Incoming call")
+        Text("Clarity", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
+        Hint("About 8 minutes")
         Spacer(Modifier.weight(1f))
         RingingBell()
         Spacer(Modifier.weight(1f))
         state.message?.let { ErrorBox(it) }
-        Hint("You talk. I answer in text, on screen.", Modifier.padding(bottom = 24.dp))
+        Hint("Replies appear on screen", Modifier.padding(bottom = Space.Large))
         SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working)
     }
 }
@@ -150,18 +158,18 @@ private fun RingingBell() {
 @Composable
 private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 120.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+        Modifier.fillMaxSize().padding(start = Space.Large, end = Space.Large, top = Space.Large * 4, bottom = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
-        Kicker("snoozed")
+        Kicker("Not now")
         Text(
-            state.snoozedUntil?.let { "I’ll call again at $it." } ?: "I’ll call again soon.",
+            state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
             style = MaterialTheme.typography.headlineMedium,
         )
-        Hint("If you skip today, I’ll keep yesterday’s plan and hold nothing new.")
+        Hint("Yesterday’s plan stays")
         state.message?.let { ErrorBox(it) }
         Spacer(Modifier.weight(1f))
-        PrimaryButton("call me now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working)
+        PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working)
     }
 }
 
@@ -187,23 +195,24 @@ private fun InCallScreen(
     }
     val elapsed = if (inspection) "4:12" else state.startedAt?.let { formatElapsed(now - it) } ?: "0:00"
 
-    Column(Modifier.fillMaxSize().statusBarsPadding().imePadding()) {
+    Column(Modifier.fillMaxSize().imePadding()) {
+      Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).statusBarsPadding()) {
         Row(
-            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = 20.dp, bottom = 12.dp),
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = Space.Medium, bottom = Space.Medium),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state.mic == MicChipState.Off) Spacer(Modifier) else MicStateChip(state.mic)
-            Kicker("morning meeting · $elapsed")
+            Kicker("Morning meeting, $elapsed", Modifier.semantics { contentDescription = "Morning meeting, ${spokenElapsed(elapsed)}" })
         }
-        StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = 14.dp))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = Space.Medium))
+      }
         SessionFeed(state, Modifier.weight(1f))
+      Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
         if (!mic.granted) {
-            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
+            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
         }
-        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp)) }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) }
         ChatComposer(
             draft = state.draft,
             onDraft = onDraft,
@@ -214,9 +223,10 @@ private fun InCallScreen(
         PrimaryButton(
             primaryLabel(state.stage),
             onAdvance,
-            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = 24.dp).heightIn(min = 56.dp),
+            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = Space.Large).heightIn(min = 56.dp),
             enabled = state.canAdvance,
         )
+      }
     }
 }
 
@@ -224,40 +234,52 @@ private fun InCallScreen(
 private fun callMic(state: CallUiState) = ComposerMic(
     live = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn,
     muted = state.muted,
-    description = when {
+    description = "Microphone",
+    state = when {
+        state.pushToTalk -> if (state.mic == MicChipState.Listening) "Talking" else "Off"
+        state.muted -> "Muted"
+        else -> "On"
+    },
+    action = when {
         state.pushToTalk -> "Talk"
         state.muted -> "Unmute"
         else -> "Mute"
     },
 )
 
-/** The four stage segments: done and current filled, the rest muted, each with its label. */
+/** The four stage segments, each with its one-word label: done and current filled, the rest muted. */
 @Composable
 fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boolean = false) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        stageSegments(stage, ended).forEachIndexed { i, segment ->
-            Segment(StageLabels[i], segment)
-        }
+    val description = stageDescription(stage, ended)
+    Row(
+        modifier.fillMaxWidth().clearAndSetSemantics {
+            contentDescription = description
+            liveRegion = LiveRegionMode.Polite
+        },
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
+    ) {
+        stageSegments(stage, ended).forEachIndexed { i, segment -> Segment(StageLabels[i], segment) }
     }
 }
 
 @Composable
 private fun RowScope.Segment(label: String, state: SegmentState) {
     val scheme = MaterialTheme.colorScheme
-    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Box(
             Modifier.fillMaxWidth().height(4.dp).background(
                 when (state) {
-                    SegmentState.Done -> scheme.primary.copy(alpha = .5f)
+                    // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
+                    SegmentState.Done -> scheme.onSurfaceVariant
                     SegmentState.Current -> scheme.primary
-                    SegmentState.Todo -> scheme.secondaryContainer
+                    SegmentState.Todo -> scheme.outline
                 },
                 MaterialTheme.shapes.extraSmall,
             ),
         )
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.5.sp),
+            style = MaterialTheme.typography.labelMedium,
             color = if (state == SegmentState.Current) scheme.onSurface else scheme.onSurfaceVariant,
         )
     }
@@ -279,40 +301,40 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
     val elapsed = state.session?.let { s -> s.endedAt?.let { formatElapsed(it - s.startedAt) } }
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = 24.dp, end = 24.dp, top = 48.dp, bottom = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = Space.Large, end = Space.Large, top = Space.Large, bottom = Space.Medium),
+            verticalArrangement = Arrangement.spacedBy(Space.Medium),
         ) {
             var order = 0
-            Kicker(if (elapsed == null) "call ended" else "call ended · $elapsed")
-            Text("Your Morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
+            Kicker(if (elapsed == null) "Call ended" else "Call ended after $elapsed")
+            Text("Your morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
             if (state.plan.isNotEmpty()) PlanHero(state.plan, Modifier.springIn(order++))
-            TodayLabel("Setting up", Modifier.padding(top = 10.dp).springIn(order++))
+            TodayLabel("Setting up", Modifier.padding(top = Space.Medium).springIn(order++))
             if (state.setup.isEmpty()) {
-                Hint("Nothing to set up yet.")
+                Hint("Nothing set up")
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    state.setup.forEachIndexed { i, task ->
-                        // No Review button in the call, but a task holding something for review keeps its shape.
-                        DoingRowView(DoingRow(task, review = null), groupShape(i, state.setup.size), onReview = {}, Modifier.springIn(order++), needsYou = task.heldActionId != null)
-                    }
+                CardGroup(state.setup) { task, shape, _ ->
+                    // No Review button in the call, but a task holding something for review keeps its shape.
+                    DoingRowView(DoingRow(task, review = null), shape, onReview = {}, Modifier.springIn(order++), needsYou = task.heldActionId != null)
                 }
             }
         }
-        Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryButton("Open the app", onOpenApp, Modifier.fillMaxWidth())
-            SecondaryButton("replay the call", onReplay, Modifier.fillMaxWidth())
+        Column(Modifier.padding(start = Space.Large, end = Space.Large, bottom = Space.Large), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+            PrimaryButton("Open app", onOpenApp, Modifier.fillMaxWidth())
+            SecondaryButton("Replay call", onReplay, Modifier.fillMaxWidth())
         }
     }
 }
 
-/** "replay the call": the session's items again, read only. */
+/** "Replay the call": the session's items again, read only. */
 @Composable
 private fun ReplayScreen(state: CallUiState, onClose: () -> Unit) {
-    Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 16.dp)) {
-        Row(Modifier.padding(horizontal = ScreenGutter), verticalAlignment = Alignment.CenterVertically) {
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).statusBarsPadding().padding(horizontal = ScreenGutter, vertical = Space.Small),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             net.robog.clarity.app.ui.components.BackLink("Your morning", onClose)
         }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         SessionFeed(state.copy(live = null), Modifier.weight(1f))
     }
 }

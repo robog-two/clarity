@@ -60,7 +60,7 @@ fun deriveInterview(items: List<FeedItem>, sessionId: SessionId): InterviewView 
 fun sectionLabel(section: Section): String = when (section) {
     Section.VALUES -> "value"
     Section.HARD_LINES -> "hard line"
-    Section.AUTONOMY -> "how much I do alone"
+    Section.AUTONOMY -> "does alone"
     Section.COLLISIONS -> "priority"
     Section.PEOPLE -> "people"
     Section.REPAIR -> "repair + memory"

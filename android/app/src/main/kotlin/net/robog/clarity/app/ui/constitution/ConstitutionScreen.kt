@@ -1,5 +1,8 @@
 package net.robog.clarity.app.ui.constitution
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.springIn
+
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.ScreenGutter
 import net.robog.clarity.R
@@ -31,6 +34,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -69,13 +73,13 @@ data class AutonomySummary(val alone: List<String>, val afterReview: List<String
 
 private fun ActionKind.phrase(): String = when (this) {
     ActionKind.SAVE_DRAFT -> "Draft anything"
-    ActionKind.SEND_EMAIL -> "Send email as me"
+    ActionKind.SEND_EMAIL -> "Send email as you"
     ActionKind.CREATE_EVENT -> "Block focus time"
     ActionKind.MOVE_EVENT -> "Move events"
     ActionKind.RESPOND_TO_INVITE -> "Answer invites"
     ActionKind.CREATE_REMINDER -> "Set reminders"
-    ActionKind.SET_DO_NOT_DISTURB -> "Mute my phone"
-    ActionKind.READ_DOCUMENT -> "Read my files"
+    ActionKind.SET_DO_NOT_DISTURB -> "Mute your phone"
+    ActionKind.READ_DOCUMENT -> "Read your files"
     ActionKind.PAYMENT -> "Anything with money"
     ActionKind.EXTERNAL_TOOL -> "Use other tools"
     ActionKind.USE_CREDENTIAL -> "Use a saved login"
@@ -97,8 +101,8 @@ data class ConstitutionUiState(
     val error: String? = null,
 )
 
-/** "your constitution · v3" */
-fun versionKicker(version: Int): String = "your constitution · v$version"
+/** "your constitution, version 3" */
+fun versionKicker(version: Int): String = "your constitution, version $version"
 
 @Inject
 @ViewModelKey(ConstitutionViewModel::class)
@@ -138,17 +142,17 @@ fun ConstitutionScreen(onBack: () -> Unit, onAmend: () -> Unit, viewModel: Const
 /** One numbered line; a hard line carries a lock and a "Hard line" label so it reads as non-negotiable. */
 @Composable
 private fun ConstitutionLineRow(number: Int, line: Line) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth().padding(vertical = Space.Small).semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Text(
             "$number",
             Modifier.width(20.dp).alignByBaseline(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelLarge,
         )
-        Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.weight(1f).alignByBaseline(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             ReadingText(line.text)
             if (line.hard) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                     Icon(Icons.Outlined.Lock, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
                     Text("Hard line", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                 }
@@ -161,17 +165,16 @@ private fun ConstitutionLineRow(number: Int, line: Line) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PermissionChips(items: List<String>, icon: ImageVector) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         items.forEach { label ->
             Surface(
                 shape = MaterialTheme.shapes.small,
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                color = MaterialTheme.colorScheme.surfaceContainer,
             ) {
                 Row(
-                    Modifier.heightIn(min = 32.dp).padding(horizontal = 12.dp, vertical = 6.dp),
+                    Modifier.heightIn(min = 32.dp).padding(horizontal = Space.Medium, vertical = Space.Small),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Space.Small),
                 ) {
                     Icon(icon, contentDescription = null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(label, style = MaterialTheme.typography.labelLarge)
@@ -184,31 +187,31 @@ private fun PermissionChips(items: List<String>, icon: ImageVector) {
 @Composable
 fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        Modifier.fillMaxSize().springIn(0).verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         BackLink("Settings", onBack)
         val c = state.constitution
-        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = 4.dp).size(120.dp))
+        Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = Space.Small).size(120.dp))
         if (c != null) Kicker(versionKicker(c.version))
-        ScreenTitle("How I want to work")
+        ScreenTitle("Constitution")
         state.error?.let { ErrorBox(it) }
         when {
             state.loading -> LoadingSpinner()
-            c == null -> Hint(if (state.unavailable) "Your server doesn’t have a constitution yet." else "Can’t load it right now.")
+            c == null -> Hint(if (state.unavailable) "No constitution on this server yet." else "Can’t load it.")
             else -> {
-                Kicker("lines")
+                Kicker("lines", heading = true)
                 c.lines.forEachIndexed { i, line -> ConstitutionLineRow(i + 1, line) }
                 val summary = autonomySummary(c)
                 if (summary.alone.isNotEmpty()) {
-                    Kicker("may do alone", Modifier.padding(top = 12.dp))
+                    Kicker("does alone", Modifier.padding(top = Space.Medium), heading = true)
                     PermissionChips(summary.alone, Icons.Outlined.Check)
                 }
                 if (summary.afterReview.isNotEmpty()) {
-                    Kicker("always after review", Modifier.padding(top = 12.dp))
+                    Kicker("always after review", Modifier.padding(top = Space.Medium), heading = true)
                     PermissionChips(summary.afterReview, Icons.Outlined.Visibility)
                 }
-                SecondaryButton("amend by talking", onAmend, Modifier.fillMaxWidth().padding(top = 12.dp))
+                SecondaryButton("amend by talking", onAmend, Modifier.fillMaxWidth().padding(top = Space.Medium))
             }
         }
     }

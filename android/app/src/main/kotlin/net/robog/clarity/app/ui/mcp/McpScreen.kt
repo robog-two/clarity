@@ -1,5 +1,10 @@
 package net.robog.clarity.app.ui.mcp
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.SegmentCard
+import androidx.compose.ui.graphics.Shape
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -25,7 +30,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -154,7 +163,7 @@ private fun ServerList(state: McpUiState, actions: McpActions) {
             state.error != null -> ErrorBox(state.error)
             state.servers.isEmpty() -> Hint(stringResource(R.string.mcp_empty))
         }
-        state.servers.forEach { ServerCard(it) { actions.onOpen(it.id) } }
+        CardGroup(state.servers) { server, shape, _ -> ServerCard(server, shape) { actions.onOpen(server.id) } }
     }
 }
 
@@ -166,33 +175,35 @@ private fun SuggestionCard(suggestion: McpSuggestion, actions: McpActions) {
         color = MaterialTheme.colorScheme.secondaryContainer,
         contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
     ) {
-        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(start = Space.Medium, end = Space.Small, top = Space.Medium, bottom = Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Text(stringResource(R.string.mcp_suggests, suggestion.label), style = MaterialTheme.typography.titleMedium)
-            Text(suggestion.why, Modifier.padding(end = 8.dp), style = MaterialTheme.typography.bodyMedium)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
-                TextButton(onClick = { actions.onDismiss(suggestion.id) }) { Text(stringResource(R.string.mcp_dismiss)) }
-                Button(onClick = { actions.onAdd(suggestion) }) { Text(sentenceCase(stringResource(R.string.mcp_set_up))) }
+            Text(suggestion.why, Modifier.padding(end = Space.Small), style = MaterialTheme.typography.bodyMedium)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small, Alignment.End)) {
+                TextButton(
+                    onClick = { actions.onDismiss(suggestion.id) },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                ) { Text(stringResource(R.string.mcp_dismiss)) }
+                Button(
+                    onClick = { actions.onAdd(suggestion) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.secondaryContainer,
+                    ),
+                ) { Text(sentenceCase(stringResource(R.string.mcp_set_up))) }
             }
         }
     }
 }
 
 @Composable
-private fun ServerCard(server: McpServerStatus, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp,
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun ServerCard(server: McpServerStatus, shape: Shape, onClick: () -> Unit) {
+    SegmentCard(shape, onClick = onClick) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Medium)) {
                 Text(server.label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 StateChip(server.state)
             }
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyMedium)
-            if (server.source.isNotBlank()) SourceLine(server.source)
             Text(toolCountLine(server), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             server.failure()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         }
@@ -212,11 +223,12 @@ private fun McpServerStatus.failure(): String? = error?.takeIf { state == McpSer
 private fun toolCountLine(server: McpServerStatus): String {
     val counts = server.toolCounts()
     if (counts.total == 0) return stringResource(R.string.mcp_tools_none)
-    return listOfNotNull(
-        pluralStringResource(R.plurals.mcp_tools_count, counts.total, counts.total),
+    val total = pluralStringResource(R.plurals.mcp_tools_count, counts.total, counts.total)
+    val parts = listOfNotNull(
         if (counts.reads > 0) stringResource(R.string.mcp_tools_read, counts.reads) else null,
         if (counts.changes > 0) pluralStringResource(R.plurals.mcp_tools_change, counts.changes, counts.changes) else null,
-    ).joinToString(" · ")
+    )
+    return if (parts.isEmpty()) total else total + ". " + parts.joinToString(" and ")
 }
 
 @Composable
@@ -229,7 +241,7 @@ fun StateChip(state: McpServerState, modifier: Modifier = Modifier) {
         ChipTone.Off -> MaterialTheme.colorScheme.surfaceContainerHighest to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(modifier, shape = CircleShape, color = container, contentColor = content) {
-        Text(stateLabel(state), Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelMedium)
+        Text(stateLabel(state), Modifier.padding(horizontal = Space.Medium, vertical = Space.Small), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -255,7 +267,7 @@ private fun ServerDetail(server: McpServerStatus, state: McpUiState, actions: Mc
         title = server.label,
         footer = { SecondaryButton(stringResource(R.string.mcp_edit), { actions.onEdit(server.id) }, Modifier.fillMaxWidth()) },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             StateChip(server.state)
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyLarge)
             if (server.source.isNotBlank()) SourceLine(server.source)
@@ -266,31 +278,29 @@ private fun ServerDetail(server: McpServerStatus, state: McpUiState, actions: Mc
         state.changeError?.let { ErrorBox(it) }
         val groups = server.toolGroups()
         if (server.tools.isEmpty()) Hint(stringResource(R.string.mcp_no_tools))
-        if (groups.reads.isNotEmpty()) ToolGroup(R.string.mcp_group_reads, R.string.mcp_reads_hint, server, groups.reads, actions)
-        if (groups.changes.isNotEmpty()) ToolGroup(R.string.mcp_group_changes, R.string.mcp_changes_hint, server, groups.changes, actions)
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Large)) {
+            if (groups.reads.isNotEmpty()) ToolGroup(R.string.mcp_group_reads, R.string.mcp_reads_hint, server, groups.reads, actions)
+            if (groups.changes.isNotEmpty()) ToolGroup(R.string.mcp_group_changes, R.string.mcp_changes_hint, server, groups.changes, actions)
+        }
     }
 }
 
 @Composable
 private fun ToolGroup(title: Int, hint: Int, server: McpServerStatus, tools: List<McpToolStatus>, actions: McpActions) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            SectionTitle(stringResource(title))
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+            SectionTitle(stringResource(title), Modifier.semantics { heading() })
             Hint(stringResource(hint))
         }
-        tools.forEach { ToolRow(server.id, it, actions) }
+        CardGroup(tools) { tool, shape, _ -> ToolRow(server.id, tool, shape, actions) }
     }
 }
 
 @Composable
-private fun ToolRow(serverId: String, tool: McpToolStatus, actions: McpActions) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-    ) {
-        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+private fun ToolRow(serverId: String, tool: McpToolStatus, shape: Shape, actions: McpActions) {
+    SegmentCard(shape) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
                 if (tool.destructive) {
                     Icon(
                         Icons.Outlined.WarningAmber,
@@ -299,20 +309,21 @@ private fun ToolRow(serverId: String, tool: McpToolStatus, actions: McpActions) 
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
-                Text(tool.title ?: tool.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text(toolDisplayName(tool), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
                 // Not changed: a quiet "default". Changed: what the default is, and the way back to it.
                 if (tool.overridden) {
-                    TextButton(onClick = { actions.onReset(serverId, tool.name) }) { Text(stringResource(R.string.mcp_reset)) }
+                    val resetFor = stringResource(R.string.mcp_reset_for, toolDisplayName(tool))
+                    TextButton(
+                        onClick = { actions.onReset(serverId, tool.name) },
+                        modifier = Modifier.semantics { contentDescription = resetFor },
+                    ) { Text(stringResource(R.string.mcp_reset)) }
                 } else {
-                    Kicker(stringResource(R.string.mcp_default), Modifier.padding(end = 8.dp))
+                    Kicker(stringResource(R.string.mcp_default))
                 }
             }
-            if (tool.title != null) {
-                Text(tool.name, style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (tool.description.isNotBlank()) Hint(tool.description, Modifier.padding(end = 8.dp))
+            if (tool.description.isNotBlank()) Hint(tool.description)
             if (tool.overridden) Kicker(stringResource(R.string.mcp_default_is, modeLabel(defaultMode(tool))))
-            Column(Modifier.padding(end = 8.dp)) { ModeControl(tool) { actions.onMode(serverId, tool.name, it) } }
+            Column { ModeControl(tool, toolDisplayName(tool)) { actions.onMode(serverId, tool.name, it) } }
         }
     }
 }
@@ -320,8 +331,9 @@ private fun ToolRow(serverId: String, tool: McpToolStatus, actions: McpActions) 
 private val MODES = listOf(McpToolMode.AUTO, McpToolMode.ASK, McpToolMode.OFF)
 
 @Composable
-private fun ModeControl(tool: McpToolStatus, onChoose: (McpToolMode) -> Unit) {
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+private fun ModeControl(tool: McpToolStatus, name: String, onChoose: (McpToolMode) -> Unit) {
+    val label = stringResource(R.string.mcp_how_i_use, name)
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().semantics { contentDescription = label }) {
         MODES.forEachIndexed { i, mode ->
             SegmentedButton(
                 selected = tool.mode == mode,
@@ -350,7 +362,7 @@ private fun ConfirmAuto(server: McpServerStatus, tool: McpToolStatus, actions: M
         } else {
             null
         },
-        title = { Text(stringResource(R.string.mcp_confirm_title, tool.title ?: tool.name)) },
+        title = { Text(stringResource(R.string.mcp_confirm_title, toolDisplayName(tool))) },
         text = {
             val text = stringResource(R.string.mcp_confirm_text, server.label)
             Text(if (tool.destructive) text + " " + stringResource(R.string.mcp_confirm_destructive) else text)

@@ -147,12 +147,12 @@ class DndActionHandler(
         }
         if (!controller.hasAccess()) {
             return ActionOutcome.Failed(
-                "Do not disturb access is off for the app. The person can allow it in settings, under sources on this phone.",
+                "Do not disturb access is off. Allow it in Settings, under Sources.",
                 retryable = false,
             )
         }
         return when (val plan = dndPlanFor(action, clock.now())) {
-            DndPlan.AlreadyOver -> ActionOutcome.Done(content = "The window was already over; nothing changed.")
+            DndPlan.AlreadyOver -> ActionOutcome.Done(content = "Window already over. Nothing changed.")
             is DndPlan.Enable -> {
                 // A second window while one is running keeps the original setting to go back to.
                 val previous = state.load()?.previousFilter ?: controller.currentFilter()
@@ -161,7 +161,7 @@ class DndActionHandler(
                 alarms.scheduleEnd(plan.until)
                 ActionOutcome.Done(
                     content = if (plan.allowStarred) {
-                        "Do not disturb until ${plan.until}. Only starred contacts get through; Android can't allow individual numbers."
+                        "Do not disturb until ${plan.until}. Only starred contacts get through. Android can't allow single numbers."
                     } else {
                         "Do not disturb until ${plan.until}. Only alarms get through."
                     },

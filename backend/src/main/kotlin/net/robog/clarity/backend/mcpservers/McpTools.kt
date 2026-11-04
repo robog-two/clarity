@@ -246,7 +246,7 @@ class McpCalls(
         }
         val context = listOf(
             ContextItem("server", server.label),
-            ContextItem("tool", listOfNotNull(tool.title ?: tool.name, firstSentence(tool.description).ifEmpty { null }).joinToString(" · ")),
+            ContextItem("tool", listOfNotNull(tool.title ?: tool.name, firstSentence(tool.description).ifEmpty { null }).joinToString(", ")),
             ContextItem("input", ClarityJson.encodeToString(JsonObject.serializer(), action.input).let { if (it.length > 600) it.take(599) + "…" else it }),
         )
         val agentView = "I want to call ${tool.name} on ${server.label}."

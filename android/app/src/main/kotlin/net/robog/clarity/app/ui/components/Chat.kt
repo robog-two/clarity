@@ -1,6 +1,13 @@
 package net.robog.clarity.app.ui.components
 
+import net.robog.clarity.app.ui.theme.Space
+
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -36,7 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.cards.CardEnv
@@ -87,8 +96,8 @@ fun ChatTranscript(
         modifier.fillMaxWidth(),
         state = listState,
         reverseLayout = true,
-        contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Bottom),
+        contentPadding = PaddingValues(horizontal = ScreenGutter, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium, Alignment.Bottom),
     ) {
         newest()
         live?.let { text -> item(key = "live") { LiveBubble(text, arrivingItem(), confirmed = liveConfirmed) } }
@@ -102,18 +111,17 @@ fun ChatTranscript(
     }
 }
 
-/** A small centred outlined pill, like a date chip in a messaging app. */
+/** A small centred pill, like a date chip in a messaging app. */
 @Composable
 fun ChatPill(label: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+    Box(modifier.fillMaxWidth().padding(vertical = Space.Medium), contentAlignment = Alignment.Center) {
         Surface(
             shape = CircleShape,
-            color = Color.Transparent,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
             Text(
                 label,
-                Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                Modifier.padding(horizontal = Space.Medium, vertical = Space.Small),
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -124,7 +132,15 @@ fun ChatPill(label: String, modifier: Modifier = Modifier) {
 }
 
 /** How the composer's mic button looks: [live] while it listens, [muted] shows the crossed-out mic. */
-data class ComposerMic(val live: Boolean, val muted: Boolean = false, val description: String)
+data class ComposerMic(
+    val live: Boolean,
+    val muted: Boolean = false,
+    val description: String,
+    /** Spoken state ("On", "Muted"); with [action] the button reads as a state, "Microphone, on". */
+    val state: String? = null,
+    /** What a tap does ("Mute"), spoken as the click label. */
+    val action: String? = null,
+)
 
 /**
  * The text field with the mic and send buttons, shared by Ask and the call. The mic is an expressive
@@ -139,18 +155,30 @@ fun ChatComposer(
     mic: ComposerMic,
     onMic: () -> Unit,
     modifier: Modifier = Modifier,
-    placeholder: String = "Type, or tap the mic",
+    placeholder: String = "Type or talk",
 ) {
     val buttonSize = IconButtonDefaults.mediumContainerSize()
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
     Row(
-        modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier.fillMaxWidth().padding(horizontal = ScreenGutter, vertical = Space.Medium),
+        horizontalArrangement = Arrangement.spacedBy(Space.Small),
         verticalAlignment = Alignment.Bottom,
     ) {
         TextField(
             value = draft,
             onValueChange = onDraft,
-            modifier = Modifier.weight(1f).heightIn(min = buttonSize.height).semantics { contentDescription = "message" },
+            interactionSource = interaction,
+            // The field sits on a container 1.1:1 from the page, so it gets an outline (3.83:1 light) and,
+            // while focused, a thicker primary one (6.03:1 light).
+            modifier = Modifier
+                .weight(1f)
+                .heightIn(min = buttonSize.height)
+                .border(
+                    if (focused) 2.dp else 1.dp,
+                    if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    MaterialTheme.shapes.extraLarge,
+                ),
             placeholder = { Text(placeholder, style = MaterialTheme.clarityText.chat) },
             textStyle = MaterialTheme.clarityText.chat,
             shape = MaterialTheme.shapes.extraLarge,
@@ -169,11 +197,17 @@ fun ChatComposer(
             checked = mic.live,
             onCheckedChange = { onMic() },
             shapes = IconButtonDefaults.toggleableShapes(),
-            modifier = Modifier.size(buttonSize),
+            modifier = Modifier.size(buttonSize).semantics(mergeDescendants = true) {
+                if (mic.state != null) {
+                    contentDescription = mic.description
+                    stateDescription = mic.state
+                    if (mic.action != null) onClick(label = mic.action) { onMic(); true }
+                }
+            },
         ) {
             Icon(
                 if (mic.muted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-                contentDescription = mic.description,
+                contentDescription = if (mic.state != null) null else mic.description,
                 modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
             )
         }
@@ -183,7 +217,7 @@ fun ChatComposer(
             shapes = IconButtonDefaults.shapes(),
             modifier = Modifier.size(buttonSize),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
         }
     }
 }

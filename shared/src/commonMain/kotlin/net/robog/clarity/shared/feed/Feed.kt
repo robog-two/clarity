@@ -115,7 +115,7 @@ sealed interface Card {
     @Serializable @SerialName("context")
     data class Context(val label: String, val items: List<ContextItem>) : Card
 
-    /** A labelled list of short items ("captured · 5", "today’s two", "I’ll do", "parked until tomorrow"). */
+    /** A labelled list of short items ("5 captured", "today’s two", "I’ll do", "parked until tomorrow"). */
     @Serializable @SerialName("chips")
     data class Chips(val label: String, val items: List<Chip>) : Card
 

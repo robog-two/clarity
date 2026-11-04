@@ -1,5 +1,14 @@
 package net.robog.clarity.app.ui.settings
 
+import net.robog.clarity.app.ui.theme.Space
+import net.robog.clarity.app.ui.components.CardGroup
+import net.robog.clarity.app.ui.components.CardGroupScope
+import net.robog.clarity.app.ui.components.SegmentCard
+import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.springSwap
+import androidx.compose.ui.graphics.Shape
+import net.robog.clarity.app.ui.components.groupShape
+
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
@@ -32,6 +41,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -83,6 +93,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -262,11 +275,7 @@ fun SettingsContent(
     AnimatedContent(
         targetState = page,
         modifier = modifier.fillMaxSize(),
-        transitionSpec = {
-            val forward = targetState != SettingsPage.Home
-            (fadeIn() + slideInHorizontally { w -> if (forward) w / 8 else -w / 8 }) togetherWith
-                (fadeOut() + slideOutHorizontally { w -> if (forward) -w / 8 else w / 8 })
-        },
+        transitionSpec = springSwap(),
         label = "settings page",
     ) { shown ->
         if (shown == SettingsPage.Home) {
@@ -299,7 +308,7 @@ fun SettingsContent(
         AlertDialog(
             onDismissRequest = { confirming = false },
             title = { Text("Forget this server?") },
-            text = { Text("This removes the device key and the saved feed from this phone. You will need to set up again.") },
+            text = { Text("Removes this phone’s key and saved feed. Setup starts over.") },
             confirmButton = { TextButton(onClick = { confirming = false; actions.onForget() }) { Text("Forget", color = MaterialTheme.colorScheme.error) } },
             dismissButton = { TextButton(onClick = { confirming = false }) { Text("Cancel") } },
         )
@@ -312,14 +321,14 @@ fun SettingsContent(
 private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, onOpenConstitution: () -> Unit, onOpenMcp: () -> Unit) {
     val settings = state.settings
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Large),
     ) {
-        Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Image(painterResource(R.drawable.settings_coffee), contentDescription = null, modifier = Modifier.size(144.dp))
+        Column(Modifier.fillMaxWidth().springIn(0), horizontalAlignment = Alignment.CenterHorizontally) {
+            Image(painterResource(R.drawable.settings_coffee), contentDescription = null, modifier = Modifier.size(144.dp), colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary))
             Text(
                 "Settings",
-                Modifier.padding(top = 20.dp),
+                Modifier.padding(top = Space.Medium),
                 style = MaterialTheme.clarityText.heroTitle,
                 textAlign = TextAlign.Center,
             )
@@ -327,72 +336,73 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
         // One state at a time: a problem outranks the local-only note, and either outranks the spinner.
         when {
             state.message != null -> ErrorBox(state.message)
-            state.localOnly -> Hint("Your server can’t store settings yet, so changes stay on this phone for now.")
+            state.localOnly -> Hint("Server can’t save settings. Changes stay on this phone.")
             settings == null -> LoadingSpinner()
         }
 
-        SettingsGroup("Your day") {
+        SettingsGroup("Your day", Modifier.springIn(1)) {
             val call = settings?.morningCall
             val callWarning = when {
-                !state.notificationsOn -> "Notifications are off, so I can’t reach you"
-                state.needsExactAlarms -> "Exact timing is off, so the call may be late"
-                !state.fullScreenOk && call?.mode == MorningCall.Mode.CALL -> "The call can’t show over the lock screen"
+                !state.notificationsOn -> "Notifications off. Calls can’t reach you."
+                state.needsExactAlarms -> "Exact timing off. Calls may be late."
+                !state.fullScreenOk && call?.mode == MorningCall.Mode.CALL -> "Call can’t show over the lock screen"
                 else -> null
             }
-            GroupRow(
+            groupRow(
                 Icons.Outlined.Alarm, "Morning call",
                 callWarning ?: call?.let(::callTimeSummary),
                 enabled = settings != null, warning = callWarning != null,
             ) { open(SettingsPage.MorningCall) }
-            GroupRow(
+            groupRow(
                 Icons.Outlined.Mic, "Voice",
-                settings?.let { if (it.micAlwaysOn) "Mic always on during calls" else "Push to talk" },
+                settings?.let { if (it.micAlwaysOn) "Mic on during calls" else "Push to talk" },
                 enabled = settings != null,
             ) { open(SettingsPage.Voice) }
-            GroupRow(
+            groupRow(
                 Icons.Outlined.PauseCircleOutline, "Held actions",
-                settings?.let { if (it.batchLowUrgency) "Low-urgency holds wait for ${formatTime(it.eveningSummaryAt)}" else "Shown right away" },
+                settings?.let { if (it.batchLowUrgency) "Low-urgency items wait until ${formatTime(it.eveningSummaryAt)}" else "Shown right away" },
                 enabled = settings != null,
             ) { open(SettingsPage.HeldActions) }
         }
 
-        SettingsGroup("How I work") {
-            GroupRow(Icons.Outlined.Gavel, "Constitution", state.constitution?.let(::sentenceCase) ?: "Not written yet", onClick = onOpenConstitution)
-            GroupRow(Icons.Outlined.Memory, "Models", "Which model does each part of the work") { open(SettingsPage.Models) }
+        SettingsGroup("Behavior", Modifier.springIn(2)) {
+            groupRow(Icons.Outlined.Gavel, "Constitution", state.constitution?.let(::sentenceCase) ?: "Not written yet", onClick = onOpenConstitution)
+            groupRow(Icons.Outlined.Memory, "Models", "Model for each job") { open(SettingsPage.Models) }
         }
 
-        SettingsGroup("Connections") {
+        val mcpTitle = stringResource(R.string.mcp_title)
+        val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
+        SettingsGroup("Connections", Modifier.springIn(3)) {
             val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
-            GroupRow(
+            groupRow(
                 Icons.Outlined.Hub, "Sources",
                 if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
                 warning = failing > 0,
             ) { open(SettingsPage.Sources) }
-            GroupRow(
-                Icons.Outlined.Extension, stringResource(R.string.mcp_title),
-                stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary),
+            groupRow(
+                Icons.Outlined.Extension, mcpTitle, mcpSummary,
                 onClick = onOpenMcp,
             )
             val batteryWarning = state.pushOn && !state.batteryUnrestricted
-            GroupRow(
+            groupRow(
                 Icons.Outlined.NotificationsActive, "Stay connected",
                 when {
-                    !state.pushOn -> "Off, so I check in every 15 minutes or so"
-                    batteryWarning -> "On, but your battery settings may delay pushes"
-                    else -> "On, so urgent things arrive at once"
+                    !state.pushOn -> "Off. Checks every 15 minutes."
+                    batteryWarning -> "On. Battery limits may delay alerts."
+                    else -> "On. Urgent items arrive at once."
                 },
                 warning = batteryWarning,
             ) { open(SettingsPage.Push) }
-            GroupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
+            groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
         }
 
-        SettingsGroup("This phone") {
-            GroupRow(Icons.Outlined.Dns, "Server", state.instanceUrl.removePrefix("https://").ifEmpty { "Not connected" }) { open(SettingsPage.Server) }
+        SettingsGroup("This phone", Modifier.springIn(4)) {
+            groupRow(Icons.Outlined.Dns, "Server", state.instanceUrl.removePrefix("https://").ifEmpty { "Not connected" }) { open(SettingsPage.Server) }
         }
     }
 }
 
-/** "3 on your server · texts synced" */
+/** "3 on your server. Texts synced." */
 private fun sourcesSummary(state: SettingsUiState): String {
     val server = when (state.serverSources.size) {
         0 -> "None on your server yet"
@@ -400,40 +410,33 @@ private fun sourcesSummary(state: SettingsUiState): String {
         else -> "${state.serverSources.size} on your server"
     }
     val textsOk = state.smsGranted && state.sms.ok
-    return if (textsOk) "$server · texts synced" else server
+    return if (textsOk) "$server. Texts synced." else server
 }
 
-/** A titled group of rows on a raised surface. */
+/** A titled group of cards, the same grouped style as Today's task list. */
 @Composable
-private fun SettingsGroup(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, Modifier.padding(start = 16.dp), style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = MaterialTheme.shapes.extraLarge,
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 1.dp,
-            shadowElevation = 2.dp,
-        ) {
-            Column(Modifier.padding(vertical = 8.dp), content = content)
-        }
+private fun SettingsGroup(title: String, modifier: Modifier = Modifier, build: CardGroupScope.() -> Unit) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        Text(title, Modifier.padding(start = Space.Medium).semantics { heading() }, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+        CardGroup(build = build)
     }
 }
 
-/** One row of a group: an icon, a name and a one-line summary (none while loading). Opens a page. */
-@Composable
-private fun GroupRow(
+/** One segment of a group: an icon, a name and a one-line summary (none while loading). Opens a page. */
+private fun CardGroupScope.groupRow(
     icon: ImageVector,
     title: String,
     summary: String?,
     enabled: Boolean = true,
     warning: Boolean = false,
     onClick: () -> Unit,
-) {
-    ListItem(
-        modifier = Modifier.clickable(enabled = enabled, onClick = onClick),
-        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-        leadingContent = {
+) = segment { shape ->
+    SegmentCard(
+        shape,
+        Modifier.semantics { if (warning) stateDescription = "Needs attention" },
+        onClick = onClick, enabled = enabled, minHeight = 56.dp,
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier.size(40.dp).background(
                     if (warning) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.secondaryContainer,
@@ -446,19 +449,19 @@ private fun GroupRow(
                     tint = if (warning) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onSecondaryContainer,
                 )
             }
-        },
-        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal)) },
-        supportingContent = summary?.let {
-            {
-                Text(
-                    it,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Normal))
+                if (summary != null) {
+                    Text(
+                        summary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-        },
-        trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-    )
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
 }
 
 // --- the pages ---
@@ -466,142 +469,175 @@ private fun GroupRow(
 @Composable
 private fun SettingsSubPage(title: String, @DrawableRes drawing: Int?, onBack: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Medium),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
-        BackLink("settings", onBack)
-        drawing?.let { Drawing(it, Modifier.padding(top = 8.dp).size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
-        ScreenTitle(title, Modifier.padding(top = 8.dp, bottom = 16.dp))
-        content()
+        BackLink("settings", onBack, Modifier.springIn(0))
+        drawing?.let { Drawing(it, Modifier.springIn(0).size(112.dp), tint = MaterialTheme.colorScheme.secondary) }
+        ScreenTitle(title, Modifier.springIn(1))
+        Column(Modifier.springIn(2), verticalArrangement = Arrangement.spacedBy(Space.Large), content = content)
     }
 }
 
 @Composable
 private fun MorningCallPage(state: SettingsUiState, settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
-    Column {
-        SelectRow("time", callTimeSummary(settings.morningCall), "change", onPickTime)
-        Kicker("days", Modifier.padding(top = 8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    val calling = settings.morningCall.mode == MorningCall.Mode.CALL
+    CardGroup {
+        segment { SelectRow("time", callTimeSummary(settings.morningCall), "change", onPickTime, shape = it) }
+        segment {
+            ToggleRow(
+                "Heads-up 10 min before", "A notification, then the call",
+                settings.morningCall.headsUpMinutes != null, { actions.onToggleHeadsUp() }, shape = it,
+            )
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        Kicker("days", Modifier.padding(start = Space.Medium), heading = true)
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Small), modifier = Modifier.fillMaxWidth()) {
             DayOrder.forEach { day ->
                 PillChoice(dayInitial(day), day in settings.morningCall.days, { actions.onToggleDay(day) }, description = dayName(day))
             }
         }
-        ToggleRow(
-            "Heads-up 10 min before", "A notification, then the call",
-            settings.morningCall.headsUpMinutes != null, { actions.onToggleHeadsUp() },
-        )
-        Kicker("how I reach you", Modifier.padding(top = 12.dp))
-        val calling = settings.morningCall.mode == MorningCall.Mode.CALL
-        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-            SegmentedButton(calling, { if (!calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Call me") }
-            SegmentedButton(!calling, { if (calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Notify me") }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        Kicker("contact method", Modifier.padding(start = Space.Medium), heading = true)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            SegmentedButton(calling, { if (!calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(0, 2)) { Text("Call") }
+            SegmentedButton(!calling, { if (calling) actions.onToggleMode() }, SegmentedButtonDefaults.itemShape(1, 2)) { Text("Notify") }
         }
-        if (!state.notificationsOn) SelectRow("notifications", "off, so I can’t reach you", "allow", actions.onAllowNotifications)
-        if (state.needsExactAlarms) SelectRow("exact timing", "the call may ring a few minutes late", "allow", actions.onAllowExactAlarms)
-        if (!state.fullScreenOk && calling) {
-            SelectRow("show the call over the lock screen", "off, so it rings as a banner instead", "allow", actions.onAllowFullScreen)
+    }
+    if (!state.notificationsOn || state.needsExactAlarms || (!state.fullScreenOk && calling)) {
+        CardGroup {
+            if (!state.notificationsOn) segment { SelectRow("notifications", "off. Calls can’t reach you", "allow", actions.onAllowNotifications, shape = it) }
+            if (state.needsExactAlarms) segment { SelectRow("exact timing", "calls may ring late", "allow", actions.onAllowExactAlarms, shape = it) }
+            if (!state.fullScreenOk && calling) {
+                segment { SelectRow("show the call over the lock screen", "off. Calls show as a banner", "allow", actions.onAllowFullScreen, shape = it) }
+            }
         }
     }
 }
 
 @Composable
 private fun VoicePage(settings: Settings, actions: SettingsActions, voiceModels: @Composable () -> Unit = {}) {
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         ToggleRow(
-            "Mic always on during calls", if (settings.micAlwaysOn) "So you can jump in" else "Push to talk",
+            "Mic on during calls", if (settings.micAlwaysOn) "Always listening" else "Push to talk",
             settings.micAlwaysOn, { actions.onToggleMic() },
         )
-        Hint("I always answer in text, on screen.", Modifier.padding(top = 8.dp))
+        Hint("Replies appear as text.", Modifier.padding(start = Space.Medium))
     }
     voiceModels()
 }
 
 @Composable
 private fun HeldActionsPage(settings: Settings, actions: SettingsActions, onPickTime: () -> Unit) {
-    Column {
-        ToggleRow(
-            "Save low-urgency holds for the evening", if (settings.batchLowUrgency) "Reviewed together in the evening" else "Shown right away",
-            settings.batchLowUrgency, { actions.onToggleBatch() },
-        )
-        if (settings.batchLowUrgency) {
-            SelectRow("evening summary", "when the batch arrives", formatTime(settings.eveningSummaryAt), onPickTime)
+    CardGroup {
+        segment {
+            ToggleRow(
+                "Hold low-urgency items until evening", if (settings.batchLowUrgency) "Reviewed together in the evening" else "Shown right away",
+                settings.batchLowUrgency, { actions.onToggleBatch() }, shape = it,
+            )
         }
-        ToggleRow(
-            "Notify me about urgent holds", "A notification as it happens",
-            settings.pushUrgent, { actions.onTogglePush() },
-        )
+        if (settings.batchLowUrgency) {
+            segment { SelectRow("evening summary", "when the batch arrives", formatTime(settings.eveningSummaryAt), onPickTime, shape = it) }
+        }
+        segment {
+            ToggleRow(
+                "Notify about urgent holds", "A notification as it happens",
+                settings.pushUrgent, { actions.onTogglePush() }, shape = it,
+            )
+        }
     }
 }
 
 @Composable
 private fun PushPage(state: SettingsUiState, actions: SettingsActions) {
-    Column {
-        ToggleRow(
-            "Stay connected", "Keeps a quiet note in your notifications so urgent things arrive at once",
-            state.pushOn, { actions.onTogglePushService() },
-        )
-        if (state.pushOn) {
-            if (state.batteryUnrestricted) {
-                Hint("Battery use is unrestricted, so pushes arrive right away.", Modifier.padding(top = 8.dp))
-            } else {
-                SelectRow("battery", "without it your phone may delay pushes", "allow", actions.onAllowBattery)
-            }
-        } else {
-            Hint("With this off I catch up when you open the app and every 15 minutes or so.", Modifier.padding(top = 8.dp))
+    CardGroup {
+        segment {
+            ToggleRow(
+                "Stay connected", "Keeps a notification showing so urgent items arrive at once",
+                state.pushOn, { actions.onTogglePushService() }, shape = it,
+            )
         }
+        if (state.pushOn && !state.batteryUnrestricted) {
+            segment { SelectRow("battery", "without it your phone may delay alerts", "allow", actions.onAllowBattery, shape = it) }
+        }
+    }
+    if (state.pushOn) {
+        if (state.batteryUnrestricted) Hint("Battery use unrestricted. Alerts arrive at once.", Modifier.padding(start = Space.Medium))
+    } else {
+        Hint("Updates when you open the app and every 15 minutes.", Modifier.padding(start = Space.Medium))
     }
 }
 
 @Composable
 private fun SourcesPage(state: SettingsUiState, actions: SettingsActions) {
-    SectionTitle("On your server")
-    Column {
-        if (state.serverSources.isEmpty()) Hint("No sources connected yet.")
-        state.serverSources.forEach { row -> SourceItem(row) { actions.onOpenConnector(row.id) } }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        SectionTitle("On your server", Modifier.padding(start = Space.Medium).semantics { heading() })
+        if (state.serverSources.isEmpty()) Hint("No sources connected yet.", Modifier.padding(start = Space.Medium))
+        CardGroup(state.serverSources) { row, shape, _ -> SourceItem(row, shape) { actions.onOpenConnector(row.id) } }
     }
-    SectionTitle("On this phone", Modifier.padding(top = 16.dp))
-    Column {
-        SelectRow(
-            "messages",
-            state.sms.sub,
-            state.sms.trailing,
-            {
-                when {
-                    !state.smsGranted -> actions.onAllowSms()
-                    state.sms.needsAllow -> actions.onAllowSmsOnServer()
-                }
-            },
-        )
-        SelectRow(
-            "do not disturb",
-            if (state.dndGranted) "I can mute your phone when you ask" else "allow it so I can mute your phone",
-            if (state.dndGranted) "on" else "allow",
-            { if (!state.dndGranted) actions.onAllowDnd() },
-        )
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        SectionTitle("On this phone", Modifier.padding(start = Space.Medium).semantics { heading() })
+        CardGroup {
+            segment {
+                SelectRow(
+                    "messages",
+                    state.sms.sub,
+                    state.sms.trailing,
+                    {
+                        when {
+                            !state.smsGranted -> actions.onAllowSms()
+                            state.sms.needsAllow -> actions.onAllowSmsOnServer()
+                        }
+                    },
+                    shape = it,
+                )
+            }
+            segment {
+                SelectRow(
+                    "do not disturb",
+                    if (state.dndGranted) "Can mute your phone on request" else "allow to mute your phone",
+                    if (state.dndGranted) "on" else "allow",
+                    { if (!state.dndGranted) actions.onAllowDnd() },
+                    shape = it,
+                )
+            }
+        }
     }
 }
 
 @Composable
 private fun ServerPage(state: SettingsUiState, actions: SettingsActions, onForget: () -> Unit) {
-    Kicker("connected to")
-    Text(state.instanceUrl.ifEmpty { "Not connected" }, style = MaterialTheme.typography.bodyLarge)
-    SecondaryButton("redo onboarding", actions.onRedoOnboarding, Modifier.fillMaxWidth().padding(top = 24.dp))
-    OutlinedButton(
-        onClick = onForget,
-        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-    ) { Text("Forget this server", style = MaterialTheme.typography.labelLarge) }
+    SegmentCard(groupShape(0, 1)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+            Kicker("connected to", heading = true)
+            Text(state.instanceUrl.ifEmpty { "Not connected" }, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+        SecondaryButton("set up again", actions.onRedoOnboarding, Modifier.fillMaxWidth())
+        OutlinedButton(
+            onClick = onForget,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+        ) { Text("Forget this server", style = MaterialTheme.typography.labelLarge) }
+    }
 }
 
 private const val TIME_CALL = "call"
 private const val TIME_EVENING = "evening"
 
 @Composable
-private fun SourceItem(row: SourceRow, onClick: () -> Unit) {
+private fun SourceItem(row: SourceRow, shape: Shape, onClick: () -> Unit) {
     val failed = row.sync.contains("fail", ignoreCase = true)
-    SelectRow(row.title, row.sub, row.sync, onClick, statusColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+    SelectRow(
+        row.title, row.sub, row.sync, onClick, shape = shape,
+        statusColor = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        stateDescription = if (failed) "Needs attention" else null,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -620,11 +656,11 @@ private fun TimeDialog(initial: LocalTime, onDismiss: () -> Unit, onPick: (Local
 
 private val previewState = SettingsUiState(
     instanceUrl = "https://clarity.home.example.org", deviceId = "dev_8f3k2m9q", loading = false,
-    settings = Settings(), constitution = "v3 · 14 lines · amended yesterday",
+    settings = Settings(), constitution = "Version 3, 14 lines, amended yesterday",
     serverSources = listOf(
-        SourceRow("mail", "imap · 2 accounts", "4 min ago", "mail"),
-        SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
-        SourceRow("files", "webdav", "never", "files"),
+        SourceRow("mail", "2 accounts", "4 min ago", "mail"),
+        SourceRow("calendar and contacts", "Password rejected", "Failed", "dav"),
+        SourceRow("files", "", "never", "files"),
     ),
     smsGranted = true, sms = SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )
@@ -633,7 +669,7 @@ private val previewVault = VaultUiState(
     VaultKeyStatus.READY,
     listOf(
         CredentialRow(CredentialId("c1"), "chase_checking", "login", "secure.chase.com", "alex.morgan@work-example.com"),
-        CredentialRow(CredentialId("c2"), "visa_personal", "card", "", "Visa ·· 4242 expires 03"),
+        CredentialRow(CredentialId("c2"), "visa_personal", "card", "", "Visa ending 4242, expires 03"),
     ),
     loading = false,
 )
@@ -661,7 +697,7 @@ private fun SettingsLoadingPreview() = PreviewFrame(SettingsUiState())
 @Preview(name = "offline", widthDp = 390, heightDp = 1200)
 @Composable
 private fun SettingsOfflinePreview() = PreviewFrame(
-    previewState.copy(message = "Could not reach your server. Changes will be saved when you’re back online.", localOnly = true),
+    previewState.copy(message = "Server unreachable. Changes save when you’re back online.", localOnly = true),
 )
 
 @Preview(name = "morning call", widthDp = 390, heightDp = 780)

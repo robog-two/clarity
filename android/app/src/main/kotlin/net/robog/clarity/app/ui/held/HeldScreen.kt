@@ -1,5 +1,9 @@
 package net.robog.clarity.app.ui.held
 
+import net.robog.clarity.app.ui.theme.Space
+
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.foundation.layout.Arrangement
@@ -52,35 +56,35 @@ fun HeldContent(
     onReview: (HeldActionId) -> Unit = onOpen,
 ) {
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
+        verticalArrangement = Arrangement.spacedBy(Space.Medium),
     ) {
         Kicker(state.kicker)
-        Text("Held for you", style = MaterialTheme.clarityText.heroTitle)
-        Hint("Things I tried that hit one of your lines. Tap one to review it.")
-        if (state.rows.isEmpty()) Hint("Nothing is held right now.")
+        Text("Held for you", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
+        Hint("Stopped by your rules. Tap to review.")
+        if (state.rows.isEmpty()) Hint("Nothing waiting.")
         // The same contained group as Today's "I'm doing". Rows spring up from below as they load.
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             state.rows.forEachIndexed { i, row ->
                 key(row.id) {
                     val open = { if (row.review) onReview(row.id) else onOpen(row.id) }
                     TaskRow(
                         title = row.title,
-                        detail = if (row.waiting) "needs your OK · ${row.whenText}" else row.whenText,
+                        detail = if (row.waiting) "Needs your OK, ${row.whenText}" else row.whenText,
                         shape = groupShape(i, state.rows.size),
                         glyph = { HeldGlyph(row.state) },
-                        trailing = { if (row.waiting) ReviewButton(open) else TaskStatus(row.status) },
+                        trailing = { if (row.waiting) ReviewButton(open, row.title) else TaskStatus(row.status) },
                         modifier = Modifier.springIn(i, rise = RISE, stagger = 60L),
                         onClick = open,
                     )
                 }
             }
         }
-        Kicker("low-urgency holds wait for an evening batch", Modifier.padding(top = 8.dp))
-        SecondaryButton(if (state.showAllowed) "hide allowed actions" else "see allowed actions", onToggleAllowed, Modifier.fillMaxWidth())
+        Kicker("Low-urgency items wait until evening.", Modifier.padding(top = Space.Small))
+        SecondaryButton(if (state.showAllowed) "Hide automatic actions" else "Show automatic actions", onToggleAllowed, Modifier.fillMaxWidth())
         if (state.showAllowed) {
-            if (state.allowed.isEmpty()) Hint("Nothing yet.")
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            if (state.allowed.isEmpty()) Hint("None yet.")
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                 state.allowed.forEachIndexed { i, a ->
                     TaskRow(
                         title = a.title,
@@ -107,11 +111,11 @@ private val RISE = 320.dp
 @Composable
 private fun HeldGlyph(status: HeldAction.Status) {
     val colors = MaterialTheme.colorScheme
-    val faint = colors.onSurfaceVariant.copy(alpha = 0.35f)
+    val faint = colors.outline
     when (status) {
         HeldAction.Status.HELD, HeldAction.Status.BLOCKED -> TaskShape(MaterialShapes.Cookie4Sided, colors.secondary)
         HeldAction.Status.APPROVED -> TaskShape(MaterialShapes.Clover4Leaf, faint)
-        HeldAction.Status.EXECUTED -> TaskShape(MaterialShapes.Circle, colors.secondaryContainer)
+        HeldAction.Status.EXECUTED -> TaskShape(MaterialShapes.Circle, colors.secondary)
         HeldAction.Status.FAILED -> TaskShape(MaterialShapes.Burst, colors.error)
         else -> TaskShape(MaterialShapes.Circle, faint)
     }

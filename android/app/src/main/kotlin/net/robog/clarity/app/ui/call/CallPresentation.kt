@@ -16,7 +16,7 @@ import net.robog.clarity.shared.session.Session
 import net.robog.clarity.shared.session.SessionControl
 
 /** The four stage segments under the call header. */
-val StageLabels: List<String> = listOf("clear", "choose", "commit", "hand off")
+val StageLabels: List<String> = listOf("Ideate", "Identify", "Unblock", "Delegate")
 
 enum class SegmentState { Done, Current, Todo }
 
@@ -32,11 +32,33 @@ fun stageSegments(stage: CallStage?, ended: Boolean = false): List<SegmentState>
         }
     }
 
-/** The primary button: `that’s all` / `next` / `next` / `end call`. */
+/** The primary button advances every stage with `Next` and ends the call on the last: `End call`. */
 fun primaryLabel(stage: CallStage?): String = when (stage) {
-    null, CallStage.CLEAR -> "that’s all"
-    CallStage.CHOOSE, CallStage.COMMIT -> "next"
-    CallStage.HAND_OFF -> "end call"
+    null, CallStage.CLEAR, CallStage.CHOOSE, CallStage.COMMIT -> "Next"
+    CallStage.HAND_OFF -> "End call"
+}
+
+/** What a screen reader says for the stage bar: "Step 2 of 4, Identify". */
+fun stageDescription(stage: CallStage?, ended: Boolean = false): String {
+    if (ended) return "All ${StageLabels.size} steps done"
+    val index = stage?.ordinal ?: 0
+    return "Step ${index + 1} of ${StageLabels.size}, ${StageLabels[index]}"
+}
+
+/** "4:12" as "4 minutes" (and "1:05:00" as "1 hour 5 minutes"): the timer for a screen reader, changing once a minute. */
+fun spokenElapsed(elapsed: String): String {
+    val parts = elapsed.split(":").mapNotNull { it.toIntOrNull() }
+    val (hours, minutes) = when (parts.size) {
+        3 -> parts[0] to parts[1]
+        2 -> 0 to parts[0]
+        else -> return elapsed
+    }
+    fun unit(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
+    return when {
+        hours > 0 -> unit(hours, "hour") + if (minutes > 0) " " + unit(minutes, "minute") else ""
+        minutes > 0 -> unit(minutes, "minute")
+        else -> "just started"
+    }
 }
 
 fun primaryControl(stage: CallStage?): SessionControl =

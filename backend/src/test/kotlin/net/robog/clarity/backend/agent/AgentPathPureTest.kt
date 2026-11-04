@@ -39,7 +39,7 @@ class AgentPathPureTest : FunSpec({
             describeCall("list_messages", buildJsonObject { put("participant", "dana@example.com") }, "[{},{},{}]") shouldBe ("Read 3 messages" to "dana@example.com")
             describeCall("list_calendar_events", buildJsonObject { put("date", "2026-10-28") }, "[{}]") shouldBe ("Found 1 event" to "2026-10-28")
             describeCall("list_messages", buildJsonObject { }, null).first shouldBe "Checked mail"
-            describeCall("create_reminder", buildJsonObject { put("title", "Pickup"); put("due", "Wed 4:00") }, "ok") shouldBe ("Set a reminder" to "Pickup · Wed 4:00")
+            describeCall("create_reminder", buildJsonObject { put("title", "Pickup"); put("due", "Wed 4:00") }, "ok") shouldBe ("Set a reminder" to "Pickup, Wed 4:00")
             describeCall("send_to_user", buildJsonObject { put("cards", buildJsonArray { add(buildJsonObject { put("type", "text"); put("text", "Signed in.") }) }) }, "ok").first shouldBe "Sent you a message"
         }
 

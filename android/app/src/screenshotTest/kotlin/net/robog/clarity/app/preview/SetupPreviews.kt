@@ -201,7 +201,7 @@ private fun mailState(editing: Boolean = false, choosing: Boolean = false, newIt
     )
     val editValues = if (newItem) itemForm.initialValues() else values.items("accounts").first().values
     return ConnectorSetupState(
-        key = "mail", title = "Mail", proto = "IMAP · on your server", blurb = "I read your inbox and save drafts.",
+        key = "mail", title = "Mail", proto = "On your server", blurb = "Send emails on your behalf or use them for personal context. Set the rules in your constitution.",
         form = form, values = values, lastTest = TestLine("Work: 4,218 messages · Personal: password rejected", ok = false),
         editor = if (editing) ItemEdit("accounts", if (newItem) "new1" else "k3j9x2p1", newItem, editValues, hint = if (newItem) "Use an app-specific password from account.apple.com" else null, showErrors = true) else null,
         choosing = if (choosing) "accounts" else null,
@@ -327,11 +327,11 @@ private val vaultRows = listOf(
 
 private val settingsState = SettingsUiState(
     instanceUrl = "https://clarity.home.example.org", deviceId = "dev_8f3k2m9q", loading = false,
-    settings = Settings(), constitution = "v3 · 14 lines · amended yesterday",
+    settings = Settings(), constitution = "Version 3, 14 lines, amended yesterday",
     serverSources = listOf(
-        SourceRow("mail", "imap · 2 accounts", "4 min ago", "mail"),
-        SourceRow("calendar and contacts", "caldav · password rejected", "failed", "dav"),
-        SourceRow("files", "webdav", "never", "files"),
+        SourceRow("mail", "2 accounts", "4 min ago", "mail"),
+        SourceRow("calendar and contacts", "Password rejected", "Failed", "dav"),
+        SourceRow("files", "On your server", "never", "files"),
     ),
     smsGranted = true, sms = net.robog.clarity.app.ui.settings.SmsRowText("1,204 texts synced with your server", "just now", ok = true), notificationsOn = false, needsExactAlarms = true, batteryUnrestricted = false,
 )
@@ -423,7 +423,7 @@ fun SetupCredentialStates() = Frame {
     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         CredentialFormContent(FormCardState.Loading, { _, _ -> }, {}, {})
         CredentialFormContent(FormCardState.Failed("Could not reach your server. Check your connection."), { _, _ -> }, {}, {})
-        CredentialFormContent(FormCardState.Done("Saved. “chase_checking” is locked on your phone and I can use it now."), { _, _ -> }, {}, {})
+        CredentialFormContent(FormCardState.Done("Saved. “chase_checking” is locked on your phone. Ready to use."), { _, _ -> }, {}, {})
         CredentialFormContent(FormCardState.Editing(CredentialForm(loginRequest, 2026, 10), saving = true), { _, _ -> }, {}, {})
     }
 }

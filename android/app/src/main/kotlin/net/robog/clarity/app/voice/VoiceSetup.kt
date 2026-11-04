@@ -265,14 +265,14 @@ class VoiceModels(
                 }
             }.getOrNull()
         } ?: run {
-            log.add("Speed test: the $tier model could not run on this phone")
+            log.add("Speed test failed. The $tier model could not run on this phone.")
             return nativeFailed()
         }
         prefs.update { it.copy(speeds = it.speeds + (tier to speed)) }
         val next = tierAfterBenchmark(tier, speed)
         log.add(
-            "Speed test: the $tier model takes %.2f s per second of audio".format(java.util.Locale.ROOT, speed) +
-                if (next != tier) "; too slow, stepping down to $next" else "",
+            "Speed test. The $tier model takes %.2f s per second of audio.".format(java.util.Locale.ROOT, speed) +
+                if (next != tier) " Too slow. Stepping down to $next." else "",
         )
         if (next != tier) {
             prefs.update { it.copy(benchmarkedDown = true) }

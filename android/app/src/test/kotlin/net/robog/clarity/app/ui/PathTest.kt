@@ -81,17 +81,17 @@ class PathPresentationTest {
         assertEquals("Wanted to tap the Resend button", stepTitle(step(1, "u", "t", gate = "code_guard", intent = "the Resend button")))
         assertEquals("Typed the sign-in code", stepTitle(step(1, "u", "t", tool = "sign_in", intent = "code")))
         assertEquals("Opened shop.clarity.test", stepTitle(step(1, "u", "t", tool = "go", intent = "https://shop.clarity.test/")))
-        assertEquals("Before: tapped the Sign in link, on link · Sign in", frameDescription(step(1, "u", "t"), after = false))
+        assertEquals("Before. Tapped the Sign in link", frameDescription(step(1, "u", "t"), after = false))
     }
 
     @Test fun reportsAreCondensedAndJevSpeaksInWords() {
         assertEquals(
-            "Page changed: shop.clarity.test/ → login.clarity.test/signin · Looks like \"a sign-in form\" happened (Jev is very sure, 99%)",
+            "Page changed: shop.clarity.test/ to login.clarity.test/signin. Looks like \"a sign-in form\" happened. 99% sure",
             condenseReport("Page changed: https://shop.clarity.test/ → https://login.clarity.test/signin / Title: \"Garden Shop\" → \"Clarity ID\" / On the screen: looks like \"a sign-in form\" happened (Jev p=0.99)."),
         )
         assertEquals("Refused: a code was sent at 3:29 pm", condenseReport("Refused: a code was sent at 3:29 pm – use ask_code (then type it with act or sign_in)."))
         assertNull(condenseReport(" "))
-        assertEquals("Jev is fairly sure, 88%", confidenceText(0.88))
+        assertEquals("88% sure", confidenceText(0.88))
     }
 
     @Test fun jevsBoxAndConfidenceComeFromItsAnswers() {
@@ -112,16 +112,16 @@ class PathPresentationTest {
             PathItem.Browser(at, "h1", 1, step(4, "https://shop.clarity.test/account", "Garden Shop")),
         )
         val tabs = pathRows(items).filterIsInstance<PathRow.Tab>().map { it.label }
-        assertEquals(listOf("On Garden Shop", "Opened the sign-in tab · Clarity ID", "Back on Garden Shop"), tabs)
+        assertEquals(listOf("On Garden Shop", "Opened Clarity ID to sign in", "Back on Garden Shop"), tabs)
     }
 
     @Test fun totalsReadAtAGlance() {
         assertEquals("$0.0019", costText(1_916))
         assertEquals("$0.04", costText(41_200))
         assertNull(costText(null))
-        assertEquals("38 s", durationText(38_000))
+        assertEquals("38 sec", durationText(38_000))
         assertEquals("3 min", durationText(204_000))
-        assertEquals("1 h 5 min", durationText(3_900_000))
+        assertEquals("1 hr 5 min", durationText(3_900_000))
         assertEquals("https://c.example/api/v1/browser/steps/7/after.png", frameUrl("https://c.example/", 7, after = true))
     }
 }
