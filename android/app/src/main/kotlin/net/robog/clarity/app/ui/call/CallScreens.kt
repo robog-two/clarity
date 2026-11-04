@@ -26,6 +26,11 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.remember
@@ -103,14 +108,14 @@ private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: 
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Kicker(if (state.callTime.isEmpty()) "incoming call" else "incoming call · ${state.callTime}")
+        Kicker(if (state.callTime.isEmpty()) "Incoming call" else "Incoming call, ${state.callTime}")
         Text("Personal Agent", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
-        Hint("Morning call · about 8 min")
+        Hint("About 8 minutes")
         Spacer(Modifier.weight(1f))
         RingingBell()
         Spacer(Modifier.weight(1f))
         state.message?.let { ErrorBox(it) }
-        Hint("You talk. I answer in text, on screen.", Modifier.padding(bottom = 24.dp))
+        Hint("Replies appear on screen", Modifier.padding(bottom = 24.dp))
         SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working)
     }
 }
@@ -153,15 +158,15 @@ private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
         Modifier.fillMaxSize().padding(start = 24.dp, end = 24.dp, top = 120.dp, bottom = 48.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        Kicker("snoozed")
+        Kicker("Not now")
         Text(
-            state.snoozedUntil?.let { "I’ll call again at $it." } ?: "I’ll call again soon.",
+            state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
             style = MaterialTheme.typography.headlineMedium,
         )
-        Hint("If you skip today, I’ll keep yesterday’s plan and hold nothing new.")
+        Hint("Yesterday’s plan stays")
         state.message?.let { ErrorBox(it) }
         Spacer(Modifier.weight(1f))
-        PrimaryButton("call me now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working)
+        PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working)
     }
 }
 
@@ -194,7 +199,7 @@ private fun InCallScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (state.mic == MicChipState.Off) Spacer(Modifier) else MicStateChip(state.mic)
-            Kicker("morning meeting · $elapsed")
+            Kicker("Morning meeting, $elapsed", Modifier.semantics { contentDescription = "Morning meeting, ${spokenElapsed(elapsed)}" })
         }
         StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = 14.dp))
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
@@ -224,7 +229,13 @@ private fun InCallScreen(
 private fun callMic(state: CallUiState) = ComposerMic(
     live = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn,
     muted = state.muted,
-    description = when {
+    description = "Microphone",
+    state = when {
+        state.pushToTalk -> if (state.mic == MicChipState.Listening) "Talking" else "Off"
+        state.muted -> "Muted"
+        else -> "On"
+    },
+    action = when {
         state.pushToTalk -> "Talk"
         state.muted -> "Unmute"
         else -> "Mute"
@@ -234,7 +245,14 @@ private fun callMic(state: CallUiState) = ComposerMic(
 /** The four stage segments: done and current filled, the rest muted, each with its label. */
 @Composable
 fun StageSegments(stage: CallStage?, modifier: Modifier = Modifier, ended: Boolean = false) {
-    Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+    val description = stageDescription(stage, ended)
+    Row(
+        modifier.fillMaxWidth().clearAndSetSemantics {
+            contentDescription = description
+            liveRegion = LiveRegionMode.Polite
+        },
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
         stageSegments(stage, ended).forEachIndexed { i, segment ->
             Segment(StageLabels[i], segment)
         }
@@ -248,9 +266,10 @@ private fun RowScope.Segment(label: String, state: SegmentState) {
         Box(
             Modifier.fillMaxWidth().height(4.dp).background(
                 when (state) {
-                    SegmentState.Done -> scheme.primary.copy(alpha = .5f)
+                    // Each at least 3:1 on the page, and different from the others: grey, brand, outline grey.
+                    SegmentState.Done -> scheme.onSurfaceVariant
                     SegmentState.Current -> scheme.primary
-                    SegmentState.Todo -> scheme.secondaryContainer
+                    SegmentState.Todo -> scheme.outline
                 },
                 MaterialTheme.shapes.extraSmall,
             ),
@@ -283,12 +302,12 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             var order = 0
-            Kicker(if (elapsed == null) "call ended" else "call ended · $elapsed")
-            Text("Your Morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
+            Kicker(if (elapsed == null) "Call ended" else "Call ended, $elapsed")
+            Text("Your morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
             if (state.plan.isNotEmpty()) PlanHero(state.plan, Modifier.springIn(order++))
             TodayLabel("Setting up", Modifier.padding(top = 10.dp).springIn(order++))
             if (state.setup.isEmpty()) {
-                Hint("Nothing to set up yet.")
+                Hint("Nothing set up")
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     state.setup.forEachIndexed { i, task ->
@@ -299,13 +318,13 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
             }
         }
         Column(Modifier.padding(start = 24.dp, end = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            PrimaryButton("Open the app", onOpenApp, Modifier.fillMaxWidth())
-            SecondaryButton("replay the call", onReplay, Modifier.fillMaxWidth())
+            PrimaryButton("Open app", onOpenApp, Modifier.fillMaxWidth())
+            SecondaryButton("Replay call", onReplay, Modifier.fillMaxWidth())
         }
     }
 }
 
-/** "replay the call": the session's items again, read only. */
+/** "Replay the call": the session's items again, read only. */
 @Composable
 private fun ReplayScreen(state: CallUiState, onClose: () -> Unit) {
     Column(Modifier.fillMaxSize().statusBarsPadding().padding(top = 16.dp)) {

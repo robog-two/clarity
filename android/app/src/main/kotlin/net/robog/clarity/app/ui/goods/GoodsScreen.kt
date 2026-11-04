@@ -56,24 +56,24 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = ScreenGutter, end = ScreenGutter, top = 24.dp, bottom = 32.dp)) {
             item(key = "header") {
                 Column(Modifier.padding(bottom = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Kicker("what I make for you")
+                    Kicker("Made for you")
                     Text("Goods", style = MaterialTheme.clarityText.heroTitle)
-                    Hint("Essays, reports and write-ups I make for you land here. Open one to read it, or download it for Word, Pages or anywhere else.")
+                    Hint("Reports and write-ups appear here")
                 }
             }
             when {
                 state.loading -> item(key = "loading") { LoadingSpinner() }
                 state.rows.isEmpty() && state.error != null -> item(key = "error") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        ErrorBox("Can’t load your Goods", state.error)
+                        ErrorBox("Can’t load Goods", state.error)
                         TextButton(onClick = onRefresh) { Text("Try again") }
                     }
                 }
                 state.rows.isEmpty() -> item(key = "empty") {
-                    Hint("Nothing here yet. Ask me to write something up, like background on a film for class or a summary to keep, and it will be here.", italic = true)
+                    Hint("Nothing yet. Ask for a write-up.", italic = true)
                 }
                 else -> {
-                    state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh right now", error, Modifier.padding(bottom = 12.dp)) } }
+                    state.error?.let { error -> item(key = "stale") { ErrorBox("Can’t refresh", error, Modifier.padding(bottom = 12.dp)) } }
                     itemsIndexed(state.rows, key = { _, row -> row.id }) { i, row ->
                         TaskRow(
                             title = row.title,

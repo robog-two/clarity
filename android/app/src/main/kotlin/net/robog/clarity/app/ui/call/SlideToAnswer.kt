@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,6 +52,13 @@ import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
+import android.view.accessibility.AccessibilityManager
+import net.robog.clarity.app.ui.components.PrimaryButton
+import net.robog.clarity.app.ui.components.SecondaryButton
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.abs
@@ -72,7 +80,8 @@ fun slideOutcome(offset: Float, max: Float): SlideOutcome = when {
  * The incoming-call control: a knob in the middle of a pill track. Slide it right to answer or left
  * to decline; let go early and it springs back. The knob is an Expressive "cookie" shape that turns
  * slowly while it waits, and the track and knob take on the answer or decline colour as it moves.
- * Screen readers get Answer and Decline as actions.
+ * Screen readers get Answer and Not now as actions, and with touch exploration on (TalkBack) the
+ * slide gives way to two plain buttons, so no gesture is needed.
  *
  * [initialProgress] (-1 to 1) places the knob for previews.
  */
@@ -84,7 +93,12 @@ fun SlideToAnswer(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     initialProgress: Float = 0f,
+    touchExploration: Boolean = rememberTouchExploration(),
 ) {
+    if (touchExploration) {
+        AnswerButtons(onAnswer, onDecline, modifier, enabled)
+        return
+    }
     val knob = 72.dp
     val pad = 8.dp
     val scope = rememberCoroutineScope()
@@ -95,16 +109,24 @@ fun SlideToAnswer(
     var dragging by remember { mutableStateOf(false) }
     var armed by remember { mutableStateOf(SlideOutcome.None) }
 
+    Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Text(
+        "Slide to answer",
+        style = MaterialTheme.typography.labelLarge,
+        color = colors.onSurfaceVariant,
+        modifier = Modifier.graphicsLayer { alpha = if (enabled) 1f else .6f },
+    )
     BoxWithConstraints(
-        modifier
+        Modifier
             .fillMaxWidth()
             .height(knob + pad * 2)
             .semantics {
-                contentDescription = "Incoming call. Slide right to answer, left to decline."
+                contentDescription = "Incoming call from Personal Agent"
+                if (!enabled) stateDescription = "Connecting"
                 if (enabled && !done) {
                     customActions = listOf(
                         CustomAccessibilityAction("Answer") { done = true; onAnswer(); true },
-                        CustomAccessibilityAction("Decline") { done = true; onDecline(); true },
+                        CustomAccessibilityAction("Not now. Calls back in 15 minutes") { done = true; onDecline(); true },
                     )
                 }
             },
@@ -131,7 +153,7 @@ fun SlideToAnswer(
         ) {
             // Both labels fade as the knob moves, so it never runs into one; the track colour shows the way.
             val labels = 1f - abs(progress) * 2f
-            EndLabel(Icons.Filled.CallEnd, "Decline", visible = labels, enabled = enabled)
+            EndLabel(Icons.Filled.CallEnd, "Not now", visible = labels, enabled = enabled)
             EndLabel(Icons.Filled.Call, "Answer", visible = labels, enabled = enabled)
         }
 
@@ -201,6 +223,40 @@ fun SlideToAnswer(
                 },
             )
         }
+    }
+    }
+}
+
+/** Whether a touch-exploration screen reader (TalkBack) is on; always off in previews. */
+@Composable
+fun rememberTouchExploration(): Boolean {
+    if (LocalInspectionMode.current) return false
+    val manager = LocalContext.current.getSystemService(AccessibilityManager::class.java) ?: return false
+    var on by remember { mutableStateOf(manager.isTouchExplorationEnabled) }
+    DisposableEffect(manager) {
+        val listener = AccessibilityManager.TouchExplorationStateChangeListener { on = it }
+        manager.addTouchExplorationStateChangeListener(listener)
+        on = manager.isTouchExplorationEnabled
+        onDispose { manager.removeTouchExplorationStateChangeListener(listener) }
+    }
+    return on
+}
+
+/** The two choices as plain buttons, for people who cannot slide. */
+@Composable
+fun AnswerButtons(onAnswer: () -> Unit, onDecline: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    var done by remember { mutableStateOf(false) }
+    Column(
+        modifier.fillMaxWidth().semantics { if (!enabled) stateDescription = "Connecting" },
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        PrimaryButton("Answer", { done = true; onAnswer() }, Modifier.fillMaxWidth().heightIn(min = 56.dp), enabled = enabled && !done)
+        SecondaryButton(
+            "Not now",
+            { done = true; onDecline() },
+            Modifier.fillMaxWidth().heightIn(min = 56.dp).semantics { contentDescription = "Not now. Calls back in 15 minutes" },
+            enabled = enabled && !done,
+        )
     }
 }
 

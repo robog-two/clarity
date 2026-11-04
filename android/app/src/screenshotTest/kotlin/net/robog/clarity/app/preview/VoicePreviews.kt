@@ -22,6 +22,15 @@ import java.time.ZoneOffset
 import net.robog.clarity.app.voice.VoiceTier
 import net.robog.clarity.app.voice.VoiceUiState
 
+/** The mic chip in each state, and the permission rationale. */
+@PreviewTest @Part @Composable
+fun MicChips() = VoiceFrame {
+    net.robog.clarity.app.voice.MicStateChip(net.robog.clarity.app.voice.MicChipState.Listening)
+    net.robog.clarity.app.voice.MicStateChip(net.robog.clarity.app.voice.MicChipState.MicOn)
+    net.robog.clarity.app.voice.MicStateChip(net.robog.clarity.app.voice.MicChipState.Muted)
+    net.robog.clarity.app.voice.MicRationale(refused = true, onAllow = {}, onOpenSettings = {})
+}
+
 @Composable
 private fun VoiceFrame(content: @Composable () -> Unit) = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) {

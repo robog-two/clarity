@@ -442,8 +442,14 @@ private fun call(screen: CallScreen, stage: CallStage? = CallStage.CHOOSE, ended
 @Composable private fun Slide(dark: Boolean, progress: Float) = Screen(dark) {
     Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, initialProgress = progress) }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
-@PreviewTest @Preview(widthDp = 412, heightDp = 140) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
+@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
+@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
+// With TalkBack on, the slide gives way to two buttons.
+@Composable private fun AnswerPlain(dark: Boolean) = Screen(dark) {
+    Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, touchExploration = true) }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsLight() = AnswerPlain(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsDark() = AnswerPlain(true)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedLight() = Call(false, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedDark() = Call(true, CallScreen.Snoozed)
 @PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallInCallLight() = Call(false, CallScreen.InCall)

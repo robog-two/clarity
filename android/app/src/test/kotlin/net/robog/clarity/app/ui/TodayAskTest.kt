@@ -368,10 +368,10 @@ class AskRulesTest {
 
     @Test fun sessionLabelsNameTheMeetingAndItsTime() {
         val today = LocalDate(2026, 10, 26)
-        assertEquals("Morning meeting · 9:00 am", sessionLabel(morning, TimeZone.UTC, today))
-        assertEquals("Morning meeting · Oct 26, 9:00 am", sessionLabel(morning, TimeZone.UTC, LocalDate(2026, 10, 27)))
-        assertEquals("Values interview · 9:00 am", sessionLabel(morning.copy(kind = SessionKind.VALUES_INTERVIEW), TimeZone.UTC, today))
-        assertEquals("Morning meeting · 5:00 am", sessionLabel(morning, TimeZone.of("America/New_York"), today))
+        assertEquals("Morning meeting, 9:00 am", sessionLabel(morning, TimeZone.UTC, today))
+        assertEquals("Morning meeting, Oct 26 at 9:00 am", sessionLabel(morning, TimeZone.UTC, LocalDate(2026, 10, 27)))
+        assertEquals("Values interview, 9:00 am", sessionLabel(morning.copy(kind = SessionKind.VALUES_INTERVIEW), TimeZone.UTC, today))
+        assertEquals("Morning meeting, 5:00 am", sessionLabel(morning, TimeZone.of("America/New_York"), today))
     }
 
     @Test fun aMeetingGetsAPillAndTheMainChatResumesWithoutOne() {
@@ -381,7 +381,7 @@ class AskRulesTest {
         assertEquals(
             listOf(
                 ChatEntry.Message(items[0]),
-                ChatEntry.Pill("start-m1-1", "Morning meeting · 9:00 am"),
+                ChatEntry.Pill("start-m1-1", "Morning meeting, 9:00 am"),
                 ChatEntry.Message(items[1]),
                 ChatEntry.Message(items[2]),
                 ChatEntry.Message(items[3]),
@@ -410,7 +410,7 @@ class AskRulesTest {
                 ChatEntry.Message(items[0]),
                 ChatEntry.Message(items[1]),
                 ChatEntry.Pill("topic-4", "Dana Contract"),
-                ChatEntry.Pill("start-m1-3", "Morning meeting · 9:00 am"),
+                ChatEntry.Pill("start-m1-3", "Morning meeting, 9:00 am"),
                 ChatEntry.Message(items[3]),
                 ChatEntry.Message(items[5]),
             ),
@@ -446,7 +446,7 @@ class AskViewModelTest {
         val r = Rig()
         r.feed.itemsFlow.value = listOf(userItem(0, "hi"), agentItem(1, "Morning.", morning.id))
         assertEquals(listOf(0L, 1L), r.state.items.map { it.seq })
-        assertEquals(ChatEntry.Pill("start-m1-1", "Morning meeting · 9:00 am"), r.state.entries[1])
+        assertEquals(ChatEntry.Pill("start-m1-1", "Morning meeting, 9:00 am"), r.state.entries[1])
     }
 
     @Test fun eachSessionIsLookedUpOnce() = withMain {

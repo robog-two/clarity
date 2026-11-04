@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.goods
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -56,8 +57,10 @@ fun ReportCardView(card: Card.Report, onOpen: ((String) -> Unit)?, modifier: Mod
     if (onOpen != null) {
         OutlinedCard(
             onClick = { onOpen(card.reportId) },
-            modifier = cardModifier.semantics { contentDescription = "${card.title}, a document in your Goods. Open it." },
+            modifier = cardModifier.semantics { contentDescription = "Open ${card.title}" },
             shape = MaterialTheme.shapes.large,
+            // The border is the only edge of the tappable card, so it gets the 3:1 outline colour.
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         ) { body() }
     } else {
         OutlinedCard(cardModifier, shape = MaterialTheme.shapes.large) { body() }

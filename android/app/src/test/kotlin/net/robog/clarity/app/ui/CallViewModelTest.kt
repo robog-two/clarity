@@ -109,12 +109,22 @@ private fun sessionItem(seq: Long, vararg cards: Card, author: FeedItem.Author =
 
 class CallStageRulesTest {
     @Test fun primaryButtonReadsLikeThePrototype() {
-        assertEquals("that’s all", primaryLabel(CallStage.CLEAR))
-        assertEquals("next", primaryLabel(CallStage.CHOOSE))
-        assertEquals("next", primaryLabel(CallStage.COMMIT))
-        assertEquals("end call", primaryLabel(CallStage.HAND_OFF))
+        assertEquals("Done talking", primaryLabel(CallStage.CLEAR))
+        assertEquals("Commit", primaryLabel(CallStage.CHOOSE))
+        assertEquals("Hand off", primaryLabel(CallStage.COMMIT))
+        assertEquals("End call", primaryLabel(CallStage.HAND_OFF))
         assertEquals(SessionControl.Next, primaryControl(CallStage.COMMIT))
         assertEquals(SessionControl.End, primaryControl(CallStage.HAND_OFF))
+    }
+
+    @Test fun stageBarAndTimerReadAloud() {
+        assertEquals("Step 2 of 4, choose", net.robog.clarity.app.ui.call.stageDescription(CallStage.CHOOSE))
+        assertEquals("Step 1 of 4, clear", net.robog.clarity.app.ui.call.stageDescription(null))
+        assertEquals("All 4 steps done", net.robog.clarity.app.ui.call.stageDescription(CallStage.HAND_OFF, ended = true))
+        assertEquals("4 minutes", net.robog.clarity.app.ui.call.spokenElapsed("4:12"))
+        assertEquals("1 minute", net.robog.clarity.app.ui.call.spokenElapsed("1:59"))
+        assertEquals("just started", net.robog.clarity.app.ui.call.spokenElapsed("0:20"))
+        assertEquals("1 hour 5 minutes", net.robog.clarity.app.ui.call.spokenElapsed("1:05:00"))
     }
 
     @Test fun segmentsMarkDoneCurrentAndTodo() {

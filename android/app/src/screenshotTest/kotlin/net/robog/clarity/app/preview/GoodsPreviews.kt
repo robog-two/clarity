@@ -104,7 +104,7 @@ Warner Bros. cut the film heavily on release, and the full version is still [har
 private val viewer = ReportUiState(
     loading = false,
     title = "Possession and Power in The Devils",
-    subtitle = "Document · revision 2 · Today, 2:40 pm",
+    subtitle = "Document. Revision 2. Today at 2:40 pm",
     document = parseMarkdown(essay),
     sources = listOf(
         ReportCitation("https://en.wikipedia.org/wiki/The_Devils_(film)", "The Devils (film)", "directed by Ken Russell", now),

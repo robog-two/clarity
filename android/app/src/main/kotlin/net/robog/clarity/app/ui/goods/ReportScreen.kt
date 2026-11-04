@@ -136,7 +136,7 @@ fun ReportContent(
             when {
                 state.loading -> LoadingSpinner(Modifier.padding(top = 48.dp))
                 state.error != null -> Column(Modifier.padding(horizontal = ScreenGutter, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ErrorBox("Can’t open this one", state.error)
+                    ErrorBox("Can’t open this", state.error)
                     TextButton(onClick = onRetry) { Text("Try again") }
                 }
                 // The bottom padding keeps the end of the document clear of the FAB.
@@ -149,14 +149,14 @@ fun ReportContent(
                     val document = state.document
                     when {
                         document == null -> item(key = "no-text") {
-                            ErrorBox("Can’t show the text here", (state.sourceError ?: "It didn’t come through.") + " Download still works.")
+                            ErrorBox("Can’t show the text", (state.sourceError ?: "It didn’t load.") + " Download still works.")
                         }
-                        document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written in this one yet.") }
+                        document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written yet") }
                         else -> markdownItems(document.blocks)
                     }
                     if (state.sources.isNotEmpty()) {
                         item(key = "sources-title") {
-                            Kicker("sources · ${state.sources.size}", Modifier.padding(top = 32.dp, bottom = 8.dp).semantics { heading() })
+                            Kicker(if (state.sources.size == 1) "1 source" else "${state.sources.size} sources", Modifier.padding(top = 32.dp, bottom = 8.dp).semantics { heading() })
                         }
                         itemsIndexed(state.sources, key = { _, s -> "source-" + s.url }) { i, source ->
                             SourceRow(source, groupShape(i, state.sources.size), Modifier.padding(bottom = 2.dp))
@@ -259,15 +259,15 @@ fun ShareSettings(state: ReportUiState, onTurnOn: () -> Unit, onTurnOff: () -> U
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(if (state.linkOn) "Link on" else "Link off", style = MaterialTheme.clarityText.chat)
                 Text(
-                    if (state.linkOn) "Anyone with the link can download it · ${downloadsText(state.linkDownloads)}"
-                    else "No one can download it from a link. Download or Share turns it on.",
+                    if (state.linkOn) "Anyone with the link can download. ${downloadsText(state.linkDownloads)}."
+                    else "Download or Share turns it on.",
                     style = MaterialTheme.clarityText.chatSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        if (state.linkOn) SecondaryButton("turn off link", onTurnOff, Modifier.fillMaxWidth(), busy = state.switching)
-        else PrimaryButton("turn on link", onTurnOn, Modifier.fillMaxWidth(), busy = state.switching)
+        if (state.linkOn) SecondaryButton("Turn off link", onTurnOff, Modifier.fillMaxWidth(), busy = state.switching)
+        else PrimaryButton("Turn on link", onTurnOn, Modifier.fillMaxWidth(), busy = state.switching)
     }
 }
 
@@ -281,7 +281,7 @@ private fun ReportHeader(state: ReportUiState, modifier: Modifier = Modifier) {
             style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 34.sp),
         )
         val meta = state.document?.meta
-        val byline = listOfNotNull(meta?.author, meta?.date).joinToString(" · ")
+        val byline = listOfNotNull(meta?.author, meta?.date).joinToString(", ")
         if (byline.isNotEmpty()) Hint(byline)
     }
 }

@@ -41,7 +41,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import net.robog.clarity.app.ui.cards.CardEnv
@@ -129,7 +131,15 @@ fun ChatPill(label: String, modifier: Modifier = Modifier) {
 }
 
 /** How the composer's mic button looks: [live] while it listens, [muted] shows the crossed-out mic. */
-data class ComposerMic(val live: Boolean, val muted: Boolean = false, val description: String)
+data class ComposerMic(
+    val live: Boolean,
+    val muted: Boolean = false,
+    val description: String,
+    /** Spoken state ("On", "Muted"); with [action] the button reads as a state, "Microphone, on". */
+    val state: String? = null,
+    /** What a tap does ("Mute"), spoken as the click label. */
+    val action: String? = null,
+)
 
 /**
  * The text field with the mic and send buttons, shared by Ask and the call. The mic is an expressive
@@ -167,8 +177,7 @@ fun ChatComposer(
                     if (focused) 2.dp else 1.dp,
                     if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                     MaterialTheme.shapes.extraLarge,
-                )
-                .semantics { contentDescription = "message" },
+                ),
             placeholder = { Text(placeholder, style = MaterialTheme.clarityText.chat) },
             textStyle = MaterialTheme.clarityText.chat,
             shape = MaterialTheme.shapes.extraLarge,
@@ -187,11 +196,17 @@ fun ChatComposer(
             checked = mic.live,
             onCheckedChange = { onMic() },
             shapes = IconButtonDefaults.toggleableShapes(),
-            modifier = Modifier.size(buttonSize),
+            modifier = Modifier.size(buttonSize).semantics(mergeDescendants = true) {
+                if (mic.state != null) {
+                    contentDescription = mic.description
+                    stateDescription = mic.state
+                    if (mic.action != null) onClick(label = mic.action) { onMic(); true }
+                }
+            },
         ) {
             Icon(
                 if (mic.muted) Icons.Outlined.MicOff else Icons.Outlined.Mic,
-                contentDescription = mic.description,
+                contentDescription = if (mic.state != null) null else mic.description,
                 modifier = Modifier.size(IconButtonDefaults.mediumIconSize),
             )
         }
@@ -201,7 +216,7 @@ fun ChatComposer(
             shapes = IconButtonDefaults.shapes(),
             modifier = Modifier.size(buttonSize),
         ) {
-            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "send", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
+            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(IconButtonDefaults.mediumIconSize))
         }
     }
 }

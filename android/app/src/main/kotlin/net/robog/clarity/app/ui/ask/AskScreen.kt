@@ -93,9 +93,9 @@ fun AskContent(
             if (listening) MicStateChip(state.mic)
             else if (state.busy) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 LoadingIndicator(Modifier.size(24.dp))
-                Kicker("working…")
+                Kicker("Working")
             }
-            else Kicker("replies in text")
+            else Kicker("Replies in text")
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         ChatTranscript(
@@ -108,7 +108,7 @@ fun AskContent(
                 if (state.suggestions.isNotEmpty()) {
                     item(key = "suggestions") {
                         Column(arrivingItem().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Kicker("try saying")
+                            Kicker("Try asking")
                             state.suggestions.forEach { s ->
                                 OutlinedButton(
                                     onClick = { onSuggest(s) },
@@ -122,12 +122,12 @@ fun AskContent(
             },
             oldest = {
                 if (state.entries.isEmpty() && state.live == null) {
-                    item(key = "empty") { Hint("Ask me anything about your day. I’ll check your sources and answer here.") }
+                    item(key = "empty") { Hint("Ask about your day") }
                 }
             },
         )
         if (state.sync == SyncState.Unauthorized) {
-            ErrorBox("Your server doesn’t accept this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
+            ErrorBox("Server rejected this phone", "Set it up again in settings.", Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp))
         }
         state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = 8.dp)) }
         if (mic.refused && !mic.granted) {
@@ -138,7 +138,12 @@ fun AskContent(
             draft = state.draft,
             onDraft = onDraft,
             onSend = onSubmit,
-            mic = ComposerMic(live = listening, description = if (state.mic == MicChipState.Off) "talk" else "stop"),
+            mic = ComposerMic(
+                live = listening,
+                description = "Microphone",
+                state = if (listening) "Listening" else "Off",
+                action = if (state.mic == MicChipState.Off) "Talk" else "Stop",
+            ),
             onMic = onTalk,
         )
     }

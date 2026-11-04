@@ -152,6 +152,7 @@ fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? 
             Text(
                 text,
                 Modifier
+                    .semantics { contentDescription = "You said, $text" }
                     .padding(start = if (reaction != null) ReactionOverhang else 0.dp, bottom = if (reaction != null) ReactionDrop else 0.dp)
                     .widthIn(max = MaxBubble)
                     .background(MaterialTheme.colorScheme.primaryContainer, YouShape)
@@ -219,7 +220,9 @@ fun LiveBubble(text: String, modifier: Modifier = Modifier, confirmed: Int = 0) 
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Text(
             shown,
+            // Silent while it changes word by word; the sent message is read when it lands.
             Modifier
+                .semantics { contentDescription = "Hearing, $text" }
                 .widthIn(max = MaxBubble)
                 .border(1.dp, scheme.outline, YouShape)
                 .padding(horizontal = 16.dp, vertical = 10.dp),

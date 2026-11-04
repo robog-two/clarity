@@ -145,7 +145,7 @@ class GoodsPresentationTest {
     private val now = Instant.parse("2026-10-28T15:00:00Z")
 
     @Test fun whenReadsLikeAList() {
-        assertEquals("Today, 9:41 am", goodsWhen(Instant.parse("2026-10-28T09:41:00Z"), now, zone))
+        assertEquals("Today at 9:41 am", goodsWhen(Instant.parse("2026-10-28T09:41:00Z"), now, zone))
         assertEquals("Yesterday", goodsWhen(now - 1.days, now, zone))
         assertEquals("Oct 2", goodsWhen(Instant.parse("2026-10-02T10:00:00Z"), now, zone))
         assertEquals("Dec 24, 2025", goodsWhen(Instant.parse("2025-12-24T10:00:00Z"), now, zone))
@@ -160,7 +160,7 @@ class GoodsPresentationTest {
             now, zone,
         )
         assertEquals(listOf("b", "a"), rows.map { it.id })
-        assertEquals("Document · Yesterday · revision 2", rows[0].detail)
+        assertEquals("Document. Yesterday. Revision 2", rows[0].detail)
     }
 
     @Test fun theMenuSaysHowOftenTheLinkWasUsed() {
@@ -178,8 +178,8 @@ class GoodsPresentationTest {
     }
 
     @Test fun revisionLineSaysWhichAndWhen() {
-        assertEquals("Document · Today, 1:00 pm", revisionLine(detail(revisions = 1), now, zone))
-        assertEquals("Document · revision 3 · Today, 3:00 pm", revisionLine(detail(revisions = 3), now, zone))
+        assertEquals("Document. Today at 1:00 pm", revisionLine(detail(revisions = 1), now, zone))
+        assertEquals("Document. Revision 3. Today at 3:00 pm", revisionLine(detail(revisions = 3), now, zone))
     }
 
 }
@@ -229,7 +229,7 @@ class ReportViewModelTest {
         assertFalse(s.loading)
         assertNull(s.error)
         assertEquals("Possession and Power", s.title, "the front matter's title wins")
-        assertTrue(s.subtitle.startsWith("Document · revision 2"))
+        assertTrue(s.subtitle.startsWith("Document. Revision 2"))
         assertEquals(sources, s.sources)
         assertFalse(s.linkOn)
         assertEquals(MdBlock.Heading(1, listOf(t("Background"))), s.document!!.blocks.first())
@@ -279,7 +279,7 @@ class ReportViewModelTest {
         advanceUntilIdle()
         assertEquals(LinkAction.Download, vm.state.value.open!!.action)
         vm.opened(ok = false)
-        assertEquals("Nothing on this phone can open the link.", vm.state.value.linkNote)
+        assertEquals("No app can open the link", vm.state.value.linkNote)
     }
 
     @Test fun anExistingLinkShowsWithItsCountAndCanBeTurnedOffAndOn() = runTest(dispatcher) {
@@ -295,7 +295,7 @@ class ReportViewModelTest {
         assertEquals(1, goods.turnOffCalls)
         assertFalse(vm.state.value.linkOn)
         assertEquals(0, vm.state.value.linkDownloads)
-        assertEquals("Link turned off.", vm.state.value.linkNote)
+        assertEquals("Link turned off", vm.state.value.linkNote)
         vm.noteShown()
         assertNull(vm.state.value.linkNote)
         vm.turnOnLink()
