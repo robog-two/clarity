@@ -3,12 +3,19 @@ package net.robog.clarity.app.ui.components
 import net.robog.clarity.app.ui.theme.Space
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -55,6 +62,26 @@ import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.Reaction
 import net.robog.clarity.shared.feed.latestReactions
+
+/**
+ * The layout of a conversation screen (Ask, the call): a header band, the transcript filling the
+ * middle, and a footer band under it with the composer. The transcript keeps its own list, anchored
+ * to the bottom, so this is the one screen layout that does not scroll as a column. Everything is
+ * padded for the status bar, the nav bar and the keyboard, as [ClarityScreen] is.
+ */
+@Composable
+fun ChatLayout(
+    header: @Composable ColumnScope.() -> Unit,
+    footer: @Composable ColumnScope.() -> Unit,
+    modifier: Modifier = Modifier,
+    transcript: @Composable (Modifier) -> Unit,
+) {
+    Column(modifier.fillMaxSize().imePadding()) {
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).statusBarsPadding()) { header() }
+        transcript(Modifier.weight(1f))
+        Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).navigationBarsPadding()) { footer() }
+    }
+}
 
 /** One row of a chat transcript: a feed item, or a pill that names what follows (a meeting, a topic). */
 sealed interface ChatEntry {

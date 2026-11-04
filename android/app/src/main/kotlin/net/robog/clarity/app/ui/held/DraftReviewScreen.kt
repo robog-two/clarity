@@ -1,7 +1,8 @@
 package net.robog.clarity.app.ui.held
 
 import net.robog.clarity.app.ui.theme.Space
-import net.robog.clarity.app.ui.components.springIn
+import androidx.compose.foundation.layout.ColumnScope
+import net.robog.clarity.app.ui.components.ClarityScreen
 
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
@@ -94,30 +95,44 @@ fun DraftReviewContent(
     onRetry: (() -> Unit)? = null,
 ) {
     val held = state.held
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().springIn(0)
-            .padding(horizontal = ScreenGutter, vertical = Space.Small),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-    ) {
-        BackLink("Back", onBack)
-        if (held == null) {
-            if (!state.loading) {
-                ErrorBox("Can’t open this one", state.message)
-                onRetry?.let { TextButton(onClick = it) { Text("Try again") } }
+    val email = state.email
+    val outcome = held?.let { heldOutcome(it.status) }
+    val phase = when {
+        held != null -> ReviewPhase.Ready
+        state.loading -> ReviewPhase.Loading
+        else -> ReviewPhase.Missing
+    }
+    val footer: (@Composable ColumnScope.() -> Unit)? = if (held == null) null else {
+        {
+            if (state.decided) {
+                Text(outcome ?: "Done", Modifier.padding(vertical = Space.Medium), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
             } else {
-                LoadingSpinner(Modifier.padding(top = Space.Large))
+                if (held.needsCode && state.code.isBlank()) Hint("Enter the code.")
+                SlideToConfirm(
+                    slideLabel(held.action.kind),
+                    onApprove,
+                    enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
+                    resetKey = state.message,
+                    working = state.busy,
+                )
+                NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
             }
-            return@Column
         }
-        val outcome = heldOutcome(held.status)
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        ) {
-            val email = state.email
-            Kicker(outcome ?: "needs your OK, ${formatClock(held.createdAt, TimeZone.currentSystemDefault())}")
-            Text(email?.subject ?: held.action.summary, Modifier.semantics { heading() }, style = MaterialTheme.typography.headlineSmall)
-
+    }
+    ClarityScreen(
+        title = held?.let { email?.subject ?: it.action.summary },
+        kicker = held?.let { outcome ?: "needs your OK, ${formatClock(it.createdAt, TimeZone.currentSystemDefault())}" },
+        backLabel = "Back",
+        onBack = onBack,
+        phase = phase,
+        footer = footer,
+    ) { shown ->
+        if (shown == ReviewPhase.Loading) {
+            LoadingSpinner(Modifier.padding(top = Space.Large))
+        } else if (shown == ReviewPhase.Missing || held == null) {
+            ErrorBox("Can’t open this one", state.message)
+            onRetry?.let { TextButton(onClick = it) { Text("Try again") } }
+        } else {
             if (email != null) {
                 // Which address it goes from and who it goes to come first: it is sent as the person.
                 Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
@@ -138,7 +153,7 @@ fun DraftReviewContent(
                     minLines = 5,
                 )
             }
-            extras(held)
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) { extras(held) }
             if (email == null && held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
 
             Kicker("why it asked", Modifier.padding(top = Space.Small))
@@ -161,21 +176,10 @@ fun DraftReviewContent(
 
             state.message?.let { ErrorBox(it) }
         }
-        if (state.decided) {
-            Text(outcome ?: "Done", Modifier.padding(vertical = Space.Medium), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
-        } else {
-            if (held.needsCode && state.code.isBlank()) Hint("Enter the code.")
-            SlideToConfirm(
-                slideLabel(held.action.kind),
-                onApprove,
-                enabled = !state.busy && (!held.needsCode || state.code.isNotBlank()),
-                resetKey = state.message,
-                working = state.busy,
-            )
-            NotNow(held, onDeny = onDecline, onAlways = onAlways, enabled = !state.busy)
-        }
     }
 }
+
+private enum class ReviewPhase { Loading, Missing, Ready }
 
 @Composable
 private fun RecipientLine(label: String, value: String) {

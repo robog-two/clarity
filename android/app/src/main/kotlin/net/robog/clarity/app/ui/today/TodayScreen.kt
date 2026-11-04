@@ -3,8 +3,6 @@ package net.robog.clarity.app.ui.today
 import net.robog.clarity.app.ui.theme.Space
 
 import android.content.res.Configuration
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
@@ -16,9 +14,6 @@ import androidx.compose.ui.text.style.TextAlign
 import net.robog.clarity.R
 import net.robog.clarity.app.ui.components.Drawing
 import net.robog.clarity.app.ui.theme.ClarityFonts
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -60,7 +55,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.graphics.shapes.RoundedPolygon
@@ -97,7 +91,9 @@ import net.robog.clarity.app.ui.components.TaskRow
 import net.robog.clarity.app.ui.components.TaskShape
 import net.robog.clarity.app.ui.components.TaskStatus
 import net.robog.clarity.app.ui.components.groupShape
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.Reveal
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.relativeTime
 import net.robog.clarity.app.ui.components.springEnter
 import net.robog.clarity.app.ui.components.springExit
@@ -144,48 +140,32 @@ fun TodayContent(
     /** A task tapped: its thread (the Agent's Path). */
     onOpenTask: (TaskId) -> Unit = {},
 ) {
-    val pull = rememberPullToRefreshState()
-    PullToRefreshBox(
-        isRefreshing = state.refreshing,
+    val phase = when {
+        state.loading -> Phase.Loading
+        state.unavailable -> Phase.Unavailable
+        state.today == null -> Phase.Nothing
+        else -> Phase.Ready
+    }
+    // Loading gives way to the day (the screen swaps its body, and the day's blocks rise in turn).
+    ClarityScreen(
+        title = "Today",
+        modifier = modifier,
+        level = ScreenLevel.Top,
+        kicker = state.kicker.takeIf { it.isNotEmpty() },
+        phase = phase,
+        refreshing = state.refreshing,
         onRefresh = onRefresh,
-        modifier = modifier.fillMaxSize(),
-        state = pull,
-        indicator = {
-            PullToRefreshDefaults.LoadingIndicator(state = pull, isRefreshing = state.refreshing, modifier = Modifier.align(Alignment.TopCenter))
-        },
-    ) {
-        Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = ScreenGutter, vertical = Space.Large),
-            verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        ) {
-            if (state.kicker.isNotEmpty()) Kicker(state.kicker)
-            Text("Today", Modifier.semantics { heading() }, style = MaterialTheme.clarityText.heroTitle)
-            AnimatedVisibility(state.callOffer == CallOffer.REJOIN, enter = springEnter(), exit = springExit()) { CallAgainCard(state.callAgainProblem, onCallAgain) }
-            state.error?.let {
-                ErrorBox(it)
-                TextButton(onClick = onRefresh) { Text("Try again") }
-            }
-            val phase = when {
-                state.loading -> Phase.Loading
-                state.unavailable -> Phase.Unavailable
-                state.today == null -> Phase.Nothing
-                else -> Phase.Ready
-            }
-            // Loading cross-fades into the day instead of popping.
-            val enter = MaterialTheme.motionScheme.defaultEffectsSpec<Float>()
-            val exit = MaterialTheme.motionScheme.fastEffectsSpec<Float>()
-            AnimatedContent(
-                targetState = phase,
-                transitionSpec = { fadeIn(enter) togetherWith fadeOut(exit) },
-                label = "today phase",
-            ) { p ->
-                when (p) {
-                    Phase.Loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
-                    Phase.Unavailable -> Hint("Server isn’t ready for Today.")
-                    Phase.Nothing -> Unit
-                    Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, inactiveExpanded, onOpenTask, onCallAgain) }
-                }
-            }
+    ) { shown ->
+        Reveal(state.callOffer == CallOffer.REJOIN) { CallAgainCard(state.callAgainProblem, onCallAgain) }
+        state.error?.let {
+            ErrorBox(it)
+            TextButton(onClick = onRefresh) { Text("Try again") }
+        }
+        when (shown) {
+            Phase.Loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
+            Phase.Unavailable -> Hint("Server isn’t ready for Today.")
+            Phase.Nothing -> Unit
+            Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, inactiveExpanded, onOpenTask, onCallAgain) }
         }
     }
 }
@@ -202,28 +182,25 @@ private fun DayBody(
     onOpenTask: (TaskId) -> Unit,
     onCall: () -> Unit,
 ) {
-    Column(Modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-        var order = 0
-        when {
-            today.plan.isNotEmpty() -> PlanHero(today.plan, Modifier.springIn(order++))
-            !today.called -> NoPlanYet(state.callOffer, state.callAgainProblem, onCall, Modifier.springIn(order++))
-        }
-        // Held first: anything waiting on an OK must be seen.
-        HeldCard(state.heldWaiting, onOpenHeld, Modifier.springIn(order++))
-        val doing = state.doing
-        if (doing.main.isNotEmpty()) {
-            TodayLabel("Doing", Modifier.padding(top = Space.Medium).springIn(order++))
-            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-                doing.main.forEachIndexed { i, row ->
-                    DoingRowView(row, groupShape(i, doing.main.size), onReview, Modifier.springIn(order++), onOpen = { onOpenTask(row.task.id) })
-                }
+    when {
+        today.plan.isNotEmpty() -> PlanHero(today.plan)
+        !today.called -> NoPlanYet(state.callOffer, state.callAgainProblem, onCall)
+    }
+    // Held first: anything waiting on an OK must be seen.
+    HeldCard(state.heldWaiting, onOpenHeld)
+    val doing = state.doing
+    if (doing.main.isNotEmpty()) {
+        TodayLabel("Doing", Modifier.padding(top = Space.Medium))
+        Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+            doing.main.forEachIndexed { i, row ->
+                DoingRowView(row, groupShape(i, doing.main.size), onReview, onOpen = { onOpenTask(row.task.id) })
             }
         }
-        // Last: everything inactive under one fold, closed on every visit.
-        inactiveLine(doing.inactive.size, today.parked.size)?.let { line ->
-            Folded(line, "inactive items", inactiveExpanded, Modifier.springIn(order++)) {
-                InactiveRows(doing.inactive, today.parked, doing.now, onOpenTask)
-            }
+    }
+    // Last: everything inactive under one fold, closed on every visit.
+    inactiveLine(doing.inactive.size, today.parked.size)?.let { line ->
+        Folded(line, "inactive items", inactiveExpanded) {
+            InactiveRows(doing.inactive, today.parked, doing.now, onOpenTask)
         }
     }
 }
@@ -401,7 +378,7 @@ private fun Folded(
                 modifier = Modifier.size(18.dp).graphicsLayer { rotationZ = turn },
             )
         }
-        AnimatedVisibility(expanded, enter = springEnter(), exit = springExit()) { content() }
+        Reveal(expanded) { content() }
     }
 }
 

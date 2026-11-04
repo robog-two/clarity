@@ -2,6 +2,9 @@ package net.robog.clarity.app.ui.onboarding
 
 import net.robog.clarity.app.ui.theme.Space
 
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.ScreenArrangement
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -131,34 +134,23 @@ fun DoneScreen(viewModel: DoneStepViewModel = metroViewModel()) {
 
 @Composable
 fun DoneContent(state: DoneState, onOpenApp: () -> Unit, onAllowBattery: () -> Unit = {}) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = ScreenGutter)
-            .padding(top = Space.Large * 2, bottom = Space.Medium),
-        verticalArrangement = Arrangement.SpaceBetween,
+    val connectors = if (state.connectors == 1) "1 connector" else "${state.connectors} connectors"
+    ClarityScreen(
+        title = state.nextDay?.let { "Talk $it at ${formatTime(state.call.at)}." } ?: "You’re all set.",
+        level = ScreenLevel.Top,
+        kicker = "$connectors set up" + (state.constitutionVersion?.let { ". Constitution version $it" } ?: ""),
+        footer = { PrimaryButton("open the app", onOpenApp, Modifier.fillMaxWidth()) },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-            val connectors = if (state.connectors == 1) "1 connector" else "${state.connectors} connectors"
-            Kicker("$connectors set up" + (state.constitutionVersion?.let { ". Constitution version $it" } ?: ""))
-            Text(
-                state.nextDay?.let { "Talk $it at ${formatTime(state.call.at)}." } ?: "You’re all set.",
-                style = MaterialTheme.clarityText.hero.copy(fontSize = 36.sp),
-            )
-            ReadingText(doneLine(state.call), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (state.askBattery) {
-                InfoBox {
-                    Text("Run in background", style = MaterialTheme.typography.titleMedium)
-                    Hint(
-                        "Urgent items arrive at once. Uses little battery. Without it they may arrive late.",
-                    )
-                    SecondaryButton("allow", onAllowBattery, Modifier.fillMaxWidth())
-                }
+        ReadingText(doneLine(state.call), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (state.askBattery) {
+            InfoBox {
+                Text("Run in background", style = MaterialTheme.typography.titleMedium)
+                Hint(
+                    "Urgent items arrive at once. Uses little battery. Without it they may arrive late.",
+                )
+                SecondaryButton("allow", onAllowBattery, Modifier.fillMaxWidth())
             }
         }
-        PrimaryButton("open the app", onOpenApp, Modifier.fillMaxWidth())
     }
 }
 

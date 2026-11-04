@@ -1,9 +1,10 @@
 package net.robog.clarity.app.ui.onboarding
 
 import net.robog.clarity.app.ui.theme.Space
-import androidx.compose.animation.AnimatedContent
-import net.robog.clarity.app.ui.components.springSwap
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.PhaseSwap
+import net.robog.clarity.app.ui.components.ScreenArrangement
+import net.robog.clarity.app.ui.components.ScreenLevel
 
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
@@ -69,7 +70,7 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
     var openConnector by rememberSaveable { mutableStateOf<String?>(null) }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
-        AnimatedContent(targetState = step, transitionSpec = springSwap(), label = "onboarding step") { shown ->
+        PhaseSwap(step, label = "onboarding step") { shown ->
         when (shown) {
             OnboardingStep.Welcome -> WelcomeScreen(onBegin = { flow.go(OnboardingStep.Server) })
             OnboardingStep.Server -> ServerScreen(onNext = flow::next, onBack = flow::back)
@@ -124,7 +125,7 @@ fun OnboardingFlow(flow: OnboardingFlowViewModel = metroViewModel()) {
 
 /**
  * The shape shared by the step screens: progress bar, optional back link, kicker, heading, a
- * scrolling body and a pinned footer with the buttons.
+ * scrolling body and a pinned footer with the buttons. It is [ClarityScreen] with the step bar on.
  */
 @Composable
 fun StepScaffold(
@@ -134,61 +135,64 @@ fun StepScaffold(
     onBack: (() -> Unit)? = null,
     kicker: String? = step?.kicker,
     title: String? = null,
-    footer: @Composable ColumnScope.() -> Unit = {},
-    body: @Composable ColumnScope.() -> Unit,
+    footer: (@Composable ColumnScope.() -> Unit)? = null,
+    body: @Composable () -> Unit,
 ) {
-    Column(
-        modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(horizontal = ScreenGutter)
-            .padding(top = Space.Large, bottom = Space.Medium),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-    ) {
-        if (step != null) StepBar(step.segments)
-        if (backLabel != null && onBack != null) BackLink(backLabel, onBack)
-        Column(
-            Modifier.weight(1f).fillMaxWidth().springIn(0).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        ) {
-            if (kicker != null) Kicker(kicker)
-            if (title != null) ScreenTitle(title)
-            body()
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) { footer() }
-    }
+    ClarityScreen(
+        title = title,
+        modifier = modifier,
+        kicker = kicker,
+        backLabel = backLabel,
+        onBack = onBack,
+        stepSegments = step?.segments,
+        footer = footer,
+        body = body,
+    )
+}
+
+/** [StepScaffold] for a body with phases (loading, ready): see [ClarityScreen]. */
+@Composable
+fun <P> StepScaffold(
+    step: OnboardingStep?,
+    phase: P,
+    modifier: Modifier = Modifier,
+    backLabel: String? = null,
+    onBack: (() -> Unit)? = null,
+    kicker: String? = step?.kicker,
+    title: String? = null,
+    footer: (@Composable ColumnScope.() -> Unit)? = null,
+    body: @Composable (P) -> Unit,
+) {
+    ClarityScreen(
+        title = title,
+        modifier = modifier,
+        kicker = kicker,
+        backLabel = backLabel,
+        onBack = onBack,
+        stepSegments = step?.segments,
+        phase = phase,
+        footer = footer,
+        body = body,
+    )
 }
 
 // --- welcome ---
 
 @Composable
 fun WelcomeScreen(onBegin: () -> Unit) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = ScreenGutter)
-            .padding(top = Space.Large * 2, bottom = Space.Medium),
-        verticalArrangement = Arrangement.spacedBy(Space.Large),
+    ClarityScreen(
+        title = "You set the priorities.",
+        level = ScreenLevel.Top,
+        kicker = "Personal agent",
+        footer = { PrimaryButton("begin", onBegin, Modifier.fillMaxWidth()) },
     ) {
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-            Text("Personal agent", style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
-            Text("You set the priorities.", style = MaterialTheme.clarityText.hero)
-            ReadingText(
-                "Clarity handles small tasks for you.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        ReadingText(
+            "Clarity handles small tasks for you.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         // The four steps ahead, so the screen says what "ten minutes" is made of.
-        Column(Modifier.weight(1f, fill = false), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-            Kicker("What we’ll do")
-            WELCOME_STEPS.forEachIndexed { i, (title, caption) -> WelcomeStep(i + 1, title, caption) }
-        }
-        androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
-        PrimaryButton("begin", onBegin, Modifier.fillMaxWidth())
+        Kicker("What we’ll do", Modifier.padding(top = Space.Medium))
+        WELCOME_STEPS.forEachIndexed { i, (title, caption) -> WelcomeStep(i + 1, title, caption) }
     }
 }
 

@@ -1,7 +1,7 @@
 package net.robog.clarity.app.ui.amend
 
 import net.robog.clarity.app.ui.theme.Space
-import net.robog.clarity.app.ui.components.springIn
+import net.robog.clarity.app.ui.components.ClarityScreen
 
 import net.robog.clarity.app.ui.components.ScreenGutter
 import androidx.activity.compose.BackHandler
@@ -72,57 +72,52 @@ fun AmendContent(
     onKeep: () -> Unit,
     onSave: () -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().springIn(0)
-            .padding(horizontal = ScreenGutter, vertical = Space.Medium),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
+    ClarityScreen(
+        title = "Change a rule",
+        backLabel = backLabel,
+        onBack = onBack,
+        footer = {
+            if (!mic.granted) MicRationale(mic.refused, mic.request, mic.openSettings)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                MicStateChip(state.mic)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
+                SecondaryButton("keep as is", onKeep, Modifier.weight(1f), enabled = state.canKeep)
+                PrimaryButton("save rule", onSave, Modifier.weight(1f), enabled = state.canSave)
+            }
+        },
     ) {
-        BackLink(backLabel, onBack)
-        ScreenTitle("Change a rule")
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        ) {
-            state.held?.let { held ->
-                InfoBox {
-                    Kicker(heldWhen(held, kotlinx.datetime.TimeZone.currentSystemDefault()))
-                    Text(held.action.summary, style = MaterialTheme.clarityText.chat)
-                    Hint(held.verdict.rationale)
-                }
+        state.held?.let { held ->
+            InfoBox {
+                Kicker(heldWhen(held, kotlinx.datetime.TimeZone.currentSystemDefault()))
+                Text(held.action.summary, style = MaterialTheme.clarityText.chat)
+                Hint(held.verdict.rationale)
             }
-            if (state.settled) Hint("This one is already settled.")
-            else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
-            val reactions = androidx.compose.runtime.remember(state.talk) { net.robog.clarity.shared.feed.latestReactions(state.talk) }
-            state.talk.forEach { FeedItemView(it, reaction = reactions[it.id]) }
-            state.live?.let { LiveBubble(it, confirmed = state.liveConfirmed) }
-            if (state.waitingAgent) Hint("Working on it", italic = true)
-            state.proposal?.let { p ->
-                Kicker("proposed change", heading = true)
-                InfoBox {
-                    Kicker(proposalLabel(p))
-                    p.old?.let {
-                        Kicker("Remove")
-                        Text(
-                            it,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.clarityText.reading.copy(textDecoration = TextDecoration.LineThrough),
-                        )
-                    }
-                    if (p.old != null) Kicker("Add")
-                    ReadingText(p.proposed.text)
-                    p.proposed.because?.let { Hint("Because $it") }
-                    p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = Space.Small)) }
+        }
+        if (state.settled) Hint("This one is already settled.")
+        else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
+        val reactions = androidx.compose.runtime.remember(state.talk) { net.robog.clarity.shared.feed.latestReactions(state.talk) }
+        state.talk.forEach { FeedItemView(it, reaction = reactions[it.id]) }
+        state.live?.let { LiveBubble(it, confirmed = state.liveConfirmed) }
+        if (state.waitingAgent) Hint("Working on it", italic = true)
+        state.proposal?.let { p ->
+            Kicker("proposed change", heading = true)
+            InfoBox {
+                Kicker(proposalLabel(p))
+                p.old?.let {
+                    Kicker("Remove")
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.clarityText.reading.copy(textDecoration = TextDecoration.LineThrough),
+                    )
                 }
+                if (p.old != null) Kicker("Add")
+                ReadingText(p.proposed.text)
+                p.proposed.because?.let { Hint("Because $it") }
+                p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = Space.Small)) }
             }
-            state.message?.let { ErrorBox(it) }
         }
-        if (!mic.granted) MicRationale(mic.refused, mic.request, mic.openSettings)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            MicStateChip(state.mic)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
-            SecondaryButton("keep as is", onKeep, Modifier.weight(1f), enabled = state.canKeep)
-            PrimaryButton("save rule", onSave, Modifier.weight(1f), enabled = state.canSave)
-        }
+        state.message?.let { ErrorBox(it) }
     }
 }

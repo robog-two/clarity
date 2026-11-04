@@ -42,7 +42,6 @@ import net.robog.clarity.app.ui.components.ChatTranscript
 import net.robog.clarity.app.ui.components.ComposerMic
 import net.robog.clarity.app.ui.components.chatEntries
 import net.robog.clarity.app.ui.components.groupShape
-import net.robog.clarity.app.ui.components.springIn
 import net.robog.clarity.app.ui.today.DoingRow
 import net.robog.clarity.app.ui.today.DoingRowView
 import net.robog.clarity.app.ui.today.PlanHero
@@ -63,6 +62,11 @@ import androidx.compose.ui.unit.sp
 import kotlin.time.Clock
 import kotlinx.coroutines.delay
 import net.robog.clarity.app.ui.cards.CardEnv
+import net.robog.clarity.app.ui.components.BackLink
+import net.robog.clarity.app.ui.components.ChatLayout
+import net.robog.clarity.app.ui.components.ClarityScreen
+import net.robog.clarity.app.ui.components.ScreenArrangement
+import net.robog.clarity.app.ui.components.ScreenLevel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
@@ -106,26 +110,24 @@ fun CallContent(
 
 @Composable
 private fun IncomingScreen(state: CallUiState, onAnswer: () -> Unit, onDecline: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(start = Space.Large, end = Space.Large, top = Space.Large * 4, bottom = Space.Large),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    ClarityScreen(
+        title = "Clarity",
+        level = ScreenLevel.Top,
+        kicker = "Incoming call",
+        subtitle = "About 8 minutes",
+        arrangement = ScreenArrangement.Centered,
+        gutter = Space.Large,
+        footer = { SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working) },
     ) {
-        Kicker("Incoming call")
-        Text("Clarity", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 34.sp, lineHeight = 40.sp), textAlign = TextAlign.Center)
-        Hint("About 8 minutes")
-        Spacer(Modifier.weight(1f))
-        RingingBell()
-        Spacer(Modifier.weight(1f))
+        Box(Modifier.fillMaxWidth().padding(vertical = Space.Large), contentAlignment = Alignment.Center) { RingingBell() }
         state.message?.let { ErrorBox(it) }
-        Hint("Replies appear on screen", Modifier.padding(bottom = Space.Large))
-        SlideToAnswer(onAnswer = onAnswer, onDecline = onDecline, enabled = !state.working)
+        Hint("Replies appear on screen", Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 
 /** The ringing bell: a few quick swings from the handle, then a pause, like a hand bell being rung. */
 @Composable
-private fun RingingBell() {
+private fun RingingBell(modifier: Modifier = Modifier) {
     val angle = if (LocalInspectionMode.current) 0f else {
         val ring = rememberInfiniteTransition(label = "bell")
         ring.animateFloat(
@@ -148,7 +150,7 @@ private fun RingingBell() {
     }
     Drawing(
         R.drawable.drawing_bell_ringing,
-        Modifier.size(180.dp).graphicsLayer {
+        modifier.size(180.dp).graphicsLayer {
             transformOrigin = TransformOrigin(0.5f, 0.15f)
             rotationZ = angle
         },
@@ -157,19 +159,14 @@ private fun RingingBell() {
 
 @Composable
 private fun SnoozedScreen(state: CallUiState, onAnswer: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(start = Space.Large, end = Space.Large, top = Space.Large * 4, bottom = Space.Large),
-        verticalArrangement = Arrangement.spacedBy(Space.Medium),
+    ClarityScreen(
+        title = state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
+        kicker = "Not now",
+        gutter = Space.Large,
+        footer = { PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working) },
     ) {
-        Kicker("Not now")
-        Text(
-            state.snoozedUntil?.let { "Calling again at $it" } ?: "Calling again in 15 minutes",
-            style = MaterialTheme.typography.headlineMedium,
-        )
         Hint("Yesterday’s plan stays")
         state.message?.let { ErrorBox(it) }
-        Spacer(Modifier.weight(1f))
-        PrimaryButton("Call now", onAnswer, Modifier.fillMaxWidth(), enabled = !state.working)
     }
 }
 
@@ -195,39 +192,38 @@ private fun InCallScreen(
     }
     val elapsed = if (inspection) "4:12" else state.startedAt?.let { formatElapsed(now - it) } ?: "0:00"
 
-    Column(Modifier.fillMaxSize().imePadding()) {
-      Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).statusBarsPadding()) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = Space.Medium, bottom = Space.Medium),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (state.mic == MicChipState.Off) Spacer(Modifier) else MicStateChip(state.mic)
-            Kicker("Morning meeting, $elapsed", Modifier.semantics { contentDescription = "Morning meeting, ${spokenElapsed(elapsed)}" })
-        }
-        StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = Space.Medium))
-      }
-        SessionFeed(state, Modifier.weight(1f))
-      Column(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow)) {
-        if (!mic.granted) {
-            MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
-        }
-        state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) }
-        ChatComposer(
-            draft = state.draft,
-            onDraft = onDraft,
-            onSend = onSend,
-            mic = callMic(state),
-            onMic = onToggleMute,
-        )
-        PrimaryButton(
-            primaryLabel(state.stage),
-            onAdvance,
-            Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = Space.Large).heightIn(min = 56.dp),
-            enabled = state.canAdvance,
-        )
-      }
-    }
+    ChatLayout(
+        header = {
+            Row(
+                Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, top = Space.Medium, bottom = Space.Medium),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (state.mic == MicChipState.Off) Spacer(Modifier) else MicStateChip(state.mic)
+                Kicker("Morning meeting, $elapsed", Modifier.semantics { contentDescription = "Morning meeting, ${spokenElapsed(elapsed)}" })
+            }
+            StageSegments(state.stage, Modifier.padding(horizontal = ScreenGutter).padding(bottom = Space.Medium))
+        },
+        footer = {
+            if (!mic.granted) {
+                MicRationale(mic.refused, onAllow = mic.request, onOpenSettings = mic.openSettings, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small))
+            }
+            state.message?.let { ErrorBox(it, modifier = Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) }
+            ChatComposer(
+                draft = state.draft,
+                onDraft = onDraft,
+                onSend = onSend,
+                mic = callMic(state),
+                onMic = onToggleMute,
+            )
+            PrimaryButton(
+                primaryLabel(state.stage),
+                onAdvance,
+                Modifier.fillMaxWidth().padding(start = ScreenGutter, end = ScreenGutter, bottom = Space.Large).heightIn(min = 56.dp),
+                enabled = state.canAdvance,
+            )
+        },
+    ) { transcript -> SessionFeed(state, transcript) }
 }
 
 /** The composer's mic in a call: live while listening, crossed out when muted, "Talk" when push to talk. */
@@ -299,28 +295,25 @@ private fun SessionFeed(state: CallUiState, modifier: Modifier = Modifier) {
 @Composable
 private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () -> Unit) {
     val elapsed = state.session?.let { s -> s.endedAt?.let { formatElapsed(it - s.startedAt) } }
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Column(
-            Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(start = Space.Large, end = Space.Large, top = Space.Large, bottom = Space.Medium),
-            verticalArrangement = Arrangement.spacedBy(Space.Medium),
-        ) {
-            var order = 0
-            Kicker(if (elapsed == null) "Call ended" else "Call ended after $elapsed")
-            Text("Your morning", style = MaterialTheme.clarityText.heroTitle.copy(fontSize = 28.sp, lineHeight = 32.sp))
-            if (state.plan.isNotEmpty()) PlanHero(state.plan, Modifier.springIn(order++))
-            TodayLabel("Setting up", Modifier.padding(top = Space.Medium).springIn(order++))
-            if (state.setup.isEmpty()) {
-                Hint("Nothing set up")
-            } else {
-                CardGroup(state.setup) { task, shape, _ ->
-                    // No Review button in the call, but a task holding something for review keeps its shape.
-                    DoingRowView(DoingRow(task, review = null), shape, onReview = {}, Modifier.springIn(order++), needsYou = task.heldActionId != null)
-                }
-            }
-        }
-        Column(Modifier.padding(start = Space.Large, end = Space.Large, bottom = Space.Large), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+    ClarityScreen(
+        title = "Your morning",
+        level = ScreenLevel.Top,
+        gutter = Space.Large,
+        kicker = if (elapsed == null) "Call ended" else "Call ended after $elapsed",
+        footer = {
             PrimaryButton("Open app", onOpenApp, Modifier.fillMaxWidth())
             SecondaryButton("Replay call", onReplay, Modifier.fillMaxWidth())
+        },
+    ) {
+        if (state.plan.isNotEmpty()) PlanHero(state.plan)
+        TodayLabel("Setting up", Modifier.padding(top = Space.Medium))
+        if (state.setup.isEmpty()) {
+            Hint("Nothing set up")
+        } else {
+            CardGroup(state.setup) { task, shape, _ ->
+                // No Review button in the call, but a task holding something for review keeps its shape.
+                DoingRowView(DoingRow(task, review = null), shape, onReview = {}, needsYou = task.heldActionId != null)
+            }
         }
     }
 }
@@ -328,15 +321,10 @@ private fun EndedScreen(state: CallUiState, onOpenApp: () -> Unit, onReplay: () 
 /** "Replay the call": the session's items again, read only. */
 @Composable
 private fun ReplayScreen(state: CallUiState, onClose: () -> Unit) {
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).statusBarsPadding().padding(horizontal = ScreenGutter, vertical = Space.Small),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            net.robog.clarity.app.ui.components.BackLink("Your morning", onClose)
-        }
-        SessionFeed(state.copy(live = null), Modifier.weight(1f))
-    }
+    ChatLayout(
+        header = { BackLink("Your morning", onClose, Modifier.padding(horizontal = ScreenGutter, vertical = Space.Small)) },
+        footer = {},
+    ) { transcript -> SessionFeed(state.copy(live = null), transcript) }
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)

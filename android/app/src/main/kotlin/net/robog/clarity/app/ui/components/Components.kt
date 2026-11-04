@@ -91,11 +91,18 @@ fun sentenceCase(text: String): String {
 
 /** `.k`: the small caption line. Pass [heading] when it labels a section, so screen readers can jump to it. */
 @Composable
-fun Kicker(text: String, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.onSurfaceVariant, heading: Boolean = false) {
+fun Kicker(
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    heading: Boolean = false,
+    textAlign: androidx.compose.ui.text.style.TextAlign? = null,
+) {
     Text(
         sentenceCase(text),
         if (heading) modifier.semantics { heading() } else modifier,
         color = color,
+        textAlign = textAlign,
         style = MaterialTheme.clarityText.kicker,
     )
 }
@@ -123,17 +130,24 @@ fun LoadingSpinner(modifier: Modifier = Modifier) {
 
 /** `.h`: the screen heading. */
 @Composable
-fun ScreenTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier.semantics { heading() }, style = MaterialTheme.typography.headlineMedium)
+fun ScreenTitle(text: String, modifier: Modifier = Modifier, textAlign: androidx.compose.ui.text.style.TextAlign? = null) {
+    Text(text, modifier.semantics { heading() }, textAlign = textAlign, style = MaterialTheme.typography.headlineMedium)
 }
 
 /** `.sm`: the quiet explanatory paragraph under a heading. */
 @Composable
-fun Hint(text: String, modifier: Modifier = Modifier, italic: Boolean = false, color: Color = MaterialTheme.colorScheme.onSurfaceVariant) {
+fun Hint(
+    text: String,
+    modifier: Modifier = Modifier,
+    italic: Boolean = false,
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    textAlign: androidx.compose.ui.text.style.TextAlign? = null,
+) {
     Text(
         text,
         modifier,
         color = color,
+        textAlign = textAlign,
         style = MaterialTheme.clarityText.readingSmall.let {
             if (italic) it.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic) else it
         },
@@ -194,15 +208,6 @@ private fun BusyLabel(text: String, busy: Boolean) {
 
 private fun Modifier.busySemantics(busy: Boolean): Modifier =
     if (busy) semantics { stateDescription = "Working" } else this
-
-/**
- * For a lazy list item: fades in as it arrives and glides when the items around it move, on the
- * expressive motion scheme's springs, so new messages settle in instead of popping.
- */
-@Composable
-fun LazyItemScope.arrivingItem(): Modifier = with(MaterialTheme.motionScheme) {
-    Modifier.animateItem(fadeInSpec = defaultEffectsSpec(), placementSpec = defaultSpatialSpec(), fadeOutSpec = fastEffectsSpec())
-}
 
 /**
  * For a bottom-up chat list (`reverseLayout`, newest item first): when a new message arrives while

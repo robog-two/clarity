@@ -3,7 +3,6 @@ package net.robog.clarity.app.ui.settings
 import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.CardGroup
 
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -110,87 +109,84 @@ fun tierTitle(tier: VoiceTier): String = when (tier) {
 fun VoiceModelsContent(
     state: VoiceUiState,
     actions: VoiceModelActions,
-    modifier: Modifier = Modifier,
     log: List<VoiceLogEntry> = emptyList(),
     zone: ZoneId = ZoneId.systemDefault(),
     logOpen: Boolean = false,
 ) {
-    Column(modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(Space.Large)) {
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-        SectionTitle("Speech recognition", Modifier.semantics { heading() })
-        InfoBox {
-            when (val status = state.status) {
-                ModelStatus.Ready -> {
-                    Text(
-                        if (state.usingOwn) "${tierTitle(state.tier)} on this phone" else "Models ready. Not in use.",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Hint(
-                        when {
-                            state.engineFailed -> "Models failed to start. Phone recognizer in use."
-                            state.useBuiltIn -> "Phone recognizer in use."
-                            else -> "Live words while you talk. Audio stays on this phone."
-                        },
-                    )
-                }
-                is ModelStatus.NotDownloaded -> {
-                    Text("Download speech models", style = MaterialTheme.typography.titleMedium)
-                    Hint(
-                        "Speech to text on this phone. Audio never leaves it. " +
-                            "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
-                    )
-                    Hint("Phone recognizer in use until then.")
-                    PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = Space.Small))
-                }
-                is ModelStatus.Downloading -> {
-                    Text("Downloading speech models", style = MaterialTheme.typography.titleMedium)
-                    LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = Space.Small))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Kicker("${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)}", Modifier.weight(1f))
-                        SecondaryButton("cancel", actions.onCancel)
-                    }
-                }
-                is ModelStatus.WaitingForNetwork -> {
-                    Text(if (state.mobileData) "Waiting for a connection" else "Waiting for Wi-Fi", style = MaterialTheme.typography.titleMedium)
-                    Hint(
-                        if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
-                        else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
-                    )
-                    SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = Space.Small))
-                }
-                is ModelStatus.Failed -> {
-                    ErrorBox("The download stopped", status.problem)
-                    PrimaryButton("try again", actions.onDownload, Modifier.padding(top = Space.Small))
-                }
-            }
-        }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-            Kicker("Model size", heading = true)
-            TierPicker(state, actions.onChoice)
-            Hint(tierCaption(state))
-        }
-
-        CardGroup {
-            segment {
-                ToggleRow(
-                    "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
-                    state.mobileData, actions.onMobileData, shape = it,
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+    SectionTitle("Speech recognition", Modifier.semantics { heading() })
+    InfoBox {
+        when (val status = state.status) {
+            ModelStatus.Ready -> {
+                Text(
+                    if (state.usingOwn) "${tierTitle(state.tier)} on this phone" else "Models ready. Not in use.",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Hint(
+                    when {
+                        state.engineFailed -> "Models failed to start. Phone recognizer in use."
+                        state.useBuiltIn -> "Phone recognizer in use."
+                        else -> "Live words while you talk. Audio stays on this phone."
+                    },
                 )
             }
-            segment {
-                ToggleRow(
-                    "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
-                    state.useBuiltIn, actions.onUseBuiltIn, shape = it,
+            is ModelStatus.NotDownloaded -> {
+                Text("Download speech models", style = MaterialTheme.typography.titleMedium)
+                Hint(
+                    "Speech to text on this phone. Audio never leaves it. " +
+                        "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
                 )
+                Hint("Phone recognizer in use until then.")
+                PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = Space.Small))
+            }
+            is ModelStatus.Downloading -> {
+                Text("Downloading speech models", style = MaterialTheme.typography.titleMedium)
+                LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = Space.Small))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Kicker("${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)}", Modifier.weight(1f))
+                    SecondaryButton("cancel", actions.onCancel)
+                }
+            }
+            is ModelStatus.WaitingForNetwork -> {
+                Text(if (state.mobileData) "Waiting for a connection" else "Waiting for Wi-Fi", style = MaterialTheme.typography.titleMedium)
+                Hint(
+                    if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
+                    else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
+                )
+                SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = Space.Small))
+            }
+            is ModelStatus.Failed -> {
+                ErrorBox("The download stopped", status.problem)
+                PrimaryButton("try again", actions.onDownload, Modifier.padding(top = Space.Small))
             }
         }
-        if (state.status == ModelStatus.Ready) {
-            SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = Space.Small))
-        }
-        if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
     }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+        Kicker("Model size", heading = true)
+        TierPicker(state, actions.onChoice)
+        Hint(tierCaption(state))
+    }
+
+    CardGroup {
+        segment {
+            ToggleRow(
+                "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
+                state.mobileData, actions.onMobileData, shape = it,
+            )
+        }
+        segment {
+            ToggleRow(
+                "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
+                state.useBuiltIn, actions.onUseBuiltIn, shape = it,
+            )
+        }
+    }
+    if (state.status == ModelStatus.Ready) {
+        SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = Space.Small))
+    }
+    if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
 }
 
 /**
