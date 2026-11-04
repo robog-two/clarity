@@ -29,14 +29,16 @@ data class VaultUiState(
     val notice: String? = null,
 )
 
-/** "Visa ·· 4242 · expires 03" / "dana@example.com" from the non-secret hints. */
+/** "Visa ending 4242, expires 03" / "dana@example.com" from the non-secret hints. */
 fun credentialRow(meta: CredentialMeta): CredentialRow {
     val detail = when (meta.kind) {
         CredentialKind.PAYMENT_CARD -> listOfNotNull(
-            meta.hints["brand"]?.replaceFirstChar { it.uppercase() },
-            meta.hints["last4"]?.let { "·· $it" },
+            listOfNotNull(
+                meta.hints["brand"]?.replaceFirstChar { it.uppercase() },
+                meta.hints["last4"]?.let { "ending $it" },
+            ).joinToString(" ").takeIf { it.isNotEmpty() },
             meta.hints["expiry_month"]?.let { "expires $it" },
-        ).joinToString(" ")
+        ).joinToString(", ")
         CredentialKind.LOGIN -> meta.hints["username"].orEmpty()
         CredentialKind.IDENTITY, CredentialKind.NOTE -> ""
     }
@@ -86,7 +88,7 @@ class VaultViewModel(private val vault: VaultRepository) : ViewModel() {
         viewModelScope.launch {
             when (val r = vault.rekey()) {
                 is ApiResult.Success -> {
-                    _state.update { it.copy(notice = "The vault has new keys. Delete the old entries below and ask me to collect them again.") }
+                    _state.update { it.copy(notice = "Vault keys reset. Older logins can’t be opened. Add them again.") }
                     refresh()
                 }
                 is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence()) }

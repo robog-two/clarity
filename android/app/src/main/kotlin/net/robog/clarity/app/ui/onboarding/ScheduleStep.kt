@@ -82,10 +82,10 @@ fun doneLine(call: MorningCall): String {
     val ringing = call.mode == MorningCall.Mode.CALL
     val headsUp = call.headsUpMinutes
     return when {
-        headsUp != null -> "I’ll send a heads-up $headsUp minutes before, then " +
-            if (ringing) "call. Pick up in the app." else "a notification to start."
-        ringing -> "I’ll call at $time. Pick up in the app."
-        else -> "You’ll get a notification at $time."
+        headsUp != null -> "Heads-up $headsUp minutes before, then " +
+            if (ringing) "a call. Answer in the app." else "a notification."
+        ringing -> "Call at $time. Answer in the app."
+        else -> "Notification at $time."
     }
 }
 

@@ -179,16 +179,16 @@ class HeldRulesTest {
     }
 
     @Test fun proposalAndToastText() {
-        assertEquals("change to a line · values", proposalLabel(amendment()))
-        assertEquals("new line · values", proposalLabel(amendment().copy(lineId = null)))
+        assertEquals("change to a line in values", proposalLabel(amendment()))
+        assertEquals("new line in values", proposalLabel(amendment().copy(lineId = null)))
         assertEquals(
-            "create event: do it, then tell me",
+            "create event. do, then report",
             net.robog.clarity.app.ui.amend.autonomyChangeLine(
                 net.robog.clarity.shared.governance.AutonomyChange(ActionKind.CREATE_EVENT, net.robog.clarity.shared.governance.AutonomyTier.DO_THEN_TELL),
             ),
         )
-        assertEquals("Rule saved. Constitution v2.", ruleSavedToast(2))
-        assertEquals("What would you like to change?", fallbackQuestion(heldPresent = false))
+        assertEquals("Rule saved. Constitution version 2.", ruleSavedToast(2))
+        assertEquals("What should change?", fallbackQuestion(heldPresent = false))
     }
 }
 
@@ -411,7 +411,7 @@ class AmendViewModelTest {
         }
         r.vm.save()
         assertEquals(listOf(amendment().id), r.amendments.saved)
-        assertEquals(listOf("Rule saved. Constitution v3."), toasts)
+        assertEquals(listOf("Rule saved. Constitution version 3."), toasts)
         assertTrue(r.state.finished)
         assertTrue(r.feed.decisions.isEmpty(), "the server moves the held action to rule_updated itself")
         job.cancel()

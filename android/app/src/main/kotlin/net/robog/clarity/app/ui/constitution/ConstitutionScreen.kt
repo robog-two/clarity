@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -69,13 +70,13 @@ data class AutonomySummary(val alone: List<String>, val afterReview: List<String
 
 private fun ActionKind.phrase(): String = when (this) {
     ActionKind.SAVE_DRAFT -> "Draft anything"
-    ActionKind.SEND_EMAIL -> "Send email as me"
+    ActionKind.SEND_EMAIL -> "Send email as you"
     ActionKind.CREATE_EVENT -> "Block focus time"
     ActionKind.MOVE_EVENT -> "Move events"
     ActionKind.RESPOND_TO_INVITE -> "Answer invites"
     ActionKind.CREATE_REMINDER -> "Set reminders"
-    ActionKind.SET_DO_NOT_DISTURB -> "Mute my phone"
-    ActionKind.READ_DOCUMENT -> "Read my files"
+    ActionKind.SET_DO_NOT_DISTURB -> "Mute your phone"
+    ActionKind.READ_DOCUMENT -> "Read your files"
     ActionKind.PAYMENT -> "Anything with money"
     ActionKind.EXTERNAL_TOOL -> "Use other tools"
     ActionKind.USE_CREDENTIAL -> "Use a saved login"
@@ -97,8 +98,8 @@ data class ConstitutionUiState(
     val error: String? = null,
 )
 
-/** "your constitution · v3" */
-fun versionKicker(version: Int): String = "your constitution · v$version"
+/** "your constitution, version 3" */
+fun versionKicker(version: Int): String = "your constitution, version $version"
 
 @Inject
 @ViewModelKey(ConstitutionViewModel::class)
@@ -138,7 +139,7 @@ fun ConstitutionScreen(onBack: () -> Unit, onAmend: () -> Unit, viewModel: Const
 /** One numbered line; a hard line carries a lock and a "Hard line" label so it reads as non-negotiable. */
 @Composable
 private fun ConstitutionLineRow(number: Int, line: Line) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp).semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(
             "$number",
             Modifier.width(20.dp).alignByBaseline(),
@@ -191,21 +192,21 @@ fun ConstitutionContent(state: ConstitutionUiState, onBack: () -> Unit, onAmend:
         val c = state.constitution
         Drawing(R.drawable.drawing_quill_scroll, Modifier.padding(top = 4.dp).size(120.dp))
         if (c != null) Kicker(versionKicker(c.version))
-        ScreenTitle("How I want to work")
+        ScreenTitle("Constitution")
         state.error?.let { ErrorBox(it) }
         when {
             state.loading -> LoadingSpinner()
-            c == null -> Hint(if (state.unavailable) "Your server doesn’t have a constitution yet." else "Can’t load it right now.")
+            c == null -> Hint(if (state.unavailable) "No constitution on this server yet." else "Can’t load it.")
             else -> {
-                Kicker("lines")
+                Kicker("lines", heading = true)
                 c.lines.forEachIndexed { i, line -> ConstitutionLineRow(i + 1, line) }
                 val summary = autonomySummary(c)
                 if (summary.alone.isNotEmpty()) {
-                    Kicker("may do alone", Modifier.padding(top = 12.dp))
+                    Kicker("does alone", Modifier.padding(top = 12.dp), heading = true)
                     PermissionChips(summary.alone, Icons.Outlined.Check)
                 }
                 if (summary.afterReview.isNotEmpty()) {
-                    Kicker("always after review", Modifier.padding(top = 12.dp))
+                    Kicker("always after review", Modifier.padding(top = 12.dp), heading = true)
                     PermissionChips(summary.afterReview, Icons.Outlined.Visibility)
                 }
                 SecondaryButton("amend by talking", onAmend, Modifier.fillMaxWidth().padding(top = 12.dp))

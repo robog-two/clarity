@@ -58,7 +58,7 @@ fun roleTitle(role: String): String = when (role) {
 
 fun roleCaption(role: String): String = when (role) {
     ModelRoles.LEAD -> "Plans your day and talks with you"
-    ModelRoles.HELPER -> "Do longer tasks for the lead"
+    ModelRoles.HELPER -> "Handles longer tasks"
     ModelRoles.GUARD -> "Checks each action against your rules"
     ModelRoles.TRIAGE -> "Looks at each step a helper takes on the web"
     else -> ""
@@ -111,7 +111,7 @@ fun changedOverride(view: RoleModelView, model: String? = null, effort: String? 
 }
 
 /** Under the lead: when a change applies, and what happens to a long thread. */
-const val LEAD_NOTE = "Changes apply from its next turn. It summarizes its own thread when the thread gets long."
+const val LEAD_NOTE = "Applies to the next reply. Long chats are summarized."
 
 /** Pure: the rows the section shows. */
 fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap()): List<RoleModelRow> = view.roles.map { r ->
@@ -132,7 +132,7 @@ fun modelRows(view: ModelSettingsView, errors: Map<String, String> = emptyMap())
 fun refusal(error: ApiError): String {
     val problem = (error as? ApiError.Http)?.problem
     val fields: List<FieldError> = problem?.errors.orEmpty()
-    return if (fields.isNotEmpty()) fields.joinToString(" ") { it.message.replaceFirstChar { c -> c.titlecase() }.trimEnd('.') + "." } else error.sentence()
+    return if (fields.isNotEmpty()) fields.joinToString(" ") { if (it.field.contains("effort", ignoreCase = true)) "Pick an effort from the list." else it.message.replaceFirstChar { c -> c.titlecase() }.trimEnd('.') + "." } else error.sentence()
 }
 
 /** "Models" in Settings: which model each role runs on, saved on the server and in effect at once. */

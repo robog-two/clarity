@@ -164,7 +164,7 @@ class CredentialFormTest {
         model.load()
         val done = assertIs<FormCardState.Done>(model.state)
         assertEquals("no longer needed", done.kicker)
-        assertEquals("No longer needed: already saved as ulta_login.", done.line)
+        assertEquals("No longer needed. already saved as ulta_login.", done.line)
         // one the person cancelled is not called saved either
         assertEquals("cancelled", closedFormState(credentialRequest(status = CredentialRequestStatus.CANCELLED)).kicker)
     }

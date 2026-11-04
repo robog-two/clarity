@@ -31,8 +31,8 @@ fun daysSummary(days: Set<Int>): String = when {
     else -> days.sorted().joinToString(", ") { dayName(it).take(3) }
 }
 
-/** "9:00 · weekdays" */
-fun callTimeSummary(call: MorningCall): String = "${formatTime(call.at)} · ${daysSummary(call.days)}"
+/** "9:00 am, weekdays" */
+fun callTimeSummary(call: MorningCall): String = "${formatTime(call.at)}, ${daysSummary(call.days)}"
 
 /** The "messages" row on the phone: a line about the sync, the trailing word, and whether tapping it should ask. */
 data class SmsRowText(val sub: String, val trailing: String, val needsAllow: Boolean = false, val ok: Boolean = false)
@@ -41,14 +41,14 @@ data class SmsRowText(val sub: String, val trailing: String, val needsAllow: Boo
 fun textsCount(n: Long): String = if (n == 1L) "1 text" else "%,d texts".format(java.util.Locale.US, n)
 
 fun smsRowText(granted: Boolean, status: SmsSyncStatus, now: Instant): SmsRowText {
-    if (!granted) return SmsRowText("allow reading texts to sync them", "allow", needsAllow = true)
+    if (!granted) return SmsRowText("allow reading texts", "allow", needsAllow = true)
     val synced = textsCount(status.sent) + " synced"
     return when (status.problem) {
-        SmsSyncProblem.NOT_ALLOWED -> SmsRowText("your server isn’t taking texts from this phone yet", "allow", needsAllow = true)
-        SmsSyncProblem.UNREACHABLE -> SmsRowText("couldn’t reach your server · $synced", relativeTime(status.lastSyncAt, now))
-        SmsSyncProblem.NOT_ACCEPTED -> SmsRowText("your server doesn’t accept this phone", "failed")
-        SmsSyncProblem.READ_FAILED -> SmsRowText("couldn’t read the texts on this phone", "failed")
-        SmsSyncProblem.SERVER_ERROR -> SmsRowText("your server answered with an error · $synced", "failed")
+        SmsSyncProblem.NOT_ALLOWED -> SmsRowText("server not accepting texts yet", "allow", needsAllow = true)
+        SmsSyncProblem.UNREACHABLE -> SmsRowText("server unreachable. $synced", relativeTime(status.lastSyncAt, now))
+        SmsSyncProblem.NOT_ACCEPTED -> SmsRowText("server rejected this phone", "failed")
+        SmsSyncProblem.READ_FAILED -> SmsRowText("can’t read texts on this phone", "failed")
+        SmsSyncProblem.SERVER_ERROR -> SmsRowText("server error. $synced", "failed")
         null -> if (status.lastSyncAt == null) SmsRowText("waiting for the first sync", "never")
         else SmsRowText("$synced with your server", relativeTime(status.lastSyncAt, now), ok = true)
     }

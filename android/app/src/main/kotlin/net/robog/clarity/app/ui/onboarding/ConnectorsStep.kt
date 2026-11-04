@@ -32,7 +32,7 @@ sealed interface ConnectorRow {
         override val key: String get() = summary.id.value
         override val title: String get() = summary.manifest?.displayName ?: connectorDisplayName(summary.id.value)
         override val proto: String
-            get() = if (notRunning) NOT_RUNNING else "${protocolLabel(summary.manifest?.kind ?: "connector")} · on your server"
+            get() = if (notRunning) NOT_RUNNING else "On your server"
 
         /** Its container has not started, so it never sent a manifest and there is nothing to set up yet. */
         val notRunning: Boolean get() = summary.manifest == null
@@ -80,11 +80,11 @@ data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: Te
     val status: String
         get() = when {
             notRunning -> "not running"
-            test is TestState.Testing -> "testing…"
+            test is TestState.Testing -> "Testing"
             test is TestState.Ok -> test.summary ?: "synced"
-            test is TestState.Failed -> "failed · fix →"
+            test is TestState.Failed -> "Fix it"
             saved -> "ready"
-            else -> "set up →"
+            else -> "Set up"
         }
 
     /** The caption under the name: the protocol, the failure reason, or "allowed" for phone items. */
@@ -92,7 +92,7 @@ data class ConnectorItem(val row: ConnectorRow, val saved: Boolean, val test: Te
         get() = when {
             notRunning -> NOT_RUNNING
             test is TestState.Failed -> test.reason
-            saved && row is ConnectorRow.Phone -> "allowed · on this phone"
+            saved && row is ConnectorRow.Phone -> "Allowed on this phone"
             else -> row.proto
         }
 }
@@ -113,7 +113,7 @@ data class ConnectorsState(
     val allSaved: Boolean get() = active.isNotEmpty() && active.all { it.saved }
     val canSync: Boolean get() = allSaved && !syncing && !anyFailed
 
-    /** "3 of 6 set up", "testing and syncing…", ... */
+    /** "3 of 6 set up", "Testing and syncing", ... */
     val summaryLine: String
         get() = connectorsSummaryLine(
             total = active.size,
@@ -127,12 +127,12 @@ data class ConnectorsState(
 
 fun connectorsSummaryLine(total: Int, saved: Int, synced: Int, syncing: Boolean, anyFailed: Boolean, notRunning: Int = 0): String {
     // Rows that are not running are listed too, so the count says where they went.
-    val skipped = if (notRunning > 0) " · $notRunning not running" else ""
+    val skipped = if (notRunning > 0) " $notRunning not running." else ""
     return when {
-        syncing -> "testing and syncing…"
-        anyFailed -> "$synced of $total synced$skipped · tap the failed one to fix it"
-        total > 0 && synced == total -> "all $total synced$skipped"
-        else -> "$saved of $total set up$skipped"
+        syncing -> "Testing and syncing"
+        anyFailed -> "$synced of $total synced.$skipped Fix the failed one."
+        total > 0 && synced == total -> "All $total synced.$skipped"
+        else -> "$saved of $total set up.$skipped"
     }
 }
 

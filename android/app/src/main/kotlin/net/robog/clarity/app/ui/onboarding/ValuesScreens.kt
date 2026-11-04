@@ -59,9 +59,7 @@ fun ValuesIntroScreen(onStart: () -> Unit, onBack: () -> Unit) {
         footer = { PrimaryButton("start", onStart, Modifier.fillMaxWidth()) },
     ) {
         ReadingText("Seven questions, about six minutes.")
-        Hint("I’ll ask about real moments, good and bad, rather than abstract rules. Stories show what matters more reliably than guesses about it.")
-        Hint("Each answer becomes a line in your constitution, with your reason kept beside it. The reason is what lets me use judgment when something comes up that no rule covers.")
-        Hint("A few things become hard lines I never cross. Everything else, you can amend any time by talking.")
+        Hint("Real moments, good and bad, become lines in your constitution. A few become hard lines.")
     }
 }
 
@@ -139,10 +137,10 @@ fun ValuesContent(
         when (val phase = state.phase) {
             InterviewPhase.Idle, InterviewPhase.Starting -> {
                 Text("How you work", style = MaterialTheme.typography.headlineMedium)
-                WorkingLine("Getting the first question ready…")
+                WorkingLine("Getting the first question ready")
             }
             InterviewPhase.Unavailable -> {
-                Hint("This server can’t run the values interview yet. You can skip it for now and do it later.")
+                Hint("Interview unavailable on this server. Skip it for now.")
                 SecondaryButton("skip for now", onSkip, Modifier.fillMaxWidth())
             }
             is InterviewPhase.Failed -> {
@@ -201,8 +199,8 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
     val version = (state as? ConstitutionUi.Loaded)?.version
     StepScaffold(
         step = OnboardingStep.Constitution,
-        kicker = "step 3 of 4 · your constitution" + (version?.let { " · v$it" } ?: ""),
-        title = "How I want to work",
+        kicker = "Step 3 of 4, constitution" + (version?.let { " version $it" } ?: ""),
+        title = "Your constitution",
         footer = {
             when (state) {
                 is ConstitutionUi.Loaded -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -217,7 +215,7 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
     ) {
         when (state) {
             ConstitutionUi.Loading -> LoadingSpinner()
-            ConstitutionUi.Unavailable -> Hint("This server can’t show the constitution yet. You can read it in settings once it can.")
+            ConstitutionUi.Unavailable -> Hint("Constitution unavailable on this server.")
             is ConstitutionUi.Failed -> ErrorBox("Could not load the constitution.", "Check your connection and try again.")
             is ConstitutionUi.Loaded -> {
                 state.sections.forEach { section ->
@@ -232,7 +230,7 @@ fun ConstitutionContent(state: ConstitutionUi, onRedo: () -> Unit, onNext: () ->
                         }
                     }
                 }
-                Hint("Every action I take is checked against this page first. Hard lines are fixed. Everything else is judgment, guided by your reasons. Amend any of it by talking.")
+                Hint("Every action is checked against this page. Hard lines never change.")
             }
         }
     }
@@ -269,8 +267,8 @@ private fun ConstitutionPreview() = ClarityTheme {
             ConstitutionUi.Loaded(
                 1,
                 listOf(
-                    ConstitutionSectionView("what I value", listOf(ConstitutionEntry("Keep 9 to 12 for deep work.", "that’s when the work gets the best of me."))),
-                    ConstitutionSectionView("hard lines · never crossed", listOf(ConstitutionEntry(sampleLine.text, sampleLine.because))),
+                    ConstitutionSectionView("what matters", listOf(ConstitutionEntry("Keep 9 to 12 for deep work.", "that’s when the work gets the best of me."))),
+                    ConstitutionSectionView("hard lines", listOf(ConstitutionEntry(sampleLine.text, sampleLine.because))),
                 ),
             ),
             {}, {}, {},

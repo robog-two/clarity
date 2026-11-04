@@ -572,7 +572,7 @@ class NotRunningTest {
         vm.syncAll()
         assertEquals(listOf("files"), repo.tested, "it is not tested")
         assertTrue(vm.state.value.allSynced, "continue is offered")
-        assertEquals("all 2 synced · 1 not running", vm.state.value.summaryLine)
+        assertEquals("All 2 synced. 1 not running.", vm.state.value.summaryLine)
     }
 
     @Test fun deviceConnectorsAreHiddenInOnboarding() = withMain {

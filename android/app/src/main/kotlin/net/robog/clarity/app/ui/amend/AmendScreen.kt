@@ -32,6 +32,7 @@ import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.PrimaryButton
 import net.robog.clarity.app.ui.components.ReadingText
+import net.robog.clarity.app.ui.components.ScreenTitle
 import net.robog.clarity.app.ui.components.SecondaryButton
 import net.robog.clarity.app.ui.held.heldWhen
 import net.robog.clarity.app.ui.theme.clarityText
@@ -74,7 +75,7 @@ fun AmendContent(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         BackLink(backLabel, onBack)
-        Kicker("amend constitution")
+        ScreenTitle("Change a rule")
         Column(
             Modifier.weight(1f).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -86,23 +87,25 @@ fun AmendContent(
                     Hint(held.verdict.rationale)
                 }
             }
-            if (state.settled) Hint("This one is settled. Nothing more to decide here.")
+            if (state.settled) Hint("This one is already settled.")
             else if (!agentHasSpoken(state.talk)) net.robog.clarity.app.ui.cards.AgentBubble(fallbackQuestion(state.held != null))
             val reactions = androidx.compose.runtime.remember(state.talk) { net.robog.clarity.shared.feed.latestReactions(state.talk) }
             state.talk.forEach { FeedItemView(it, reaction = reactions[it.id]) }
             state.live?.let { LiveBubble(it, confirmed = state.liveConfirmed) }
-            if (state.waitingAgent) Hint("Working on it…", italic = true)
+            if (state.waitingAgent) Hint("Working on it", italic = true)
             state.proposal?.let { p ->
-                Kicker("proposed change")
+                Kicker("proposed change", heading = true)
                 InfoBox(border = MaterialTheme.colorScheme.primary) {
                     Kicker(proposalLabel(p))
                     p.old?.let {
+                        Kicker("Remove")
                         Text(
                             it,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = .6f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.clarityText.reading.copy(textDecoration = TextDecoration.LineThrough),
                         )
                     }
+                    if (p.old != null) Kicker("Add")
                     ReadingText(p.proposed.text)
                     p.proposed.because?.let { Hint("Because $it") }
                     p.autonomy?.let { Kicker(autonomyChangeLine(it), Modifier.padding(top = 4.dp)) }

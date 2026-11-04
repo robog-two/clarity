@@ -27,6 +27,10 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -109,30 +113,29 @@ fun VoiceModelsContent(
     logOpen: Boolean = false,
 ) {
     Column(modifier.animateContentSize(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SectionTitle("Speech recognition")
+        SectionTitle("Speech recognition", Modifier.semantics { heading() })
         InfoBox {
             when (val status = state.status) {
                 ModelStatus.Ready -> {
                     Text(
-                        if (state.usingOwn) "On this phone · ${tierTitle(state.tier)}" else "Models ready · not in use",
+                        if (state.usingOwn) "${tierTitle(state.tier)} on this phone" else "Models ready. Not in use.",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Hint(
                         when {
-                            state.engineFailed -> "The models couldn’t start on this phone, so the phone’s own recognizer listens instead."
-                            state.useBuiltIn -> "The phone’s own recognizer listens, as you chose below."
-                            else -> "Live words as you talk, then a more accurate pass on each phrase. Your voice never leaves this phone."
+                            state.engineFailed -> "Models failed to start. Phone recognizer in use."
+                            state.useBuiltIn -> "Phone recognizer in use."
+                            else -> "Live words while you talk. Audio stays on this phone."
                         },
                     )
                 }
                 is ModelStatus.NotDownloaded -> {
                     Text("Download speech models", style = MaterialTheme.typography.titleMedium)
                     Hint(
-                        "More accurate speech to text that runs entirely on this phone: no chime, no restarts between " +
-                            "sentences, and the audio never leaves the phone. One download of ${formatBytes(status.bytes)}" +
-                            if (state.mobileData) "." else ", over Wi-Fi.",
+                        "Speech to text on this phone. Audio never leaves it. " +
+                            "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
                     )
-                    Hint("Until then, the phone’s own recognizer listens.")
+                    Hint("Phone recognizer in use until then.")
                     PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = 4.dp))
                 }
                 is ModelStatus.Downloading -> {
@@ -146,8 +149,8 @@ fun VoiceModelsContent(
                 is ModelStatus.WaitingForNetwork -> {
                     Text(if (state.mobileData) "Waiting for a connection" else "Waiting for Wi-Fi", style = MaterialTheme.typography.titleMedium)
                     Hint(
-                        if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} so far; the rest follows on its own."
-                        else "The download of ${formatBytes(status.totalBytes)} starts on its own.",
+                        if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
+                        else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
                     )
                     SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = 4.dp))
                 }
@@ -158,7 +161,7 @@ fun VoiceModelsContent(
             }
         }
 
-        Kicker("Model size")
+        Kicker("Model size", heading = true)
         TierPicker(state, actions.onChoice)
         Hint(tierCaption(state))
 
@@ -167,7 +170,7 @@ fun VoiceModelsContent(
             state.mobileData, actions.onMobileData,
         )
         ToggleRow(
-            "Use the phone’s built-in recognizer instead", if (state.useBuiltIn) "The downloaded models aren’t used" else "The downloaded models listen once they’re ready",
+            "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
             state.useBuiltIn, actions.onUseBuiltIn,
         )
         if (state.status == ModelStatus.Ready) {
@@ -189,17 +192,20 @@ private fun VoiceLogPanel(log: List<VoiceLogEntry>, onClear: () -> Unit, zone: Z
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("Voice log", style = MaterialTheme.typography.titleMedium)
-                Hint("The last ${log.size} steps, with the words heard. Only in this phone’s memory: never saved or sent.")
+                Hint(if (log.isEmpty()) "No steps yet." else "Last ${log.size} steps and words heard. Kept in memory only.")
             }
-            TextButton(onClick = { open = !open }) { Text(if (open) "Hide" else "Show") }
+            TextButton(
+                onClick = { open = !open },
+                modifier = Modifier.semantics { stateDescription = if (open) "Shown" else "Hidden" },
+            ) { Text(if (open) "Hide" else "Show") }
         }
         if (open) {
             InfoBox {
                 if (log.isEmpty()) {
-                    Hint("Nothing yet. Talk with the mic on, then look here.")
+                    Hint("Nothing yet.")
                 } else {
                     log.asReversed().forEach { entry ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.semantics(mergeDescendants = true) {}, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text(
                                 logTime(entry.atMs, zone),
                                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
@@ -222,7 +228,7 @@ fun logTime(atMs: Long, zone: ZoneId): String =
 @Composable
 private fun TierPicker(state: VoiceUiState, onChoice: (TierChoice) -> Unit) {
     val options = TierChoice.entries
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().semantics { contentDescription = "Speech model size" }) {
         options.forEachIndexed { i, choice ->
             SegmentedButton(
                 selected = state.choice == choice,
@@ -247,11 +253,11 @@ fun tierCaption(state: VoiceUiState): String {
     val light = formatBytes(VoiceCatalog.downloadBytes(VoiceTier.Light))
     return when (state.choice) {
         TierChoice.Auto -> when {
-            state.benchmarkedDown -> "Auto: ${tierTitle(VoiceTier.Light)} ($light). The larger model was too slow on this phone."
-            else -> "Auto: ${tierTitle(state.proposed)} (${if (state.proposed == VoiceTier.Accurate) accurate else light}), from this phone’s memory; " +
-                "it steps down if a test decode is too slow."
+            state.benchmarkedDown -> "Auto picks ${tierTitle(VoiceTier.Light)} at $light. The larger model was too slow."
+            else -> "Auto picks ${tierTitle(state.proposed)} at ${if (state.proposed == VoiceTier.Accurate) accurate else light}. " +
+                "It steps down if too slow."
         }
-        TierChoice.Accurate -> "${tierTitle(VoiceTier.Accurate)}: the most accurate, $accurate. Needs a fast phone with 8 GB of memory."
-        TierChoice.Light -> "${tierTitle(VoiceTier.Light)}: lighter and quicker, $light."
+        TierChoice.Accurate -> "${tierTitle(VoiceTier.Accurate)} is most accurate at $accurate. Needs 8 GB of memory."
+        TierChoice.Light -> "${tierTitle(VoiceTier.Light)} is lighter and quicker at $light."
     }
 }

@@ -520,7 +520,7 @@ fun sealerFor(sealer: ConfigSealer, connectorId: ConnectorId, sealingKey: String
     { field, plaintext -> sealer.seal(connectorId, field, sealingKey, plaintext) }
 
 /**
- * The part of a connector's test text that names [label]: from "Work: 4,218 messages · Personal: 312
+ * The part of a connector's test text that names [label]: from "Work: 4,218 messages; Personal: 312
  * messages" and "Work" this is "4,218 messages". Null if the text does not name that account.
  */
 fun accountTestLine(text: String?, label: String): String? {

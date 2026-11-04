@@ -37,6 +37,8 @@ import net.robog.clarity.app.connector.ItemValues
 import net.robog.clarity.app.connector.PresetEdit
 import net.robog.clarity.app.ui.components.ClarityDropdown
 import net.robog.clarity.app.ui.components.ClarityField
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.InfoBox
 import net.robog.clarity.app.ui.components.Kicker
@@ -63,17 +65,17 @@ data class ItemNoun(
     companion object {
         val Account = ItemNoun(
             one = "account", many = "accounts", chooserTitle = "Which kind?",
-            chooserHint = "Pick a provider and I’ll fill in its server settings. You can change anything.",
+            chooserHint = "Pick a provider to fill in its settings.",
             otherTitle = "Other provider", otherCaption = "Enter the server settings yourself",
-            removeText = "It stops syncing once you save. Its saved password is deleted with it.",
-            removeNowText = "It stops syncing. Its saved password is deleted with it.",
+            removeText = "Stops syncing on save. Saved password is deleted.",
+            removeNowText = "Stops syncing. Saved password is deleted.",
         )
         val Server = ItemNoun(
             one = "server", many = "servers", chooserTitle = "Which server?",
-            chooserHint = "Pick one to fill in its package, version and hosts. You can change anything.",
+            chooserHint = "Pick one to fill in its settings.",
             otherTitle = "Another server", otherCaption = "Enter its package or address yourself",
-            removeText = "Clarity stops using it once you save. Its saved tokens are deleted with it.",
-            removeNowText = "Clarity stops using it. Its saved tokens are deleted with it.",
+            removeText = "Stops being used on save. Saved logins are deleted.",
+            removeNowText = "Stops being used. Saved logins are deleted.",
         )
     }
 }
@@ -149,7 +151,7 @@ fun FieldInput(
     }
 }
 
-const val SAVED_SECRET = "saved · type to replace"
+const val SAVED_SECRET = "Saved. Type to replace it."
 
 /** A list of short strings (folders, calendars): each entry with remove, and a field to add one. */
 @Composable
@@ -173,7 +175,10 @@ fun StringListEditor(
         entries.forEachIndexed { i, entry ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(entry, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
-                TextButton(onClick = { onChange(entries.filterIndexed { j, _ -> j != i }) }) { Text("Remove") }
+                TextButton(
+                    onClick = { onChange(entries.filterIndexed { j, _ -> j != i }) },
+                    modifier = Modifier.semantics { contentDescription = "Remove $entry" },
+                ) { Text("Remove") }
             }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
@@ -207,7 +212,7 @@ fun CollectionSection(
     val items = values.items(field.key)
     var removing by remember { mutableStateOf<ItemValues?>(null) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Kicker(field.label)
+        Kicker(field.label, heading = true)
         field.description?.let { Hint(it) }
         items.forEach { item ->
             val title = form.itemTitle(field, item)
@@ -252,15 +257,15 @@ fun AccountCard(
             Hint(it.text, color = if (it.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(onClick = onRemove) { Text("Remove") }
-            TextButton(onClick = onEdit) { Text("Edit") }
+            TextButton(onClick = onRemove, modifier = Modifier.semantics { contentDescription = "Remove $title" }) { Text("Remove") }
+            TextButton(onClick = onEdit, modifier = Modifier.semantics { contentDescription = "Edit $title" }) { Text("Edit") }
         }
     }
 }
 
 fun FieldError.message(noun: ItemNoun = ItemNoun.Account): String = when (this) {
-    FieldError.Required -> "Required."
-    FieldError.InvalidUrl -> "Enter a full address, like https://example.com."
+    FieldError.Required -> "Fill this in."
+    FieldError.InvalidUrl -> "Enter a full address starting with https://"
     FieldError.InvalidEmail -> "Enter an email address."
     FieldError.InvalidChoice -> "Pick one of the choices."
     FieldError.NotANumber -> "Enter a number."
@@ -268,7 +273,7 @@ fun FieldError.message(noun: ItemNoun = ItemNoun.Account): String = when (this) 
     is FieldError.TooSmall -> "At least ${trim(minimum)}."
     is FieldError.TooLarge -> "At most ${trim(maximum)}."
     is FieldError.TooFewItems -> if (minimum <= 1) "Add at least one ${noun.one}." else "Add at least $minimum ${noun.many}."
-    FieldError.ItemInvalid -> "One of the ${noun.many} is incomplete. Open it to fix it."
+    FieldError.ItemInvalid -> "Finish the incomplete ${noun.one}."
 }
 
 private fun trim(d: Double): String = if (d % 1.0 == 0.0) d.toLong().toString() else d.toString()
@@ -341,9 +346,9 @@ private fun PresetQuestion(input: PresetInput, edit: PresetEdit, values: FormVal
     }
 }
 
-/** A choice input's menu: each choice with its value, then "Other…" when other answers are taken. */
+/** A choice input's menu: each choice with its value, then "Other" when other answers are taken. */
 fun choiceOptions(input: PresetInput): List<Pair<String, String>> =
-    input.choices.map { it.value to "${it.title} · ${it.value}" } + if (input.other) listOf(OTHER_CHOICE to "Other…") else emptyList()
+    input.choices.map { it.value to "${it.title}, ${it.value}" } + if (input.other) listOf(OTHER_CHOICE to "Other") else emptyList()
 
 /** "Advanced settings": every field of the item, folded away under the questions. */
 @Composable
@@ -358,9 +363,9 @@ fun AdvancedToggle(open: Boolean, onToggle: () -> Unit) {
 @Composable
 fun UnreachableHosts(hosts: List<String>, onAdd: (String) -> Unit) {
     InfoBox(container = MaterialTheme.colorScheme.errorContainer, content = MaterialTheme.colorScheme.onErrorContainer, border = null) {
-        Text("Not in the hosts it may reach", style = MaterialTheme.typography.titleSmall)
+        Text("Blocked address", style = MaterialTheme.typography.titleSmall)
         Hint(
-            "The settings send it to ${hosts.joinToString()}, but it may not connect there, so those requests will be refused.",
+            "This server can’t reach ${hosts.joinToString()}. Add it to the allowed list.",
             color = MaterialTheme.colorScheme.onErrorContainer,
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
@@ -370,9 +375,9 @@ fun UnreachableHosts(hosts: List<String>, onAdd: (String) -> Unit) {
 }
 
 fun PresetInputError.message(): String = when (this) {
-    PresetInputError.Required -> "Required."
-    PresetInputError.NotHttps -> "Use the https address (it starts with https://, or just type the name)."
-    PresetInputError.NotAnAddress -> "Enter the address you open it at, like canvas.yourschool.edu."
+    PresetInputError.Required -> "Fill this in."
+    PresetInputError.NotHttps -> "Use the https:// address or its name."
+    PresetInputError.NotAnAddress -> "Enter its address, like canvas.school.edu."
     PresetInputError.WrongPort -> "Use the address without a port number."
     PresetInputError.NoMatch -> "That doesn’t look right. Check for typos."
     PresetInputError.NotAChoice -> "Pick one of the choices."

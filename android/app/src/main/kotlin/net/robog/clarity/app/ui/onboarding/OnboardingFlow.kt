@@ -171,7 +171,7 @@ fun WelcomeScreen(onBegin: () -> Unit) {
             Text("Personal agent", style = MaterialTheme.typography.titleLarge.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
             Text("You set the priorities.", style = MaterialTheme.clarityText.hero)
             ReadingText(
-                "I take small, scoped tasks and stay out of the way. Setup takes about ten minutes, mostly talking.",
+                "Clarity handles small tasks for you.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
@@ -186,10 +186,10 @@ fun WelcomeScreen(onBegin: () -> Unit) {
 }
 
 private val WELCOME_STEPS = listOf(
-    "Connect" to "Your server, your model key, and where your day lives",
+    "Connect" to "Server, model key, connectors",
     "Values" to "Seven questions about how you like to work",
-    "Review" to "Check the lines I wrote down from your answers",
-    "Morning call" to "Pick when I call to plan the day",
+    "Review" to "Review your constitution",
+    "Morning call" to "Pick a call time",
 )
 
 @Composable
@@ -243,32 +243,40 @@ fun ServerContent(
             }
         },
     ) {
-        Hint("Your data stays here. I read from it over open standards and keep nothing elsewhere.")
+        Hint("Your data stays on your server.")
         val urlError = (state.error as? ServerError.InvalidUrl)?.reason
-        ClarityField(
-            label = "Server address",
-            value = state.url,
-            onValueChange = onUrlChanged,
-            placeholder = "https://clarity.example.com",
-            error = urlError?.message(),
-            enabled = !state.enrolled && !state.checking,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
-        )
-        ClarityField(
-            label = "Setup code (optional)",
-            value = state.code,
-            onValueChange = onCodeChanged,
-            supporting = "Only needed if your server shows one.",
-            error = if (state.error is ServerError.CodeRequired) "This server needs a valid setup code." else null,
-            enabled = !state.enrolled && !state.checking,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
-        )
-        when {
-            state.checking -> StatusLine("checking…")
-            state.probe != null -> StatusLine(
-                if (state.probe.tls) "● Reachable, connected securely" else "● Reachable, but not over a secure connection",
+        if (state.enrolled) {
+            // Already connected: the address reads as plain text, not a faint disabled field.
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Kicker("Server address")
+                Text(state.url, style = MaterialTheme.typography.titleMedium)
+            }
+        } else {
+            ClarityField(
+                label = "Server address",
+                value = state.url,
+                onValueChange = onUrlChanged,
+                placeholder = "https://clarity.example.com",
+                error = urlError?.message(),
+                enabled = !state.checking,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
             )
-            state.enrolled -> StatusLine("● connected")
+            ClarityField(
+                label = "Setup code",
+                value = state.code,
+                onValueChange = onCodeChanged,
+                supporting = "Optional",
+                error = if (state.error is ServerError.CodeRequired) "This server needs a valid setup code." else null,
+                enabled = !state.checking,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+            )
+        }
+        when {
+            state.checking -> StatusLine("Checking")
+            state.probe != null -> StatusLine(
+                if (state.probe.tls) "Server reachable. Connection secure." else "Server reachable. Connection not secure.",
+            )
+            state.enrolled -> StatusLine("Connected")
         }
         state.error?.takeIf { it !is ServerError.InvalidUrl && it !is ServerError.CodeRequired }?.let {
             ErrorBox(it.message())
@@ -283,17 +291,17 @@ fun StatusLine(text: String, modifier: Modifier = Modifier) {
 
 private fun UrlError.message(): String = when (this) {
     UrlError.Empty -> "Enter the address of your server."
-    UrlError.Malformed -> "That does not look like a valid address."
-    UrlError.InsecureScheme -> "The address must start with https://."
-    UrlError.UnsupportedScheme -> "The address must start with https://."
+    UrlError.Malformed -> "That address doesn’t look right."
+    UrlError.InsecureScheme -> "Start the address with https://"
+    UrlError.UnsupportedScheme -> "Start the address with https://"
 }
 
 private fun ServerError.message(): String = when (this) {
     is ServerError.InvalidUrl -> reason.message()
-    ServerError.Unreachable -> "Could not reach the server. Check the address and your connection."
+    ServerError.Unreachable -> "Can’t reach server. Check the address."
     ServerError.CodeRequired -> "This server needs a valid setup code."
-    is ServerError.Server -> "The server returned an error (HTTP $status)."
-    ServerError.Unexpected -> "Unexpected response. Is this a Clarity server?"
+    is ServerError.Server -> "Server error $status. Try again later."
+    ServerError.Unexpected -> "Not a Clarity server. Check the address."
 }
 
 // --- model ---
@@ -319,16 +327,17 @@ fun ModelContent(state: ModelState, onCheck: () -> Unit, onNext: () -> Unit, onB
             }
         },
     ) {
-        Hint("I run on OpenRouter with your server’s own key. Usage is billed to that account, and requests go from your server, to providers that keep nothing.")
-        Hint("I pick the model size for each task: small for sorting mail, larger for drafting as you. You can change them in settings.")
+        Hint("Uses OpenRouter with a key on your server. You pay OpenRouter for usage.")
+        Hint("A small model sorts mail. A larger one writes for you.")
         when (state.result) {
-            ModelResult.Works -> StatusLine("● models ready")
+            ModelResult.Works -> StatusLine("Models ready")
             ModelResult.Missing -> ErrorBox(
-                "Your server has no OpenRouter key yet.",
-                "Put it in the server’s openrouter_api_key secret (or OPENROUTER_API_KEY), restart it, then check again.",
+                "Your server needs an OpenRouter key.",
+                "Add the key to your server settings. Restart the server and check again.",
+                raw = "The server reads the key from its openrouter_api_key secret or OPENROUTER_API_KEY.",
             )
-            ModelResult.ServerNotReady -> Hint("This server doesn’t report its setup yet. You can continue.")
-            null -> if (state.checking) StatusLine("Checking…")
+            ModelResult.ServerNotReady -> Hint("Server setup can’t be checked. You can continue.")
+            null -> if (state.checking) StatusLine("Checking")
         }
         Spacer(Modifier.height(1.dp))
     }

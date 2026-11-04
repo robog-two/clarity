@@ -36,7 +36,7 @@ import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.app.ui.mcp.isMcpHost
 import net.robog.clarity.shared.session.Settings
 
-/** One line of "Sources": a name, where it comes from, and when it last synced. */
+/** One line of "Sources": a name, a short note (or what failed), and when it last synced. */
 data class SourceRow(
     val title: String,
     val sub: String,
@@ -134,7 +134,7 @@ class SettingsViewModel(
         }
         refreshDevice()
         (constitution.current() as? ApiResult.Success)?.value?.let { c ->
-            _state.update { it.copy(constitution = "v${c.version} · ${c.lines.size} lines") }
+            _state.update { it.copy(constitution = "Version ${c.version}, ${c.lines.size} lines") }
         }
         refreshSources()
     }
@@ -155,7 +155,13 @@ class SettingsViewModel(
                                 if (m == null) {
                                     SourceRow(c.id.value, NOT_RUNNING, "not running", c.id.value)
                                 } else {
-                                    SourceRow(m.displayName, m.kind, relativeTime(c.lastSeenAt, now), c.id.value)
+                                    val failedTest = c.lastTest?.takeIf { t -> !t.ok }
+                                    SourceRow(
+                                        m.displayName,
+                                        failedTest?.message ?: "On your server",
+                                        if (failedTest != null) "Failed" else relativeTime(c.lastSeenAt, now),
+                                        c.id.value,
+                                    )
                                 }
                             },
                     )

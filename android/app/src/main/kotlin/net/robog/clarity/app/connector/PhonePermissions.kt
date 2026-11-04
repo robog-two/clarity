@@ -11,7 +11,7 @@ enum class PhoneConnectorKind(val key: String, val title: String, val permission
         key = "phone-messages",
         title = "Messages",
         permission = Manifest.permission.READ_SMS,
-        blurb = "Your messages are synchronized with your personal server.",
+        blurb = "Syncs texts to your server.",
     ),
 }
 

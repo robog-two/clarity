@@ -8,12 +8,11 @@ import net.robog.clarity.shared.governance.ProposedAction
 /** Pure: what approving a held action on the phone will do, in words. Null when it needs nothing special. */
 fun phoneApprovalNote(action: ProposedAction, phoneApproval: Boolean): String? = when {
     action is ProposedAction.UseCredential ->
-        "Approving opens your saved login with your fingerprint or face and lets me use ${action.fields.joinToString().ifEmpty { "it" }} " +
-            "on ${action.site} for this task (up to an hour). I never see the values."
+        "Approving unlocks your saved login with fingerprint or face. It is used on ${action.site} for this task, up to an hour."
     action is ProposedAction.AskCode ->
-        "Type the code you got for ${action.site}, then confirm with your fingerprint or face. It is used once and not kept."
+        "Type the code for ${action.site}, then confirm with fingerprint or face. It is used once."
     phoneApproval ->
-        "You set this to “never alone”, so your yes is signed on this phone with your fingerprint or face, and your server checks it."
+        "Set to “never alone”. Your approval is signed on this phone with fingerprint or face."
     else -> null
 }
 
