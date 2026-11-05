@@ -21,6 +21,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
@@ -80,6 +82,9 @@ fun ScreenHeading(text: String, level: ScreenLevel, modifier: Modifier = Modifie
 /** How tall the [ClarityScreen] `art` slot is. */
 private val ArtHeight = 88.dp
 
+/** How tall [ClarityScreen] `art` is when it sits above the title ([artAbove]). */
+val ArtAboveHeight = 144.dp
+
 /**
  * The header, in this order and only these pieces: step bar, back link, kicker, title. [art] is an
  * illustration at the end of the title row, centered on the title and decorative (no description).
@@ -95,14 +100,19 @@ private fun headerPieces(
     centered: Boolean = false,
     art: (@Composable () -> Unit)? = null,
     subtitle: String? = null,
+    artAbove: Boolean = false,
 ): List<@Composable () -> Unit> = buildList {
-    val align = if (centered) TextAlign.Center else null
-    val fill = if (centered) Modifier.fillMaxWidth() else Modifier
+    val center = centered || artAbove
+    val align = if (center) TextAlign.Center else null
+    val fill = if (center) Modifier.fillMaxWidth() else Modifier
     if (stepSegments != null) add { StepBar(stepSegments) }
     if (backLabel != null && onBack != null) add { BackLink(backLabel, onBack) }
     if (kicker != null) add { Kicker(kicker, fill, textAlign = align) }
+    if (art != null && artAbove) add {
+        Box(Modifier.fillMaxWidth().height(ArtAboveHeight).clearAndSetSemantics {}, contentAlignment = Alignment.Center) { art() }
+    }
     if (!title.isNullOrBlank()) add {
-        if (art == null) {
+        if (art == null || artAbove) {
             ScreenHeading(title, level, fill, align)
         } else {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
@@ -135,13 +145,15 @@ fun ClarityScreen(
     arrangement: ScreenArrangement = ScreenArrangement.Top,
     gutter: Dp = ScreenGutter,
     subtitle: String? = null,
+    /** [art] sits centered above a centered title instead of at the end of the title row. */
+    artAbove: Boolean = false,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     footer: (@Composable ColumnScope.() -> Unit)? = null,
     body: @Composable () -> Unit,
 ) = ClarityScreen(
     title, modifier, level, kicker, backLabel, onBack, stepSegments, horizontalAlignment, art, arrangement, gutter, subtitle,
-    phase = Unit, refreshing = refreshing, onRefresh = onRefresh, footer = footer,
+    artAbove = artAbove, phase = Unit, refreshing = refreshing, onRefresh = onRefresh, footer = footer,
 ) { body() }
 
 /**
@@ -163,6 +175,7 @@ fun <P> ClarityScreen(
     arrangement: ScreenArrangement = ScreenArrangement.Top,
     gutter: Dp = ScreenGutter,
     subtitle: String? = null,
+    artAbove: Boolean = false,
     phase: P,
     refreshing: Boolean = false,
     onRefresh: (() -> Unit)? = null,
@@ -171,7 +184,9 @@ fun <P> ClarityScreen(
 ) {
     val centered = arrangement == ScreenArrangement.Centered
     val align = horizontalAlignment
-    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments, centered, art, subtitle)
+    val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments, centered, art, subtitle, artAbove)
+    // The screen paints the surface, so its text takes the matching colour (no Surface above it on the nav stack).
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
     Column(
         modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().navigationBarsPadding().imePadding(),
     ) {
@@ -209,6 +224,7 @@ fun <P> ClarityScreen(
                 verticalArrangement = Arrangement.spacedBy(Space.Medium),
             ) { footer() }
         }
+    }
     }
 }
 
@@ -258,6 +274,7 @@ fun ClarityListScreen(
     val header = headerPieces(title, level, kicker, backLabel, onBack, stepSegments = null, art = art)
     val clock = rememberStaggerClock(Unit)
     Box(modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+      CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding()) {
             Refreshable(refreshing, onRefresh, Modifier.weight(1f)) {
                 LazyColumn(
@@ -279,6 +296,7 @@ fun ClarityListScreen(
             }
         }
         overlay()
+      }
     }
 }
 

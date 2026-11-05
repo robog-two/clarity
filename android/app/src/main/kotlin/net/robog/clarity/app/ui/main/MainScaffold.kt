@@ -3,7 +3,7 @@ package net.robog.clarity.app.ui.main
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.padding
 import net.robog.clarity.app.ui.components.PhaseSwap
@@ -89,6 +89,9 @@ fun MainScaffold(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,
+        // The screens paint their background under the status bar and pad for it themselves
+        // (ClarityScreen, ChatLayout), so the scaffold only makes room for the tab bar.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         snackbarHost = {
             SnackbarHost(snackbar) { data ->
                 Snackbar(
@@ -102,7 +105,7 @@ fun MainScaffold(
         },
         bottomBar = { TabBar(tab, state.heldWaiting, onTab) },
     ) { padding ->
-        // The screens pad for the status bar and the nav bar themselves; the scaffold has already done it here.
+        // padding is the tab bar; it already covers the nav bar, so the screens' own nav bar padding is consumed.
         val content = Modifier.padding(padding).consumeWindowInsets(padding)
         PhaseSwap(tab, label = "tab") { shown ->
             when (shown) {

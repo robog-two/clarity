@@ -528,7 +528,7 @@ fun SectionTitle(text: String, modifier: Modifier = Modifier) {
 
 private val previewTime = Instant.parse("2026-10-26T14:04:00Z")
 private val previewDate = LocalDate(2026, 10, 26)
-private const val PREVIEW_KICKER = "Monday, October 26, 2:04 pm"
+private const val PREVIEW_KICKER = "Monday, October 26th."
 
 private fun previewTask(id: String, title: String, detail: String, status: AgentTask.Status, held: String? = null, ago: Duration = Duration.ZERO) =
     AgentTask(TaskId(id), title, detail, status, held?.let { HeldActionId(it) }, previewTime - ago)
@@ -589,7 +589,7 @@ private fun TodayLoadingPreview() = PreviewFrame(TodayUiState(kicker = PREVIEW_K
 @Preview(name = "before call", widthDp = 390, heightDp = 780)
 @Composable
 private fun TodayBeforeCallPreview() = PreviewFrame(
-    TodayUiState(loading = false, kicker = "Monday, October 26, 7:12 am", today = Today(date = previewDate)),
+    TodayUiState(loading = false, kicker = "Monday, October 26th.", today = Today(date = previewDate)),
 )
 
 @Preview(name = "call unfinished", widthDp = 390, heightDp = 1000)

@@ -52,11 +52,9 @@ fun GoodsContent(state: GoodsUiState, onOpen: (String) -> Unit, onRefresh: () ->
         title = "Goods",
         modifier = modifier,
         level = ScreenLevel.Top,
-        kicker = "Made for you",
         refreshing = state.refreshing,
         onRefresh = onRefresh,
     ) {
-        item(key = "hint") { Hint("Reports and write-ups appear here") }
         when {
             state.loading -> item(key = "loading") { LoadingSpinner() }
             state.rows.isEmpty() && state.error != null -> item(key = "error") {

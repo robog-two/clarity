@@ -3,6 +3,7 @@ package net.robog.clarity.app.ui.theme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MotionScheme
 import androidx.compose.material3.Shapes
@@ -36,13 +37,17 @@ fun ClarityTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composabl
     val text = remember { clarityTextStyles(ClarityFonts.ui, ClarityFonts.ui) }
     val typography = remember { clarityTypography(ClarityFonts.ui, ClarityFonts.ui) }
     CompositionLocalProvider(LocalClarityText provides text) {
+        val colors = if (darkTheme) ClarityPalette.dark else ClarityPalette.light
         MaterialTheme(
-            colorScheme = if (darkTheme) ClarityPalette.dark else ClarityPalette.light,
+            colorScheme = colors,
             motionScheme = MotionScheme.expressive(),
             typography = typography,
             shapes = ClarityShapes,
-            content = content,
-        )
+        ) {
+            // Text outside any Surface (a screen pushed on the nav stack) takes the palette's text
+            // colour instead of Compose's default black, which is unreadable in dark mode.
+            CompositionLocalProvider(LocalContentColor provides colors.onSurface, content = content)
+        }
     }
 }
 

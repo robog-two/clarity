@@ -103,7 +103,6 @@ fun AskContent(
                     LoadingIndicator(Modifier.size(24.dp))
                     Kicker("Working")
                 }
-                else Kicker("Replies in text")
             }
         },
         footer = {

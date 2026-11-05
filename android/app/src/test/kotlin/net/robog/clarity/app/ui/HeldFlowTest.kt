@@ -201,7 +201,6 @@ class HeldViewModelTest {
         val s = vm.state.value
         assertEquals(2, s.rows.size)
         assertEquals(1, s.waiting)
-        assertEquals("1 waiting, 1 automatic", s.kicker)
         assertFalse(s.showAllowed)
         vm.toggleAllowed()
         assertTrue(vm.state.value.showAllowed)
@@ -211,7 +210,7 @@ class HeldViewModelTest {
     @Test fun updatesWhenTheFeedChanges() = withMain {
         val feed = ScreenFeed()
         val vm = HeldViewModel(feed, FakeHeldRepo())
-        assertEquals("Nothing waiting, 0 automatic", vm.state.value.kicker)
+        assertEquals(0, vm.state.value.waiting)
         feed.heldFlow.value = listOf(heldAction())
         assertEquals(1, vm.state.value.waiting)
     }

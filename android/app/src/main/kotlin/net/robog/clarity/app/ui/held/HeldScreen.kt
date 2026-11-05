@@ -56,8 +56,7 @@ fun HeldContent(
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = onOpen,
 ) {
-    ClarityScreen(title = "Held for you", modifier = modifier, level = ScreenLevel.Top, kicker = state.kicker) {
-        Hint("Stopped by your rules. Tap to review.")
+    ClarityScreen(title = "Held for Approval", modifier = modifier, level = ScreenLevel.Top) {
         if (state.rows.isEmpty()) Hint("Nothing waiting.")
         // The same contained group as Today's "I'm doing".
         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
