@@ -61,6 +61,7 @@ private fun annotated(inlines: List<MdInline>, colors: InlineColors): AnnotatedS
                 is MdInline.Strong -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { add(inline.children) }
                 is MdInline.Emphasis -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { add(inline.children) }
                 is MdInline.Code -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = colors.codeBackground)) { append(inline.text) }
+                is MdInline.Image -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(inline.alt) }
                 is MdInline.Link -> withLink(
                     LinkAnnotation.Url(inline.url, TextLinkStyles(SpanStyle(color = colors.link, textDecoration = TextDecoration.Underline))),
                 ) { add(inline.children) }
@@ -81,19 +82,19 @@ private fun InlineText(inlines: List<MdInline>, style: TextStyle, modifier: Modi
 }
 
 /** The document's blocks as lazy items (a long report scrolls without composing all of it). */
-fun LazyListScope.markdownItems(blocks: List<MdBlock>, modifier: Modifier = Modifier) {
+fun LazyListScope.markdownItems(blocks: List<MdBlock>, modifier: Modifier = Modifier, imagesBase: String? = null) {
     blocks.forEachIndexed { i, block ->
         item(key = "md-$i", contentType = block::class) {
-            MarkdownBlock(block, modifier.padding(top = spaceBefore(block, i == 0)))
+            MarkdownBlock(block, modifier.padding(top = spaceBefore(block, i == 0)), imagesBase)
         }
     }
 }
 
 /** Blocks inside a quote or a list item, in a plain column. */
 @Composable
-private fun MarkdownBlocks(blocks: List<MdBlock>, modifier: Modifier = Modifier) {
+private fun MarkdownBlocks(blocks: List<MdBlock>, modifier: Modifier = Modifier, imagesBase: String? = null) {
     Column(modifier) {
-        blocks.forEachIndexed { i, block -> MarkdownBlock(block, Modifier.padding(top = spaceBefore(block, i == 0))) }
+        blocks.forEachIndexed { i, block -> MarkdownBlock(block, Modifier.padding(top = spaceBefore(block, i == 0)), imagesBase) }
     }
 }
 
@@ -105,7 +106,7 @@ private fun spaceBefore(block: MdBlock, first: Boolean) = when {
 }
 
 @Composable
-private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
+private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier, imagesBase: String? = null) {
     val type = MaterialTheme.typography
     val reading = MaterialTheme.clarityText.reading
     val colors = MaterialTheme.colorScheme
@@ -124,7 +125,7 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
         is MdBlock.Quote -> Row(modifier.height(IntrinsicSize.Min)) {
             Box(Modifier.width(3.dp).fillMaxHeight().background(colors.outlineVariant, MaterialTheme.shapes.extraSmall))
             androidx.compose.runtime.CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides colors.onSurfaceVariant) {
-                MarkdownBlocks(block.blocks, Modifier.padding(start = Space.Medium))
+                MarkdownBlocks(block.blocks, Modifier.padding(start = Space.Medium), imagesBase)
             }
         }
         is MdBlock.ListBlock -> Column(
@@ -152,7 +153,7 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
                     }
                     Column(Modifier.weight(1f)) {
                         InlineText(item.text, reading)
-                        if (item.children.isNotEmpty()) MarkdownBlocks(item.children, Modifier.padding(top = Space.Small))
+                        if (item.children.isNotEmpty()) MarkdownBlocks(item.children, Modifier.padding(top = Space.Small), imagesBase)
                     }
                 }
             }
@@ -167,6 +168,7 @@ private fun MarkdownBlock(block: MdBlock, modifier: Modifier = Modifier) {
             style = type.bodySmall.copy(fontFamily = FontFamily.Monospace),
         )
         is MdBlock.Table -> MarkdownTable(block, modifier)
+        is MdBlock.Image -> MarkdownImage(block, imagesBase, modifier)
         MdBlock.Rule -> HorizontalDivider(modifier.padding(vertical = Space.Small), color = colors.outlineVariant)
     }
 }

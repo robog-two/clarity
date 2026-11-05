@@ -175,7 +175,7 @@ fun ReportContent(
                         ErrorBox("Can’t show the text", (state.sourceError ?: "It didn’t load.") + " Download still works.")
                     }
                     document.blocks.isEmpty() -> item(key = "empty") { Hint("Nothing written yet") }
-                    else -> markdownItems(document.blocks)
+                    else -> markdownItems(document.blocks, imagesBase = state.imagesBase)
                 }
                 if (state.sources.isNotEmpty()) {
                     item(key = "sources-title") {

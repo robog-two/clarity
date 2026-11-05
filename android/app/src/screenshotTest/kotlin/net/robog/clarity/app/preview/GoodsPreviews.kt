@@ -41,6 +41,10 @@ import net.robog.clarity.app.ui.goods.GoodsUiState
 import net.robog.clarity.app.ui.goods.ReportCardView
 import net.robog.clarity.app.ui.goods.ReportContent
 import net.robog.clarity.app.ui.goods.ReportUiState
+import net.robog.clarity.app.ui.goods.LocalImagePainter
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.ColorPainter
 import net.robog.clarity.app.ui.goods.goodsRows
 import net.robog.clarity.app.ui.goods.parseMarkdown
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -183,6 +187,28 @@ private fun SettingsSheet(dark: Boolean, state: ReportUiState) = Goods(dark) {
     Viewer(false, ReportUiState(loading = false, error = "Can’t reach your server right now."))
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorDark() =
     Viewer(true, ReportUiState(loading = false, error = "Can’t reach your server right now."))
+
+// ---------- a report with an image ----------
+
+private val withImage = ReportUiState(
+    loading = false,
+    title = "Sales by quarter",
+    subtitle = "Document. Revision 1. Today at 2:40 pm",
+    document = parseMarkdown(
+        "# Results\n\nSales grew in every quarter.\n\n![Sales by quarter, 2026](https://example.com/sales.png)\n\n" +
+            "The second quarter was the strongest. See ![the raw table](https://example.com/table.png) for the figures.",
+    ),
+)
+
+/** The image is a plain colour here: previews do not fetch. */
+@Composable
+private fun WithImage(dark: Boolean) = Goods(dark) {
+    CompositionLocalProvider(LocalImagePainter provides { ColorPainter(if (dark) Color(0xFF3A4A5C) else Color(0xFFB8CCE0)) }) {
+        ReportContent(withImage, {}, "Goods", {}, {}, {})
+    }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageLight() = WithImage(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageDark() = WithImage(true)
 
 // ---------- the Goods tab ----------
 

@@ -3,7 +3,7 @@ package net.robog.clarity.app.ui.goods
 /*
  * A small Markdown reader for the Goods viewer: the subset a report uses (pandoc's Markdown as the
  * agent writes it). Headings, paragraphs, bullet and numbered lists (one level of nesting), block
- * quotes, fenced code, rules and tables (kept as text), and inline emphasis, strong, code and links.
+ * quotes, fenced code, rules and tables (kept as text), images, and inline emphasis, strong, code and links.
  * Pure, so it is tested without Compose; [MarkdownDocument] draws the result.
  */
 
@@ -24,6 +24,9 @@ sealed interface MdBlock {
     /** A table, as its rows of cells (the header first). */
     data class Table(val rows: List<List<List<MdInline>>>) : MdBlock
     data object Rule : MdBlock
+
+    /** A paragraph that is only one image: [alt] is its caption, [url] the address as written (see [imageKey]). */
+    data class Image(val alt: String, val url: String) : MdBlock
 }
 
 data class MdListItem(val text: List<MdInline>, val children: List<MdBlock> = emptyList())
@@ -34,6 +37,9 @@ sealed interface MdInline {
     data class Strong(val children: List<MdInline>) : MdInline
     data class Code(val text: String) : MdInline
     data class Link(val children: List<MdInline>, val url: String) : MdInline
+
+    /** An image inside a sentence; it is drawn as its [alt] text. */
+    data class Image(val alt: String, val url: String) : MdInline
 }
 
 private val HEADING = Regex("^(#{1,6})\\s+(.*?)\\s*#*\\s*$")
@@ -113,7 +119,9 @@ private fun blocks(lines: List<String>): List<MdBlock> {
                 val para = mutableListOf(line.trim())
                 i++
                 while (i < lines.size && lines[i].isNotBlank() && !startsBlock(lines[i])) para += lines[i++].trim()
-                out += MdBlock.Paragraph(parseInline(para.joinToString(" ")))
+                val inlines = parseInline(para.joinToString(" "))
+                val only = inlines.singleOrNull() as? MdInline.Image
+                out += if (only != null) MdBlock.Image(only.alt, only.url) else MdBlock.Paragraph(inlines)
             }
         }
     }
@@ -179,7 +187,7 @@ private fun dropSpaces(line: String, count: Int): String = line.drop(minOf(count
 private fun cells(line: String): List<List<MdInline>> =
     line.trim().removePrefix("|").removeSuffix("|").split('|').map { parseInline(it.trim()) }
 
-/** Pure: the inline Markdown of [text]: `*em*`, `**strong**`, `` `code` ``, `[text](url)`, `<url>`, `\` escapes. */
+/** Pure: the inline Markdown of [text]: `*em*`, `**strong**`, `` `code` ``, `[text](url)`, `![alt](url)`, `<url>`, `\` escapes. */
 fun parseInline(text: String): List<MdInline> {
     val out = mutableListOf<MdInline>()
     val plain = StringBuilder()
@@ -208,6 +216,12 @@ fun parseInline(text: String): List<MdInline> {
                     out += MdInline.Code(text.substring(i + ticks, close).trim())
                     i = close + ticks
                 }
+            }
+            c == '!' && text.getOrNull(i + 1) == '[' && linkAt(text, i + 1) != null -> {
+                val image = linkAt(text, i + 1)!!
+                flush()
+                out += MdInline.Image(plainText(parseInline(image.first)), image.second)
+                i = image.third
             }
             c == '[' -> {
                 val link = linkAt(text, i)
@@ -322,6 +336,16 @@ fun plainText(inlines: List<MdInline>): String = buildString {
             is MdInline.Emphasis -> append(plainText(it.children))
             is MdInline.Strong -> append(plainText(it.children))
             is MdInline.Link -> append(plainText(it.children))
+            is MdInline.Image -> append(it.alt)
         }
     }
 }
+
+/** Pure: the image's key on the instance, the lowercase hex SHA-256 of [url] as written (trimmed). */
+fun imageKey(url: String): String =
+    java.security.MessageDigest.getInstance("SHA-256").digest(url.trim().toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+
+/** Pure: where the instance at [base] keeps the images of report [id]; [imageKey] goes on the end. */
+fun imagesBase(base: String, id: String): String =
+    base.trimEnd('/') + net.robog.clarity.shared.api.ApiPaths.REPORTS + "/" + id + "/images/"

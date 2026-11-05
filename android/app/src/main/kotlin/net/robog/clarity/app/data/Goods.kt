@@ -17,6 +17,9 @@ interface GoodsRepository {
     suspend fun detail(id: String): ApiResult<ReportDetail>
     suspend fun source(id: String): ApiResult<String>
 
+    /** The instance's address, the base of the report's image URLs ([imagesBase]); null before the app is set up. */
+    suspend fun base(): String? = null
+
     /** The download page's full URL (the same one until it is turned off). */
     suspend fun link(id: String): ApiResult<GoodsLink>
     suspend fun turnOffLink(id: String): ApiResult<Unit>
@@ -30,6 +33,7 @@ class DefaultGoodsRepository(private val api: ReportsApi) : GoodsRepository {
 
     override suspend fun detail(id: String): ApiResult<ReportDetail> = api.report(id)
     override suspend fun source(id: String): ApiResult<String> = api.reportSource(id)
+    override suspend fun base(): String? = api.baseUrl()
     override suspend fun link(id: String): ApiResult<GoodsLink> = api.reportLink(id)
     override suspend fun turnOffLink(id: String): ApiResult<Unit> = api.revokeReportLink(id)
 }

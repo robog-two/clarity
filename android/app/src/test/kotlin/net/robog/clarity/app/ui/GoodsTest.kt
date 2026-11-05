@@ -48,6 +48,8 @@ import net.robog.clarity.app.ui.goods.MdInline
 import net.robog.clarity.app.ui.goods.MdMeta
 import net.robog.clarity.app.ui.goods.ReportViewModel
 import net.robog.clarity.app.ui.goods.goodsRows
+import net.robog.clarity.app.ui.goods.imageKey
+import net.robog.clarity.app.ui.goods.imagesBase
 import net.robog.clarity.app.ui.goods.goodsWhen
 import net.robog.clarity.app.ui.goods.parseInline
 import net.robog.clarity.app.ui.goods.parseMarkdown
@@ -133,6 +135,29 @@ class MarkdownTest {
         assertEquals(listOf(t("snake_case_name")), parseInline("snake_case_name"))
         assertEquals(listOf(MdInline.Strong(listOf(MdInline.Emphasis(listOf(t("both")))))), parseInline("***both***"))
         assertEquals(listOf(t("an [unclosed link")), parseInline("an [unclosed link"))
+    }
+
+    @Test fun aParagraphOfOnlyAnImageIsAnImageBlock() {
+        val doc = parseMarkdown("Before.\n\n![A *chart* of sales](https://example.com/a.png)\n\nAfter.")
+        assertEquals(MdBlock.Image("A chart of sales", "https://example.com/a.png"), doc.blocks[1])
+        assertEquals(3, doc.blocks.size)
+        assertEquals(MdBlock.Image("", "https://example.com/b.png"), parseMarkdown("![](https://example.com/b.png)").blocks.single())
+    }
+
+    @Test fun anImageInASentenceStaysInline() {
+        val inlines = parseInline("See ![the chart](https://example.com/a.png) here.")
+        assertEquals(listOf(t("See "), MdInline.Image("the chart", "https://example.com/a.png"), t(" here.")), inlines)
+        assertEquals("See the chart here.", plainText(inlines))
+        val doc = parseMarkdown("See ![the chart](https://example.com/a.png) here.")
+        assertIs<MdBlock.Paragraph>(doc.blocks.single())
+        assertEquals(listOf(t("an ![unclosed image")), parseInline("an ![unclosed image"))
+    }
+
+    @Test fun anImageKeyIsTheSha256OfTheAddressAsWritten() {
+        assertEquals("494a30704d4f32ac0b81739d18a66d3638d440cbc6f5669f6af66f840edee5ab", imageKey("https://example.com/a.png"))
+        assertEquals(imageKey("https://example.com/a.png"), imageKey("  https://example.com/a.png "))
+        assertEquals("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", imageKey(""))
+        assertEquals("https://clarity.example/api/v1/reports/r1/images/", imagesBase("https://clarity.example/", "r1"))
     }
 
     @Test fun nothingEverThrows() {

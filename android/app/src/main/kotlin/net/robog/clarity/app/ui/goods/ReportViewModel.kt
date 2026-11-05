@@ -39,6 +39,8 @@ data class ReportUiState(
     /** Why the text could not be shown, while Download and Share still work. */
     val sourceError: String? = null,
     val sources: List<ReportCitation> = emptyList(),
+    /** Where the report's images are on the instance (see [imagesBase]); null until known. */
+    val imagesBase: String? = null,
     /** Whether the Good has a live download link (anyone with it can download). */
     val linkOn: Boolean = false,
     /** Files downloaded through the live link. */
@@ -153,6 +155,7 @@ class ReportViewModel(
                         document = document,
                         sourceError = (source as? ApiResult.Failure)?.error?.sentence(),
                         sources = value.sources,
+                        imagesBase = repository.base()?.let { base -> imagesBase(base, id) },
                         linkOn = value.link != null,
                         linkDownloads = value.linkDownloads,
                     )
