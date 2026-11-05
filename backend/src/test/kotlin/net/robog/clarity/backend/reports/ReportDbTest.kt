@@ -134,7 +134,7 @@ class ReportDbTest : FunSpec({
                 buildList { while (rs.next()) add(rs.getString(1)) }
             }
         }.orEmpty()
-        tables.sorted() shouldContainExactly listOf("report", "report_link", "report_rendition", "report_revision", "report_source")
+        tables.sorted() shouldContainExactly listOf("report", "report_image", "report_link", "report_rendition", "report_revision", "report_source")
         val column = database.tx {
             exec("SELECT column_default FROM information_schema.columns WHERE table_name = 'model_call' AND column_name = 'web_search_requests'") { rs ->
                 if (rs.next()) rs.getString(1) else null
