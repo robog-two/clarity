@@ -22,9 +22,14 @@ import zlib
 
 BASE, KEY = sys.argv[1].rstrip("/"), sys.argv[2]
 URL = "https://example.com/hare.png"
+# the production shape: percent-escapes, plus signs and a query; and the angle-bracket form
+URL2 = "https://images.example.com/content/v1/abc/H+%26+B+2018-2865.jpg?format=1500w"
+URL3 = "https://example.com/angle.png"
 SOURCE = (
     "# Pictures\n\n"
     f"![Hare caption]({URL})\n\n"
+    f"![Escaped caption]({URL2})\n\n"
+    f"![Angle caption](<{URL3}>)\n\n"
     "![Unfetched caption](https://example.com/other.png)\n\n"
     "![Filefile caption](file:///etc/passwd)\n\n"
     "![Pathpath caption](/etc/passwd)\n\n"
@@ -74,7 +79,9 @@ def pdf_images(data):
 
 CAPTIONS = ("Unfetched caption", "Filefile caption", "Pathpath caption", "Datadata caption")
 key = hashlib.sha256(URL.encode()).hexdigest()
-image = {key: {"type": "image/png", "data": base64.b64encode(png(1200, 600)).decode(), "width": 1200, "height": 600}}
+image = {}
+for u, w in ((URL, 1200), (URL2, 800), (URL3, 400)):
+    image[hashlib.sha256(u.encode()).hexdigest()] = {"type": "image/png", "data": base64.b64encode(png(w, w // 2)).decode(), "width": w, "height": w // 2}
 
 for fmt in ("pdf", "docx", "odt"):
     code, with_image = post(fmt, image)
@@ -84,15 +91,15 @@ for fmt in ("pdf", "docx", "odt"):
     if code != 200:
         fail(f"{fmt} without images answered {code}: {without[:300]!r}")
     if fmt == "pdf":
-        if pdf_images(with_image) != 1:
-            fail(f"pdf should embed exactly one image, found {pdf_images(with_image)}")
+        if pdf_images(with_image) != 3:
+            fail(f"pdf should embed exactly three images, found {pdf_images(with_image)}")
         if pdf_images(without) != 0:
             fail(f"pdf without images embedded {pdf_images(without)}")
     else:
         folder = "word/media/" if fmt == "docx" else "Pictures/"
         media = [n for n in zip_names(with_image) if n.startswith(folder) and not n.endswith("/")]
-        if len(media) != 1:
-            fail(f"{fmt} should embed exactly one image, found {media}")
+        if len(media) != 3:
+            fail(f"{fmt} should embed all three images, found {media}")
         if [n for n in zip_names(without) if n.startswith(folder) and not n.endswith("/")]:
             fail(f"{fmt} without images embedded one")
         part = "word/document.xml" if fmt == "docx" else "content.xml"

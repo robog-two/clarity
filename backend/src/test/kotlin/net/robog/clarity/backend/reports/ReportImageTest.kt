@@ -35,6 +35,10 @@ class ReportImageTest : FunSpec({
     test("the key is the lowercase hex SHA-256 of the trimmed address, as the renderer computes it") {
         imageKey(PNG_URL) shouldBe "640dbf8d7b514cf29975648c0ccb012c97a06cfd4ab3d8bb9b8486300fa826fc"
         imageKey("  $PNG_URL\n") shouldBe imageKey(PNG_URL)
+        // the production shape: percent-escapes, plus signs and a query are hashed exactly as written
+        imageKey("https://images.example.com/content/v1/abc/H+%26+B+2018-2865.jpg?format=1500w") shouldBe "ba93f912c631c761d413a288fbc03bbd98c70b1341b1e6822d60f32ea30a7b3d"
+        extractImageUrls("![Hare & Bristle salon](https://images.example.com/content/v1/abc/H+%26+B+2018-2865.jpg?format=1500w)") shouldContainExactly listOf("https://images.example.com/content/v1/abc/H+%26+B+2018-2865.jpg?format=1500w")
+        extractImageUrls("![Angle](<https://example.com/angle.png>)") shouldContainExactly listOf("https://example.com/angle.png")
         imageKey("https://example.com/Hare.png") shouldBe imageKey("https://example.com/Hare.png")
         (imageKey("https://example.com/Hare.png") == imageKey(PNG_URL)) shouldBe false
     }
