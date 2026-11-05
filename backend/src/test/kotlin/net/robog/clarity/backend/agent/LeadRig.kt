@@ -208,7 +208,13 @@ class LeadRig(
     val nudgeTools = NudgeTools(nudges, tasks, settingsProvider, clock)
 
     val reportStore = net.robog.clarity.backend.reports.ExposedReportStore(database, clock)
-    val reportTools = net.robog.clarity.backend.reports.ReportTools(reportStore, own, journal, settingsProvider, clock)
+    val reportImages = net.robog.clarity.backend.reports.ReportImages(
+        net.robog.clarity.backend.reports.ExposedReportImageStore(database),
+        net.robog.clarity.backend.reports.NoImageFetcher,
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob()),
+        clock,
+    )
+    val reportTools = net.robog.clarity.backend.reports.ReportTools(reportStore, own, journal, settingsProvider, clock, reportImages)
 
     val mcpStore = net.robog.clarity.backend.mcpservers.ExposedMcpStore(database)
     val mcpCatalog = net.robog.clarity.backend.mcpservers.McpCatalog(mcpHost, mcpStore, collections, clock, refreshOnRead = mcpRefreshOnRead)

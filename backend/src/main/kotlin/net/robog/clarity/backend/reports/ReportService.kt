@@ -54,6 +54,7 @@ class ReportService(
     private val renderer: Renderer,
     private val blobs: ReportBlobs,
     private val clock: Clock,
+    private val images: ReportImages,
 ) {
     suspend fun detail(id: String): ReportDetail? {
         val report = store.report(id) ?: return null
@@ -93,8 +94,11 @@ class ReportService(
             // The row outlived its file (a restore without the cache, a manual clean-up): drop it and render again.
             store.deleteRendition(cached.revisionId, cached.format, cached.rendererVersion)
         }
-        val rendered = renderer.render(revision.source, revision.style, format).fold({ return DownloadError.Render(it).left() }, { it })
-        cache(revision, format, rendered)
+        // Pictures come from what was fetched when the revision was saved. A file made while one is still to
+        // come is not cached (the next download has it).
+        val pictures = if (format == ReportFormat.TXT) RenderImages.NONE else images.forRender(revision.reportId, revision.source)
+        val rendered = renderer.render(revision.source, revision.style, format, pictures.images).fold({ return DownloadError.Render(it).left() }, { it })
+        if (!pictures.pending) cache(revision, format, rendered)
         return rendered.bytes.right()
     }
 

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """renderd: turns a report revision (Markdown + style spec) into a file with pandoc.
 
-POST /render  {"source": "...", "style": {...}, "format": "pdf|docx|odt|txt|md"}  -> the file's bytes
+POST /render  {"source": "...", "style": {...}, "format": "pdf|docx|odt|txt|md",
+               "images": {"<sha256 of the URL>": {"type": "image/png", "data": "<base64>", "width": 640, "height": 480}}}
+              -> the file's bytes
 GET  /healthz -> {"status": "ok", "version": "..."}
 
 Bearer key from RENDER_KEY_FILE on /render (refused when the file is missing or empty). No network:
@@ -11,6 +13,8 @@ spacing, indents, margins); PDFs go through Typst. Python standard library only,
 nothing but python3, pandoc, typst and the fonts.
 """
 
+import base64
+import binascii
 import hashlib
 import hmac
 import io
@@ -31,7 +35,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("RENDER_PORT", "8950"))
 KEY_FILE = os.environ.get("RENDER_KEY_FILE", "/run/secrets/render_key")
 TIMEOUT = float(os.environ.get("RENDER_TIMEOUT", "60"))
-MAX_BODY = int(os.environ.get("RENDER_MAX_BODY", str(4 * 1024 * 1024)))
+MAX_BODY = int(os.environ.get("RENDER_MAX_BODY", str(40 * 1024 * 1024)))
+MAX_IMAGES = 20
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_PARALLEL = int(os.environ.get("RENDER_MAX_PARALLEL", "2"))
 PANDOC = os.environ.get("RENDER_PANDOC", "pandoc")
 DATA = os.environ.get("RENDER_DATA", HERE)
@@ -780,7 +786,7 @@ def typst_defaults(style):
 
 # ---- rendering --------------------------------------------------------------------------------------
 
-def pandoc_command(fmt_name, work, style):
+def pandoc_command(fmt_name, work, style, images=None):
     """The pandoc command line for [fmt_name], with its side files written to [work]. Pure apart from the files."""
     source = os.path.join(work, "source.md")
     # --sandbox: pandoc itself reads nothing but the files named here (sanitize.lua already drops what
@@ -788,6 +794,7 @@ def pandoc_command(fmt_name, work, style):
     command = [PANDOC, source, "--sandbox", "--from", FROM, "--lua-filter", os.path.join(DATA, "sanitize.lua")]
     if style["titlePage"]:
         command += ["--lua-filter", os.path.join(DATA, "titlepage.lua")]
+    command += image_metadata(work, style, images or {})
     if fmt_name == "txt":
         out = os.path.join(work, "out.txt")
         command += ["--to", "plain", "--standalone", "--wrap=auto", "--columns=80"]
@@ -818,6 +825,70 @@ def pandoc_command(fmt_name, work, style):
     return command + ["--output", out], out
 
 
+# ---- images -----------------------------------------------------------------------------------------
+
+KEY = re.compile(r"^[0-9a-f]{64}$")
+IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp"}
+
+
+def magic_ok(ext, data):
+    """The file really is what its type says (the backend checked too; this is the second lock)."""
+    if ext == "png":
+        return data.startswith(b"\x89PNG\r\n\x1a\n")
+    if ext == "jpg":
+        return data.startswith(b"\xff\xd8\xff")
+    if ext == "gif":
+        return data.startswith((b"GIF87a", b"GIF89a"))
+    return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+
+
+def parse_images(raw):
+    """The request's images as {key: (ext, bytes, width, height)}. Anything malformed is a bad request."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_IMAGES:
+        raise BadRequest(f"images must be an object of at most {MAX_IMAGES} entries")
+    images = {}
+    for key, item in raw.items():
+        if not isinstance(key, str) or not KEY.match(key) or not isinstance(item, dict):
+            raise BadRequest("each image needs a lowercase hex sha256 key and an object")
+        ext = IMAGE_TYPES.get(item.get("type"))
+        data = item.get("data")
+        if ext is None or not isinstance(data, str):
+            raise BadRequest("each image needs a type (png, jpeg, gif or webp) and base64 data")
+        try:
+            blob = base64.b64decode(data, validate=True)
+        except (binascii.Error, ValueError):
+            raise BadRequest("image data must be base64")
+        if not blob or len(blob) > MAX_IMAGE_BYTES or not magic_ok(ext, blob):
+            raise BadRequest("an image is empty, too large or not the type it says")
+        size = []
+        for field in ("width", "height"):
+            value = item.get(field)
+            size.append(value if isinstance(value, int) and not isinstance(value, bool) and 0 < value < 100000 else 0)
+        images[key] = (ext, blob, size[0], size[1])
+    return images
+
+
+def text_width_in(style):
+    page = 8.5 if style["pageSize"] == "letter" else 8.27
+    return max(page - 2 * style["marginIn"], 1.0)
+
+
+def image_metadata(work, style, images):
+    """Writes [images] to a fresh directory under [work] and returns the -M options sanitize.lua reads.
+    They are always passed (an empty list too): a command-line value beats the document's own."""
+    folder = os.path.join(work, "images")
+    os.mkdir(folder)
+    entries = []
+    for key, (ext, blob, width, height) in sorted(images.items()):
+        with open(os.path.join(folder, f"{key}.{ext}"), "wb") as f:
+            f.write(blob)
+        entries.append(f"{key}:{ext}:{width or ''}:{height or ''}")
+    return ["-M", f"clarity-image-dir={folder}", "-M", f"clarity-text-width-in={fmt(text_width_in(style))}",
+            "-M", "clarity-images=" + (" ".join(entries) if entries else "none")]
+
+
 def run(command, cwd):
     """Runs [command] in its own process group (pandoc starts typst), killed whole on timeout."""
     env = {
@@ -841,14 +912,14 @@ def run(command, cwd):
     return process.returncode, err.decode("utf-8", "replace")
 
 
-def render(source, style, fmt_name):
+def render(source, style, fmt_name, images=None):
     if fmt_name == "md":
         return source.encode("utf-8")
     work = tempfile.mkdtemp(prefix="render-")
     try:
         with open(os.path.join(work, "source.md"), "w", encoding="utf-8") as f:
             f.write(source)
-        command, out = pandoc_command(fmt_name, work, style)
+        command, out = pandoc_command(fmt_name, work, style, images)
         code, err = run(command, work)
         if code != 0 or not os.path.isfile(out):
             raise RenderFailed(last_lines(err))
@@ -948,12 +1019,13 @@ class Handler(BaseHTTPRequestHandler):
             if fmt_name not in FORMATS:
                 raise BadRequest("format must be one of " + ", ".join(FORMATS))
             style = normalize_style(request.get("style"))
+            images = parse_images(request.get("images"))
         except (BadRequest, ValueError) as e:
             return self.error(400, str(e))
         if not SLOTS.acquire(timeout=TIMEOUT):
             return self.error(503, "busy, try again")
         try:
-            data = render(source, style, fmt_name)
+            data = render(source, style, fmt_name, images)
         except TimeoutError:
             return self.error(504, f"rendering took longer than {fmt(TIMEOUT)} s")
         except RenderFailed as e:
