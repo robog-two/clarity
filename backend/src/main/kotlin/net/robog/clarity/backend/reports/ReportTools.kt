@@ -185,11 +185,12 @@ class ReportTools(
     private val journal: RunJournal,
     private val settings: SettingsProvider,
     private val clock: Clock,
+    private val images: ReportImages,
 ) {
     @Serializable
     class CreateInput(
         @Description("Short title, e.g. \"The causes of the 1918 flu pandemic\".") val title: String,
-        @Description("The whole document in Markdown: # headings, paragraphs, lists, tables, > quotes. Optional YAML front matter (title, author, date) at the top.")
+        @Description("The whole document in Markdown: # headings, paragraphs, lists, tables, > quotes, and pictures as ![caption](https://...) with a public image URL (PNG, JPEG, GIF or WebP, 5 MB at most, 20 per document). Optional YAML front matter (title, author, date) at the top.")
         val source: String,
         @Description("How it should look, from what the person asked for (fonts, sizes, spacing, margins, heading font/bold/italic/size, MLA...). Omit for the default: body Times New Roman 12, single spaced, 1 in margins; title and headings in Libre Caslon Text.")
         @Serializable(with = LenientStyleInput::class) val style: StyleInput? = null,
@@ -236,7 +237,8 @@ class ReportTools(
         name = "create_report",
         description = "Create a document for the person from Markdown; it shows in their Goods tab at once. Returns its id; keep the id, not the text. " +
             "A document you are asked for goes here, not into your reply. " +
-            "It downloads as PDF, Word / Pages, OpenDocument and plain text.",
+            "It downloads as PDF, Word / Pages, OpenDocument and plain text. " +
+            "Pictures work as ![caption](https://...) with a public image URL; they show in the app and in the downloads (plain text keeps the caption).",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
@@ -248,6 +250,7 @@ class ReportTools(
             else -> repeatedReport(store.createdBy(scope.runId), title, scope.isLead)?.let { ToolResult.Error(repeatedReportText(it)) }
                 ?: resolveStyle(input.style, ReportStyle()).fold({ ToolResult.Error(it) }) { style ->
                     val (report, revision) = store.create(ReportKind.DOCUMENT, title, input.source, style, scope.runId)
+                    images.schedule(report.id, revision.source)
                     ToolResult.Ok("Report ${report.id} created: \"${report.title}\", revision 1, ${revision.source.lines().size} lines. Style: ${describeStyle(style)}.")
                 }
         }
@@ -263,7 +266,10 @@ class ReportTools(
             replaceUnique(latest.source, input.old, input.new).map { RevisionChange(it, latest.style) }
         }.fold(
             { ToolResult.Error(it) },
-            { ToolResult.Ok("Report ${it.reportId}: revision ${it.n} saved (${it.source.lines().size} lines).") },
+            {
+                images.schedule(it.reportId, it.source)
+                ToolResult.Ok("Report ${it.reportId}: revision ${it.n} saved (${it.source.lines().size} lines).")
+            },
         )
     }
 

@@ -115,12 +115,12 @@ class ReportLinkTest : FunSpec({
         val (devils, _) = store.create(ReportKind.DOCUMENT, "The Devils", "# Background\n\nRussell.", ReportStyle(), null)
         val (flu, _) = store.create(ReportKind.DOCUMENT, "The 1918 flu", "# Causes\n\nSpread.", ReportStyle(), null)
         val renderer = CountingRenderer()
-        val service = ReportService(store, renderer, ReportBlobs(reportsAppConfig(Files.createTempDirectory("links"))), Clock.System)
+        val service = ReportService(store, renderer, ReportBlobs(reportsAppConfig(Files.createTempDirectory("links"))), Clock.System, testImages(database))
         testApplication {
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                ReportRoutes(service, store, links).install(this)
+                ReportRoutes(service, store, links, testImages(database)).install(this)
                 ReportLinkRoutes(service, store, links, SettingsProvider { Settings() }).install(this)
             }
             val client = createClient { }

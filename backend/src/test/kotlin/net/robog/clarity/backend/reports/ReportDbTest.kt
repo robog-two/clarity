@@ -70,7 +70,7 @@ class CountingRenderer(var currentVersion: String? = "v1") : Renderer {
 
     override suspend fun version(): String? = currentVersion
 
-    override suspend fun render(source: String, style: ReportStyle, format: ReportFormat): Either<RenderError, Rendered> {
+    override suspend fun render(source: String, style: ReportStyle, format: ReportFormat, images: Map<String, RenderImage>): Either<RenderError, Rendered> {
         failure?.let { return it.left() }
         calls += format to style
         return Rendered("${format.wireName}:${source.length}:${currentVersion}".encodeToByteArray(), currentVersion ?: "unknown").right()
@@ -118,7 +118,8 @@ class ReportDbTest : FunSpec({
         val store = ExposedReportStore(database, Clock.System)
         val renderer = CountingRenderer()
         val blobs = ReportBlobs(reportsAppConfig(dir))
-        val service = ReportService(store, renderer, blobs, Clock.System)
+        val images = testImages(database)
+        val service = ReportService(store, renderer, blobs, Clock.System, images)
     }
 
     suspend fun created(r: LeadRig, title: String = "The 1918 flu", source: String = "# Causes\n\nThe flu spread in 1918.\n\n# Spread\n\nIt spread fast.", style: JsonObject? = null): String {
@@ -372,7 +373,7 @@ class ReportDbTest : FunSpec({
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                ReportRoutes(c.service, c.store, ExposedReportLinkStore(database, Clock.System)).install(this)
+                ReportRoutes(c.service, c.store, ExposedReportLinkStore(database, Clock.System), c.images).install(this)
             }
             val client = createClient { }
             suspend fun fetch(path: String, auth: Boolean = true) = client.get(path) { if (auth) header(HttpHeaders.Authorization, "Bearer device") }

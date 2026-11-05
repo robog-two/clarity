@@ -50,6 +50,10 @@ for format in pdf docx odt txt md; do
   if grep -q "$key" "$out"; then echo "FAIL: $format contains the key"; exit 1; fi
   echo "ok $format ($(wc -c <"$out") bytes)"
 done
+
+# images: one supplied image embeds in pdf, docx and odt; every other address stays a caption
+python3 -I "$(dirname "$0")/smoke_images.py" "$base" "$key" || exit 1
+
 t0=$(date +%s); podman stop -t 10 "$name" >/dev/null
 [ $(( $(date +%s) - t0 )) -lt 8 ] || { echo "FAIL: renderd ignored SIGTERM"; exit 1; }
 echo "render smoke OK"

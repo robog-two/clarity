@@ -109,6 +109,14 @@ case "$code" in 000|403|407|5*) fail "backend: openrouter.ai should be allowed, 
 expect "backend refuses other public host (www.iana.org)" 403 "$(via_backend https://www.iana.org/)"
 expect "backend refuses a private address" 403 "$(via_backend http://10.0.0.1/)"
 
+# --- backend image listener (3129): public hosts, read only -------------------------------------
+via_images() { client "$net_backend" -x http://egress-backend:3129 "$@"; }
+expect "images: public HTTPS (www.iana.org)" 200 "$(via_images https://www.iana.org/)"
+expect "images refuses a private address" 403 "$(via_images http://10.0.0.1/)"
+expect "images refuses localhost" 403 "$(via_images http://localhost/)"
+expect "images: CONNECT to non-443 port refused" 403 "$(via_images https://example.com:8443/)"
+expect "images: POST refused" 403 "$(via_images -X POST -d x http://example.com/)"
+
 # --- mcp listener: a login per server, each with its own allow-list ------------------------------
 via_mcp() { u="$1"; shift; client "$net_mcp" -x "http://$u@egress-mcp:3128" "$@"; }
 expect "mcp: no login is challenged" 407 "$(client "$net_mcp" -x http://egress-mcp:3128 https://example.com/)"

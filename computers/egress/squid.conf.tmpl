@@ -4,12 +4,17 @@
 
 http_port @BROWSER_IP@:3128 name=browser
 http_port @BACKEND_IP@:3128 name=backend
+# Pictures a report names (Goods): the backend's second listener, on its own port, for public hosts only
+# and only to read (GET, and CONNECT for https). The model API listener above stays limited to its hosts.
+http_port @BACKEND_IP@:3129 name=images
 http_port @SANDBOX_IP@:3128 name=sandbox
 http_port @MCP_IP@:3128 name=mcphost
 http_port 127.0.0.1:3130 name=health
 
 acl browser_port myportname browser
 acl backend_port myportname backend
+acl images_port myportname images
+acl images_method method GET CONNECT
 acl sandbox_port myportname sandbox
 acl mcp_port myportname mcphost
 
@@ -39,7 +44,7 @@ acl tls_port port 443
 acl CONNECT method CONNECT
 acl backend_hosts dstdomain @BACKEND_ALLOW@
 
-http_access deny !browser_port !backend_port !sandbox_port !mcp_port
+http_access deny !browser_port !backend_port !images_port !sandbox_port !mcp_port
 http_access deny private_dst
 http_access deny private_name
 http_access deny private_regex
@@ -49,6 +54,8 @@ http_access deny CONNECT !tls_port
 http_access deny mcp_port !mcp_login
 http_access allow mcp_port mcp_allowed
 http_access deny mcp_port
+http_access deny images_port !images_method
+http_access allow images_port
 http_access allow backend_port backend_hosts
 http_access deny backend_port
 http_access allow browser_port

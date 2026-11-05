@@ -13,6 +13,9 @@
 #   CLARITY_BACKEND_EGRESS_ALLOW  extra hosts the backend may reach, comma/space separated
 #                               (openrouter.ai, the model API, is always allowed). A leading dot allows subdomains.
 #
+# The backend network has a second listener (port 3129, the image listener) for public hosts, GET and CONNECT
+# only: the backend fetches the pictures a Good names through it. Port 3128 stays limited to the allow-list.
+#
 # Each client network gets its own listener bound to this container's address on that network, so
 # a container on one network cannot borrow the other network's policy.
 set -eu

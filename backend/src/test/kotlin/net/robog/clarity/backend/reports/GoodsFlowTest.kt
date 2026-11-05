@@ -185,12 +185,12 @@ class GoodsFlowTest : FunSpec({
         cards shouldContain Card.Report(report.id, report.title, formatsFor(report.kind).map { it.wireName })
 
         // ... and in the Goods list the app shows.
-        val c = ReportService(r.reportStore, CountingRenderer(), ReportBlobs(reportsAppConfig(Files.createTempDirectory("goods"))), Clock.System)
+        val c = ReportService(r.reportStore, CountingRenderer(), ReportBlobs(reportsAppConfig(Files.createTempDirectory("goods"))), Clock.System, r.reportImages)
         testApplication {
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                ReportRoutes(c, r.reportStore, ExposedReportLinkStore(database, Clock.System)).install(this)
+                ReportRoutes(c, r.reportStore, ExposedReportLinkStore(database, Clock.System), r.reportImages).install(this)
             }
             val body = createClient { }.get("/api/v1/reports") { header(HttpHeaders.Authorization, "Bearer device") }.bodyAsText()
             ClarityJson.decodeFromString(ReportList.serializer(), body).reports.map { it.id } shouldBe listOf(report.id)

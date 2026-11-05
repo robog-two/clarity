@@ -43,13 +43,21 @@ fun DownloadError.toProblem(): HttpProblem = when (this) {
  *  - `GET /api/v1/reports`: the list, newest first;
  *  - `GET /api/v1/reports/{id}`: metadata, revisions, sources, the formats (labels included) and the live secret link's path;
  *  - `GET /api/v1/reports/{id}/source?rev=`: a revision's Markdown (the latest without `rev`);
+ *  - `GET /api/v1/reports/{id}/images/{key}`: a picture the report's Markdown names (`![caption](https://...)`),
+ *    fetched when the revision was saved; `key` is the lowercase hex SHA-256 of the address as written. 404 when
+ *    the report has no such picture (unknown key, fetch failed or not done yet);
  *  - `GET /api/v1/reports/{id}/download/{format}?rev=`: the rendered file, as an attachment named
  *    after the title. Rendered on demand and cached.
  * The secret link (and the only public report routes) are in [ReportLinkRoutes].
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class ReportRoutes(private val reports: ReportService, private val store: ReportStore, private val links: ReportLinkStore) : HttpModule {
+class ReportRoutes(
+    private val reports: ReportService,
+    private val store: ReportStore,
+    private val links: ReportLinkStore,
+    private val images: ReportImages,
+) : HttpModule {
     override fun install(application: Application) {
         application.routing {
             authenticate(AuthProviders.DEVICE) {
@@ -72,6 +80,19 @@ class ReportRoutes(private val reports: ReportService, private val store: Report
                     } else {
                         call.response.header("X-Report-Revision", revision.n.toString())
                         call.respondText(revision.source, ContentType.parse(ReportFormat.MD.mimeType))
+                    }
+                }
+                get("${ApiPaths.REPORTS}/{id}/images/{key}") {
+                    val key = call.parameters["key"].orEmpty()
+                    val image = if (IMAGE_KEY.matches(key)) images.image(call.parameters["id"].orEmpty(), key) else null
+                    val bytes = image?.bytes
+                    val type = image?.contentType
+                    if (bytes == null || type == null) {
+                        call.respondProblem(EdgeProblem.NotFound("No such image."))
+                    } else {
+                        call.response.header(HttpHeaders.CacheControl, "private, max-age=86400")
+                        call.response.header("X-Content-Type-Options", "nosniff")
+                        call.respondBytes(bytes, ContentType.parse(type))
                     }
                 }
                 get("${ApiPaths.REPORTS}/{id}/download/{format}") {
@@ -106,4 +127,8 @@ class ReportRoutes(private val reports: ReportService, private val store: Report
     }
 
     private class Rev(val value: Int?)
+
+    private companion object {
+        val IMAGE_KEY = Regex("[0-9a-f]{64}")
+    }
 }
