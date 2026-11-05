@@ -40,7 +40,7 @@ object Playbooks {
             "One hard line: something never to do. Set hard=true.",
         ),
         InterviewQuestion(
-            "what's hard to undo", "how much I do alone",
+            "what's hard to undo", "How much it does alone",
             "What would be hard to undo if I got it wrong?",
             Section.AUTONOMY,
             "One line, plus the autonomy tiers (do it then tell me / ask me first / never alone), each with the examples the person gave, plus anything they never want done at all (never). Pass them as `tiers`. Don't assume: if they didn't say how to treat money or sending as them, ask once.",
