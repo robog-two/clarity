@@ -144,6 +144,15 @@ class MarkdownTest {
         assertEquals(MdBlock.Image("", "https://example.com/b.png"), parseMarkdown("![](https://example.com/b.png)").blocks.single())
     }
 
+    @Test fun anImageAddressIsReadAsTheInstanceReadsIt() {
+        fun url(md: String) = (parseMarkdown(md).blocks.single() as MdBlock.Image).url
+        assertEquals("https://example.com/File_(1).jpg", url("![a](https://example.com/File_(1).jpg)"))
+        assertEquals("https://example.com/H+%26+B.jpg?format=1500w", url("![a](https://example.com/H+%26+B.jpg?format=1500w)"))
+        assertEquals("https://example.com/a b.png", url("![a](<https://example.com/a b.png>)"))
+        assertEquals("https://example.com/a.png", url("![a](https://example.com/a.png \"A title\")"))
+        assertEquals(listOf(MdInline.Link(listOf(t("x")), "https://example.com/(y)")), parseInline("[x](https://example.com/(y))"))
+    }
+
     @Test fun anImageInASentenceStaysInline() {
         val inlines = parseInline("See ![the chart](https://example.com/a.png) here.")
         assertEquals(listOf(t("See "), MdInline.Image("the chart", "https://example.com/a.png"), t(" here.")), inlines)

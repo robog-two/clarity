@@ -320,10 +320,31 @@ private fun linkAt(text: String, at: Int): Triple<String, String, Int>? {
         i++
     }
     if (i >= text.length || text.getOrNull(i + 1) != '(') return null
-    val close = text.indexOf(')', i + 2)
-    if (close < 0) return null
-    val url = text.substring(i + 2, close).trim().substringBefore(' ').removeSurrounding("<", ">")
-    if (url.isEmpty()) return null
+    // The address as the instance reads it (its image keys depend on it): `<...>` may hold spaces,
+    // a bare one may hold balanced parentheses, and a title may follow.
+    var j = i + 2
+    while (j < text.length && text[j] == ' ') j++
+    val url: String
+    if (text.getOrNull(j) == '<') {
+        val end = text.indexOf('>', j + 1)
+        if (end < 0) return null
+        url = text.substring(j + 1, end).trim()
+        j = end + 1
+    } else {
+        val start = j
+        var parens = 0
+        while (j < text.length) {
+            val ch = text[j]
+            if (ch == '\\') { j = minOf(j + 2, text.length); continue }
+            if (ch == ' ') break
+            if (ch == '(') parens++
+            if (ch == ')') { if (parens == 0) break; parens-- }
+            j++
+        }
+        url = text.substring(start, j)
+    }
+    val close = text.indexOf(')', j)
+    if (close < 0 || url.isEmpty()) return null
     return Triple(text.substring(at + 1, i), url, close + 1)
 }
 
