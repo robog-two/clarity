@@ -44,7 +44,6 @@ import net.robog.clarity.app.ui.goods.ReportUiState
 import net.robog.clarity.app.ui.goods.LocalImagePainter
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.painter.ColorPainter
 import net.robog.clarity.app.ui.goods.goodsRows
 import net.robog.clarity.app.ui.goods.parseMarkdown
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -200,10 +199,23 @@ private val withImage = ReportUiState(
     ),
 )
 
-/** The image is a plain colour here: previews do not fetch. */
+/** A drawn bar chart, 1200 by 600, standing in for the fetched picture: previews do not fetch. */
+private class ChartPainter(private val back: Color, private val bar: Color) : androidx.compose.ui.graphics.painter.Painter() {
+    override val intrinsicSize = androidx.compose.ui.geometry.Size(1200f, 600f)
+    override fun androidx.compose.ui.graphics.drawscope.DrawScope.onDraw() {
+        drawRect(back)
+        val heights = listOf(0.35f, 0.8f, 0.55f, 0.65f)
+        val slot = size.width / heights.size
+        heights.forEachIndexed { i, h ->
+            drawRect(bar, androidx.compose.ui.geometry.Offset(i * slot + slot * 0.2f, size.height * (1 - h)), androidx.compose.ui.geometry.Size(slot * 0.6f, size.height * h))
+        }
+    }
+}
+
 @Composable
 private fun WithImage(dark: Boolean) = Goods(dark) {
-    CompositionLocalProvider(LocalImagePainter provides { ColorPainter(if (dark) Color(0xFF3A4A5C) else Color(0xFFB8CCE0)) }) {
+    val chart = if (dark) ChartPainter(Color(0xFF2B3440), Color(0xFF8FB4D9)) else ChartPainter(Color(0xFFE6EEF6), Color(0xFF3F6E9E))
+    CompositionLocalProvider(LocalImagePainter provides { chart }) {
         ReportContent(withImage, {}, "Goods", {}, {}, {})
     }
 }
