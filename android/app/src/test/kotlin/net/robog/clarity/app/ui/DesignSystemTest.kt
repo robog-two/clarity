@@ -79,7 +79,9 @@ class DesignSystemTest {
 
     // ---- Layout ----
 
-    private val layoutTokens = Regex("""\b(verticalScroll\(|LazyColumn\(|Scaffold\(|statusBarsPadding\(\))""")
+    private val layoutTokens = Regex(
+        """\b(verticalScroll\(|LazyColumn\(|Scaffold\(|statusBarsPadding\(\)|systemBarsPadding\(\)|safeDrawingPadding\(\)|safeContentPadding\(\)|windowInsetsPadding\()""",
+    )
 
     /** Files that may lay out a screen themselves, by token. */
     private val layoutAllowlist: Map<String, Pair<Set<String>, String>> = mapOf(
@@ -103,6 +105,23 @@ class DesignSystemTest {
             offenders.isEmpty(),
             "Use ClarityScreen (scrolling body) or ClarityListScreen (long list) instead of laying a screen out by hand:\n" + offenders.joinToString("\n"),
         )
+    }
+
+    /**
+     * The status bar is padded once, by the screen, after it paints its background (ClarityScreen,
+     * ClarityListScreen, ChatLayout). A Scaffold around screens must not pad for it too: that doubles
+     * the top margin and leaves a band of the scaffold's color under the status bar.
+     */
+    @Test
+    fun `scaffolds leave the status bar to the screens`() {
+        val offenders = sources.flatMap { s ->
+            Regex("""\bScaffold\(""").findAll(s.code).filter { m ->
+                val open = m.range.last
+                val close = matching(s.code, open, '(', ')')
+                "contentWindowInsets" !in s.code.substring(open, close)
+            }.map { "${s.path}:${s.lineOf(it.range.first)}" }.toList()
+        }
+        assertTrue(offenders.isEmpty(), "Set contentWindowInsets = WindowInsets(0, 0, 0, 0) on these Scaffolds:\n" + offenders.joinToString("\n"))
     }
 
     // ---- Screens ----

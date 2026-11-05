@@ -40,6 +40,7 @@ import net.robog.clarity.shared.session.SessionControl
 import net.robog.clarity.shared.session.SessionKind
 import net.robog.clarity.app.ui.today.TodayViewModel
 import net.robog.clarity.app.ui.today.dateKicker
+import net.robog.clarity.app.ui.today.ordinal
 import net.robog.clarity.app.ui.today.doingRows
 import net.robog.clarity.app.ui.today.Doing
 import net.robog.clarity.app.ui.today.DoingGroup
@@ -129,7 +130,10 @@ class TodayRulesTest {
     }
 
     @Test fun textsMatchThePrototype() {
-        assertEquals("Monday, October 26, 10:04 am", dateKicker(LocalDate(2026, 10, 26), LocalTime(10, 4)))
+        assertEquals("Monday, October 26th.", dateKicker(LocalDate(2026, 10, 26)))
+        assertEquals("Wednesday, November 4th.", dateKicker(LocalDate(2026, 11, 4)))
+        assertEquals(listOf("1st", "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "23rd", "31st"),
+            listOf(1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 31).map(::ordinal))
         assertEquals("Nothing waiting", heldLine(0))
         assertEquals("2 waiting", heldLine(2))
     }

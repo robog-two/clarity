@@ -149,9 +149,18 @@ fun mergeTasks(fromToday: List<AgentTask>, live: List<AgentTask>, since: Instant
 /** The instant the local day of [now] began in [zone]. */
 fun startOfLocalDay(now: Instant, zone: TimeZone): Instant = now.toLocalDateTime(zone).date.atStartOfDayIn(zone)
 
-/** "Monday, October 26, 10:04 am" */
-fun dateKicker(date: LocalDate, time: LocalTime): String =
-    "${dayName(date.dayOfWeek.isoDayNumber)}, ${monthName(date.month)} ${date.day}, ${formatTime(time)}"
+/** "Wednesday, November 4th." The phone's clock already sits right above it, so no time. */
+fun dateKicker(date: LocalDate): String =
+    "${dayName(date.dayOfWeek.isoDayNumber)}, ${monthName(date.month)} ${ordinal(date.day)}."
+
+/** 1st, 2nd, 3rd, 4th, 11th, 12th, 13th, 21st. */
+fun ordinal(n: Int): String = n.toString() + when {
+    n % 100 in 11..13 -> "th"
+    n % 10 == 1 -> "st"
+    n % 10 == 2 -> "nd"
+    n % 10 == 3 -> "rd"
+    else -> "th"
+}
 
 private fun monthName(month: Month): String = month.name.lowercase().replaceFirstChar { it.titlecase() }
 
@@ -279,7 +288,7 @@ class TodayViewModel(
                 fetched = r.value
                 val now = clock.now().toLocalDateTime(clock.zone())
                 _state.update {
-                    it.copy(loading = false, refreshing = false, today = r.value, unavailable = false, error = null, kicker = dateKicker(now.date, now.time))
+                    it.copy(loading = false, refreshing = false, today = r.value, unavailable = false, error = null, kicker = dateKicker(now.date))
                 }
                 offerCall()
                 publish()

@@ -21,6 +21,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.ui.components.ErrorBox
 import net.robog.clarity.app.ui.components.Hint
+import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.SecondaryButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
@@ -70,7 +71,8 @@ fun VaultSectionContent(
             }
             VaultKeyStatus.MISSING, VaultKeyStatus.READY -> Unit
         }
-        if (!state.loading && state.rows.isEmpty()) Hint("Nothing saved yet.")
+        if (state.loading && state.rows.isEmpty()) LoadingSpinner()
+        else if (state.rows.isEmpty()) Hint("Nothing saved yet.")
         CardGroup(state.rows) { row, shape, _ ->
             SegmentCard(shape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {

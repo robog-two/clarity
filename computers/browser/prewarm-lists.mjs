@@ -1,7 +1,8 @@
 // Build-time only (prewarm.sh). Stands in for the network while Firefox runs once on the profile
 // template, so uBlock Origin downloads its cookie-notice lists from pinned, sha256-verified copies
 // (fetched in the Containerfile) instead of the live internet. It answers as an HTTP proxy on
-// 127.0.0.1:3199 and terminates TLS for the list hosts with a throwaway certificate that only the
+// a free port on 127.0.0.1 (written to <tls-dir>/port; the amd64 and arm64 builds run side by side and
+// share one network) and terminates TLS for the list hosts with a throwaway certificate that only the
 // prewarm run trusts; anything it does not have is a 404, so uBO keeps its packaged copies of the
 // default lists. After the run uBO updates the lists itself, through the egress proxy.
 //
@@ -43,4 +44,8 @@ app.on("connect", (req, socket) => {
   app.emit("connection", s);
 });
 
-app.listen(3199, "127.0.0.1", () => console.log("prewarm list server on 127.0.0.1:3199"));
+app.listen(0, "127.0.0.1", () => {
+  const { port } = app.address();
+  fs.writeFileSync(`${tlsDir}/port`, String(port));
+  console.log(`prewarm list server on 127.0.0.1:${port}`);
+});

@@ -62,15 +62,22 @@ class VaultViewModel(private val vault: VaultRepository) : ViewModel() {
     init { refresh() }
 
     fun refresh() {
+        _state.update { it.copy(loading = true) }
         viewModelScope.launch {
+            // The key check reads the Keystore on the IO dispatcher (VaultRepository); registering this
+            // phone's key runs beside the list load, which does not wait on it.
             val status = vault.keyStatus()
-            _state.update { it.copy(keys = status, loading = true) }
-            if (status != VaultKeyStatus.INVALIDATED) vault.register()
+            _state.update { it.copy(keys = status) }
+            if (status != VaultKeyStatus.INVALIDATED) {
+                vault.register()
+                _state.update { it.copy(keys = vault.keyStatus()) }
+            }
+        }
+        viewModelScope.launch {
             when (val r = vault.credentials()) {
                 is ApiResult.Success -> _state.update { it.copy(rows = r.value.map(::credentialRow), loading = false, message = null) }
                 is ApiResult.Failure -> _state.update { it.copy(loading = false, message = r.error.sentence()) }
             }
-            _state.update { it.copy(keys = vault.keyStatus()) }
         }
     }
 

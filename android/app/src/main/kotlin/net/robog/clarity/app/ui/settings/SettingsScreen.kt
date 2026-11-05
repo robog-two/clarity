@@ -4,6 +4,7 @@ import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.CardGroup
 import net.robog.clarity.app.ui.components.CardGroupScope
 import net.robog.clarity.app.ui.components.SegmentCard
+import net.robog.clarity.app.ui.components.ArtAboveHeight
 import net.robog.clarity.app.ui.components.ClarityScreen
 import net.robog.clarity.app.ui.components.PhaseSwap
 import net.robog.clarity.app.ui.components.ScreenLevel
@@ -315,7 +316,8 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
     ClarityScreen(
         title = "Settings",
         level = ScreenLevel.Top,
-        art = { Drawing(R.drawable.settings_coffee, Modifier.size(88.dp), tint = MaterialTheme.colorScheme.primary) },
+        art = { Drawing(R.drawable.settings_coffee, Modifier.size(ArtAboveHeight), tint = MaterialTheme.colorScheme.primary) },
+        artAbove = true,
     ) {
         // One state at a time: a problem outranks the local-only note, and either outranks the spinner.
         when {

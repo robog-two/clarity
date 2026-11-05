@@ -370,6 +370,13 @@ fun SetupVaultEmptyInvalidated() = Frame {
     }
 }
 
+@PreviewTest @Part @Composable
+fun SetupVaultLoading() = Frame {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        VaultSectionContent(VaultUiState(VaultKeyStatus.READY, emptyList(), loading = true), {}, {}, showTitle = false)
+    }
+}
+
 // --- the credential form card ---
 
 private val loginRequest = CredentialRequest(

@@ -29,10 +29,14 @@ if [ -f "$lists_dir/prewarm-lists.mjs" ]; then
   rm -f "$tls/ca.key" "$tls/leaf.csr" "$tls/ca.srl" "$tls/ext.cnf"
   node "$lists_dir/prewarm-lists.mjs" "$lists_dir/lists" "$lists_dir/tls" >/tmp/prewarm-lists.log 2>&1 &
   srv=$!
+  # The server picks a free port and writes it out once it listens.
+  for _ in $(seq 1 30); do [ -s "$tls/port" ] && break; sleep 1; done
+  [ -s "$tls/port" ] || { echo "prewarm: list server did not start" >&2; cat /tmp/prewarm-lists.log >&2; exit 1; }
+  port="$(cat "$tls/port")"
   cp "$profile/user.js" /tmp/prewarm-user.js
   cp "$policies" /tmp/prewarm-policies.json
   sed -e 's/"network.proxy.http", "egress"/"network.proxy.http", "127.0.0.1"/' -e 's/"network.proxy.ssl", "egress"/"network.proxy.ssl", "127.0.0.1"/' \
-      -e 's/"network.proxy.http_port", 3128/"network.proxy.http_port", 3199/' -e 's/"network.proxy.ssl_port", 3128/"network.proxy.ssl_port", 3199/' \
+      -e "s/\"network.proxy.http_port\", 3128/\"network.proxy.http_port\", $port/" -e "s/\"network.proxy.ssl_port\", 3128/\"network.proxy.ssl_port\", $port/" \
       /tmp/prewarm-user.js >"$profile/user.js"
   node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync(process.argv[1])); p.policies.Certificates={Install:[process.argv[2]]}; fs.writeFileSync(process.argv[1], JSON.stringify(p));' \
     "$policies" "$lists_dir/tls/ca.pem"
