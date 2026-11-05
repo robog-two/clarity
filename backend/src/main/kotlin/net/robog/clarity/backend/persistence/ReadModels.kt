@@ -5,6 +5,7 @@ import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
 import net.robog.clarity.shared.noun.DocumentPayload
+import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.noun.Payload
 
@@ -35,6 +36,8 @@ interface NounReader {
     suspend fun searchMessages(search: MessageSearch): MessageHits = MessageHits(emptyList())
     /** The email folders each message is in (from its live source links); messages without any are left out. */
     suspend fun messageFolders(ids: List<EntityId>): Map<EntityId, List<String>> = emptyMap()
+    /** Saved contact names for [handles] (see [handleKey]); empty when there is no contact store. */
+    suspend fun contactNames(handles: Collection<Handle>): ContactNameIndex = ContactNameIndex()
     /** One message by id, or null when there is none (or it was deleted). */
     suspend fun message(id: EntityId): Stored<MessagePayload>? = null
 

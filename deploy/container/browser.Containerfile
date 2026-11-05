@@ -33,8 +33,9 @@ ARG PRIVACY_BADGER_SHA256=97cd8911e3486da34a532a7c7f2806cd6d0cfa117a1fbe5e874704
 # uBlock Origin's cookie-notice lists (policies.json), baked into the profile template so they work from the
 # first page after a cold start; uBO updates them itself afterwards. Pinned to a commit and verified.
 # uAssets gh-pages (what ublockorigin.github.io serves) and AdGuard's FiltersRegistry, both via jsDelivr.
-# The fetch stage also makes a throwaway CA and certificate that only the prewarm run trusts
-# (prewarm-lists.mjs serves the pinned lists to uBO); neither is shipped in the profile.
+# prewarm.sh makes a throwaway CA and certificate that only the prewarm run trusts
+# (prewarm-lists.mjs serves the pinned lists to uBO); neither is shipped in the profile. They are made in
+# that step, not here: this stage comes from the registry build cache, and a cached certificate expires.
 ARG UBO_ASSETS_COMMIT=539a01fe0d80279ffa1c60c3f4638b34601af3cd
 ARG UBO_COOKIES_SHA256=3ec381cfe2ad78d274c4b562ecb337e05facbb2abc4feb72713f9d5f97df6ec2
 ARG EASYLIST_COOKIES_SHA256=162fac1f940746592bd68ab25806ed52568eb1b7daa30db9d4dcd402dc7c384e
@@ -42,7 +43,7 @@ ARG ADGUARD_FILTERS_COMMIT=3c6fc50acd2f72f0f69fd6e17cfb92cf91068711
 ARG ADGUARD_COOKIES_SHA256=1de29a32d9b10d2846a4d82494c89b8bf237741af46d79139f579374894442f4
 
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils openssl \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
     && rm -rf /var/lib/apt/lists/*
 
 RUN set -eu; \
@@ -63,17 +64,11 @@ RUN set -eu; \
     echo "${UBLOCK_SHA256}  /out/extensions/uBlock0@raymondhill.net.xpi" | sha256sum -c -; \
     curl -fsSL -o "/out/extensions/jid1-MnnxcxisBPnSXQ@jetpack.xpi" "$PRIVACY_BADGER_URL"; \
     echo "${PRIVACY_BADGER_SHA256}  /out/extensions/jid1-MnnxcxisBPnSXQ@jetpack.xpi" | sha256sum -c -; \
-    mkdir -p /out/prewarm/lists /out/prewarm/tls; cd /out/prewarm/lists; \
+    mkdir -p /out/prewarm/lists; cd /out/prewarm/lists; \
     curl -fsSL -o annoyances-cookies.txt "https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssets@${UBO_ASSETS_COMMIT}/filters/annoyances-cookies.txt"; \
     curl -fsSL -o easylist-cookies.txt "https://cdn.jsdelivr.net/gh/uBlockOrigin/uAssets@${UBO_ASSETS_COMMIT}/thirdparties/easylist-cookies.txt"; \
     curl -fsSL -o adguard-18.txt "https://cdn.jsdelivr.net/gh/AdguardTeam/FiltersRegistry@${ADGUARD_FILTERS_COMMIT}/platforms/extension/ublock/filters/18.txt"; \
-    printf '%s  %s\n' "$UBO_COOKIES_SHA256" annoyances-cookies.txt "$EASYLIST_COOKIES_SHA256" easylist-cookies.txt "$ADGUARD_COOKIES_SHA256" adguard-18.txt | sha256sum -c -; \
-    cd /out/prewarm/tls; \
-    openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Clarity prewarm CA" -keyout ca.key -out ca.pem 2>/dev/null; \
-    openssl req -newkey rsa:2048 -nodes -subj "/CN=prewarm" -keyout leaf.key -out leaf.csr 2>/dev/null; \
-    printf 'subjectAltName=DNS:ublockorigin.github.io,DNS:ublockorigin.pages.dev,DNS:cdn.jsdelivr.net,DNS:filters.adtidy.org,DNS:secure.fanboy.co.nz,DNS:raw.githubusercontent.com\nbasicConstraints=CA:FALSE\n' > ext.cnf; \
-    openssl x509 -req -in leaf.csr -CA ca.pem -CAkey ca.key -CAcreateserial -days 2 -extfile ext.cnf -out leaf.pem 2>/dev/null; \
-    rm -f ca.key leaf.csr ca.srl ext.cnf
+    printf '%s  %s\n' "$UBO_COOKIES_SHA256" annoyances-cookies.txt "$EASYLIST_COOKIES_SHA256" easylist-cookies.txt "$ADGUARD_COOKIES_SHA256" adguard-18.txt | sha256sum -c -
 
 # ---- deps: pinned npm tree (package-lock.json carries integrity hashes) ----------------------
 FROM ${NODE_IMAGE} AS deps

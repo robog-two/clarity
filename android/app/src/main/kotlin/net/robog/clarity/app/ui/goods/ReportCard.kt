@@ -17,8 +17,7 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -58,14 +57,14 @@ fun ReportCardView(card: Card.Report, onOpen: ((String) -> Unit)?, modifier: Mod
     }
     val cardModifier = modifier.widthIn(max = MaxCard).fillMaxWidth()
     if (onOpen != null) {
-        Card(
+        Surface(
             onClick = { onOpen(card.reportId) },
             modifier = cardModifier.semantics { contentDescription = "Open ${card.title}" },
             shape = MaterialTheme.shapes.large,
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            color = MaterialTheme.colorScheme.surfaceContainer,
         ) { body() }
     } else {
-        Card(cardModifier, shape = MaterialTheme.shapes.large, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) { body() }
+        Surface(cardModifier, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) { body() }
     }
 }
 

@@ -357,7 +357,7 @@ class SessionTools(
         sessions.mutate(session.id, quiet = true) { it.lineCaptured(line, tiers) }.getOrElse { return@tool ToolResult.Error(it.text()) }
         val cards = buildList<Card> {
             add(Card.Chips("Captured as ${question?.label ?: "line"}", listOf(Chip(line.text, line.because?.let { "because $it" }.orEmpty()))))
-            if (tiers.isNotEmpty()) add(Card.Chips("how much I do alone", tiers.map { Chip(it.examples, TIER_SUB.getValue(it.level)) }))
+            if (tiers.isNotEmpty()) add(Card.Chips("How much it does alone", tiers.map { Chip(it.examples, TIER_SUB.getValue(it.level)) }))
         }
         post(session, cards)
         ToolResult.Ok("Captured line for question ${index + 1}. The person can keep it or ask to reword. Do not ask the next question; the app moves on when they keep it.")

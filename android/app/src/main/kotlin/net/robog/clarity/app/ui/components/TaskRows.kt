@@ -148,23 +148,3 @@ fun ReviewButton(onClick: () -> Unit, about: String? = null) {
         colors = ButtonDefaults.buttonColors(containerColor = ClarityPalette.Peach, contentColor = ClarityPalette.Charcoal),
     ) { Text("Review") }
 }
-
-/**
- * Staggered arrival: each block rises [rise] and fades in on an expressive spring, [index] steps
- * after the first. Previews and screenshots show the settled layout.
- */
-@Composable
-fun Modifier.springIn(index: Int, rise: Dp = 24.dp, stagger: Long = 45L): Modifier {
-    if (LocalInspectionMode.current) return this
-    val progress = remember { Animatable(0f) }
-    val spatial = MaterialTheme.motionScheme.defaultSpatialSpec<Float>()
-    LaunchedEffect(Unit) {
-        delay(stagger * index)
-        progress.animateTo(1f, spatial)
-    }
-    return graphicsLayer {
-        val p = progress.value
-        alpha = p.coerceIn(0f, 1f)
-        translationY = (1f - p) * rise.toPx()
-    }
-}

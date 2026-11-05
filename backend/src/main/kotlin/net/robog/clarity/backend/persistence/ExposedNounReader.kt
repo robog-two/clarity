@@ -7,6 +7,7 @@ import kotlin.time.Instant
 import kotlin.uuid.toKotlinUuid
 import net.robog.clarity.backend.dedup.normalizeLooseHandle
 import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.ContactPayload
 import net.robog.clarity.shared.noun.DocumentPayload
@@ -40,13 +41,23 @@ import org.jetbrains.exposed.v1.json.contains
 @ContributesBinding(AppScope::class)
 class ExposedNounReader(private val database: Database) : NounReader {
 
+    override suspend fun contactNames(handles: Collection<Handle>): ContactNameIndex =
+        if (handles.isEmpty()) ContactNameIndex() else database.tx { contactNames(handles) }
+
     override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?): List<Stored<MessagePayload>> =
         database.tx {
+            // The participant may be a number or address in any formatting, or a saved contact's name.
+            val keys = participant?.let { p ->
+                val named = if ('@' in p || p.none(Char::isLetter)) HandleKeys(emptyList()) else contactHandleKeys(likePattern(p.trim().lowercase()))
+                HandleKeys(listOf(handleKey(p)) + named.exact.map { "x:$it" } + named.last10.map { "p:$it" })
+            }
             Messages.selectAll()
                 .where {
                     var op = (Messages.sentAt greaterEq range.from) and (Messages.sentAt less range.until) and
                         Messages.deletedAt.isNull()
-                    if (participant != null) op = op and Messages.participants.contains(listOf(normalizeLooseHandle(participant)))
+                    if (participant != null && keys != null) {
+                        op = op and (Messages.participants.contains(listOf(normalizeLooseHandle(participant))) or ParticipantIn(keys))
+                    }
                     if (folder != null) op = op and ((Messages.channel neq EMAIL) or InEmailFolder(emailFolderPattern(folder)))
                     op
                 }
@@ -125,17 +136,22 @@ class ExposedNounReader(private val database: Database) : NounReader {
 
     override suspend fun searchMessages(search: MessageSearch): MessageHits {
         val terms = search.terms.ifEmpty { return MessageHits(emptyList()) }
+        // A word that names a saved contact also finds that contact's messages, as a name on the message would.
+        val byContact = database.tx { terms.map { t -> contactHandleKeys(t.peoplePattern()).takeUnless { it.isEmpty } } }
         val args = mutableListOf<Pair<IColumnType<*>, Any?>>()
         fun text(value: String) = "?".also { args += TextColumnType() to value }
         // Per term: 3 for a name or address, 2 for the subject, 1 for the body; a stopword-only term matches everything.
-        val scores = terms.map { t ->
-            "CASE WHEN m.people LIKE ${text(t.peoplePattern())} THEN 3 " +
+        fun contactMatch(i: Int) = byContact[i]?.let { k ->
+            " OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(m.participants) p(v) WHERE ${k.matching("p.v") { v -> text(v) }})"
+        }.orEmpty()
+        val scores = terms.withIndex().map { (i, t) ->
+            "CASE WHEN m.people LIKE ${text(t.peoplePattern())}${contactMatch(i)} THEN 3 " +
                 "WHEN m.search @@ to_tsquery('english', ${text(t.tsQuery('A'))}) THEN 2 " +
                 "WHEN m.search @@ to_tsquery('english', ${text(t.tsQuery())}) THEN 1 " +
                 "WHEN numnode(to_tsquery('english', ${text(t.tsQuery())})) = 0 THEN 0 ELSE -1 END"
         }
-        val anyTerm = terms.joinToString(" OR ") { t ->
-            "m.people LIKE ${text(t.peoplePattern())} OR m.search @@ to_tsquery('english', ${text(t.tsQuery())})"
+        val anyTerm = terms.withIndex().joinToString(" OR ") { (i, t) ->
+            "m.people LIKE ${text(t.peoplePattern())}${contactMatch(i)} OR m.search @@ to_tsquery('english', ${text(t.tsQuery())})"
         }
         val filters = buildList {
             add("m.deleted_at IS NULL")
@@ -278,6 +294,32 @@ fun documentTsQuery(raw: String): String? {
 }
 
 private const val EMAIL = "email"
+
+private fun likePattern(raw: String) = "%" + raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+
+/** A participant of the message matches one of [keys] (see [handleKey]), however the number or address is written. */
+private class ParticipantIn(private val keys: HandleKeys) : Op<Boolean>() {
+    override fun toQueryBuilder(queryBuilder: QueryBuilder) = queryBuilder {
+        append("EXISTS (SELECT 1 FROM jsonb_array_elements_text(")
+        append(Messages.participants)
+        append(") p(v) WHERE ")
+        val parts = buildList<() -> Unit> {
+            if (keys.exact.isNotEmpty()) add {
+                append("lower(btrim(p.v)) IN (")
+                keys.exact.forEachIndexed { i, v -> if (i > 0) append(","); registerArgument(TextColumnType(), v) }
+                append(")")
+            }
+            if (keys.last10.isNotEmpty()) add {
+                append("(p.v ~ '^[+0-9 ().-]+\$' AND right(regexp_replace(p.v, '\\D', '', 'g'), 10) IN (")
+                keys.last10.forEachIndexed { i, v -> if (i > 0) append(","); registerArgument(TextColumnType(), v) }
+                append("))")
+            }
+        }
+        append("(")
+        parts.forEachIndexed { i, f -> if (i > 0) append(" OR "); f() }
+        append("))")
+    }
+}
 
 /** `EXISTS` a live source link of this message whose id is in the folder matched by [pattern]. */
 private class InEmailFolder(private val pattern: String) : Op<Boolean>() {

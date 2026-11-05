@@ -3,7 +3,11 @@ package net.robog.clarity.app.ui.settings
 import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.CardGroup
 
-import androidx.compose.animation.animateContentSize
+import android.Manifest
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import net.robog.clarity.app.voice.RecentContactNames
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -77,6 +81,7 @@ class VoiceModelsViewModel(private val voice: VoiceModels) : ViewModel() {
         onChoice = { voice.setChoice(it) },
         onUseBuiltIn = { voice.setUseBuiltIn(it) },
         onMobileData = { voice.setMobileData(it) },
+        onUseContactNames = { voice.setUseContactNames(it) },
         onDelete = { voice.deleteModels() },
     )
 }
@@ -88,6 +93,7 @@ data class VoiceModelActions(
     val onChoice: (TierChoice) -> Unit = {},
     val onUseBuiltIn: (Boolean) -> Unit = {},
     val onMobileData: (Boolean) -> Unit = {},
+    val onUseContactNames: (Boolean) -> Unit = {},
     val onDelete: () -> Unit = {},
     val onClearLog: () -> Unit = {},
 )
@@ -96,7 +102,23 @@ data class VoiceModelActions(
 fun VoiceModelsSection(viewModel: VoiceModelsViewModel = metroViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val log by viewModel.log.collectAsStateWithLifecycle()
-    VoiceModelsContent(state, viewModel.actions, log = log)
+    // One step grants both: names come from the texts and the saved contacts.
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        if (granted[Manifest.permission.READ_CONTACTS] == true && granted[Manifest.permission.READ_SMS] == true) {
+            viewModel.actions.onUseContactNames(true)
+        }
+    }
+    val context = LocalContext.current
+    val actions = viewModel.actions.copy(
+        onUseContactNames = { on ->
+            if (on && !RecentContactNames.permitted(context)) {
+                ask.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS))
+            } else {
+                viewModel.actions.onUseContactNames(on)
+            }
+        },
+    )
+    VoiceModelsContent(state, actions, log = log)
 }
 
 fun tierTitle(tier: VoiceTier): String = when (tier) {
@@ -110,87 +132,90 @@ fun tierTitle(tier: VoiceTier): String = when (tier) {
 fun VoiceModelsContent(
     state: VoiceUiState,
     actions: VoiceModelActions,
-    modifier: Modifier = Modifier,
     log: List<VoiceLogEntry> = emptyList(),
     zone: ZoneId = ZoneId.systemDefault(),
     logOpen: Boolean = false,
 ) {
-    Column(modifier.animateContentSize(MaterialTheme.motionScheme.defaultSpatialSpec()), verticalArrangement = Arrangement.spacedBy(Space.Large)) {
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-        SectionTitle("Speech recognition", Modifier.semantics { heading() })
-        InfoBox {
-            when (val status = state.status) {
-                ModelStatus.Ready -> {
-                    Text(
-                        if (state.usingOwn) "${tierTitle(state.tier)} on this phone" else "Models ready. Not in use.",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Hint(
-                        when {
-                            state.engineFailed -> "Models failed to start. Phone recognizer in use."
-                            state.useBuiltIn -> "Phone recognizer in use."
-                            else -> "Live words while you talk. Audio stays on this phone."
-                        },
-                    )
-                }
-                is ModelStatus.NotDownloaded -> {
-                    Text("Download speech models", style = MaterialTheme.typography.titleMedium)
-                    Hint(
-                        "Speech to text on this phone. Audio never leaves it. " +
-                            "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
-                    )
-                    Hint("Phone recognizer in use until then.")
-                    PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = Space.Small))
-                }
-                is ModelStatus.Downloading -> {
-                    Text("Downloading speech models", style = MaterialTheme.typography.titleMedium)
-                    LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = Space.Small))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Kicker("${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)}", Modifier.weight(1f))
-                        SecondaryButton("cancel", actions.onCancel)
-                    }
-                }
-                is ModelStatus.WaitingForNetwork -> {
-                    Text(if (state.mobileData) "Waiting for a connection" else "Waiting for Wi-Fi", style = MaterialTheme.typography.titleMedium)
-                    Hint(
-                        if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
-                        else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
-                    )
-                    SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = Space.Small))
-                }
-                is ModelStatus.Failed -> {
-                    ErrorBox("The download stopped", status.problem)
-                    PrimaryButton("try again", actions.onDownload, Modifier.padding(top = Space.Small))
-                }
-            }
-        }
-        }
-
-        Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
-            Kicker("Model size", heading = true)
-            TierPicker(state, actions.onChoice)
-            Hint(tierCaption(state))
-        }
-
-        CardGroup {
-            segment {
-                ToggleRow(
-                    "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
-                    state.mobileData, actions.onMobileData, shape = it,
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+    SectionTitle("Speech recognition", Modifier.semantics { heading() })
+    InfoBox {
+        when (val status = state.status) {
+            ModelStatus.Ready -> {
+                Text(
+                    if (state.usingOwn) "${tierTitle(state.tier)} on this phone" else "Models ready. Not in use.",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Hint(
+                    when {
+                        state.engineFailed -> "Models failed to start. Phone recognizer in use."
+                        state.useBuiltIn -> "Phone recognizer in use."
+                        else -> "Live words while you talk. Audio stays on this phone."
+                    },
                 )
             }
-            segment {
-                ToggleRow(
-                    "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
-                    state.useBuiltIn, actions.onUseBuiltIn, shape = it,
+            is ModelStatus.NotDownloaded -> {
+                Text("Download speech models", style = MaterialTheme.typography.titleMedium)
+                Hint(
+                    "Speech to text on this phone. Audio never leaves it. " +
+                        "One ${formatBytes(status.bytes)} download" + if (state.mobileData) "." else " on Wi-Fi.",
                 )
+                Hint("Phone recognizer in use until then.")
+                PrimaryButton("download ${formatBytes(status.bytes)}", actions.onDownload, Modifier.padding(top = Space.Small))
+            }
+            is ModelStatus.Downloading -> {
+                Text("Downloading speech models", style = MaterialTheme.typography.titleMedium)
+                LinearWavyProgressIndicator(progress = { status.fraction }, modifier = Modifier.fillMaxWidth().padding(vertical = Space.Small))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Kicker("${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)}", Modifier.weight(1f))
+                    SecondaryButton("cancel", actions.onCancel)
+                }
+            }
+            is ModelStatus.WaitingForNetwork -> {
+                Text(if (state.mobileData) "Waiting for a connection" else "Waiting for Wi-Fi", style = MaterialTheme.typography.titleMedium)
+                Hint(
+                    if (status.doneBytes > 0) "${formatBytes(status.doneBytes)} of ${formatBytes(status.totalBytes)} downloaded."
+                    else "Download of ${formatBytes(status.totalBytes)} starts automatically.",
+                )
+                SecondaryButton("cancel", actions.onCancel, Modifier.padding(top = Space.Small))
+            }
+            is ModelStatus.Failed -> {
+                ErrorBox("The download stopped", status.problem)
+                PrimaryButton("try again", actions.onDownload, Modifier.padding(top = Space.Small))
             }
         }
-        if (state.status == ModelStatus.Ready) {
-            SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = Space.Small))
-        }
-        if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
     }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
+        Kicker("Model size", heading = true)
+        TierPicker(state, actions.onChoice)
+        Hint(tierCaption(state))
+    }
+
+    CardGroup {
+        segment {
+            ToggleRow(
+                "Download over mobile data", if (state.mobileData) "Any connection" else "Wi-Fi only",
+                state.mobileData, actions.onMobileData, shape = it,
+            )
+        }
+        segment {
+            ToggleRow(
+                "Use contact names", "Helps it spell the names you text most.",
+                state.useContactNames, actions.onUseContactNames, shape = it,
+            )
+        }
+        segment {
+            ToggleRow(
+                "Use phone recognizer instead", if (state.useBuiltIn) "Models not used" else "Models used when ready",
+                state.useBuiltIn, actions.onUseBuiltIn, shape = it,
+            )
+        }
+    }
+    if (state.status == ModelStatus.Ready) {
+        SecondaryButton("delete speech models", actions.onDelete, Modifier.padding(top = Space.Small))
+    }
+    if (state.status == ModelStatus.Ready || log.isNotEmpty()) VoiceLogPanel(log, actions.onClearLog, zone, logOpen)
 }
 
 /**

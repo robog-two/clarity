@@ -18,6 +18,15 @@ lists_dir="${PREWARM_LISTS:-/tmp/prewarm}"
 policies=/opt/firefox/distribution/policies.json
 srv=""
 if [ -f "$lists_dir/prewarm-lists.mjs" ]; then
+  # A throwaway CA and certificate for the list hosts, made now so they are always in date. The CA key
+  # is deleted at once; the CA goes into the profile only for this run (cert9.db is dropped below).
+  tls="$lists_dir/tls"
+  mkdir -p "$tls"
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj "/CN=Clarity prewarm CA" -keyout "$tls/ca.key" -out "$tls/ca.pem" 2>/dev/null
+  openssl req -newkey rsa:2048 -nodes -subj "/CN=prewarm" -keyout "$tls/leaf.key" -out "$tls/leaf.csr" 2>/dev/null
+  printf 'subjectAltName=DNS:ublockorigin.github.io,DNS:ublockorigin.pages.dev,DNS:cdn.jsdelivr.net,DNS:filters.adtidy.org,DNS:secure.fanboy.co.nz,DNS:raw.githubusercontent.com\nbasicConstraints=CA:FALSE\n' >"$tls/ext.cnf"
+  openssl x509 -req -in "$tls/leaf.csr" -CA "$tls/ca.pem" -CAkey "$tls/ca.key" -CAcreateserial -days 2 -extfile "$tls/ext.cnf" -out "$tls/leaf.pem" 2>/dev/null
+  rm -f "$tls/ca.key" "$tls/leaf.csr" "$tls/ca.srl" "$tls/ext.cnf"
   node "$lists_dir/prewarm-lists.mjs" "$lists_dir/lists" "$lists_dir/tls" >/tmp/prewarm-lists.log 2>&1 &
   srv=$!
   cp "$profile/user.js" /tmp/prewarm-user.js

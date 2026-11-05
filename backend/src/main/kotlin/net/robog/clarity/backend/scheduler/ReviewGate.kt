@@ -27,6 +27,7 @@ import net.robog.clarity.backend.agent.SecretDetector
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.governance.HeldActions
 import net.robog.clarity.backend.governance.PENDING_STATUSES
+import net.robog.clarity.backend.persistence.contactNames
 import net.robog.clarity.backend.persistence.CalendarEvents
 import net.robog.clarity.backend.persistence.Messages
 import net.robog.clarity.backend.persistence.tx
@@ -126,10 +127,12 @@ class ExposedReviewChanges(private val database: Database) : ReviewChanges {
         // updated_at >= first_seen_at always; the redundant bound lets Postgres use the updated_at index.
         val messageWhere = (Messages.updatedAt greater since) and (Messages.firstSeenAt greater since) and Messages.deletedAt.isNull()
         val messageCount = Messages.selectAll().where { messageWhere }.count().toInt()
-        val messages = Messages.selectAll().where { messageWhere }
-            .orderBy(Messages.firstSeenAt to SortOrder.DESC).limit(ReviewSnapshot.MAX_MESSAGES)
+        val recent = Messages.selectAll().where { messageWhere }
+            .orderBy(Messages.firstSeenAt to SortOrder.DESC).limit(ReviewSnapshot.MAX_MESSAGES).toList()
+        val contacts = contactNames(recent.map { it[Messages.sender] })
+        val messages = recent
             .map {
-                val sender = it[Messages.sender]
+                val sender = contacts.named(it[Messages.sender])
                 ReviewMessage(
                     seenAt = it[Messages.firstSeenAt],
                     channel = it[Messages.channel],

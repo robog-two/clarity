@@ -383,8 +383,8 @@ class SessionScenarioTest : FunSpec({
 
         // the autonomy tiers were shown as a card with question 3
         val labels = r.feed.page(0, 100).items.flatMap { it.cards }.filterIsInstance<Card.Chips>().map { it.label }
-        labels shouldContain "how much I do alone"
-        labels.count { it.startsWith("captured as") } shouldBe 8 // seven questions and one reword
+        labels shouldContain "How much it does alone"
+        labels.count { it.startsWith("Captured as") } shouldBe 8 // seven questions and one reword
         // the list of tools never changed
         r.model.requests.map { req -> req.tools.map { it.name } }.toSet() shouldHaveSize 1
     }
