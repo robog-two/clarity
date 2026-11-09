@@ -58,16 +58,47 @@ interface Renderer {
     /** The renderer's version (pandoc, Typst and the server script), or null when it cannot be reached. */
     suspend fun version(): String?
 
-    suspend fun render(source: String, style: ReportStyle, format: ReportFormat): Either<RenderError, Rendered>
+    /** [images] are the pictures the Markdown names, by key ([imageKey]); the renderer embeds only these. */
+    suspend fun render(source: String, style: ReportStyle, format: ReportFormat, images: Map<String, RenderImage> = emptyMap()): Either<RenderError, Rendered>
 }
+
+/** One image in `POST /render`'s body: base64 [data] of a [type] (a MIME type) with its size in pixels when known. */
+@Serializable
+data class RenderImageBody(val type: String, val data: String, val width: Int? = null, val height: Int? = null)
 
 /** `POST /render`'s body. */
 @Serializable
-data class RenderRequest(val source: String, val style: ReportStyle, val format: String)
+data class RenderRequest(val source: String, val style: ReportStyle, val format: String, val images: Map<String, RenderImageBody> = emptyMap())
+
+/** The most a render request may weigh (the render service refuses more: its `RENDER_MAX_BODY`, 40 MB). */
+const val MAX_RENDER_BODY_BYTES = 40 * 1024 * 1024
+
+/**
+ * Pure: the images that fit in a request with [source] under [cap] bytes (base64 makes them a third
+ * bigger), in their order; one that does not fit is dropped and its caption stays. JSON overhead is
+ * covered by a margin of a few KB per image and for the style.
+ */
+fun imagesThatFit(source: String, images: Map<String, RenderImage>, cap: Int = MAX_RENDER_BODY_BYTES): Map<String, RenderImage> {
+    var used = source.length * 3L + 16 * 1024 // UTF-8 and JSON escapes, plus the style
+    val kept = LinkedHashMap<String, RenderImage>()
+    for ((key, image) in images) {
+        val weight = (image.bytes.size + 2L) / 3 * 4 + 512
+        if (used + weight > cap) continue
+        used += weight
+        kept[key] = image
+    }
+    return kept
+}
 
 /** Pure: the JSON body of a render request. */
-fun renderRequestBody(source: String, style: ReportStyle, format: ReportFormat): String =
-    ClarityJson.encodeToString(RenderRequest.serializer(), RenderRequest(source, style, format.wireName))
+fun renderRequestBody(source: String, style: ReportStyle, format: ReportFormat, images: Map<String, RenderImage> = emptyMap()): String =
+    ClarityJson.encodeToString(
+        RenderRequest.serializer(),
+        RenderRequest(
+            source, style, format.wireName,
+            imagesThatFit(source, images).mapValues { (_, i) -> RenderImageBody(i.contentType, java.util.Base64.getEncoder().encodeToString(i.bytes), i.width, i.height) },
+        ),
+    )
 
 /** Pure: the renderer version in a `/healthz` answer (`{"status":"ok","version":"..."}`), else null. */
 fun parseRenderVersion(body: String): String? {
@@ -117,13 +148,13 @@ class HttpRenderClient(config: AppConfig, private val clock: Clock) : Renderer {
         return version
     }
 
-    override suspend fun render(source: String, style: ReportStyle, format: ReportFormat): Either<RenderError, Rendered> {
+    override suspend fun render(source: String, style: ReportStyle, format: ReportFormat, images: Map<String, RenderImage>): Either<RenderError, Rendered> {
         val request = HttpRequest.newBuilder(URI.create("$base/render"))
             // A little longer than the server's own limit, so its timeout answer arrives first.
             .timeout((settings.renderTimeout + 10.seconds).toJavaDuration())
             .header("Content-Type", "application/json")
             .auth()
-            .POST(HttpRequest.BodyPublishers.ofString(renderRequestBody(source, style, format)))
+            .POST(HttpRequest.BodyPublishers.ofString(renderRequestBody(source, style, format, if (format == ReportFormat.TXT || format == ReportFormat.MD) emptyMap() else images)))
             .build()
         val response = try {
             runInterruptible(Dispatchers.IO) { http.send(request, HttpResponse.BodyHandlers.ofByteArray()) }

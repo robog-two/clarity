@@ -174,13 +174,22 @@ the file under `/data/reports` (the `backend-data` volume).
 - **Fonts**: Word and OpenDocument files name the family the agent chose (Times New Roman by default), so Word and
   Pages use the real font. Containers cannot ship Times New Roman, so PDFs use Liberation Serif (metric-compatible:
   same line breaks and page count), Liberation Sans for Arial/Helvetica and Liberation Mono for Courier New.
-- **Safety**: no network at all; a Lua filter drops raw Word/ODF/Typst/HTML code, images (pandoc would read the file
-  they name) and front-matter keys other than title, subtitle, author, date, abstract, lang and keywords. Each render
+- **Safety**: no network at all; a Lua filter drops raw Word/ODF/Typst/HTML code, every image address (pandoc would
+  read the file or URL it names) except pictures the backend already fetched and sent along (below), and front-matter
+  keys other than title, subtitle, author, date, abstract, lang and keywords. Each render
   runs in its own process group and is killed after `RENDER_TIMEOUT` (60 s); at most 2 run at once; 768 MB RAM,
   128 pids, read-only root.
 - **Cache**: `CLARITY_REPORTS_CACHE_MAX_MB` (500) caps the rendered files; an hourly job drops files of an older
   renderer version, then the least recently downloaded. Only rendered files go, never the reports; deleting
   `/data/reports` is always safe.
+- **Pictures**: `![caption](https://...)` in a Good. When a revision is saved the backend fetches the images it names
+  (https and http only, 20 per report, 5 MB each, 15 s, at most 3 redirects, PNG/JPEG/GIF/WebP by both Content-Type
+  and first bytes, no cookies) and keeps them in the `report_image` table. It fetches through the egress proxy's
+  separate image listener (`CLARITY_IMAGE_PROXY`, `http://egress:3129`: public hosts only, ports 80/443, GET and
+  CONNECT only; the model listener stays limited to the model API). Renders never fetch anything: the backend sends
+  the stored bytes in the request, keyed by the SHA-256 of the address as written, and the filter embeds an image
+  only when its address hashes to one of those keys. Anything else (a local path, `file:`, a data URI, an address
+  nobody fetched) stays its caption; plain text always shows the caption.
 - **Settings**: `CLARITY_RENDER_URL` (`http://render:8950`), `CLARITY_RENDER_KEY_FILE` (`/run/secrets/render_key`),
   `CLARITY_RENDER_TIMEOUT` (60s; the backend waits 10 s longer than that).
 - **Upgrading an existing stack**: re-run `./deploy/init-secrets.sh` first. It creates any key the new version

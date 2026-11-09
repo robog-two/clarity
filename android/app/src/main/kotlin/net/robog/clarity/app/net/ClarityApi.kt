@@ -191,6 +191,9 @@ interface ReportsApi {
     /** The latest revision's Markdown. */
     suspend fun reportSource(id: String): ApiResult<String>
 
+    /** The instance's address, for the image URLs (fetched by the image loader over the authenticated client). */
+    suspend fun baseUrl(): String?
+
     /**
      * The Good's secret download page (made on first use, the same one after), as a full URL on the
      * instance's address. Download opens it; Share sends it.

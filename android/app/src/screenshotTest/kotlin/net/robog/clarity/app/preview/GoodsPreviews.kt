@@ -41,6 +41,9 @@ import net.robog.clarity.app.ui.goods.GoodsUiState
 import net.robog.clarity.app.ui.goods.ReportCardView
 import net.robog.clarity.app.ui.goods.ReportContent
 import net.robog.clarity.app.ui.goods.ReportUiState
+import net.robog.clarity.app.ui.goods.LocalImagePainter
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.graphics.Color
 import net.robog.clarity.app.ui.goods.goodsRows
 import net.robog.clarity.app.ui.goods.parseMarkdown
 import net.robog.clarity.app.ui.theme.ClarityTheme
@@ -183,6 +186,41 @@ private fun SettingsSheet(dark: Boolean, state: ReportUiState) = Goods(dark) {
     Viewer(false, ReportUiState(loading = false, error = "Can’t reach your server right now."))
 @PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorDark() =
     Viewer(true, ReportUiState(loading = false, error = "Can’t reach your server right now."))
+
+// ---------- a report with an image ----------
+
+private val withImage = ReportUiState(
+    loading = false,
+    title = "Sales by quarter",
+    subtitle = "Document. Revision 1. Today at 2:40 pm",
+    document = parseMarkdown(
+        "# Results\n\nSales grew in every quarter.\n\n![Sales by quarter, 2026](https://example.com/sales.png)\n\n" +
+            "The second quarter was the strongest. See ![the raw table](https://example.com/table.png) for the figures.",
+    ),
+)
+
+/** A drawn bar chart, 1200 by 600, standing in for the fetched picture: previews do not fetch. */
+private class ChartPainter(private val back: Color, private val bar: Color) : androidx.compose.ui.graphics.painter.Painter() {
+    override val intrinsicSize = androidx.compose.ui.geometry.Size(1200f, 600f)
+    override fun androidx.compose.ui.graphics.drawscope.DrawScope.onDraw() {
+        drawRect(back)
+        val heights = listOf(0.35f, 0.8f, 0.55f, 0.65f)
+        val slot = size.width / heights.size
+        heights.forEachIndexed { i, h ->
+            drawRect(bar, androidx.compose.ui.geometry.Offset(i * slot + slot * 0.2f, size.height * (1 - h)), androidx.compose.ui.geometry.Size(slot * 0.6f, size.height * h))
+        }
+    }
+}
+
+@Composable
+private fun WithImage(dark: Boolean) = Goods(dark) {
+    val chart = if (dark) ChartPainter(Color(0xFF2B3440), Color(0xFF8FB4D9)) else ChartPainter(Color(0xFFE6EEF6), Color(0xFF3F6E9E))
+    CompositionLocalProvider(LocalImagePainter provides { chart }) {
+        ReportContent(withImage, {}, "Goods", {}, {}, {})
+    }
+}
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageLight() = WithImage(false)
+@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageDark() = WithImage(true)
 
 // ---------- the Goods tab ----------
 

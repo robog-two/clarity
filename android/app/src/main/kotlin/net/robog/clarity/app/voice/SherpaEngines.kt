@@ -51,6 +51,9 @@ class SherpaStreaming(base: File, threads: Int = 1) : StreamingRecognizer {
     )
     private var stream = freshStream()
 
+    /** Silence under the floor stays silence, and faint speech is lifted (the detector hears the same). */
+    private val front = DetectorFront()
+
     /**
      * A new stream, primed with a moment of silence: a stream whose first audio is already speech drops
      * its first word ("well i don't" came out as "i don't").
@@ -58,7 +61,7 @@ class SherpaStreaming(base: File, threads: Int = 1) : StreamingRecognizer {
     private fun freshStream(): OnlineStream = recognizer.createStream().also { it.acceptWaveform(FloatArray(PAD), SAMPLE_RATE) }
 
     override fun accept(samples: FloatArray): String {
-        if (samples.isNotEmpty()) stream.acceptWaveform(samples, SAMPLE_RATE)
+        if (samples.isNotEmpty()) stream.acceptWaveform(front.process(samples), SAMPLE_RATE)
         while (recognizer.isReady(stream)) recognizer.decode(stream)
         return recognizer.getResult(stream).text.trim()
     }
@@ -88,17 +91,26 @@ class SherpaStreaming(base: File, threads: Int = 1) : StreamingRecognizer {
     }
 }
 
-/** Silero VAD. A pause of [minSilenceSeconds] closes a phrase; a phrase is cut at [maxSpeechSeconds]. */
+/**
+ * Silero VAD. A pause of [minSilenceSeconds] closes a phrase; a phrase is cut at [maxSpeechSeconds].
+ *
+ * Silero has no level floor: a muted mic's few ±1 LSB samples were read as speech and held for seconds
+ * (a 13 s phrase of minus 95 dB). The detector hears the audio through [DetectorFront] (the floor gate, and
+ * a lift for faint speech); the phrases it returns are cut from the untouched audio ([PreRoll.raw]), so
+ * their level is the real one.
+ * The threshold is 0.35, not 0.5: measured with the real model, faint speech needed it.
+ */
 class SherpaVad(
     base: File,
     minSilenceSeconds: Float = 0.5f,
     maxSpeechSeconds: Float = 15f,
+    threshold: Float = 0.35f,
 ) : VoiceActivity {
     private val vad = Vad(
         config = VadModelConfig(
             sileroVadModelConfig = SileroVadModelConfig(
                 model = File(base, "silero_vad.onnx").path,
-                threshold = 0.5f,
+                threshold = threshold,
                 minSilenceDuration = minSilenceSeconds,
                 minSpeechDuration = 0.25f,
                 windowSize = WINDOW,
@@ -110,11 +122,12 @@ class SherpaVad(
         ),
     )
     private val preRoll = PreRoll(keepSeconds = maxSpeechSeconds + minSilenceSeconds + 1.0)
+    private val front = DetectorFront()
 
     // The library keeps leftover samples between calls itself, so any chunk size works.
     override fun accept(samples: FloatArray) {
         preRoll.add(samples)
-        vad.acceptWaveform(samples)
+        vad.acceptWaveform(front.process(samples))
     }
 
     override val speaking: Boolean get() = vad.isSpeechDetected()
@@ -123,7 +136,7 @@ class SherpaVad(
         val out = mutableListOf<FloatArray>()
         while (!vad.empty()) {
             val segment = vad.front()
-            out += preRoll.extend(segment.start.toLong(), segment.samples)
+            out += preRoll.raw(segment.start.toLong(), segment.samples.size, segment.samples)
             vad.pop()
         }
         return out
@@ -134,6 +147,7 @@ class SherpaVad(
     override fun reset() {
         vad.reset()
         preRoll.reset()
+        front.reset()
     }
 
     override fun close() = vad.release()
@@ -165,7 +179,8 @@ class SherpaParakeet(dir: File, bpeVocab: File?, threads: Int) : PhraseRecognize
             ),
             decodingMethod = if (biasing) "modified_beam_search" else "greedy_search",
             maxActivePaths = 4,
-            hotwordsScore = 1.5f,
+            // 1.5 let a boosted name run away on a silent phrase ("Cloud Cloud ...", 70 times); 1.0 does not.
+            hotwordsScore = 1.0f,
         ),
     )
 

@@ -52,10 +52,11 @@ fun looksLikePhoneNumber(address: String): Boolean =
 
 /**
  * Hint words for the recognizers: for each contact the full name and then its words ("Sam Example"
- * gives "Sam Example", "Sam", "Example"), contacts first, then the [others] (task-title words).
- * Letters, apostrophes and hyphens only (what the second pass can encode), no repeats, at most [max]. Pure.
+ * gives "Sam Example", "Sam", "Example"). Contacts only: words from task titles used to be added, and a
+ * silent phrase came out as those words repeated. Letters, apostrophes and hyphens only (what the second
+ * pass can encode), no repeats, at most [max]. Pure.
  */
-fun mergeHotwords(contactNames: List<String>, others: List<String>, max: Int = MAX_HOTWORDS): List<String> {
+fun contactHotwords(contactNames: List<String>, max: Int = MAX_HOTWORDS): List<String> {
     val out = LinkedHashMap<String, String>()
     fun add(phrase: String) {
         val p = phrase.trim()
@@ -68,7 +69,6 @@ fun mergeHotwords(contactNames: List<String>, others: List<String>, max: Int = M
         if (words.size > 1) add(words.joinToString(" "))
         words.forEach(::add)
     }
-    others.forEach(::add)
     return out.values.take(max)
 }
 

@@ -80,6 +80,7 @@ class TwoPassSpeechInput(
     private var levels = SessionLevels()
     private var speechAtStart = 0L
     private var phrasesAtStart = 0
+    private var leftOutAtStart = 0
     /** Commands the state machine asked for while the core was mid-call; run once it returns. */
     private val pending = ArrayDeque<MicCommand>()
 
@@ -138,6 +139,7 @@ class TwoPassSpeechInput(
         levels = SessionLevels()
         speechAtStart = core?.speechSamples ?: 0L
         phrasesAtStart = core?.phrasesClosed ?: 0
+        leftOutAtStart = core?.phrasesLeftOut ?: 0
         reader = MicReader(
             audio,
             onChunk = { chunk ->
@@ -178,10 +180,12 @@ class TwoPassSpeechInput(
     /** Logs the whole session's loudness against what the detector made of it (facts only). */
     private fun noteSession(core: TwoPassCore) {
         val speech = (core.speechSamples - speechAtStart).toDouble() / SAMPLE_RATE
-        val phrases = core.phrasesClosed - phrasesAtStart
+        val leftOut = core.phrasesLeftOut - leftOutAtStart
+        val phrases = core.phrasesClosed - phrasesAtStart + leftOut
         log.add(
             "Mic session %.0f s. Average level %s. Loudest %s. The detector heard speech for %.1f s in %d phrases."
-                .format(java.util.Locale.ROOT, levels.seconds, dbText(levels.averageDb), dbText(levels.peakDb), speech, phrases),
+                .format(java.util.Locale.ROOT, levels.seconds, dbText(levels.averageDb), dbText(levels.peakDb), speech, phrases) +
+                if (leftOut > 0) " $leftOut left out as silence." else "",
         )
     }
 

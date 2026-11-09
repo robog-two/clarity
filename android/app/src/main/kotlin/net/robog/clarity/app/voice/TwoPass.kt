@@ -143,36 +143,11 @@ fun updatedSpeed(previous: Double?, audioSeconds: Double, decodeMs: Long, weight
 
 // --- context priming (hotwords) ---
 
-/** Words worth biasing the second pass towards, at most this many. */
-const val MAX_HOTWORDS = 64
-
 /**
- * Names, courses and places from text the app already has on the phone (task titles): capitalised
- * words that are not the first of their title, not common words, three letters or more. Pure.
+ * Names worth biasing the second pass towards, at most this many. Only the people the person texts: any
+ * other word (a task title's) was boosted so far that a silent phrase came out as that word, over and over.
  */
-fun hotwordsFrom(texts: List<String>, max: Int = MAX_HOTWORDS): List<String> {
-    val seen = LinkedHashMap<String, String>()
-    for (text in texts) {
-        val words = text.split(Regex("[^\\p{L}'-]+")).filter { it.isNotEmpty() }
-        words.drop(1).forEach { w ->
-            val word = w.trim('\'', '-')
-            if (word.length >= 3 && word[0].isUpperCase() && word.all { it in 'A'..'Z' || it in 'a'..'z' || it == '\'' || it == '-' } &&
-                word.lowercase() !in COMMON_WORDS
-            ) {
-                seen.putIfAbsent(word.lowercase(), word)
-            }
-        }
-        if (seen.size >= max) break
-    }
-    return seen.values.take(max)
-}
-
-private val COMMON_WORDS = setOf(
-    "the", "and", "for", "with", "about", "from", "this", "that", "your", "you", "monday", "tuesday",
-    "wednesday", "thursday", "friday", "saturday", "sunday", "today", "tomorrow", "email", "call", "reply",
-    "draft", "review", "send", "check", "book", "meeting", "january", "february", "march", "april", "may",
-    "june", "july", "august", "september", "october", "november", "december", "re", "fwd",
-)
+const val MAX_HOTWORDS = 64
 
 /**
  * The hotwords argument of sherpa-onnx's `createStream(hotwords)`: one phrase per entry, separated by
@@ -238,6 +213,20 @@ class PreRoll(keepSeconds: Double, private val preSeconds: Double = PRE_ROLL_SEC
         if (from >= start || start > fed) return segment
         val pre = FloatArray((start - from).toInt()) { ring[((from + it) % ring.size).toInt()] }
         return pre + segment
+    }
+
+    /**
+     * The phrase the detector found at [start], [length] samples long, as the mic gave it, with the pre-roll in
+     * front. The detector hears the audio through [DetectorFront] (gated, lifted), so its own copy of the
+     * phrase is not the real level; this one is, and the second pass gets this one. [fallback] (the detector's
+     * copy) is returned when the phrase is no longer in the ring.
+     */
+    fun raw(start: Long, length: Int, fallback: FloatArray): FloatArray {
+        val end = start + length
+        val from = maxOf(start - (preSeconds * sampleRate).toLong(), lastEnd, fed - ring.size, 0L).coerceAtMost(start)
+        lastEnd = maxOf(lastEnd, end)
+        if (start < fed - ring.size || end > fed) return fallback
+        return FloatArray((end - from).toInt()) { ring[((from + it) % ring.size).toInt()] }
     }
 
     fun reset() {

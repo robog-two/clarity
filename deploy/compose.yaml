@@ -71,6 +71,9 @@ services:
       CLARITY_CONNECTORS_AUTO_GRANT: ${CLARITY_CONNECTORS_AUTO_GRANT:-false}
       # The model API (OpenRouter) is reached only through the egress proxy (openrouter.ai is all it allows).
       CLARITY_HTTPS_PROXY: http://egress:3128
+      # Pictures a Good names (![caption](https://...)) are fetched through the egress proxy's image listener
+      # (public hosts only, GET only); the model listener above reaches only the model API.
+      CLARITY_IMAGE_PROXY: http://egress:3129
       # Legacy lead model/effort (blank = the backend default); CLARITY_AGENT_LEAD_MODEL wins.
       CLARITY_AGENT_MODEL: ${CLARITY_AGENT_MODEL:-}
       CLARITY_AGENT_EFFORT: ${CLARITY_AGENT_EFFORT:-medium}
