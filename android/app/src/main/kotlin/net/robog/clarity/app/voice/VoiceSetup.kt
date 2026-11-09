@@ -34,7 +34,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import net.robog.clarity.app.data.feed.FeedStore
 
 /** The person's voice choices and what this phone measured, kept on the phone. */
 data class VoicePrefsState(
@@ -133,7 +132,6 @@ data class VoiceUiState(
 class VoiceModels(
     private val context: Context,
     private val prefs: VoicePrefs,
-    private val feed: FeedStore,
     private val contacts: RecentContactNames = RecentContactNames.of(context),
 ) {
     val store = ModelStore(File(context.noBackupFilesDir, "voice-models"))
@@ -191,11 +189,9 @@ class VoiceModels(
         return withContext(Dispatchers.IO) { contactCache.get { contacts.names() } }
     }
 
-    /** Contact names, then names, courses and places from the task titles already cached on this phone. */
+    /** The names of the people texted most, from the saved contacts. Nothing else is boosted. */
     suspend fun hotwords(): List<String> {
-        val words = runCatching {
-            mergeHotwords(contactNames(), hotwordsFrom(feed.tasks.first().map { it.title }))
-        }.getOrDefault(emptyList())
+        val words = runCatching { contactHotwords(contactNames()) }.getOrDefault(emptyList())
         hintCache.get { words }
         return words
     }

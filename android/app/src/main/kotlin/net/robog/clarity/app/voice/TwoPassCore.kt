@@ -54,6 +54,12 @@ sealed interface DecodeJob {
 /** What the second pass made of a [DecodeJob]; [text] is null when the decode failed. [ms]: how long it took. */
 class DecodeResult(val job: DecodeJob, val text: String?, val ms: Long? = null)
 
+/** A message of this many words or fewer goes out only if the live pass heard words in it too. */
+const val LIVE_REQUIRED_UP_TO_WORDS = 2
+
+/** Fillers held back wait this long (of audio) for speech to join; after that they are dropped. */
+const val CARRY_MS = 20_000L
+
 /**
  * Two-pass recognition, single-threaded and free of Android: the caller feeds audio, hands decode jobs
  * to a background thread and returns their results here, all on one thread.
@@ -100,6 +106,17 @@ class TwoPassCore(
         private set
     var phrasesClosed = 0
         private set
+    /** Phrases the detector closed that were left out as silence (see [silentPhrase]). */
+    var phrasesLeftOut = 0
+        private set
+
+    /**
+     * Words that were only fillers ("um"), held back: they go out in front of the next message, or are
+     * dropped when nothing follows ([CARRY_MS]) or the mic stops.
+     */
+    private var carry = ""
+    private var carryAtMs = 0L
+    private var ending = false
 
     /**
      * The first-pass words the detector never heard as speech that ended the last message. A message of
@@ -112,6 +129,7 @@ class TwoPassCore(
     val idle: Boolean get() = open.transcript.isEmpty() && waiting.isEmpty()
 
     fun audio(samples: FloatArray) {
+        ending = false
         samplesSeen += samples.size
         val words = first.accept(samples)
         vad.accept(samples)
@@ -143,17 +161,23 @@ class TwoPassCore(
         when (job) {
             is DecodeJob.OnePhrase -> {
                 val live = message.transcript.all.firstOrNull { it.id == job.phrase }?.live.orEmpty()
-                val text = result.text?.takeIf { it.isNotBlank() }
+                val heard = result.text?.takeIf { it.isNotBlank() }
+                // A second pass that repeats itself ("Cloud Cloud ...") ran away on noise: the live words stand.
+                val looped = heard != null && looksLikeLoop(heard, live)
+                val text = heard.takeUnless { looped }
                 // An empty or failed decode keeps the live words: the detector heard speech there.
-                message.transcript.confirm(job.phrase, text ?: live)
+                message.transcript.confirm(job.phrase, collapseRuns(text ?: live))
                 log(
                     "Phrase ${message.id}.${job.phrase} second pass ${quoted(result.text)}$took" +
-                        if (text == null && live.isNotBlank()) ". Kept the live words." else "",
+                        if (looped) ". It repeated itself. Kept the live words." else if (text == null && live.isNotBlank()) ". Kept the live words." else "",
                 )
             }
             is DecodeJob.Whole -> {
-                message.final = result.text?.takeIf { it.isNotBlank() } ?: message.transcript.joined()
-                log("Message ${message.id} whole-message pass ${quoted(result.text)}$took")
+                val phrases = message.transcript.joined()
+                val heard = result.text?.takeIf { it.isNotBlank() }
+                val looped = heard != null && looksLikeLoop(heard, phrases)
+                message.final = collapseRuns(heard.takeUnless { looped } ?: phrases)
+                log("Message ${message.id} whole-message pass ${quoted(result.text)}$took" + if (looped) ". It repeated itself. Kept the phrases." else "")
             }
         }
         finishReady()
@@ -168,6 +192,8 @@ class TwoPassCore(
         open.transcript.live(first.endPhrase())
         closed.forEach(::closePhrase)
         seal(firstEnded = true)
+        ending = true
+        finishReady() // fillers held back have nothing to join now
         vad.reset()
         if (hearing) {
             hearing = false
@@ -179,15 +205,26 @@ class TwoPassCore(
     private fun closePhrase(samples: FloatArray) {
         val message = open
         val live = message.transcript.tail
+        val level = levelDb(samples)
+        // Silence has no place in a message: not decoded (a boosted name came out of it), not kept for the
+        // whole-message pass. The mic reported it as speech; the level says otherwise.
+        silentPhrase(level, live)?.let { why ->
+            message.transcript.live("")
+            phrasesLeftOut++
+            log("Phrase ${message.id} left out. ${secondsOf(samples.size)}. ${dbText(level)}. ${why.replaceFirstChar { it.uppercase() }}. Live ${quoted(live)}")
+            return
+        }
         val id = message.transcript.close()
         phrasesClosed++
+        // A faint phrase is made louder for the second pass (the log shows the level it really had).
+        val forDecode = normalizeForDecode(samples)
         if (message.keepAudio) {
-            val kept = message.audio.values.sumOf { it.size } + samples.size
-            if (kept <= MAX_REDECODE_SECONDS * SAMPLE_RATE) message.audio[id] = samples
+            val kept = message.audio.values.sumOf { it.size } + forDecode.size
+            if (kept <= MAX_REDECODE_SECONDS * SAMPLE_RATE) message.audio[id] = forDecode
             else { message.keepAudio = false; message.audio.clear() }
         }
-        log("Phrase ${message.id}.$id closed. ${secondsOf(samples.size)}. ${dbText(levelDb(samples))}. Live ${quoted(live)}")
-        submit(DecodeJob.OnePhrase(message.id, id, samples))
+        log("Phrase ${message.id}.$id closed. ${secondsOf(samples.size)}. ${dbText(level)}. Live ${quoted(live)}")
+        submit(DecodeJob.OnePhrase(message.id, id, forDecode))
         lastUnheard = null
         lastActivityMs = nowMs
     }
@@ -223,6 +260,11 @@ class TwoPassCore(
 
     /** Sends every waiting message, in order, whose text is complete. */
     private fun finishReady() {
+        sendReady()
+        dropCarryIfEnding()
+    }
+
+    private fun sendReady() {
         while (true) {
             val head = waiting.firstOrNull() ?: return
             if (!head.transcript.settled) return
@@ -238,17 +280,53 @@ class TwoPassCore(
                 head.final = head.transcript.joined()
             }
             waiting.removeFirst()
-            val text = head.final.orEmpty()
+            val own = head.final.orEmpty()
             lastShown = LiveWords("", "") // the bubble empties with the message
-            log(if (text.isBlank()) "Message ${head.id} empty. Nothing sent." else "Message ${head.id} sent ${quoted(text)}")
-            // Only noise (a cough the second pass found no words in): nothing to send, listening goes on.
-            emit(if (text.isBlank()) SpeechEvent.Error(SpeechError.NoMatch) else SpeechEvent.Final(text))
+            if (carry.isNotEmpty() && nowMs - carryAtMs > CARRY_MS) {
+                log("Dropped ${quoted(carry)}. Nothing followed.")
+                carry = ""
+            }
+            val text = joinSpeech(carry, own)
+            val liveHeard = head.transcript.all.any { it.live.isNotBlank() }
+            when {
+                // Only noise (a cough the second pass found no words in): nothing to send, listening goes on.
+                own.isBlank() -> {
+                    log("Message ${head.id} empty. Nothing sent.")
+                    emit(SpeechEvent.Error(SpeechError.NoMatch))
+                }
+                // "Um" alone is not a message: it waits for the speech that follows it.
+                isFillerOnly(text) -> {
+                    carry = text
+                    carryAtMs = nowMs
+                    log("Message ${head.id} held back ${quoted(text)}. Only fillers.")
+                }
+                // A word or two the live pass never heard is the second pass making words of a breath or a click.
+                wordCount(text) <= LIVE_REQUIRED_UP_TO_WORDS && !liveHeard -> {
+                    log("Message ${head.id} dropped ${quoted(text)}. Too short, and the live pass heard nothing.")
+                    carry = ""
+                    emit(SpeechEvent.Error(SpeechError.NoMatch))
+                }
+                else -> {
+                    log("Message ${head.id} sent ${quoted(text)}")
+                    carry = ""
+                    emit(SpeechEvent.Final(text))
+                }
+            }
         }
+    }
+
+    /** Called when nothing is waiting any more and the mic has stopped: fillers still held back are dropped. */
+    private fun dropCarryIfEnding() {
+        if (!ending || waiting.isNotEmpty() || carry.isEmpty()) return
+        log("Dropped ${quoted(carry)}. Nothing followed.")
+        carry = ""
+        lastShown = LiveWords("", "")
+        emit(SpeechEvent.Error(SpeechError.NoMatch))
     }
 
     /** The live bubble: everything heard and not yet sent, settled words first. */
     private fun show() {
-        var confirmed = ""
+        var confirmed = carry
         var pending = ""
         var settledSoFar = true
         for (t in waiting.map { it.transcript } + open.transcript) {

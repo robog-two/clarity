@@ -32,6 +32,29 @@ class TwoPassTest {
         assertEquals(30, p.extend(20, FloatArray(10)).size, "after a reset, positions count from 0 again")
     }
 
+    @Test fun preRollRawGivesTheMicsAudioNotTheDetectorsCopy() {
+        val p = PreRoll(keepSeconds = 2.0, preSeconds = 0.25, sampleRate = 100)
+        p.add(FloatArray(100) { it.toFloat() })
+        // The detector heard a lifted copy (all 99s); the phrase starts at 60 and is 20 samples long.
+        val out = p.raw(60, 20, FloatArray(20) { 99f })
+        assertEquals((35 until 80).map { it.toFloat() }, out.toList())
+    }
+
+    @Test fun preRollRawNeverReachesIntoThePhraseBefore() {
+        val p = PreRoll(keepSeconds = 2.0, preSeconds = 0.25, sampleRate = 100)
+        p.add(FloatArray(100) { it.toFloat() })
+        p.raw(10, 40, FloatArray(40))
+        assertEquals((50 until 70).map { it.toFloat() }, p.raw(60, 10, FloatArray(10)).toList())
+    }
+
+    @Test fun preRollRawFallsBackToTheDetectorsCopyWhenThePhraseIsGone() {
+        val p = PreRoll(keepSeconds = 0.5, preSeconds = 0.25, sampleRate = 100)
+        p.add(FloatArray(300))
+        val copy = FloatArray(10) { 1f }
+        assertEquals(copy.toList(), p.raw(100, 10, copy).toList())
+        assertEquals(copy.toList(), p.raw(295, 10, copy).toList(), "past what was fed")
+    }
+
     @Test fun theVoiceLogKeepsTheLastLinesInMemory() {
         var now = 0L
         val log = VoiceLog(capacity = 3, clock = { now++ })
@@ -107,20 +130,6 @@ class TwoPassTest {
         assertEquals(0.2, updatedSpeed(null, 5.0, 1_000))
         assertEquals(0.2 + 0.3 * (0.4 - 0.2), updatedSpeed(0.2, 5.0, 2_000)!!, 1e-9)
         assertEquals(0.2, updatedSpeed(0.2, 0.1, 5_000), "a blip is too short to measure")
-    }
-
-    @Test fun hotwordsComeFromCapitalisedWordsInsideTitles() {
-        val words = hotwordsFrom(
-            listOf(
-                "Email Professor Klaus about the Calculus exam",
-                "Book a room at Ballard Library for Thursday",
-                "reply to Klaus",
-                "Call Mom",
-            ),
-        )
-        assertEquals(listOf("Professor", "Klaus", "Calculus", "Ballard", "Library", "Mom"), words)
-        assertEquals(2, hotwordsFrom(listOf("x Alpha Beta Gamma"), max = 2).size)
-        assertEquals(emptyList(), hotwordsFrom(emptyList()))
     }
 
     @Test fun hotwordsArgumentDropsTheLibrarysSyntax() {

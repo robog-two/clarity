@@ -243,7 +243,7 @@ interface AppGraph : ViewModelGraph {
     fun voicePrefs(store: DataStore<Preferences>): VoicePrefs = DataStoreVoicePrefs(store)
 
     @Provides @SingleIn(AppScope::class)
-    fun voiceModels(context: Context, prefs: VoicePrefs, feed: FeedStore): VoiceModels = VoiceModels(context, prefs, feed)
+    fun voiceModels(context: Context, prefs: VoicePrefs): VoiceModels = VoiceModels(context, prefs)
 
     /**
      * Two-pass recognition with the app's own models (sherpa-onnx) once they are downloaded; the phone's
