@@ -35,18 +35,19 @@ class RecentContactNamesTest {
         assertEquals(listOf("Sam Example"), out)
     }
 
-    @Test fun `hint words put contacts first with full names and parts`() {
-        val out = mergeHotwords(listOf("Sam Example"), listOf("Calc", "Sam", "Biology"))
-        assertEquals(listOf("Sam Example", "Sam", "Example", "Calc", "Biology"), out)
+    @Test fun `hint words are the contacts, each with its full name and parts, and nothing else`() {
+        val out = contactHotwords(listOf("Sam Example", "Jordan Sample", "Sam Example"))
+        assertEquals(listOf("Sam Example", "Sam", "Example", "Jordan Sample", "Jordan", "Sample"), out)
+        assertEquals(emptyList(), contactHotwords(emptyList()))
     }
 
     @Test fun `hint words keep the cap`() {
         val names = (0 until 40).map { "Fname${"abcdefghijklmnopqrstuvwxyz"[it % 26]}${"abcdefghij"[it / 26]} Lname" }
-        assertEquals(MAX_HOTWORDS, mergeHotwords(names, emptyList()).size)
+        assertEquals(MAX_HOTWORDS, contactHotwords(names).size)
     }
 
     @Test fun `hint words drop what cannot be encoded`() {
-        val out = mergeHotwords(listOf("Zoë Example"), emptyList())
+        val out = contactHotwords(listOf("Zoë Example"))
         assertTrue(out.none { it.contains('ë') })
         assertTrue("Example" in out)
     }

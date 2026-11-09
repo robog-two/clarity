@@ -152,6 +152,160 @@ class TwoPassCoreTest {
         assertEquals(listOf("W1 W2"), r.finals)
     }
 
+    /** Sound the detector takes for speech (the fake one does at any non-zero value) at about minus 100 dB. */
+    private fun faint(chunks: Int = 30): List<FloatArray> = List(chunks) { FloatArray(CHUNK) { 1e-5f } }
+
+    @Test fun aPhraseOfNearSilenceIsNeitherDecodedNorSent() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(faint() + silence(3_600))
+        assertEquals(0, r.jobs.size, "no second pass for silence")
+        assertEquals(emptyList(), r.finals)
+        assertEquals(1, r.core.phrasesLeftOut)
+        assertEquals(0, r.core.phrasesClosed)
+        assertTrue(r.core.idle)
+    }
+
+    @Test fun silenceInTheMiddleOfAMessageIsLeftOutOfItAndOfTheWholeMessagePass() {
+        val r = Rig(immediate = true, speed = 0.05)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(600) + faint() + silence(600) + speech(2) + silence(3_600))
+        assertEquals(3, r.second.decoded.size, "two phrases, then the whole message; the silent phrase was never decoded")
+        assertEquals(listOf("W1 W2"), r.finals)
+    }
+
+    @Test fun aQuietPhraseWithNoLiveWordsIsLeftOutButOneWithWordsStays() {
+        val quiet = List(5) { FloatArray(CHUNK) { 0.0005f } } // about minus 66 dB, no word in it
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(quiet + silence(3_600))
+        assertEquals(0, r.jobs.size)
+        assertEquals(1, r.core.phrasesLeftOut)
+    }
+
+    @Test fun aSecondPassThatRepeatsItselfIsReplacedByTheLiveWords() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Devils " + "Cloud ".repeat(70)))
+        assertEquals(listOf("w1"), r.finals)
+    }
+
+    @Test fun aLoopWithNoLiveWordsLeavesNothingToSend() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(noise() + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Cloud ".repeat(40)))
+        assertEquals(emptyList(), r.finals)
+        assertEquals(SpeechEvent.Error(SpeechError.NoMatch), r.events.last())
+    }
+
+    @Test fun aWholeMessagePassThatLoopsFallsBackToThePhrases() {
+        val r = Rig(immediate = false, speed = 0.05)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(600) + speech(2) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "W1"))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "W2"))
+        val whole = r.jobs.removeFirst()
+        assertTrue(whole is DecodeJob.Whole)
+        r.core.decoded(DecodeResult(whole, "Cloud Cloud Cloud Cloud"))
+        assertEquals(listOf("W1 W2"), r.finals)
+    }
+
+    @Test fun repeatsThePersonReallySaidSurvive() {
+        // Both passes hear "no no no": the person said it, so the second pass is kept.
+        val jobs = ArrayDeque<DecodeJob>()
+        val events = mutableListOf<SpeechEvent>()
+        val core = TwoPassCore(StuckFirstPass("no no no"), FakeVad(), submit = { jobs += it }, emit = { events += it })
+        (speech(1) + silence(3_600)).forEach(core::audio)
+        core.decoded(DecodeResult(jobs.removeFirst(), "No. No. No."))
+        assertTrue(events.filterIsInstance<SpeechEvent.Final>().first().text.startsWith("No. No. No."), "the second pass is kept, not replaced by the live words")
+    }
+
+    @Test fun aLoneUmIsNotSentAlone() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Um."))
+        assertEquals(emptyList(), r.finals)
+        assertEquals(MicMode.Listening, r.mic.mode)
+        assertTrue(r.partials.last().text.contains("Um."), "the bubble still shows what was heard")
+    }
+
+    @Test fun anUmJoinsTheMessageThatFollows() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Um."))
+        r.feed(speech(2) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Check my calendar."))
+        assertEquals(listOf("Um. Check my calendar."), r.finals)
+    }
+
+    @Test fun anUmIsDroppedWhenTheMicStops() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Mm-hmm."))
+        r.core.flush()
+        assertEquals(emptyList(), r.finals)
+        assertEquals(SpeechEvent.Error(SpeechError.NoMatch), r.events.last())
+    }
+
+    @Test fun anUmThatEndsWithTheMicIsDroppedOnceItsDecodeIsBack() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1))
+        r.core.flush()
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Uh"))
+        assertEquals(emptyList(), r.finals)
+        assertEquals(SpeechEvent.Error(SpeechError.NoMatch), r.events.last())
+    }
+
+    @Test fun anUmIsNotKeptForever() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Um"))
+        r.feed(silence(CARRY_MS + 1_000))
+        r.feed(speech(2) + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Hello there"))
+        assertEquals(listOf("Hello there"), r.finals)
+    }
+
+    @Test fun aLoneWordTheLivePassNeverHeardIsDropped() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(noise() + silence(3_600)) // the detector heard something, the live pass no words
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Yes."))
+        assertEquals(emptyList(), r.finals)
+        assertEquals(SpeechEvent.Error(SpeechError.NoMatch), r.events.last())
+    }
+
+    @Test fun aRealYesStays() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(speech(1) + silence(3_600)) // the live pass heard "w1"
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Yes."))
+        assertEquals(listOf("Yes."), r.finals)
+    }
+
+    @Test fun twoWordsTheLivePassNeverHeardAreDroppedToo() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(noise() + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "I'm sorry."))
+        assertEquals(emptyList(), r.finals)
+    }
+
+    @Test fun threeWordsFromNoiseStillGoOut() {
+        val r = Rig(immediate = false)
+        r.start(keepOn = true)
+        r.feed(noise() + silence(3_600))
+        r.core.decoded(DecodeResult(r.jobs.removeFirst(), "Yes please sir"))
+        assertEquals(listOf("Yes please sir"), r.finals)
+    }
+
     @Test fun hearingFollowsTheDetector() {
         val r = Rig()
         r.start(keepOn = true)

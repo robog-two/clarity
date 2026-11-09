@@ -8,10 +8,6 @@ import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.media.audiofx.AcousticEchoCanceler
-import android.media.audiofx.AudioEffect
-import android.media.audiofx.AutomaticGainControl
-import android.media.audiofx.NoiseSuppressor
 import android.os.Process
 import androidx.core.content.ContextCompat
 
@@ -38,9 +34,11 @@ class AndroidAudioSource(private val context: Context) : AudioSource {
         val min = AudioRecord.getMinBufferSize(SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         // Two seconds of room, so a slow moment on the decoding side never drops audio.
         val record = AudioRecord(
-            // The system's voice mode: automatic gain, noise suppression and echo cancellation. VOICE_RECOGNITION
-            // leaves them off on many phones, which made quiet speech too faint for the detector.
-            MediaRecorder.AudioSource.VOICE_COMMUNICATION,
+            // The source Android tunes for recognizers. The call mode (VOICE_COMMUNICATION) runs noise
+            // suppression, gain control and echo cancellation made for a listener, which distort speech for
+            // a recognizer. No effects are attached either: faint speech is lifted in software (DetectorFront,
+            // normalizeForDecode), where it is measured.
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
@@ -55,39 +53,14 @@ class AndroidAudioSource(private val context: Context) : AudioSource {
             record.release()
             throw IllegalStateException("the microphone did not start")
         }
-        // Anything that goes wrong after the recorder started must not leave it running.
-        val effects = mutableListOf<AudioEffect>()
-        try {
-            // Optional extras: one that fails costs only itself, never the recording.
-            fun enable(name: String, available: Boolean, create: () -> AudioEffect?): String {
-                val effect = if (available) runCatching { create()?.also { it.enabled = true } }.getOrNull() else null
-                effect?.let(effects::add)
-                return "$name " + if (effect != null) "on" else if (available) "failed" else "not offered"
-            }
-            val session = record.audioSessionId
-            val states = listOf(
-                enable("gain", AutomaticGainControl.isAvailable()) { AutomaticGainControl.create(session) },
-                enable("noise suppression", NoiseSuppressor.isAvailable()) { NoiseSuppressor.create(session) },
-                enable("echo cancellation", AcousticEchoCanceler.isAvailable()) { AcousticEchoCanceler.create(session) },
-            ).joinToString(", ")
-            return AndroidAudioStream(record, effects, states)
-        } catch (t: Throwable) {
-            effects.forEach { runCatching { it.release() } }
-            runCatching { record.stop() }
-            record.release()
-            throw IllegalStateException("the microphone could not be set up", t)
-        }
+        return AndroidAudioStream(record)
     }
 }
 
-private class AndroidAudioStream(
-    private val record: AudioRecord,
-    private val effects: List<AudioEffect>,
-    private val effectStates: String,
-) : AudioStream {
+private class AndroidAudioStream(private val record: AudioRecord) : AudioStream {
     // Asked after the first audio has come in: the route is settled by then.
     override val info: String
-        get() = "voice-call mode, ${record.routedDevice?.let(::deviceName) ?: "input unknown"}, ${record.sampleRate} Hz; $effectStates"
+        get() = "recognition mode, ${record.routedDevice?.let(::deviceName) ?: "input unknown"}, ${record.sampleRate} Hz; no effects"
 
     private val shorts = ShortArray(SAMPLE_RATE / 10)
 
@@ -99,7 +72,6 @@ private class AndroidAudioStream(
 
     override fun close() {
         runCatching { record.stop() }
-        effects.forEach { runCatching { it.release() } }
         record.release()
     }
 }

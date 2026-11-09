@@ -27,10 +27,14 @@ class VoiceLog(private val capacity: Int = 40, private val clock: () -> Long = S
     fun clear() { _entries.value = emptyList() }
 }
 
+/** The most of a pass's words the log quotes: a pass that ran away on noise would fill it with one word. */
+const val MAX_QUOTED = 160
+
 /** "“words”", or "nothing" for empty text: how the log quotes what a pass heard. Pure. */
 fun quoted(text: String?): String = when {
     text == null -> "failed"
     text.isBlank() -> "nothing"
+    text.trim().length > MAX_QUOTED -> "“${text.trim().take(MAX_QUOTED).trimEnd()}…”"
     else -> "“${text.trim()}”"
 }
 
