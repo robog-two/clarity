@@ -48,6 +48,10 @@ import kotlinx.serialization.encodeToString
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.api.ApiPaths
+import net.robog.clarity.shared.backup.BackupInfo
+import net.robog.clarity.shared.backup.BackupList
+import net.robog.clarity.shared.backup.RollbackAccepted
+import net.robog.clarity.shared.backup.RollbackRequest
 import net.robog.clarity.shared.api.EnrollmentRequest
 import net.robog.clarity.shared.api.EnrollmentResponse
 import net.robog.clarity.shared.api.InstanceInfo
@@ -167,6 +171,17 @@ interface IngestApi {
     suspend fun putGrants(id: ConnectorId, update: GrantsUpdate): ApiResult<Unit>
 }
 
+/** The database backups and the phone-signed rollback (`/api/v1/backups`). */
+interface BackupsApi {
+    suspend fun backups(): ApiResult<BackupList>
+
+    /** Makes a backup now and returns it. */
+    suspend fun backUpNow(): ApiResult<BackupInfo>
+
+    /** The signed rollback. The server restarts afterwards. */
+    suspend fun rollback(request: RollbackRequest): ApiResult<RollbackAccepted>
+}
+
 /** Each role's model settings (`/api/v1/settings/models`). */
 interface ModelsApi {
     suspend fun modelSettings(): ApiResult<ModelSettingsView>
@@ -267,7 +282,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi, McpApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi, McpApi, BackupsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -295,6 +310,19 @@ class KtorClarityApi(
     override suspend fun putSettings(settings: Settings): ApiResult<Unit> = putUnit(ApiPaths.SETTINGS, settings)
 
     override suspend fun connectors(): ApiResult<List<ConnectorSummary>> = get(ApiPaths.CONNECTORS)
+
+    override suspend fun backups(): ApiResult<BackupList> = get(ApiPaths.BACKUPS)
+
+    override suspend fun backUpNow(): ApiResult<BackupInfo> = authed { base -> client.post { url(base + ApiPaths.BACKUPS) } }
+
+    override suspend fun rollback(request: RollbackRequest): ApiResult<RollbackAccepted> =
+        authed { base ->
+            client.post {
+                url(base + ApiPaths.BACKUPS_ROLLBACK)
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+        }
 
     override suspend fun modelSettings(): ApiResult<ModelSettingsView> = get(ApiPaths.SETTINGS_MODELS)
 

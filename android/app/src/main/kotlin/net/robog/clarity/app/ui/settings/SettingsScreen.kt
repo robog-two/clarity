@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Alarm
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Gavel
@@ -223,6 +224,7 @@ fun SettingsTab(
         modifier = modifier,
         vault = { VaultSection(showTitle = false) },
         models = { ModelsSection(showTitle = false) },
+        backups = { BackupsSection() },
         voiceModels = { VoiceModelsSection() },
     )
 }
@@ -246,6 +248,7 @@ enum class SettingsPage(val title: String, @DrawableRes val drawing: Int? = null
     Vault("Vault"),
     Sources("Sources"),
     Models("Models"),
+    Backups("Backups"),
     Server("Server"),
 }
 
@@ -258,6 +261,8 @@ fun SettingsContent(
     vault: @Composable () -> Unit = {},
     /** The model choices, shown on their own page. */
     models: @Composable () -> Unit = {},
+    /** The database backups and rollback, shown on their own page. */
+    backups: @Composable () -> Unit = {},
     /** The on-phone speech models, shown on the Voice page. */
     voiceModels: @Composable () -> Unit = {},
     /** The page to open on; previews use it to show a sub-page. */
@@ -284,6 +289,7 @@ fun SettingsContent(
                     SettingsPage.Vault -> vault()
                     SettingsPage.Sources -> SourcesSettings(state, actions)
                     SettingsPage.Models -> models()
+                    SettingsPage.Backups -> backups()
                     SettingsPage.Server -> ServerSettings(state, actions) { confirming = true }
                 }
             }
@@ -380,6 +386,10 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
                 warning = batteryWarning,
             ) { open(SettingsPage.Push) }
             groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
+        }
+
+        SettingsGroup("Your data") {
+            groupRow(Icons.Outlined.Backup, "Backups", "Every night at 2 am. Kept for 7 days.") { open(SettingsPage.Backups) }
         }
 
         SettingsGroup("This phone") {

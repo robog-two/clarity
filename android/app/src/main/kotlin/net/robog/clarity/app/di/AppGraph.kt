@@ -304,6 +304,9 @@ interface AppGraph : ViewModelGraph {
 
     @Provides fun modelsRepository(api: KtorClarityApi): ModelsRepository = DefaultModelsRepository(api)
 
+    @Provides fun backupsRepository(api: KtorClarityApi): net.robog.clarity.app.data.BackupsRepository =
+        net.robog.clarity.app.data.DefaultBackupsRepository(api)
+
     @Provides fun mcpRepository(api: KtorClarityApi): net.robog.clarity.app.data.McpRepository =
         net.robog.clarity.app.data.DefaultMcpRepository(api)
 
@@ -316,6 +319,10 @@ interface AppGraph : ViewModelGraph {
     @Provides fun phoneAuth(foreground: ForegroundActivity): PhoneAuth = BiometricPhoneAuth(foreground)
 
     @Provides fun vaultRepository(api: VaultApi, keys: VaultKeys): VaultRepository = DefaultVaultRepository(api, keys)
+
+    /** A rollback of the server's database is signed on the phone like a never-alone action. */
+    @Provides fun rollbackSigning(keys: VaultKeys, auth: PhoneAuth, vault: VaultRepository): net.robog.clarity.app.vault.RollbackSigning =
+        net.robog.clarity.app.vault.RollbackSigner(keys, auth, vault)
 
     /** Never-alone actions and vault releases are approved with a biometric yes signed on this phone. */
     @Provides fun approvalGate(api: VaultApi, keys: VaultKeys, auth: PhoneAuth, vault: VaultRepository): ApprovalGate =
