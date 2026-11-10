@@ -35,6 +35,8 @@ data class BackupRow(
     /** The size, and for a copy made before a rollback what it is. */
     val detail: String,
     val beforeRollback: Boolean,
+    /** Made by hand with "Back up now". */
+    val manual: Boolean = false,
     val info: BackupInfo,
 )
 
@@ -94,6 +96,10 @@ fun backupRows(backups: List<BackupInfo>, zone: TimeZone = TimeZone.currentSyste
     val dayName = day?.let(::dayText) ?: info.date
     when (info.kind) {
         BackupKind.NIGHTLY -> BackupRow(info.name, dayName, sizeText(info.sizeBytes), beforeRollback = false, info = info)
+        BackupKind.MANUAL -> BackupRow(
+            info.name, "$dayName at ${clockText(info.createdAt, zone)}",
+            "Saved by hand. ${sizeText(info.sizeBytes)}", beforeRollback = false, manual = true, info = info,
+        )
         BackupKind.BEFORE_ROLLBACK -> BackupRow(
             info.name, "$dayName at ${clockText(info.createdAt, zone)}",
             "Copy kept before a rollback. ${sizeText(info.sizeBytes)}", beforeRollback = true, info = info,

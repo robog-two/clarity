@@ -12,6 +12,9 @@ enum class BackupKind {
 
     /** A copy of the database taken just before a rollback, so the rollback itself can be undone; the last two are kept. */
     @SerialName("before_rollback") BEFORE_ROLLBACK,
+
+    /** A copy the person asked for with "Back up now"; it never replaces a nightly file. The last three are kept. */
+    @SerialName("manual") MANUAL,
 }
 
 /** One backup file. [name] is the file's name and its id; [sha256] is the lowercase hex SHA-256 of its bytes. */

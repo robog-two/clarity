@@ -18,6 +18,9 @@ class Maintenance {
 
     fun begin() = flag.set(true)
 
+    /** Lifts the gate again (a rollback that stopped before it began). */
+    fun end() = flag.set(false)
+
     companion object {
         /** The probes that keep working in maintenance. */
         val OPEN_PATHS = setOf("/healthz", "/readyz")

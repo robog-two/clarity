@@ -146,7 +146,20 @@ class BackupService(
     }
 
     /** "Back up now": today's file on the home clock, replaced by a fresh dump. */
-    suspend fun backupNow(): Either<BackupError, BackupInfo> = backupNightly(today(), wait = false)
+    suspend fun backupNow(): Either<BackupError, BackupInfo> {
+        if (!enabled) return BackupError.Off.left()
+        if (!lock.tryLock()) return BackupError.Busy().left()
+        try {
+            val zone = zoneOrUtc(settings.current().homeZone)
+            val info = dumpTo(freshName(zone, BackupNames::manual))
+            prune()
+            return info.right()
+        } catch (e: BackupFailure) {
+            return BackupError.Failed(e.message.orEmpty()).left()
+        } finally {
+            lock.unlock()
+        }
+    }
 
     suspend fun today(): LocalDate {
         val zone = zoneOrUtc(settings.current().homeZone)
@@ -172,7 +185,7 @@ class BackupService(
     }
 
     private fun prune() {
-        filesToDelete(folder.names(), cfg.keepNightly, cfg.keepBeforeRollback).forEach { folder.delete(it) }
+        filesToDelete(folder.names(), cfg.keepNightly, cfg.keepBeforeRollback, cfg.keepManual).forEach { folder.delete(it) }
     }
 
     /**
@@ -198,10 +211,14 @@ class BackupService(
             }
             // 1) a copy of now, so the rollback can be undone. If it fails, nothing has changed.
             val zone = zoneOrUtc(settings.current().homeZone)
-            val safetyName = freshSafetyName(zone)
+            val safetyName = freshName(zone, BackupNames::beforeRollback)
+            // From here nothing else may write: requests get 503 until the rollback is over (or fails to start).
+            maintenance.begin()
             val safety = try {
                 dumpTo(safetyName)
-            } catch (e: BackupFailure) {
+            } catch (e: Throwable) {
+                maintenance.end()
+                if (e !is BackupFailure) throw e
                 return BackupError.Failed("a copy of the current data could not be made, so nothing was changed. ${e.message}").left()
             }
             // 2..5) in the background: the lock stays held until the process ends.
@@ -216,10 +233,10 @@ class BackupService(
     // Not the application scope: stopping that one is part of the job.
     private val scope0 = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
 
-    private fun freshSafetyName(zone: TimeZone): String {
+    private fun freshName(zone: TimeZone, make: (kotlinx.datetime.LocalDateTime) -> String): String {
         var at = clock.now()
         while (true) {
-            val name = BackupNames.beforeRollback(at.toLocalDateTime(zone))
+            val name = make(at.toLocalDateTime(zone))
             if (!Files.exists(folder.path(name))) return name
             at += 60.seconds
         }

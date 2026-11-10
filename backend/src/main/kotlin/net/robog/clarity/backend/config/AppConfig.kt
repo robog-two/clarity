@@ -78,6 +78,7 @@ data class BackupsConfig(
     val enabled: Boolean = true,
     val keepNightly: Int = 7,
     val keepBeforeRollback: Int = 2,
+    val keepManual: Int = 3,
     val pgDump: String = "pg_dump",
     val pgRestore: String = "pg_restore",
     /** A dump or restore running longer than this is killed. */

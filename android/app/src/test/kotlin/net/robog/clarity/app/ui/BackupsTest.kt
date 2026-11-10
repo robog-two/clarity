@@ -65,6 +65,15 @@ class BackupsRulesTest {
         assertEquals("Tue Nov 10 at 9:05 am", backupRows(listOf(safety), TimeZone.of("America/New_York")).single().title)
     }
 
+    @Test fun aCopyMadeByHandIsMarked() {
+        val manual = safety.copy(name = "clarity-2026-11-10T1405-manual.dump", kind = BackupKind.MANUAL)
+        val row = backupRows(listOf(manual), TimeZone.UTC).single()
+        assertTrue(row.manual)
+        assertFalse(row.beforeRollback)
+        assertEquals("Tue Nov 10 at 2:05 pm", row.title)
+        assertEquals("Saved by hand. 12.5 MB", row.detail)
+    }
+
     @Test fun datesAndSizesReadPlainly() {
         assertEquals("Sun Mar 1", dayText(LocalDate(2026, 3, 1)))
         assertEquals("999 B", sizeText(999))

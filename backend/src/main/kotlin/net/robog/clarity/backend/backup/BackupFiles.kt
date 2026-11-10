@@ -19,11 +19,12 @@ data class ParsedBackupName(val kind: BackupKind, val date: LocalDate, val sortK
 
 /**
  * The names of backup files: `clarity-YYYY-MM-DD.dump` (nightly) and
- * `clarity-YYYY-MM-DDTHHMM-before-rollback.dump`. Pure. Anything else in the folder is not a backup,
+ * `clarity-YYYY-MM-DDTHHMM-before-rollback.dump` and `clarity-YYYY-MM-DDTHHMM-manual.dump`. Pure. Anything else in the folder is not a backup,
  * and a name from a request is only ever used if it matches here (no path can sneak in).
  */
 object BackupNames {
     private val nightly = Regex("""^clarity-(\d{4}-\d{2}-\d{2})\.dump$""")
+    private val manual = Regex("""^clarity-(\d{4}-\d{2}-\d{2})T(\d{4})-manual\.dump$""")
     private val safety = Regex("""^clarity-(\d{4}-\d{2}-\d{2})T(\d{4})-before-rollback\.dump$""")
 
     fun nightly(date: LocalDate) = "clarity-$date.dump"
@@ -33,10 +34,19 @@ object BackupNames {
         return "clarity-${at.date}T$hhmm-before-rollback.dump"
     }
 
+    fun manual(at: LocalDateTime): String {
+        val hhmm = "%02d%02d".format(at.hour, at.minute)
+        return "clarity-${at.date}T$hhmm-manual.dump"
+    }
+
     fun parse(name: String): ParsedBackupName? {
         nightly.matchEntire(name)?.let { m ->
             val date = runCatching { LocalDate.parse(m.groupValues[1]) }.getOrNull() ?: return null
             return ParsedBackupName(BackupKind.NIGHTLY, date, "${m.groupValues[1]}T0000")
+        }
+        manual.matchEntire(name)?.let { m ->
+            val date = runCatching { LocalDate.parse(m.groupValues[1]) }.getOrNull() ?: return null
+            return ParsedBackupName(BackupKind.MANUAL, date, "${m.groupValues[1]}T${m.groupValues[2]}")
         }
         safety.matchEntire(name)?.let { m ->
             val date = runCatching { LocalDate.parse(m.groupValues[1]) }.getOrNull() ?: return null
@@ -47,15 +57,15 @@ object BackupNames {
 }
 
 /**
- * Which files go: keeps the [keepNightly] newest nightly ones and the [keepBeforeRollback] newest
+ * Which files go: keeps the [keepNightly] newest nightly ones the [keepManual] newest by-hand ones and the [keepBeforeRollback] newest
  * before-rollback ones (newest by the date or time in the name), returns the names of the rest.
  * Files that are not backups are never in the answer. Pure.
  */
-fun filesToDelete(names: Collection<String>, keepNightly: Int, keepBeforeRollback: Int): List<String> {
+fun filesToDelete(names: Collection<String>, keepNightly: Int, keepBeforeRollback: Int, keepManual: Int = 3): List<String> {
     val parsed = names.mapNotNull { n -> BackupNames.parse(n)?.let { n to it } }
     fun surplus(kind: BackupKind, keep: Int) =
         parsed.filter { it.second.kind == kind }.sortedByDescending { it.second.sortKey }.drop(keep.coerceAtLeast(0)).map { it.first }
-    return surplus(BackupKind.NIGHTLY, keepNightly) + surplus(BackupKind.BEFORE_ROLLBACK, keepBeforeRollback)
+    return surplus(BackupKind.NIGHTLY, keepNightly) + surplus(BackupKind.MANUAL, keepManual) + surplus(BackupKind.BEFORE_ROLLBACK, keepBeforeRollback)
 }
 
 /**

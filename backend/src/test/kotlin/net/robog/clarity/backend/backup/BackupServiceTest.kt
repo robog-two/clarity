@@ -42,9 +42,11 @@ private class FakePg : PgTools {
     var failDump = false
     var failRestore = false
     var gate: CompletableDeferred<Unit>? = null
+    var duringDump: () -> Unit = {}
 
     override suspend fun dump(target: Path) {
         calls += "dump"
+        duringDump()
         gate?.await()
         if (failDump) throw BackupFailure("the backup failed: no connection")
         Files.writeString(target, content)
@@ -96,6 +98,7 @@ class BackupServiceTest : FunSpec({
     }
 
     fun rig(keyForPhone: String? = b64.encodeToString(keys.public.encoded)): Rig {
+        clock.now = Instant.parse("2026-11-10T19:05:00Z")
         val dir = Files.createTempDirectory("backups-test")
         val r = Rig(dir)
         r.vault = SigningVault(phone, keyForPhone)
@@ -114,6 +117,26 @@ class BackupServiceTest : FunSpec({
         PosixFilePermissions.toString(Files.getPosixFilePermissions(dir)) shouldBe "rwx------"
         PosixFilePermissions.toString(Files.getPosixFilePermissions(dir.resolve(info.name))) shouldBe "rw-------"
         Files.list(dir).use { s -> s.map { it.fileName.toString() }.toList() } shouldContainExactly listOf("clarity-2026-11-10.dump")
+    }
+
+    test("Back up now makes a separate manual file and never replaces the nightly one") {
+        val r = rig()
+        val nightly = r.service.backupNightly(LocalDate(2026, 11, 10), wait = false).getOrNull()!!
+        r.pg.content = "AFTER-THE-MISTAKE"
+        val manual = r.service.backupNow().getOrNull()!!
+        manual.kind shouldBe BackupKind.MANUAL
+        manual.name shouldBe "clarity-2026-11-10T1405-manual.dump"
+        Files.readString(r.dir.resolve("backups").resolve(nightly.name)) shouldBe "PGDMP-1"
+        r.service.folder.info(nightly.name)!!.sha256 shouldBe nightly.sha256
+        // a second one in the same minute gets its own name too, and the nightly dates still count only nightly files
+        r.service.backupNow().getOrNull()!!.name shouldBe "clarity-2026-11-10T1406-manual.dump"
+        r.service.nightlyDates() shouldBe setOf(LocalDate(2026, 11, 10))
+    }
+
+    test("only the three newest manual copies are kept") {
+        val r = rig()
+        repeat(5) { r.service.backupNow(); clock.advance(60.seconds) }
+        r.service.list().backups.filter { it.kind == BackupKind.MANUAL }.size shouldBe 3
     }
 
     test("a dump that fails leaves no file, and the next one works") {
@@ -183,6 +206,18 @@ class BackupServiceTest : FunSpec({
         r.service.rollback(phone, good).isRight() shouldBe true
         withTimeout(15.seconds) { r.exited.await() }
         r.vault.used.size shouldBe 1
+    }
+
+    test("the request gate is on while the copy of now is made, and lifted again when that fails") {
+        val r = rig()
+        val a = r.seedNightly(8, "A")
+        var gateDuringDump: Boolean? = null
+        r.pg.duringDump = { gateDuringDump = r.maintenance.active }
+        r.pg.failDump = true
+        r.service.rollback(phone, request(a)).leftOrNull().shouldBeInstanceOf<BackupError.Failed>()
+        gateDuringDump shouldBe true
+        r.maintenance.active shouldBe false
+        r.pg.calls.filter { it.startsWith("restore") } shouldBe emptyList()
     }
 
     test("a replayed signature is refused even when the lock is free") {

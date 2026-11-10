@@ -31,6 +31,15 @@ class BackupFilesTest : FunSpec({
         gone shouldContainExactlyInAnyOrder listOf(nightly(1), nightly(2), nightly(3), "clarity-2026-11-03T0900-before-rollback.dump")
     }
 
+    test("manual names parse, and retention keeps 7 nightly 3 manual and 2 before-rollback") {
+        BackupNames.manual(LocalDateTime(2026, 11, 10, 14, 5)) shouldBe "clarity-2026-11-10T1405-manual.dump"
+        BackupNames.parse("clarity-2026-11-10T1405-manual.dump")!!.kind shouldBe BackupKind.MANUAL
+        val manuals = (1..5).map { "clarity-2026-11-%02dT1000-manual.dump".format(it) }
+        val safeties = (1..4).map { "clarity-2026-11-%02dT1100-before-rollback.dump".format(it) }
+        val gone = filesToDelete((1..10).map { nightly(it) } + manuals + safeties, keepNightly = 7, keepBeforeRollback = 2, keepManual = 3)
+        gone shouldContainExactlyInAnyOrder listOf(nightly(1), nightly(2), nightly(3), manuals[0], manuals[1], safeties[0], safeties[1])
+    }
+
     test("nothing is deleted while there are fewer files than the limits") {
         filesToDelete((1..7).map { nightly(it) } + "clarity-2026-11-07T0200-before-rollback.dump", 7, 2).shouldBeEmpty()
     }
