@@ -104,17 +104,21 @@ private fun BackupItem(row: BackupRow, shape: Shape, enabled: Boolean, onRollBac
     }
 }
 
+/** The moment a rollback returns to: 2:00 a.m. for a nightly backup, else the copy's own time. */
+internal fun rollbackPoint(row: BackupRow): String =
+    if (row.beforeRollback || row.manual) row.title else "that day at 2:00 a.m."
+
 /** The sheet that says plainly what a rollback costs, before the fingerprint or face prompt. */
 @Composable
 fun RollbackConfirm(row: BackupRow, onConfirm: () -> Unit, onCancel: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth().padding(horizontal = Space.Large), verticalArrangement = Arrangement.spacedBy(Space.Medium)) {
         Text("Roll back to ${row.title}?", style = MaterialTheme.typography.titleLarge)
         Text(
-            "Everything since then is lost. That includes messages, notes and decisions.",
+            "All of your chat logs, goods, and memories from after ${rollbackPoint(row)} will be reverted.",
             style = MaterialTheme.typography.bodyLarge,
         )
         Text(
-            "A copy of now is kept first, so this can be undone. It restarts for a minute.",
+            "The current state will be backed up first, so you can return that data if you need it for up to a week.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -133,7 +137,7 @@ fun RollbackWaiting(row: BackupRow) {
     ) {
         LoadingSpinner()
         Text("Rolling back to ${row.title}", style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        Hint("It restarts and reconnects by itself.", textAlign = TextAlign.Center)
+        Hint("Waiting on your server to restart.", textAlign = TextAlign.Center)
     }
 }
 

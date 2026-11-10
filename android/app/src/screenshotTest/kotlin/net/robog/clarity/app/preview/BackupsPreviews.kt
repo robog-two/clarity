@@ -41,6 +41,7 @@ private fun nightly(day: Int, bytes: Long) = BackupInfo(
 )
 
 private val infos = listOf(
+    BackupInfo("clarity-2026-11-10T1130-manual.dump", BackupKind.MANUAL, "2026-11-10", Instant.parse("2026-11-10T16:30:00Z"), 12_480_000, "ef".repeat(32)),
     nightly(10, 12_400_000),
     BackupInfo("clarity-2026-11-10T0905-before-rollback.dump", BackupKind.BEFORE_ROLLBACK, "2026-11-10", Instant.parse("2026-11-10T14:05:00Z"), 12_450_000, "cd".repeat(32)),
     nightly(9, 12_100_000),
@@ -84,7 +85,7 @@ fun BackupsSettingsEntry() = Frame {
     }
 }
 
-/** The list, newest first, with a copy made before a rollback marked. */
+/** The list, newest first, with a copy saved by hand and one made before a rollback marked. */
 @PreviewTest @Screen @Composable
 fun BackupsList() = BackupsPage(BackupsUiState(loading = false, rows = rows))
 
@@ -92,10 +93,10 @@ fun BackupsList() = BackupsPage(BackupsUiState(loading = false, rows = rows))
 @PreviewTest @Part @Composable
 fun BackupsRollbackConfirm() = Frame {
     Box(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 24.dp)) {
-        RollbackConfirm(rows[2], onConfirm = {}, onCancel = {})
+        RollbackConfirm(rows[3], onConfirm = {}, onCancel = {})
     }
 }
 
 /** While the server restores and restarts. */
 @PreviewTest @Screen @Composable
-fun BackupsRollbackWaiting() = BackupsPage(BackupsUiState(loading = false, rows = rows, stage = RollbackStage.Waiting(rows[2])))
+fun BackupsRollbackWaiting() = BackupsPage(BackupsUiState(loading = false, rows = rows, stage = RollbackStage.Waiting(rows[3])))

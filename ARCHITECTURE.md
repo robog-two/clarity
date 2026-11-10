@@ -839,8 +839,8 @@ visible on Today ("drafted", "held", "sent").
 
 The backend dumps the whole database itself (`pg_dump -Fc`, `postgresql18-client` in the backend image) every
 night at 02:00 on the home clock into `<dataDir>/backups` (`clarity-YYYY-MM-DD.dump`, folder 0700, files 0600,
-written under a temporary name and renamed). It keeps the 7 newest nightly files and the 2 newest
-`...-before-rollback.dump` copies. It keeps no state in the database (a rollback replaces that): the files say which
+written under a temporary name and renamed). It keeps the 7 newest nightly files, the 3 newest
+`...-manual.dump` copies ("Back up now") and every `...-before-rollback.dump` copy for 7 days (always the newest). It keeps no state in the database (a rollback replaces that): the files say which
 nights are done, and a night missed while the backend was down is made at start-up, once. `GET /api/v1/backups`
 lists them with their SHA-256; `POST` makes one now.
 

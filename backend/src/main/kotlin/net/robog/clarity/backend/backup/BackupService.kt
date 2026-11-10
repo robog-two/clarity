@@ -184,8 +184,9 @@ class BackupService(
         checkNotNull(folder.info(name)) { "the backup $name vanished" }
     }
 
-    private fun prune() {
-        filesToDelete(folder.names(), cfg.keepNightly, cfg.keepBeforeRollback, cfg.keepManual).forEach { folder.delete(it) }
+    private suspend fun prune() {
+        filesToDelete(folder.names(), cfg.keepNightly, cfg.keepBeforeRollback, cfg.keepManual, today(), cfg.beforeRollbackDays)
+            .forEach { folder.delete(it) }
     }
 
     /**

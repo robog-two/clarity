@@ -71,13 +71,15 @@ data class ReportsConfig(
 
 /**
  * Database backups under `<dataDir>/backups`: a `pg_dump -Fc` every night at 02:00 on the home clock, the
- * newest [keepNightly] kept, plus the newest [keepBeforeRollback] copies taken just before a rollback.
+ * newest [keepNightly] kept, the newest [keepManual] made by hand, and the copies taken just before a rollback
+ * for [beforeRollbackDays] days (at least the newest [keepBeforeRollback]).
  * [pgDump] and [pgRestore] are the client programs (`postgresql18-client` in the backend image).
  */
 data class BackupsConfig(
     val enabled: Boolean = true,
     val keepNightly: Int = 7,
-    val keepBeforeRollback: Int = 2,
+    val keepBeforeRollback: Int = 1,
+    val beforeRollbackDays: Int = 7,
     val keepManual: Int = 3,
     val pgDump: String = "pg_dump",
     val pgRestore: String = "pg_restore",

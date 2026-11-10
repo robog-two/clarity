@@ -40,6 +40,20 @@ class BackupFilesTest : FunSpec({
         gone shouldContainExactlyInAnyOrder listOf(nightly(1), nightly(2), nightly(3), manuals[0], manuals[1], safeties[0], safeties[1])
     }
 
+    test("before-rollback copies stay for a week, and the newest always stays") {
+        val safeties = listOf(
+            "clarity-2026-11-10T1100-before-rollback.dump",
+            "clarity-2026-11-09T1100-before-rollback.dump",
+            "clarity-2026-11-04T1100-before-rollback.dump",
+            "clarity-2026-11-03T1100-before-rollback.dump",
+            "clarity-2026-11-02T1100-before-rollback.dump",
+        )
+        filesToDelete(safeties, 7, keepBeforeRollback = 1, today = LocalDate(2026, 11, 10), beforeRollbackDays = 7) shouldBe
+            listOf("clarity-2026-11-02T1100-before-rollback.dump")
+        val old = listOf("clarity-2026-10-01T1100-before-rollback.dump", "clarity-2026-09-01T1100-before-rollback.dump")
+        filesToDelete(old, 7, keepBeforeRollback = 1, today = LocalDate(2026, 11, 10)) shouldBe listOf("clarity-2026-09-01T1100-before-rollback.dump")
+    }
+
     test("nothing is deleted while there are fewer files than the limits") {
         filesToDelete((1..7).map { nightly(it) } + "clarity-2026-11-07T0200-before-rollback.dump", 7, 2).shouldBeEmpty()
     }

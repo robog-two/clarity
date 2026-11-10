@@ -9,7 +9,9 @@ import java.nio.file.attribute.PosixFilePermissions
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Instant
+import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
+import kotlinx.datetime.minus
 import kotlinx.datetime.LocalDateTime
 import net.robog.clarity.shared.backup.BackupInfo
 import net.robog.clarity.shared.backup.BackupKind
@@ -57,15 +59,26 @@ object BackupNames {
 }
 
 /**
- * Which files go: keeps the [keepNightly] newest nightly ones the [keepManual] newest by-hand ones and the [keepBeforeRollback] newest
- * before-rollback ones (newest by the date or time in the name), returns the names of the rest.
- * Files that are not backups are never in the answer. Pure.
+ * Which files go: keeps the [keepNightly] newest nightly ones, the [keepManual] newest by-hand ones,
+ * and every before-rollback copy from the last [beforeRollbackDays] days before [today] (always at
+ * least the newest [keepBeforeRollback]). Newest by the date or time in the name; returns the names of
+ * the rest. Files that are not backups are never in the answer. Pure.
  */
-fun filesToDelete(names: Collection<String>, keepNightly: Int, keepBeforeRollback: Int, keepManual: Int = 3): List<String> {
+fun filesToDelete(
+    names: Collection<String>,
+    keepNightly: Int,
+    keepBeforeRollback: Int,
+    keepManual: Int = 3,
+    today: LocalDate? = null,
+    beforeRollbackDays: Int = 7,
+): List<String> {
     val parsed = names.mapNotNull { n -> BackupNames.parse(n)?.let { n to it } }
-    fun surplus(kind: BackupKind, keep: Int) =
-        parsed.filter { it.second.kind == kind }.sortedByDescending { it.second.sortKey }.drop(keep.coerceAtLeast(0)).map { it.first }
-    return surplus(BackupKind.NIGHTLY, keepNightly) + surplus(BackupKind.MANUAL, keepManual) + surplus(BackupKind.BEFORE_ROLLBACK, keepBeforeRollback)
+    fun newestFirst(kind: BackupKind) = parsed.filter { it.second.kind == kind }.sortedByDescending { it.second.sortKey }
+    fun surplus(kind: BackupKind, keep: Int) = newestFirst(kind).drop(keep.coerceAtLeast(0)).map { it.first }
+    val oldestKept = today?.minus(DatePeriod(days = beforeRollbackDays))
+    val beforeRollback = newestFirst(BackupKind.BEFORE_ROLLBACK).drop(keepBeforeRollback.coerceAtLeast(0))
+        .filter { oldestKept == null || it.second.date < oldestKept }.map { it.first }
+    return surplus(BackupKind.NIGHTLY, keepNightly) + surplus(BackupKind.MANUAL, keepManual) + beforeRollback
 }
 
 /**
