@@ -835,6 +835,35 @@ Approved/allowed actions are rows in `action_outbox` addressed to a connector (b
 credentials and report `ActionResult`. Results come back to the lead as inbox items. Status is
 visible on Today ("drafted", "held", "sent").
 
+### Database backups and rollback
+
+The backend dumps the whole database itself (`pg_dump -Fc`, `postgresql18-client` in the backend image) every
+night at 02:00 on the home clock into `<dataDir>/backups` (`clarity-YYYY-MM-DD.dump`, folder 0700, files 0600,
+written under a temporary name and renamed). It keeps the 7 newest nightly files and the 2 newest
+`...-before-rollback.dump` copies. It keeps no state in the database (a rollback replaces that): the files say which
+nights are done, and a night missed while the backend was down is made at start-up, once. `GET /api/v1/backups`
+lists them with their SHA-256; `POST` makes one now.
+
+`POST /api/v1/backups/rollback` is signed on the phone like a never-alone decision: the approval key signs
+`clarity-rollback-v1|<file>|<sha256>` (one use, that file only; `approval_signature_used`). The backend then (1) dumps
+the database as it is now (stops there if that fails), (2) enters maintenance (503 for everything but the health
+probes) and cancels the application scope, which stops the scheduler, the lead, the helpers and the outbox
+dispatcher, (3) copies what must survive into the schema `rollback_carry`, ends other connections and runs
+`pg_restore --clean --if-exists --single-transaction --no-owner` (all or nothing), and (4) exits with code 75 so
+`restart: unless-stopped` starts a fresh backend. Flyway then migrates the restored schema up to date, and the
+`rollback follow-up` start-up task finishes the job before anything runs:
+
+- every restored outbox row still `queued` or `leased` is cancelled (`failed`, `rolledBack`), and what the live side had
+  already sent (or that was `leased`, which may have gone out) comes back as `done`, so nothing that happened outside
+  happens twice and the idempotency keys stay used;
+- held actions decided live keep their decision; approved ones whose delivery was cancelled become `failed`;
+- `approval_signature_used` is the union of both sides; devices, vault device keys and enrollment tokens are the live
+  ones (the phone stays paired); notifications already released stay released;
+- helper runs `queued`/`running` are cancelled, the browser lease is freed, scheduler times are recomputed.
+
+The schema's existence is the marker, so a crash between the restore and the follow-up only delays it. How the rollback
+ended is kept in `backups/rollback-result.json`; the app waits on it after sending the request.
+
 ## Credential vault
 
 The agent can log in and pay for things without ever seeing a password or card number.
