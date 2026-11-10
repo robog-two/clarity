@@ -49,6 +49,8 @@ data class AppConfig(
     val agent: AgentConfig,
     /** Reports: the render service and the rendition cache. */
     val reports: ReportsConfig = ReportsConfig(),
+    /** Nightly database backups and rollback. */
+    val backups: BackupsConfig = BackupsConfig(),
 ) {
     companion object
 }
@@ -65,4 +67,19 @@ data class ReportsConfig(
     val renderTimeout: kotlin.time.Duration = kotlin.time.Duration.parse("60s"),
     val cacheMaxBytes: Long = 500L * 1024 * 1024,
     val sweepInterval: kotlin.time.Duration = kotlin.time.Duration.parse("1h"),
+)
+
+/**
+ * Database backups under `<dataDir>/backups`: a `pg_dump -Fc` every night at 02:00 on the home clock, the
+ * newest [keepNightly] kept, plus the newest [keepBeforeRollback] copies taken just before a rollback.
+ * [pgDump] and [pgRestore] are the client programs (`postgresql18-client` in the backend image).
+ */
+data class BackupsConfig(
+    val enabled: Boolean = true,
+    val keepNightly: Int = 7,
+    val keepBeforeRollback: Int = 2,
+    val pgDump: String = "pg_dump",
+    val pgRestore: String = "pg_restore",
+    /** A dump or restore running longer than this is killed. */
+    val timeout: kotlin.time.Duration = kotlin.time.Duration.parse("30m"),
 )

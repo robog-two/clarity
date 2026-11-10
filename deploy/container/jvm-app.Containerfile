@@ -52,9 +52,11 @@ RUN --mount=type=cache,target=/root/.gradle \
 
 # ---- runtime ----------------------------------------------------------------
 # Alpine JRE: smallest Temurin variant, still ships a POSIX shell (needed by Gradle's start
-# script) and busybox wget (compose healthchecks). No RUN steps here on purpose.
+# script) and busybox wget (compose healthchecks). The only RUN step adds the PostgreSQL client to the
+# backend image (nightly backups use pg_dump, rollbacks pg_restore; it matches the postgres:18 server).
 FROM docker.io/library/eclipse-temurin:25-jre-alpine
 
+ARG MODULE
 ARG VERSION=dev
 ARG REVISION=unknown
 LABEL org.opencontainers.image.source="https://github.com/robog-two/clarity" \
@@ -62,6 +64,8 @@ LABEL org.opencontainers.image.source="https://github.com/robog-two/clarity" \
       org.opencontainers.image.licenses="NOASSERTION" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
+
+RUN if [ "$MODULE" = "backend" ]; then apk add --no-cache postgresql18-client; fi
 
 # Numeric, unprivileged user; /data is the service's own state volume.
 COPY --from=build --chown=10001:10001 /out/data /data
