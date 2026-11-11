@@ -62,7 +62,7 @@ private val richIndexes: List<Int> by lazy {
 }
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun LocalRichItem(@PreviewParameter(RichItems::class) n: Int) {
     val item = richIndexes.getOrNull(n)?.let { thread.items[it] }
@@ -80,7 +80,7 @@ fun LocalRichItem(@PreviewParameter(RichItems::class) n: Int) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 2600)
+@VeryLongPreview
 @Composable
 fun LocalThreadPage(@PreviewParameter(ThreadPages::class) page: Int) {
     val items = thread.items.drop(page * PAGE).take(PAGE)
@@ -100,12 +100,12 @@ fun LocalThreadPage(@PreviewParameter(ThreadPages::class) page: Int) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 915)
+@PhonePreview
 @Composable
 fun LocalAskScreenLight() = LocalAsk(dark = false)
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 915)
+@PhonePreview
 @Composable
 fun LocalAskScreenDark() = LocalAsk(dark = true)
 

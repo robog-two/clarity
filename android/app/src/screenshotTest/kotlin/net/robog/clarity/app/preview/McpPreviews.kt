@@ -1,6 +1,5 @@
 package net.robog.clarity.app.preview
 
-import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -40,11 +39,6 @@ import net.robog.clarity.shared.mcp.McpServerStatus
 import net.robog.clarity.shared.mcp.McpSuggestion
 import net.robog.clarity.shared.mcp.McpToolMode
 import net.robog.clarity.shared.mcp.McpToolStatus
-
-/** A phone-width screen that is taller than one view, for lists that scroll. */
-@Preview(name = "light", widthDp = 412, heightDp = 1400)
-@Preview(name = "dark", widthDp = 412, heightDp = 1400, uiMode = Configuration.UI_MODE_NIGHT_YES)
-annotation class TallScreen
 
 @Composable
 private fun Frame(content: @Composable () -> Unit) = ClarityTheme {

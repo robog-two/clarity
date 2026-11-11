@@ -196,8 +196,9 @@ everything else keeps working).
 - Material 3 expressive like the rest of Settings; no work on the UI thread; strings in resources.
 - **Screenshots:** previews in `app/src/screenshotTest` for: the server list (with one of each
   state), add-server preset picker, the server editor, server detail with both groups, a
-  suggestion, and the not-running state; light and dark, phone width. Render them with
-  `updateDebugScreenshotTest` and keep the reference PNGs.
+  suggestion, and the not-running state; light and dark, phone width. Sizes come from
+  `PreviewSizes.kt`; `testDebugScreenshotTestDefaultTestSuite` compares and the update task rewrites
+  references only for screens the person approved.
 
 ## Tests (no real services, no real model calls)
 

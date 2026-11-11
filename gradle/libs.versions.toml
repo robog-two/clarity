@@ -33,7 +33,7 @@ jsoup = "1.23.2"
 greenmail = "2.1.15"
 
 # Android
-agp = "9.4.1"
+agp = "9.5.1"
 android-compileSdk = "37"
 android-targetSdk = "37"
 android-minSdk = "31"
@@ -189,7 +189,6 @@ kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "ko
 android-application = { id = "com.android.application", version.ref = "agp" }
 metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
-compose-screenshot = { id = "com.android.compose.screenshot", version.ref = "compose-screenshot" }
 
 # Convention plugins (build-logic)
 clarity-kotlin-jvm = { id = "clarity.kotlin-jvm" }

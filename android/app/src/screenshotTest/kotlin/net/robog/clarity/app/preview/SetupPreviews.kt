@@ -1,6 +1,5 @@
 package net.robog.clarity.app.preview
 
-import android.content.res.Configuration
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -87,14 +86,6 @@ import net.robog.clarity.shared.vault.CredentialRequestId
 import net.robog.clarity.shared.vault.CredentialRequestStatus
 import net.robog.clarity.shared.vault.FieldSpec
 import net.robog.clarity.shared.vault.FieldType
-
-@Preview(name = "light", widthDp = 412, heightDp = 915)
-@Preview(name = "dark", widthDp = 412, heightDp = 915, uiMode = Configuration.UI_MODE_NIGHT_YES)
-annotation class Screen
-
-@Preview(name = "light", widthDp = 412)
-@Preview(name = "dark", widthDp = 412, uiMode = Configuration.UI_MODE_NIGHT_YES)
-annotation class Part
 
 @Composable
 private fun Frame(content: @Composable () -> Unit) = ClarityTheme {

@@ -203,15 +203,15 @@ private fun PathFrame(dark: Boolean, path: AgentPath, backLabel: String = "Today
 }
 
 // A finished task: the lead's turn, a mail helper and a browser helper (a withheld frame, the code guard's refusal).
-@PreviewTest @Preview(widthDp = 412, heightDp = 4200) @Composable fun TaskPathFinishedLight() = PathFrame(false, finished)
-@PreviewTest @Preview(widthDp = 412, heightDp = 4200) @Composable fun TaskPathFinishedDark() = PathFrame(true, finished)
+@PreviewTest @FullPagePreview @Composable fun TaskPathFinishedLight() = PathFrame(false, finished)
+@PreviewTest @FullPagePreview @Composable fun TaskPathFinishedDark() = PathFrame(true, finished)
 // The top of the same thread as it first opens.
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TaskPathTopLight() = PathFrame(false, finished)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TaskPathTopDark() = PathFrame(true, finished)
+@PreviewTest @PhonePreview @Composable fun TaskPathTopLight() = PathFrame(false, finished)
+@PreviewTest @PhonePreview @Composable fun TaskPathTopDark() = PathFrame(true, finished)
 // Still working: the helper waits for the code; the path refreshes itself.
-@PreviewTest @Preview(widthDp = 412, heightDp = 2300) @Composable fun TaskPathRunningLight() = PathFrame(false, running)
-@PreviewTest @Preview(widthDp = 412, heightDp = 2300) @Composable fun TaskPathRunningDark() = PathFrame(true, running)
+@PreviewTest @VeryLongPreview @Composable fun TaskPathRunningLight() = PathFrame(false, running)
+@PreviewTest @VeryLongPreview @Composable fun TaskPathRunningDark() = PathFrame(true, running)
 // Stepped into the browser helper; its frames on the "after" side.
-@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathLight() = PathFrame(false, child, backLabel = "Back")
-@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathDark() = PathFrame(true, child, backLabel = "Back")
-@PreviewTest @Preview(widthDp = 412, heightDp = 2900) @Composable fun RunPathAfterFramesLight() = PathFrame(false, child, backLabel = "Back", framePage = 1)
+@PreviewTest @VeryLongPreview @Composable fun RunPathLight() = PathFrame(false, child, backLabel = "Back")
+@PreviewTest @VeryLongPreview @Composable fun RunPathDark() = PathFrame(true, child, backLabel = "Back")
+@PreviewTest @VeryLongPreview @Composable fun RunPathAfterFramesLight() = PathFrame(false, child, backLabel = "Back", framePage = 1)
