@@ -77,6 +77,8 @@ fun referencedEntity(action: ProposedAction): EntityId? = when (action) {
     is ProposedAction.SaveDraft -> action.email.inReplyTo
     is ProposedAction.SendEmail -> action.email.inReplyTo
     is ProposedAction.MoveEvent -> action.event
+    is ProposedAction.UpdateEvent -> action.event
+    is ProposedAction.CancelEvent -> action.event
     is ProposedAction.RespondToInvite -> action.event
     is ProposedAction.ReadDocument -> action.document
     is ProposedAction.CreateEvent, is ProposedAction.CreateReminder,

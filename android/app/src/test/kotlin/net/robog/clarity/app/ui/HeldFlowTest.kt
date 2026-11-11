@@ -97,6 +97,8 @@ class HeldRulesTest {
         assertEquals("Sent to Dana.", executedToast(heldAction()))
         assertEquals("Draft for Dana saved.", executedToast(heldAction(action = ProposedAction.SaveDraft("k", "s", emailDraft()))))
         assertEquals("Calendar updated.", executedToast(heldAction(action = ProposedAction.MoveEvent("k", "s", net.robog.clarity.shared.EntityId("e"), T0, T0, true))))
+        assertEquals("Calendar updated.", executedToast(heldAction(action = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e"), title = "x"))))
+        assertEquals("Event cancelled.", executedToast(heldAction(action = ProposedAction.CancelEvent("k", "s", net.robog.clarity.shared.EntityId("e")))))
     }
 
     @Test fun executedTransitionTriggersTheToastOnce() {

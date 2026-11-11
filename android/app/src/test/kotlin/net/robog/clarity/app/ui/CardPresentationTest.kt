@@ -27,6 +27,8 @@ class CardPresentationTest {
 
     @Test fun approveButtonSaysWhatItDoes() {
         assertEquals("send update", approveLabel(ActionKind.MOVE_EVENT))
+        assertEquals("update event", approveLabel(ActionKind.UPDATE_EVENT))
+        assertEquals("cancel event", approveLabel(ActionKind.CANCEL_EVENT))
         assertEquals("send", approveLabel(ActionKind.SEND_EMAIL))
         assertEquals("approve", approveLabel(ActionKind.READ_DOCUMENT))
     }

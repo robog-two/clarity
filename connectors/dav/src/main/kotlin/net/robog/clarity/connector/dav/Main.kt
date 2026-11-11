@@ -16,7 +16,7 @@ fun davManifest(runtime: ConnectorRuntime) = ConnectorManifest(
     version = "0.1.0",
     produces = setOf(Noun.CALENDAR_EVENT, Noun.CONTACT, Noun.DOCUMENT),
     handles = setOf(
-        ActionKind.CREATE_EVENT, ActionKind.MOVE_EVENT, ActionKind.RESPOND_TO_INVITE,
+        ActionKind.CREATE_EVENT, ActionKind.MOVE_EVENT, ActionKind.UPDATE_EVENT, ActionKind.CANCEL_EVENT, ActionKind.RESPOND_TO_INVITE,
         ActionKind.CREATE_REMINDER, ActionKind.READ_DOCUMENT,
     ),
     configSchema = davConfigSchema,

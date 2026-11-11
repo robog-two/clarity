@@ -76,6 +76,8 @@ private fun ActionKind.phrase(): String = when (this) {
     ActionKind.SEND_EMAIL -> "Send email as you"
     ActionKind.CREATE_EVENT -> "Block focus time"
     ActionKind.MOVE_EVENT -> "Move events"
+    ActionKind.UPDATE_EVENT -> "Change events"
+    ActionKind.CANCEL_EVENT -> "Cancel events"
     ActionKind.RESPOND_TO_INVITE -> "Answer invites"
     ActionKind.CREATE_REMINDER -> "Set reminders"
     ActionKind.SET_DO_NOT_DISTURB -> "Mute your phone"
@@ -86,11 +88,14 @@ private fun ActionKind.phrase(): String = when (this) {
     ActionKind.TWO_FACTOR_CODE -> "Enter a login code"
 }
 
-/** Kinds not listed ask first; payments never go out alone whatever the tiers say. */
+/**
+ * Kinds not listed ask first; payments never go out alone whatever the tiers say. Moving an event is
+ * only listed as part of changing one: the agent no longer proposes it, and it still limits changing and cancelling.
+ */
 fun autonomySummary(constitution: Constitution): AutonomySummary {
     fun tier(kind: ActionKind) =
-        if (kind in Constitution.ALWAYS_NEVER_ALONE) AutonomyTier.NEVER_ALONE else constitution.autonomy[kind] ?: AutonomyTier.ASK_FIRST
-    val (alone, review) = ActionKind.entries.partition { tier(it) == AutonomyTier.DO_THEN_TELL }
+        if (kind in Constitution.ALWAYS_NEVER_ALONE) AutonomyTier.NEVER_ALONE else constitution.autonomyOf(kind)
+    val (alone, review) = ActionKind.entries.filter { it != ActionKind.MOVE_EVENT }.partition { tier(it) == AutonomyTier.DO_THEN_TELL }
     return AutonomySummary(alone.map { it.phrase() }, review.map { it.phrase() })
 }
 
