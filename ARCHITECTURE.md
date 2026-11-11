@@ -608,8 +608,8 @@ Any MCP server the person adds from the phone (GitHub, Canvas, Asana, ...) runs 
 container (`computers/mcphost`, connector kind `mcp-host`; see "The agent's computers"). The backend
 reads `CLARITY_MCP_HOST` (`http://mcp-host:8950;keyFile=/run/secrets/mcphost_key`; unset: no such
 servers, nothing else changes). A background service (`McpRefresher`) lists `GET /servers` at boot
-(retrying until the host answers) and every 60 s; lead turns, helper starts and routes only read
-that cached listing (`McpCatalog`), which keeps the last good one while the host is down. The listing is the host's cached `tools/list`, so
+(retrying until the host answers) and every 60 s, and at once when woken (below); lead turns,
+helper starts and routes only read that cached listing (`McpCatalog`), which keeps the last good one while the host is down. The listing is the host's cached `tools/list`, so
 listing never starts a server; a call goes through one `McpToolProvider` per server at `/s/{id}/mcp`.
 The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
 
@@ -617,14 +617,24 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   your repos, issues and PRs"), re-sent only when it changes (like the collection index; state and
   tool counts are left out so it rarely does). A helper gets a server's tools only when `delegate`
   names it: `mcp_<slug(label)>__<tool>`, descriptions headed `[label]`.
-- **Modes** (`McpToolMode`, `mcp_tool_policy`): `auto` by default only when `readOnlyHint` is true,
-  else `ask`; the person changes them per tool in Settings. `off` tools are never built. The hint is
-  not believed for a tool whose name has a write verb as a word (`create_issue`, `addLabel`:
-  `looksLikeWrite`); that tool counts as not read-only everywhere (default mode, `McpToolStatus`, gate).
-- **`auto`** calls still pass governance. A read-only tool gets only the person's hard limits
+- **Modes** (`McpToolMode`, `mcp_tool_policy`; wire `ask`, `auto`, `always_ok`): the person picks one
+  per tool in Settings; `auto` is the default for every tool. There is no off: every tool is offered
+  to a helper given the server (a retired `off`, from an older app or a stored row, reads as `ask`;
+  an unknown mode from a newer server reads as `auto` in the app). The server's `readOnlyHint` is not
+  believed for a tool whose name has a write verb as a word (`create_issue`, `addLabel`:
+  `looksLikeWrite`); that tool counts as not read-only. `readOnly` alone only says what the server
+  claims (display, `McpToolStatus.readOnly`); what the backend does with a tool follows
+  `treatedAsRead(view)`: Always OK, or Auto on a tool marked read-only. That one function decides the
+  gate (`HARD_LINES` against `GUARD`), the tool's effect (`READ` against `EXTERNAL`) and the morning
+  sweep (`sweepRead`). Always OK is allowed on every tool, writes and destructive ones included, with
+  a confirm in the app; it is the person vouching for the tool.
+- **`auto`** calls still pass governance. A tool treated as a read gets only the person's hard limits
   (`hardLineVerdict`, no model call: a "never" kind such as payments blocks it, "never alone" holds it
-  for the phone, a never-store topic holds it). A write tool the person set to Auto goes through
-  `gateLocal` with the full guard; what it does not allow is held or blocked like an `ask` call.
+  for the phone, a never-store topic holds it). Any other tool on Auto goes through `gateLocal` with
+  the full guard; what it does not allow is held or blocked like an `ask` call.
+- **`always_ok`** calls take the same hard-limits-only path as a server-marked read-only tool: the
+  guard model never asks, the helper description has no "waits for approval" line, and the sweep may
+  use the tool. The person's hard limits still apply.
 - **`ask`** calls become `ProposedAction.ExternalTool(server = "mcp:<id>")` through
   `ActionGate.gateLocal(alwaysAsk = …)`: held even when the guard would allow it (a guard DENY still
   blocks), with a summary naming the server, tool and key inputs. Approving only records the yes
@@ -641,13 +651,25 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   and a `save_note` limited to their collections (same secret and failure checks). The memory tidy
   keeps those collections' names and their "Sweep recipe:" notes.
 - **Morning sweep** (`mcp-sweep`): 30 minutes before the call prep on call days, when an enabled
-  server has a read-only `auto` tool, one helper (helper model, `profile = mcp-sweep`) gets only the
-  read-only `auto` tools of the enabled servers (a call the person's hard limits would hold is
+  server has a tool treated as a read (`sweepRead`: read-only on Auto, or Always OK), one helper
+  (helper model, `profile = mcp-sweep`) gets only those tools of the enabled servers (a call the person's hard limits would hold is
   skipped with an error: the sweep never asks or waits), `open_collection`, the limited `save_note` and a `set_scratch` that
   writes the keyed note `coming-up` (20 h, at most 1,200 characters, every line starting with its
   server). Caps: $0.03 and 12 tool calls (counted from its journal on a resume), 16 steps. It follows
   and updates each collection's "Sweep recipe:" note. It posts nothing and wakes no one: its result
   is only logged; the prep instruction tells the lead to use the note.
+- **Instant sync.** `McpWake` (a conflated channel) wakes `McpRefresher` now. Saving the `mcphost`
+  connector's config (`PUT /api/v1/connectors/mcphost/config`) kicks it with the saved servers (item
+  id to label); a grants change kicks it without any. After a kick it lists every second (never
+  faster) for up to 30 s, until the listing has exactly the saved servers with their labels, none
+  installing, each with its tools (a failed or switched-off one is as far as it gets), then goes back
+  to the 60 s tick. The host still picks its config up by polling (`CLARITY_MCPHOST_SYNC_INTERVAL`,
+  30 s in the compose default, so keep it low); `GET /api/v1/mcp/servers?refresh=true` lists the
+  host first (waiting up to 3 s). In the app, the editor notes each new or changed server as pending
+  (`PendingMcpServers`) the moment the save succeeds; the servers screen shows it as a "Pending" row
+  under its saved label, re-fetches every 1.5 s for up to 30 s, and turns it into the normal row (or
+  its error) once the listing reflects it. A new server never listed stays "Pending"; a listed one
+  stops showing it when the window ends.
 - **Suggestions.** The lead's `suggest_mcp_server(label, why, preset?)` stores an `McpSuggestion`
   (one open per label, three a week counted with dismissed ones in `mcp_suggestion_made`, none for a
   server already set up). Shown only in Settings.
@@ -780,7 +802,7 @@ controls, the report tools (`create_report`, `edit_report`, `set_report_style`, 
 `create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
 plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
 Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held, and the
-`ask` tools of the person's MCP servers (always held, run by the backend on a yes). Sandbox tools are ungated (no
+`ask` tools of the person's MCP servers (always held, run by the backend on a yes; `auto` and `always_ok` tools go through the gate described in "The person's MCP servers"). Sandbox tools are ungated (no
 network, no credentials).
 
 ## Governance
