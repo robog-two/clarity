@@ -181,6 +181,21 @@ END:VCALENDAR
         utcStarts(moved).map { it.take(13) } shouldContainExactly listOf("2026-10-26T13", "2026-10-28T13", "2026-10-30T13")
     }
 
+    test("a series of listed periods cannot be moved, but can be renamed") {
+        val periods = ics("DTSTART:20261026T120000Z", "DTEND:20261026T130000Z", "RDATE;VALUE=PERIOD:20261028T120000Z/PT1H", "SUMMARY:Periods")
+        shouldThrow<IllegalArgumentException> {
+            IcalEdit.updated(periods, at("2026-10-28 12:00", UTC), EventScope.SERIES, EventChange(start = at("2026-10-28 13:00", UTC)), "n")
+        }.message shouldContain "periods"
+        IcalEdit.updated(periods, at("2026-10-26 12:00", UTC), EventScope.SERIES, EventChange(title = "New"), "n").shouldBeInstanceOf<Edited.Replace>()
+    }
+
+    test("a mark can be read without editing") {
+        val done = IcalEdit.updated(gym(), at("2026-11-04 07:00"), EventScope.THIS, EventChange(title = "A"), "n", "key-1").shouldBeInstanceOf<Edited.Replace>().ics
+        IcalEdit.alreadyMarked(done, "key-1") shouldBe true
+        IcalEdit.alreadyMarked(done, "key-2") shouldBe false
+        IcalEdit.alreadyMarked(gym(), "key-1") shouldBe false
+    }
+
     test("a changed occurrence in its own zone moves on that zone's clock") {
         val text = listOf(
             "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//t//EN",

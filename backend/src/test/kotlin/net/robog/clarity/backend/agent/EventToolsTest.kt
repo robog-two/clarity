@@ -257,6 +257,11 @@ class EventToolsTest : FunSpec({
             created(url = "https://example.com/x").contains("token") shouldBe false
         }
 
+        test("a link whose host is not a valid name is refused, so the card never shows an empty host") {
+            shouldThrow<IllegalArgumentException> { created(url = "https://exa..mple.com/x") }.message shouldContain "web link"
+            shouldThrow<IllegalArgumentException> { created(url = "https:///path") }.message shouldContain "web link"
+        }
+
         test("a link host is shown as punycode so look-alike letters show") {
             created(url = "https://p\u0430ypal.example/x") shouldContain "with link xn--"
             created(url = "https://m\u00FCnchen.example/x") shouldContain "xn--mnchen-3ya.example"

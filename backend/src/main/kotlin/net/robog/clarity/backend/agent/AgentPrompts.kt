@@ -95,6 +95,9 @@ fun renderConstitution(c: Constitution?, home: HomeClock? = null): String {
             ActionKind.entries.filter { it in c.autonomy || c.autonomyOf(it) != AutonomyTier.ASK_FIRST }.forEach { kind ->
                 append("\n- ").append(kind.name.lowercase()).append(": ").append(tierText(c.autonomyOf(kind)))
             }
+            if (c.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER) {
+                append("\n- changing an event's time, repeat or all-day setting also follows move_event: never")
+            }
         }
         if (c.getsThrough.isNotEmpty()) {
             append("\n\nWho gets through during protected time: ").append(c.getsThrough.joinToString { it.name })

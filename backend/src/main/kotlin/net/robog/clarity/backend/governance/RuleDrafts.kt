@@ -33,7 +33,7 @@ private val log = KotlinLogging.logger {}
 /** Pure: whether a held action gets a drafted "approve automatically from now on" line. */
 fun wantsRuleDraft(held: HeldAction, constitution: Constitution?): Boolean =
     held.status == HeldAction.Status.HELD && held.ruleDraft == null && held.action.kind !in NEVER_AUTOMATIC &&
-        constitution?.let { tierOf(held.action.kind, it) } != net.robog.clarity.shared.governance.AutonomyTier.NEVER
+        constitution?.let { tierOf(held.action, it) } != net.robog.clarity.shared.governance.AutonomyTier.NEVER
 
 /** Pure: the plain line used when the model is unavailable. */
 fun fallbackRuleDraft(kind: ActionKind): RuleDraft =

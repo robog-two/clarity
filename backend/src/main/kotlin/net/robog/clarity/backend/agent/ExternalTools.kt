@@ -233,8 +233,10 @@ object ProposedActions {
     private fun place(location: String?) = location?.takeIf(String::isNotBlank)?.let { " at ${oneLine(it, PLACE_CHARS)}" }.orEmpty()
 
     /** The site of a link, for the card: what the person can judge it by. */
-    private fun host(link: String) =
-        oneLine(runCatching { java.net.IDN.toASCII(hostOf(java.net.URI(link))) }.getOrNull().orEmpty(), 60)
+    private fun host(link: String) = oneLine(runCatching { asciiHost(java.net.URI(link)) }.getOrNull().orEmpty(), 60)
+
+    /** The host of [uri] as punycode; null when it has none or is not a valid name. */
+    private fun asciiHost(uri: java.net.URI): String? = runCatching { java.net.IDN.toASCII(hostOf(uri)) }.getOrNull()?.takeIf(String::isNotEmpty)
 
     /** The host of [uri]; java.net.URI leaves it null for letters outside ASCII, so it is read from the authority. */
     private fun hostOf(uri: java.net.URI): String = uri.host ?: uri.authority?.substringAfterLast('@')?.substringBefore(':').orEmpty()
@@ -273,7 +275,7 @@ object ProposedActions {
     private fun link(raw: String?): String? {
         val text = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val uri = runCatching { java.net.URI(text) }.getOrNull()
-        require(uri != null && uri.scheme?.lowercase() in setOf("http", "https") && hostOf(uri).isNotEmpty()) { "`url` must be a web link like https://example.com/page" }
+        require(uri != null && uri.scheme?.lowercase() in setOf("http", "https") && asciiHost(uri) != null) { "`url` must be a web link like https://example.com/page" }
         return text
     }
 

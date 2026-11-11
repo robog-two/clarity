@@ -37,6 +37,20 @@ class OneLineTest {
         }
     }
 
+    @Test fun blankLookingFillersGoButEmojiSelectorsStay() {
+        for (filler in listOf("\u034F", "\u115F", "\u1160", "\u3164", "\uFFA0", "\u180E")) {
+            assertEquals("ab", oneLine("a" + filler + "b", 80), filler)
+        }
+        val heart = "\u2764\uFE0F"
+        assertEquals(heart, oneLine(heart, 80))
+    }
+
+    @Test fun noRoomMeansNothing() {
+        assertEquals("", oneLine("abc", 0))
+        assertEquals("", oneLine("abc", -3))
+        assertEquals("\u2026", oneLine("abc", 1))
+    }
+
     @Test fun cuttingNeverLeavesALoneSurrogate() {
         val text = "ab" + "\uD83D\uDE00".repeat(10)
         for (max in 2..12) {

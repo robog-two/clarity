@@ -283,6 +283,9 @@ object IcalEdit {
         }
         requireNotNull(scope) { "This event repeats. Say what to change: `this`, `following` or `series`." }
         val at = occurrence ?: master.seedInstant()
+        require(change.start == null || master.getProperties<RDate<Temporal>>("RDATE").none { it.getParameter<Parameter>("VALUE").orElse(null)?.value.equals("PERIOD", ignoreCase = true) }) {
+            "This repeating event lists periods, so its time cannot be moved. Cancel it and create a new one."
+        }
         parts.requireOccurrence(at)
         require(!master.has("RDATE") || scope == EventScope.SERIES) {
             "This repeating event lists single dates, so only the whole series can be changed."
@@ -300,6 +303,9 @@ object IcalEdit {
             else -> parts.splitFollowing(at, change, followingUid)
         }
     }
+
+    /** True when an earlier delivery of the action [actionKey] already changed [ics]. */
+    fun alreadyMarked(ics: String, actionKey: String): Boolean = cleanly { Parts.of(ics, actionKey).alreadyDone() }
 
     /** What is left of [ics] once [scope] of the event is cancelled; see [updated] for [occurrence] and [actionKey]. */
     fun cancelled(ics: String, occurrence: JInstant?, scope: EventScope?, actionKey: String? = null): Removal = cleanly { cancel(ics, occurrence, scope, actionKey) }
