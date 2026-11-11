@@ -330,6 +330,20 @@ class DavEventsTest : FunSpec({
         }
     }
 
+    test("a re-run split whose existing new series is too large says so, not that there is no version") {
+        val dav = fake()
+        val actions = actions(dav)
+        val path = actions.createGym()
+        dav.put(
+            "${CAL}${uidFor("u1")}.ics", "text/calendar",
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:${uidFor("u1")}\r\nDTSTAMP:20260301T000000Z\r\nDTSTART:20261104T150000Z\r\n" +
+                "SUMMARY:Big\r\nX-FILL:" + "x".repeat(5_100_000) + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+        )
+        val out = actions.updateEvent(update("u1", EventScope.FOLLOWING) { it.copy(title = "B") }, occurrence(path, "2026-11-02 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>()
+        out.message shouldContain "larger"
+        out.retryable shouldBe false
+    }
+
     context("a wrong occurrence is a failure, not a done") {
         test("cancelling or editing an occurrence that is not in the series fails and writes nothing") {
             val dav = fake()

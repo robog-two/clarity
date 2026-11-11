@@ -5,10 +5,10 @@ package net.robog.clarity.shared.text
  * sender did not write: soft hyphen, Arabic letter mark, zero width space, left-to-right and
  * right-to-left marks, bidirectional embeddings and isolates, word joiner and invisible operators,
  * the byte order mark, tag characters, and the fillers that print as blank (combining grapheme joiner,
- * Hangul fillers, Mongolian vowel separator). Variation selectors stay: emoji need them. Zero width (non-)joiners stay: scripts such as Persian and
+ * Hangul fillers, Mongolian vowel separator, blank Braille, Khmer inherent vowels). Variation selectors stay: emoji need them. Zero width (non-)joiners stay: scripts such as Persian and
  * emoji sequences need them.
  */
-private fun invisible(cp: Int) = cp == 0xAD || cp == 0x34F || cp == 0x61C || cp == 0x115F || cp == 0x1160 || cp == 0x180E || cp == 0x3164 || cp == 0xFFA0 || cp == 0x200B || cp == 0x200E || cp == 0x200F ||
+private fun invisible(cp: Int) = cp == 0xAD || cp == 0x34F || cp == 0x61C || cp == 0x115F || cp == 0x1160 || cp == 0x180E || cp == 0x3164 || cp == 0xFFA0 || cp == 0x2800 || cp == 0x17B4 || cp == 0x17B5 || cp == 0x200B || cp == 0x200E || cp == 0x200F ||
     cp in 0x202A..0x202E || cp in 0x2060..0x2064 || cp in 0x2066..0x2069 || cp == 0xFEFF || cp in 0xE0000..0xE007F
 
 private fun isSpace(cp: Int) = cp < 0x10000 && (cp.toChar().isWhitespace() || cp.toChar().isISOControl())

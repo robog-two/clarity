@@ -105,8 +105,8 @@ class DavActions(
         try {
             server.putCalendar(url, ics, ifNoneMatch = "*")
         } catch (_: PreconditionFailedException) {
-            val etag = server.get(url, EDIT_LIMIT)?.first ?: return noVersion()
-            server.putCalendar(url, ics, ifMatch = etag)
+            val existing = server.get(url, EDIT_LIMIT) ?: return tooLarge()
+            server.putCalendar(url, ics, ifMatch = existing.first ?: return noVersion())
         }
         return null
     }
