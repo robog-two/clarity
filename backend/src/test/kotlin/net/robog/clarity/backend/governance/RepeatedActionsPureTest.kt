@@ -53,4 +53,24 @@ class RepeatedActionsPureTest : FunSpec({
         likePrefix("run_1:") shouldBe "run\\_1:%"
         likePrefix("a%b\\") shouldBe "a\\%b\\\\%"
     }
+
+    // Guards against: a different repeat rule or place counting as the same event.
+    test("event edits and cancellations compare by what they change and how far") {
+        val hold = ProposedAction.CreateEvent("k", "s", null, "Gym", Instant.parse("2026-10-26T11:00:00Z"), Instant.parse("2026-10-26T12:00:00Z"))
+        val weekly = hold.copy(repeat = net.robog.clarity.shared.calendar.Recurrence(net.robog.clarity.shared.calendar.Frequency.WEEKLY))
+        actionFingerprint(hold) shouldNotBe actionFingerprint(weekly)
+        actionFingerprint(hold) shouldNotBe actionFingerprint(hold.copy(location = "Pool"))
+        actionFingerprint(hold) shouldBe actionFingerprint(hold.copy(idempotencyKey = "other", summary = "other"))
+
+        val scope = net.robog.clarity.shared.calendar.EventScope.THIS
+        val update = ProposedAction.UpdateEvent("k", "s", EntityId("e1"), scope, title = "Gym B")
+        actionFingerprint(update) shouldBe actionFingerprint(update.copy(idempotencyKey = "k2", summary = "x"))
+        actionFingerprint(update) shouldNotBe actionFingerprint(update.copy(scope = net.robog.clarity.shared.calendar.EventScope.SERIES))
+        actionFingerprint(update) shouldNotBe actionFingerprint(update.copy(title = "Gym C"))
+        actionFingerprint(update) shouldNotBe actionFingerprint(update.copy(event = EntityId("e2")))
+
+        val cancel = ProposedAction.CancelEvent("k", "s", EntityId("e1"), scope)
+        actionFingerprint(cancel) shouldNotBe actionFingerprint(cancel.copy(scope = net.robog.clarity.shared.calendar.EventScope.FOLLOWING))
+        actionFingerprint(cancel) shouldNotBe actionFingerprint(update.copy(title = null))
+    }
 })

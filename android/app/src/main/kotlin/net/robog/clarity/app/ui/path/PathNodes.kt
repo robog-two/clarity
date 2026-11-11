@@ -131,7 +131,7 @@ private fun actionIcon(tool: String): ImageVector = when {
     tool == "send_to_user" -> Icons.AutoMirrored.Outlined.Send
     tool == "react" -> Icons.Outlined.AddReaction
     tool in setOf("list_messages", "search_messages", "save_draft", "send_email") -> Icons.Outlined.Mail
-    tool in setOf("list_calendar_events", "create_event", "move_event", "respond_to_invite") -> Icons.Outlined.Event
+    tool in setOf("list_calendar_events", "create_event", "move_event", "update_event", "cancel_event", "respond_to_invite") -> Icons.Outlined.Event
     tool == "create_reminder" -> Icons.Outlined.Alarm
     tool in setOf("ask_code", "request_credential", "list_credentials") -> Icons.Outlined.Password
     tool == "update_task" -> Icons.Outlined.Checklist

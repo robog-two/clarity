@@ -50,7 +50,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** Every personal-data and outbound tool a search helper must never hold. */
 private val PERSONAL = listOf(
     "list_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
-    "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "move_event", "respond_to_invite",
+    "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "update_event", "cancel_event", "respond_to_invite",
     "create_reminder", "set_do_not_disturb", "request_credential", "list_credentials", "ask_code", "replace_profile", "save_note",
     "manage_collection", "browser__look", "browser__act",
 )

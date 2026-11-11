@@ -100,6 +100,56 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(move.copy(notifyAttendees = true), c, trusted()).decision shouldBe Decision.ASK
     }
 
+    test("updating or cancelling an event and notifying attendees is asked about, like moving it") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val update = sample(ActionKind.UPDATE_EVENT) as ProposedAction.UpdateEvent
+        deterministicVerdict(update, c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(update.copy(notifyAttendees = true), c, trusted()).also {
+            it.decision shouldBe Decision.ASK
+            it.rationale shouldContain "other people"
+        }
+        val cancel = sample(ActionKind.CANCEL_EVENT) as ProposedAction.CancelEvent
+        deterministicVerdict(cancel, c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(cancel.copy(notifyAttendees = true), c, trusted()).decision shouldBe Decision.ASK
+        // outside content in the run makes a notice to other people ask even when nothing else does
+        deterministicVerdict(cancel.copy(notifyAttendees = true), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(cancel, c, untrusted).decision shouldBe Decision.ALLOW
+    }
+
+    test("without a setting of its own, changing or cancelling an event asks first") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL))
+        deterministicVerdict(sample(ActionKind.MOVE_EVENT), c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), c, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), c, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("what the person said about moving events limits changing and cancelling them") {
+        val own = mapOf(ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL, ActionKind.CANCEL_EVENT to AutonomyTier.DO_THEN_TELL)
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), constitution(autonomy = own), trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), constitution(autonomy = own), trusted()).decision shouldBe Decision.ALLOW
+        val askMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), askMove, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), askMove, trusted()).decision shouldBe Decision.ASK
+        val neverMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), neverMove, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), neverMove, trusted()).decision shouldBe Decision.DENY
+    }
+
+    test("an edit that lands in protected time asks, an all-day event does not") {
+        val night = block("sleep", setOf(1, 2, 3, 4, 5, 6, 7), "22:00", "07:00")
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL, protectedTimes = listOf(night))
+        val start = kotlin.time.Instant.parse("2026-03-05T06:00:00Z")
+        val move = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e1"), start = start, end = start + 1.hours)
+        deterministicVerdict(move, c, trusted()).also {
+            it.decision shouldBe Decision.ASK
+            it.rationale shouldContain "sleep"
+        }
+        deterministicVerdict(move.copy(title = "x", start = null, end = null), c, trusted()).decision shouldBe Decision.ALLOW
+        val allDay = ProposedAction.CreateEvent("k", "s", null, "Offsite", start, start + 24.hours, listOf(Handle.email("a@example.com")), hold = false, allDay = true)
+        deterministicVerdict(allDay.copy(allDay = false), c, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(allDay, c, trusted()).decision shouldBe Decision.ALLOW // its UTC midnights say nothing about the person's evenings
+    }
+
     test("protected time: events with attendees ask, private holds do not, midnight-crossing blocks work") {
         val night = block("sleep", setOf(1, 2, 3, 4, 5, 6, 7), "22:00", "07:00")
         val c = constitution(tier = AutonomyTier.DO_THEN_TELL, protectedTimes = listOf(night))

@@ -46,6 +46,8 @@ object CalendarEvents : CanonicalTable("calendar_event") {
     val location = text("location").nullable()
     val description = text("description").nullable()
     val attendees = jsonb<List<Handle>>("attendees", ClarityJson)
+    val url = text("url").nullable()
+    val repeats = text("repeats").nullable()
 }
 
 object Documents : CanonicalTable("document") {

@@ -148,7 +148,9 @@ class DomainTools(
     private val listCalendarEvents = tool<ListCalendarEventsInput>(
         name = "list_calendar_events",
         description = "List calendar events overlapping a day or a time range, soonest first. Times are the person's local time " +
-            "with their offset; all-day events give `start` and `end` as dates (the first and last day, inclusive).",
+            "with their offset; all-day events give `start` and `end` as dates (the first and last day, inclusive). " +
+            "A repeating event is listed one occurrence at a time, each with its own id and `repeats` in words; " +
+            "use that id with update_event, cancel_event or respond_to_invite and say how far the change reaches (`scope`).",
         json = ClarityJson,
     ) { input ->
         val home = settings.homeZone()
@@ -354,6 +356,8 @@ private fun Stored<CalendarEventPayload>.eventJson(zone: TimeZone): JsonElement 
         put("end", agentTime(payload.end, zone))
     }
     payload.location?.let { put("location", it) }
+    payload.url?.let { put("url", it) }
+    payload.repeats?.let { put("repeats", it) }
     if (payload.attendees.isNotEmpty()) put("attendees", JsonArray(payload.attendees.map { JsonPrimitive(it.label()) }))
     payload.description?.let { put("description", it.truncated()) }
 }

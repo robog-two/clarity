@@ -51,6 +51,8 @@ fun sample(kind: ActionKind, key: String = "k-${kind.name}"): ProposedAction = w
     ActionKind.SEND_EMAIL -> ProposedAction.SendEmail(key, "reply to Dana", email("a@example.com"))
     ActionKind.CREATE_EVENT -> ProposedAction.CreateEvent(key, "hold time", null, "Focus", T0, T0 + kotlin.time.Duration.parse("1h"))
     ActionKind.MOVE_EVENT -> ProposedAction.MoveEvent(key, "move my own event", EntityId("e1"), T0, T0 + kotlin.time.Duration.parse("1h"), notifyAttendees = false)
+    ActionKind.UPDATE_EVENT -> ProposedAction.UpdateEvent(key, "retitle my own event", EntityId("e1"), title = "Focus")
+    ActionKind.CANCEL_EVENT -> ProposedAction.CancelEvent(key, "cancel my own event", EntityId("e1"))
     ActionKind.RESPOND_TO_INVITE -> ProposedAction.RespondToInvite(key, "accept", EntityId("e1"), InviteResponse.ACCEPT)
     ActionKind.CREATE_REMINDER -> ProposedAction.CreateReminder(key, "remind me", "call mum", T0)
     ActionKind.SET_DO_NOT_DISTURB -> ProposedAction.SetDoNotDisturb(key, "dnd", T0 + kotlin.time.Duration.parse("1h"))

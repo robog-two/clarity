@@ -800,7 +800,7 @@ Own state (`WRITE`, allowed alone): `create_trigger`, `delete_trigger`, `remembe
 `write_journal`, `set_scratch`, `update_plan`, `update_task`, `send_to_user`, `delegate`, helper
 controls, the report tools (`create_report`, `edit_report`, `set_report_style`, `present_report`,
 `cite_sources`; `read_report` and `list_reports` read). External (`EXTERNAL`, always via guard + outbox): `save_draft`, `send_email`,
-`create_event`, `move_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
+`create_event`, `update_event`, `cancel_event`, `respond_to_invite`, `create_reminder`, `set_do_not_disturb`,
 plus the helper's acting browser steps (`act`, `sign_in`), which pass the browser gate (rules,
 Jev on the screenshot, the fast triage) with page context; anything that sends, submits, buys or deletes is held, and the
 `ask` tools of the person's MCP servers (always held, run by the backend on a yes; `auto` and `always_ok` tools go through the gate described in "The person's MCP servers"). Sandbox tools are ungated (no
@@ -1059,7 +1059,7 @@ fun main() = runConnector(manifest) {
 | Connector | Nouns | Actions |
 |---|---|---|
 | `mail` (IMAP + SMTP, Angus Mail) | message | save_draft, send_email |
-| `dav` (dav4jvm + ical4j + ez-vcard) | calendar_event, contact, document | create_event, move_event, respond_to_invite, create_reminder, read_document |
+| `dav` (dav4jvm + ical4j + ez-vcard) | calendar_event, contact, document | create_event, update_event, cancel_event, move_event (stored actions only), respond_to_invite, create_reminder, read_document |
 | phone (in the app) | message (SMS) | set_do_not_disturb |
 
 Reminders are not a separate store: `create_reminder` becomes a short event with an alarm

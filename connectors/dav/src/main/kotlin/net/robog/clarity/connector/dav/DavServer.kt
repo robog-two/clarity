@@ -11,6 +11,7 @@ import at.bitfire.dav4jvm.ktor.PreemptiveBasicDigestAuthProvider
 import at.bitfire.dav4jvm.ktor.Response
 import at.bitfire.dav4jvm.ktor.UrlUtils
 import at.bitfire.dav4jvm.ktor.exception.HttpException
+import at.bitfire.dav4jvm.ktor.exception.NotFoundException
 import at.bitfire.dav4jvm.ktor.resolve
 import at.bitfire.dav4jvm.ktor.withTrailingSlash
 import at.bitfire.dav4jvm.property.caldav.CalDAV
@@ -280,6 +281,23 @@ class DavServer(private val config: DavConfig, engine: HttpClientEngine = CIO.cr
                 ifNoneMatch?.let { append(HttpHeaders.IfNoneMatch, it) }
             },
         ) { it.headers[HttpHeaders.ETag] }
+
+    /** DELETE a calendar object; [ifMatch] makes it a deletion of exactly that version. A resource that is already gone counts as deleted. */
+    suspend fun deleteCalendar(url: Url, ifMatch: String? = null) {
+        try {
+            DavResource(http, url).delete(Headers.build { ifMatch?.let { append(HttpHeaders.IfMatch, it) } }) { }
+        } catch (_: NotFoundException) {
+            // gone already
+        }
+    }
+
+    /** True when something answers a GET at [url]. */
+    suspend fun exists(url: Url): Boolean =
+        try {
+            DavResource(http, url).get(Headers.build { append(HttpHeaders.Accept, "*/*") }) { true }
+        } catch (_: NotFoundException) {
+            false
+        }
 
     /** DAV compliance classes the server announces for [url] (e.g. `calendar-auto-schedule`). */
     suspend fun capabilities(url: Url): Set<String> = DavResource(http, url).options().davCapabilities

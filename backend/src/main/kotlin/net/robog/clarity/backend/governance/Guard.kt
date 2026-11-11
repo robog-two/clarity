@@ -150,6 +150,7 @@ class GatewayGuardModel(
 fun actionTimes(action: ProposedAction): List<Pair<String, kotlin.time.Instant>> = when (action) {
     is ProposedAction.CreateEvent -> listOf("start" to action.start, "end" to action.end)
     is ProposedAction.MoveEvent -> listOf("start" to action.start, "end" to action.end)
+    is ProposedAction.UpdateEvent -> listOfNotNull(action.start?.let { "start" to it }, action.end?.let { "end" to it })
     is ProposedAction.CreateReminder -> listOf("at" to action.at)
     is ProposedAction.SetDoNotDisturb -> listOf("until" to action.until)
     else -> emptyList()

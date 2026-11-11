@@ -12,7 +12,7 @@ class DavFile(var etag: String, var contentType: String, var bytes: ByteArray, v
 
 /**
  * A small in-memory CalDAV/CardDAV/WebDAV server behind a Ktor [MockEngine] (no sockets). It
- * answers what the connector sends: PROPFIND, REPORT (sync-collection and multiget), GET, PUT, OPTIONS.
+ * answers what the connector sends: PROPFIND, REPORT (sync-collection and multiget), GET, PUT, DELETE, OPTIONS.
  * Collections listed in [syncCollections] support `sync-collection`; the rest only ETag listing.
  */
 class FakeDav(private val autoSchedule: Boolean = true) {
@@ -36,6 +36,9 @@ class FakeDav(private val autoSchedule: Boolean = true) {
         tokenCounter++
         return etag
     }
+
+    /** Called before a PUT or DELETE is judged, to let a test change the resource the way a concurrent writer would. */
+    var beforeWrite: ((String) -> Unit)? = null
 
     val deletedPaths = mutableListOf<String>()
 
@@ -90,11 +93,19 @@ class FakeDav(private val autoSchedule: Boolean = true) {
                 respond(f.bytes, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType to listOf(f.contentType), HttpHeaders.ETag to listOf(f.etag)))
             } ?: respond("", HttpStatusCode.NotFound)
             "PUT" -> {
+                beforeWrite?.invoke(path)
                 val existing = files[path]
                 if (request.headers[HttpHeaders.IfNoneMatch] == "*" && existing != null) return@MockEngine respond("", HttpStatusCode.PreconditionFailed)
                 request.headers[HttpHeaders.IfMatch]?.let { if (existing == null || existing.etag != it) return@MockEngine respond("", HttpStatusCode.PreconditionFailed) }
                 val etag = put(path, request.headers[HttpHeaders.ContentType] ?: "application/octet-stream", body)
                 respond("", if (existing == null) HttpStatusCode.Created else HttpStatusCode.NoContent, headersOf(HttpHeaders.ETag, etag))
+            }
+            "DELETE" -> {
+                beforeWrite?.invoke(path)
+                val existing = files[path]?.takeIf { !it.collection } ?: return@MockEngine respond("", HttpStatusCode.NotFound)
+                request.headers[HttpHeaders.IfMatch]?.let { if (existing.etag != it) return@MockEngine respond("", HttpStatusCode.PreconditionFailed) }
+                delete(path)
+                respond("", HttpStatusCode.NoContent)
             }
             else -> respond("", HttpStatusCode.MethodNotAllowed)
         }

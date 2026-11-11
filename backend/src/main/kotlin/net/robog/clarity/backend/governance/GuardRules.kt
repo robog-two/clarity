@@ -52,7 +52,7 @@ fun effectiveKind(action: ProposedAction): ActionKind =
  * always respected), else "ask first". Vault kinds can never be looser than "never alone".
  */
 fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
-    val set = constitution.autonomy[kind] ?: AutonomyTier.ASK_FIRST
+    val set = constitution.autonomyOf(kind)
     return when {
         set == AutonomyTier.NEVER -> AutonomyTier.NEVER
         kind in Constitution.ALWAYS_NEVER_ALONE -> AutonomyTier.NEVER_ALONE
@@ -71,6 +71,8 @@ fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.AskCode -> false
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
+    is ProposedAction.UpdateEvent -> action.notifyAttendees
+    is ProposedAction.CancelEvent -> action.notifyAttendees
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
     is ProposedAction.SaveDraft, is ProposedAction.CreateReminder,
     is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> false
@@ -89,13 +91,14 @@ fun textOf(action: ProposedAction): String = buildString {
     when (action) {
         is ProposedAction.SaveDraft -> append(action.email.subject).append('\n').append(action.email.body)
         is ProposedAction.SendEmail -> append(action.email.subject).append('\n').append(action.email.body)
-        is ProposedAction.CreateEvent -> append(action.title)
+        is ProposedAction.CreateEvent -> append(action.title).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty())
+        is ProposedAction.UpdateEvent -> append(action.title.orEmpty()).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty())
         is ProposedAction.CreateReminder -> append(action.text)
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())
         is ProposedAction.UseCredential -> append(action.site)
         is ProposedAction.AskCode -> append(action.site).append(' ').append(action.purpose)
-        is ProposedAction.MoveEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
+        is ProposedAction.MoveEvent, is ProposedAction.CancelEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
     }
 }.lowercase()
 
@@ -136,7 +139,7 @@ fun deterministicVerdict(
     }
     val recipients = recipientCount(action)
     if (recipients > 1) findings += Finding(Decision.ASK, "it goes out as you to $recipients people")
-    if (action is ProposedAction.MoveEvent && action.notifyAttendees) {
+    if (tellsAttendees(action)) {
         findings += Finding(Decision.ASK, "it changes an event other people are on and tells them")
     }
     val taint = if (provenance.untrustedInput && isExternal(action)) {
@@ -163,6 +166,14 @@ fun deterministicVerdict(
     }
     val reasons = findings.filter { it.decision == strictest }.joinToString("; ") { it.reason }
     return GuardVerdict(strictest, emptyList<LineId>(), "$lead$reasons.")
+}
+
+/** Changing or cancelling an event other people are on, with the organizer's notice going out. */
+private fun tellsAttendees(action: ProposedAction): Boolean = when (action) {
+    is ProposedAction.MoveEvent -> action.notifyAttendees
+    is ProposedAction.UpdateEvent -> action.notifyAttendees
+    is ProposedAction.CancelEvent -> action.notifyAttendees
+    else -> false
 }
 
 private fun askFirstReason(kindName: String) = "you want to be asked before I do \"$kindName\""
@@ -199,9 +210,13 @@ private fun protectedOverlapOf(action: ProposedAction, constitution: Constitutio
     when (action) {
         // a private hold without attendees *protects* time; anything else intrudes on it
         is ProposedAction.CreateEvent ->
-            if (action.hold && action.attendees.isEmpty()) null
+            if (action.hold && action.attendees.isEmpty() || action.allDay) null
             else protectedOverlap(constitution.protectedTimes, action.start, action.end, zone)
         is ProposedAction.MoveEvent -> protectedOverlap(constitution.protectedTimes, action.start, action.end, zone)
+        is ProposedAction.UpdateEvent -> {
+            val (start, end) = action.start to action.end
+            if (start != null && end != null && action.allDay != true) protectedOverlap(constitution.protectedTimes, start, end, zone) else null
+        }
         else -> null
     }
 

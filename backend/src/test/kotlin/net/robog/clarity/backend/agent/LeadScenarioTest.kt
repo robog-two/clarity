@@ -137,7 +137,7 @@ class LeadScenarioTest : FunSpec({
         request.tools.map { it.name } shouldBe request.tools.map { it.name }.sorted()
         request.system.map { it.cacheBreakpoint } shouldBe listOf(true, true)
         // every tool is sent with every request (no tool search)
-        (request.tools.map { it.name }.containsAll(listOf("send_to_user", "delegate", "remember_fact", "create_reminder", "move_event"))) shouldBe true
+        (request.tools.map { it.name }.containsAll(listOf("send_to_user", "delegate", "remember_fact", "create_reminder", "update_event"))) shouldBe true
         // the lead dispatches: no browser or sandbox tools of its own, and its prompt says to delegate them
         request.tools.none { it.name.contains("__") } shouldBe true
         AgentPrompts.LEAD_SYSTEM shouldContain "You have no browser or sandbox yourself"

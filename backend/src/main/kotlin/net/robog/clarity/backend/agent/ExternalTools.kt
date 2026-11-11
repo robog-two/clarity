@@ -4,7 +4,12 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import kotlin.time.Instant
+import kotlinx.datetime.DatePeriod
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.plus
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.governance.ActionGate
 import net.robog.clarity.backend.governance.MailAccounts
@@ -16,12 +21,20 @@ import net.robog.clarity.harness.ToolResult
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.calendar.EventScope
+import net.robog.clarity.shared.calendar.Frequency
+import net.robog.clarity.shared.calendar.NthWeekday
+import net.robog.clarity.shared.calendar.Recurrence
+import net.robog.clarity.shared.calendar.dayOfWeekFromCode
+import net.robog.clarity.shared.calendar.describe
+import net.robog.clarity.shared.calendar.startProblem
 import net.robog.clarity.shared.connector.ConnectorAccount
 import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.governance.EmailDraft
 import net.robog.clarity.shared.governance.InviteResponse
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.Urgency
+import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import net.robog.clarity.shared.time.LocalTimes
@@ -92,31 +105,164 @@ object ProposedActions {
     private fun ConnectorAccount.line() = "$label <$address>"
 
     fun createEvent(key: String, input: ExternalTools.CreateEventInput, zone: TimeZone): ProposedAction {
-        val start = instant("start", input.start, zone)
-        val end = instant("end", input.end, zone)
-        require(end > start) { "`end` must be after `start`" }
+        val (start, end) = eventTimes(input.allDay, input.start, input.end, zone)
+        val first = firstDay(start, input.allDay, zone)
+        val repeat = input.repeat?.let { recurrence(it, first) }
+        val link = link(input.url)
+        val lead = if (input.attendees.isEmpty()) "Hold " else "Invite to "
         return ProposedAction.CreateEvent(
             idempotencyKey = key,
-            summary = (if (input.attendees.isEmpty()) "Hold " else "Invite to ") + "\"${input.title}\" ${LocalTimes.formatRange(start, end, zone)}",
+            summary = lead + "\"${input.title}\" ${whenText(start, end, input.allDay, zone)}" +
+                repeat?.let { " repeating ${it.describe(first)}" }.orEmpty() + place(input.location),
             calendar = input.calendar,
             title = input.title,
             start = start,
             end = end,
             attendees = input.attendees.map(::parseHandle),
             hold = input.attendees.isEmpty() && input.hold,
+            description = input.description?.takeIf(String::isNotBlank),
+            location = input.location?.takeIf(String::isNotBlank),
+            url = link,
+            allDay = input.allDay,
+            repeat = repeat,
+            zone = zone.id,
         )
     }
 
-    fun moveEvent(key: String, input: ExternalTools.MoveEventInput, zone: TimeZone): ProposedAction {
-        val start = instant("start", input.start, zone)
-        val end = instant("end", input.end, zone)
-        require(end > start) { "`end` must be after `start`" }
-        return ProposedAction.MoveEvent(key, "Move event ${input.eventId} to ${LocalTimes.formatRange(start, end, zone)}", EntityId(input.eventId), start, end, input.notifyAttendees)
+    /**
+     * An edit of an event. [current] is the stored event the id names, when it is known: it gives the
+     * summary a title and lets a repeating event be refused for a missing `scope` right away.
+     */
+    fun updateEvent(key: String, input: ExternalTools.UpdateEventInput, zone: TimeZone, current: CalendarEventPayload? = null): ProposedAction {
+        require(listOf(input.start, input.end, input.title, input.description, input.location, input.url, input.allDay, input.repeat).any { it != null }) {
+            "Nothing to change. Give at least one of start, end, title, description, location, url, allDay or repeat."
+        }
+        input.title?.let { require(it.isNotBlank()) { "`title` can't be empty" } }
+        requireScope(input.scope, current?.repeats, "change")
+        val allDay = input.allDay
+        val (start, end) = when {
+            input.start == null && input.end == null -> null to null
+            allDay != null -> eventTimes(allDay, input.start, input.end, zone)
+            else -> {
+                val s = input.start?.let { instant("start", it, zone) }
+                val e = input.end?.let { instant("end", it, zone) }
+                if (s != null && e != null) require(e > s) { "`end` must be after `start`" }
+                s to e
+            }
+        }
+        val repeat = input.repeat?.let {
+            requireNotNull(start) { "`repeat` needs `start`: the first occurrence it applies from." }
+            recurrence(it, firstDay(start, allDay == true, zone))
+        }
+        val link = input.url?.let { if (it.isBlank()) "" else link(it) }
+        val changes = listOfNotNull(
+            start?.let { s -> if (end != null) "to ${whenText(s, end, allDay == true, zone)}" else "to start ${LocalTimes.format(s, zone)}" }
+                ?: end?.let { "to end ${LocalTimes.format(it, zone)}" },
+            input.title?.let { "rename to \"$it\"" },
+            input.location?.let { if (it.isBlank()) "clear the location" else "at ${it.take(60)}" },
+            link?.let { if (it.isEmpty()) "clear the link" else "with a link" },
+            input.description?.let { if (it.isBlank()) "clear the notes" else "new notes" },
+            repeat?.let { "repeat ${it.describe(firstDay(start!!, allDay == true, zone))}" },
+        )
+        return ProposedAction.UpdateEvent(
+            idempotencyKey = key,
+            summary = "Update ${eventLabel(input.eventId, current)}${scopeText(input.scope)} ${changes.joinToString(" ")}".trim(),
+            event = EntityId(input.eventId),
+            scope = input.scope,
+            start = start,
+            end = end,
+            title = input.title,
+            description = input.description,
+            location = input.location,
+            url = link,
+            allDay = allDay,
+            repeat = repeat,
+            notifyAttendees = input.notifyAttendees,
+            zone = zone.id,
+        )
     }
 
-    fun respond(key: String, input: ExternalTools.RespondInput): ProposedAction =
+    fun cancelEvent(key: String, input: ExternalTools.CancelEventInput, current: CalendarEventPayload? = null): ProposedAction {
+        requireScope(input.scope, current?.repeats, "cancel")
+        return ProposedAction.CancelEvent(
+            key, "Cancel ${eventLabel(input.eventId, current)}${scopeText(input.scope)}".trim(),
+            EntityId(input.eventId), input.scope, input.notifyAttendees,
+        )
+    }
+
+    /** A repeating event is only ever touched in part by saying which part. */
+    private fun requireScope(scope: EventScope?, repeats: String?, verb: String) {
+        require(scope != null || repeats == null) { "This event repeats ($repeats). Say what to $verb: scope `this`, `following` or `series`." }
+    }
+
+    private fun eventLabel(id: String, current: CalendarEventPayload?) = current?.let { "\"${it.title}\"" } ?: "event $id"
+
+    private fun scopeText(scope: EventScope?) = when (scope) {
+        EventScope.THIS -> " (this one)"
+        EventScope.FOLLOWING -> " (this and following)"
+        EventScope.SERIES -> " (whole series)"
+        null -> ""
+    }
+
+    private fun place(location: String?) = location?.takeIf(String::isNotBlank)?.let { " at ${it.take(60)}" }.orEmpty()
+
+    /**
+     * The start and end of an event as stored. All-day: `start` is a date and `end` the last day
+     * (inclusive, default `start`), stored as UTC midnights with the end exclusive. Timed: moments on the
+     * person's clock; `end` must come after `start`.
+     */
+    private fun eventTimes(allDay: Boolean, start: String?, end: String?, zone: TimeZone): Pair<Instant, Instant> {
+        if (!allDay) {
+            val s = instant("start", start.orEmpty(), zone)
+            val e = instant("end", end.orEmpty(), zone)
+            require(e > s) { "`end` must be after `start`" }
+            return s to e
+        }
+        val first = day("start", start) ?: throw IllegalArgumentException("`start` is required: the first day, like 2026-10-26")
+        val last = end?.takeIf(String::isNotBlank)?.let { day("end", it) } ?: first
+        require(last >= first) { "`end` must not be before `start`" }
+        return first.atStartOfDayIn(TimeZone.UTC) to last.plus(DatePeriod(days = 1)).atStartOfDayIn(TimeZone.UTC)
+    }
+
+    private fun day(label: String, raw: String?): LocalDate? =
+        raw?.let { LocalTimes.parseDate(it) ?: throw IllegalArgumentException("`$label` is not a date: \"$it\". An all-day event takes days like 2026-10-26.") }
+
+    /** The local date an event starts on: its first day for all-day, else the day of [start] on [zone]'s clock. */
+    private fun firstDay(start: Instant, allDay: Boolean, zone: TimeZone): LocalDate =
+        start.toLocalDateTime(if (allDay) TimeZone.UTC else zone).date
+
+    private fun whenText(start: Instant, end: Instant, allDay: Boolean, zone: TimeZone): String {
+        if (!allDay) return LocalTimes.formatRange(start, end, zone)
+        val (first, last) = LocalTimes.allDayDates(start, end)
+        return "all day " + LocalTimes.formatDate(first) + if (last != first) " to " + LocalTimes.formatDate(last) else ""
+    }
+
+    private fun link(raw: String?): String? {
+        val text = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        val uri = runCatching { java.net.URI(text) }.getOrNull()
+        require(uri != null && uri.scheme?.lowercase() in setOf("http", "https") && !uri.host.isNullOrEmpty()) { "`url` must be a web link like https://example.com/page" }
+        return text
+    }
+
+    /** A `repeat` input as a [Recurrence]; [first] is the day the series starts on. Messages are for the model. */
+    fun recurrence(input: ExternalTools.RepeatInput, first: LocalDate): Recurrence {
+        fun weekday(raw: String, label: String) =
+            dayOfWeekFromCode(raw.trim().take(2)) ?: throw IllegalArgumentException("`$label` takes weekdays like MO TU WE TH FR SA SU, not \"$raw\"")
+        val rule = Recurrence(
+            frequency = input.frequency,
+            interval = input.interval,
+            days = input.days.map { weekday(it, "days") },
+            nthWeekday = input.nthWeekday?.let { NthWeekday(it.nth, weekday(it.day, "nthWeekday.day")) },
+            until = input.until?.let { LocalTimes.parseDate(it) ?: throw IllegalArgumentException("`until` is not a date: \"$it\". Use a day like 2026-12-20.") },
+            count = input.count,
+        )
+        rule.startProblem(first)?.let { throw IllegalArgumentException(it) }
+        return rule
+    }
+
+    fun respond(key: String, input: ExternalTools.RespondInput, current: CalendarEventPayload? = null): ProposedAction =
         ProposedAction.RespondToInvite(
-            key, "${input.response.name.lowercase().replaceFirstChar { it.uppercase() }} invite ${input.eventId}",
+            key, "${input.response.name.lowercase().replaceFirstChar { it.uppercase() }} invite ${eventLabel(input.eventId, current)}",
             EntityId(input.eventId), input.response, input.comment,
         )
 
@@ -162,24 +308,62 @@ class ExternalTools(
     )
 
     @Serializable
+    class NthWeekdayInput(
+        @Description("1 to 5 for the 1st to 5th, or -1 for the last") val nth: Int,
+        @Description("MO TU WE TH FR SA SU") val day: String,
+    )
+
+    @Serializable
+    class RepeatInput(
+        val frequency: Frequency,
+        @Description("Every N days, weeks, months or years. Default 1.") val interval: Int = 1,
+        @Description("Weekly only: the weekdays, like [\"MO\",\"WE\",\"FR\"]. Default: the weekday of `start`, which must be one of them.") val days: List<String> = emptyList(),
+        @Description("Monthly only: the nth weekday of the month (2nd Tuesday, last Friday) instead of the day of the month of `start`. `start` must be that day.") val nthWeekday: NthWeekdayInput? = null,
+        @Description("The last day it can happen on, a date like 2026-12-20 (inclusive). Not together with `count`. With neither it never ends.") val until: String? = null,
+        @Description("Stop after this many occurrences. Not together with `until`.") val count: Int? = null,
+    )
+
+    @Serializable
     class CreateEventInput(
         val title: String,
-        @Description("Start. $LOCAL_TIME_HINT") val start: String,
-        @Description("End, local time like `start`.") val end: String,
+        @Description("Start. $LOCAL_TIME_HINT For an all-day event: a date like 2026-10-26.") val start: String,
+        @Description("End, local time like `start`. For an all-day event: the last day (inclusive), default `start`.") val end: String? = null,
         val calendar: String? = null,
         @Description("Invitees. Leave empty for a private block on the person's own calendar.") val attendees: List<String> = emptyList(),
         @Description("True for a private focus/hold block (only without attendees).") val hold: Boolean = true,
+        val description: String? = null,
+        val location: String? = null,
+        @Description("A web link for the event, like https://example.com/page.") val url: String? = null,
+        @Description("True for an all-day event: `start` and `end` are dates.") val allDay: Boolean = false,
+        @Description("Makes the event repeat. Leave out for a single event.") val repeat: RepeatInput? = null,
         @Description(WHY) val reason: String,
         @Description(CONTEXT) val context: List<ContextItem> = emptyList(),
         val urgency: Urgency = Urgency.NORMAL,
     )
 
     @Serializable
-    class MoveEventInput(
-        @Description("Event id from list_calendar_events") val eventId: String,
-        @Description("New start. $LOCAL_TIME_HINT") val start: String,
-        @Description("New end, local time like `start`.") val end: String,
-        @Description("True if other people are on the event and should be told.") val notifyAttendees: Boolean,
+    class UpdateEventInput(
+        @Description("Event id from list_calendar_events. For a repeating event it is one occurrence.") val eventId: String,
+        @Description("Required when the event repeats: `this` changes only this occurrence, `following` this and every later one, `series` all of them.") val scope: EventScope? = null,
+        @Description("New start. $LOCAL_TIME_HINT For an all-day event: a date, with `allDay` true. Leave out to keep it. A repeating event with `series` or `following` moves by the same amount.") val start: String? = null,
+        @Description("New end, like `start` (all-day: the last day). Leave out to keep the length.") val end: String? = null,
+        val title: String? = null,
+        @Description("New notes. An empty text clears them.") val description: String? = null,
+        @Description("New place. An empty text clears it.") val location: String? = null,
+        @Description("New web link. An empty text clears it.") val url: String? = null,
+        @Description("Set to say whether it is all-day; needed to move an all-day event, whose `start` and `end` are dates. A repeating event can't switch.") val allDay: Boolean? = null,
+        @Description("A new repeat rule (needs `start`, the first occurrence it applies from). It replaces the old rule and drops one-off changes. Not with scope `this`.") val repeat: RepeatInput? = null,
+        @Description("True if other people are on the event and should be told.") val notifyAttendees: Boolean = false,
+        @Description(WHY) val reason: String,
+        @Description(CONTEXT) val context: List<ContextItem> = emptyList(),
+        val urgency: Urgency = Urgency.NORMAL,
+    )
+
+    @Serializable
+    class CancelEventInput(
+        @Description("Event id from list_calendar_events. For a repeating event it is one occurrence.") val eventId: String,
+        @Description("Required when the event repeats: `this` cancels only this occurrence, `following` this and every later one, `series` all of them.") val scope: EventScope? = null,
+        @Description("True if other people are on the event and should be told.") val notifyAttendees: Boolean = false,
         @Description(WHY) val reason: String,
         @Description(CONTEXT) val context: List<ContextItem> = emptyList(),
         val urgency: Urgency = Urgency.NORMAL,
@@ -256,24 +440,46 @@ class ExternalTools(
 
     fun createEvent(scope: RunScope): Tool = tool<CreateEventInput>(
         name = "create_event",
-        description = "Create a calendar event or a private hold block.",
+        description = "Create a calendar event or a private hold block. It can be all-day, have a place, notes and a link, and repeat (`repeat`).",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
     ) { i -> propose(scope, "create_event", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.createEvent(k, i, zone) } }
 
-    fun moveEvent(scope: RunScope): Tool = tool<MoveEventInput>(
-        name = "move_event",
-        description = "Move a calendar event to a new time. Events with other attendees need `notifyAttendees`.",
+    /** The stored event an event tool names, for its summary; null when it is not found. */
+    private suspend fun storedEvent(id: String): CalendarEventPayload? = reader.calendarEvent(EntityId(id))?.payload
+
+    fun updateEvent(scope: RunScope): Tool = tool<UpdateEventInput>(
+        name = "update_event",
+        description = "Change a calendar event: its time, title, notes, place, link, all-day or repeat rule. Leave a field out to keep it. " +
+            "For a repeating event give `scope`: `this` (one occurrence), `following` (this and later ones) or `series`. " +
+            "Events with other attendees need `notifyAttendees`, and only the organizer can change them.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
-    ) { i -> propose(scope, "move_event", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.moveEvent(k, i, zone) } }
+    ) { i ->
+        val current = storedEvent(i.eventId)
+        propose(scope, "update_event", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.updateEvent(k, i, zone, current) }
+    }
+
+    fun cancelEvent(scope: RunScope): Tool = tool<CancelEventInput>(
+        name = "cancel_event",
+        description = "Cancel (delete) a calendar event. For a repeating event give `scope`: `this` (one occurrence), `following` (this and later ones) or `series`. " +
+            "Events with other attendees need `notifyAttendees`, and only the organizer can cancel them; to leave someone else's event, decline it with respond_to_invite.",
+        effect = ToolEffect.EXTERNAL,
+        json = ClarityJson,
+    ) { i ->
+        val current = storedEvent(i.eventId)
+        propose(scope, "cancel_event", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.cancelEvent(k, i, current) }
+    }
 
     fun respondToInvite(scope: RunScope): Tool = tool<RespondInput>(
         name = "respond_to_invite",
-        description = "Accept, decline or tentatively accept a calendar invitation.",
+        description = "Accept, decline or tentatively accept a calendar invitation. For a repeating event the answer covers the whole series, whichever occurrence the id names.",
         effect = ToolEffect.EXTERNAL,
         json = ClarityJson,
-    ) { i -> propose(scope, "respond_to_invite", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.respond(k, i) } }
+    ) { i ->
+        val current = storedEvent(i.eventId)
+        propose(scope, "respond_to_invite", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.respond(k, i, current) }
+    }
 
     fun createReminder(scope: RunScope): Tool = tool<ReminderInput>(
         name = "create_reminder",
@@ -291,7 +497,7 @@ class ExternalTools(
     ) { i -> propose(scope, "set_do_not_disturb", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.doNotDisturb(k, i, zone) } }
 
     fun all(scope: RunScope): List<Tool> = listOf(
-        saveDraft(scope), sendEmail(scope), createEvent(scope), moveEvent(scope), respondToInvite(scope),
+        saveDraft(scope), sendEmail(scope), createEvent(scope), updateEvent(scope), cancelEvent(scope), respondToInvite(scope),
         createReminder(scope), setDoNotDisturb(scope),
     )
 }

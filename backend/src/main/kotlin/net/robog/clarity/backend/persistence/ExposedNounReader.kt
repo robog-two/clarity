@@ -193,6 +193,13 @@ class ExposedNounReader(private val database: Database) : NounReader {
         }
     }
 
+    override suspend fun calendarEvent(id: EntityId): Stored<CalendarEventPayload>? {
+        val uuid = kotlin.uuid.Uuid.parseOrNull(id.value) ?: return null
+        return database.tx {
+            CalendarEvents.selectAll().where { (CalendarEvents.id eq uuid) and CalendarEvents.deletedAt.isNull() }.singleOrNull()?.toEvent()
+        }
+    }
+
     override suspend fun document(id: EntityId): Stored<DocumentPayload>? {
         val uuid = runCatching { kotlin.uuid.Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx {
@@ -258,6 +265,8 @@ class ExposedNounReader(private val database: Database) : NounReader {
             location = this[CalendarEvents.location],
             description = this[CalendarEvents.description],
             attendees = this[CalendarEvents.attendees],
+            url = this[CalendarEvents.url],
+            repeats = this[CalendarEvents.repeats],
         ),
         firstSeenAt = this[CalendarEvents.firstSeenAt],
         updatedAt = this[CalendarEvents.updatedAt],

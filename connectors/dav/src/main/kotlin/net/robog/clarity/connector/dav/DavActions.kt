@@ -1,15 +1,19 @@
 package net.robog.clarity.connector.dav
 
+import at.bitfire.dav4jvm.ktor.exception.NotFoundException
 import at.bitfire.dav4jvm.ktor.exception.PreconditionFailedException
 import at.bitfire.dav4jvm.ktor.exception.UnauthorizedException
 import io.ktor.http.Url
 import java.time.Instant as JInstant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import net.robog.clarity.connector.sdk.ActionHandlers
 import net.robog.clarity.connector.sdk.ConnectorRuntime
 import net.robog.clarity.connector.sdk.actionHandlers
 import net.robog.clarity.connector.sdk.runIsolated
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.action.ActionOutcome
+import net.robog.clarity.shared.calendar.EventScope
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.noun.Handle
 import kotlin.time.Instant
@@ -23,8 +27,12 @@ private fun Instant.toJava(): JInstant = JInstant.ofEpochMilli(toEpochMillisecon
 
 private fun failed(message: String, retryable: Boolean = false) = ActionOutcome.Failed(message, retryable)
 
+/** The person's clock as the action carried it; UTC when it did not say or is not a zone Java knows. */
+private fun zoneOf(id: String?): ZoneId = id?.let { runCatching { ZoneId.of(it) }.getOrNull() } ?: ZoneOffset.UTC
+
 /**
- * `CREATE_EVENT`, `MOVE_EVENT`, `RESPOND_TO_INVITE`, `CREATE_REMINDER` and `READ_DOCUMENT`.
+ * `CREATE_EVENT`, `UPDATE_EVENT`, `CANCEL_EVENT`, `RESPOND_TO_INVITE`, `CREATE_REMINDER` and `READ_DOCUMENT`,
+ * and `MOVE_EVENT` for actions stored before `UPDATE_EVENT`.
  * [accounts] yields the accounts of the newest config for each action and [connect] a fresh
  * server connection for one of them. Events, invitations and documents are found in the account
  * their source id names; a new event goes to the account that has the requested calendar.
@@ -38,6 +46,8 @@ class DavActions(
     fun handlers(): ActionHandlers = actionHandlers {
         onTargeted<ProposedAction.CreateEvent> { a, _ -> createEvent(a) }
         onTargeted<ProposedAction.MoveEvent> { a, target -> moveEvent(a, target) }
+        onTargeted<ProposedAction.UpdateEvent> { a, target -> updateEvent(a, target) }
+        onTargeted<ProposedAction.CancelEvent> { a, target -> cancelEvent(a, target) }
         onTargeted<ProposedAction.RespondToInvite> { a, target -> respond(a, target) }
         onTargeted<ProposedAction.CreateReminder> { a, _ -> createReminder(a) }
         onTargeted<ProposedAction.ReadDocument> { a, target -> readDocument(a, target) }
@@ -59,7 +69,12 @@ class DavActions(
             }
         }
         val uid = uidFor(a.idempotencyKey)
-        val ics = Ical.newEvent(uid, a.title, a.start.toJava(), a.end.toJava(), a.hold, a.attendees, me?.let { Handle.email(it) })
+        val ics = Ical.newEvent(
+            NewEvent(
+                uid, a.title, a.start.toJava(), a.end.toJava(), a.hold, a.attendees, me?.let { Handle.email(it) },
+                a.description, a.location, a.url, a.allDay, a.repeat, zoneOf(a.zone),
+            ),
+        )
         return create(server, config, calendar.url, uid, ics)
     }
 
@@ -75,47 +90,117 @@ class DavActions(
     /** PUT that must not overwrite: an existing resource with our derived UID means an earlier delivery already did it. */
     private suspend fun create(server: DavServer, config: DavConfig, calendar: Url, uid: String, ics: String): ActionOutcome {
         val url = server.resolve(calendar, calendar.encodedPath.trimEnd('/') + "/" + uid + ".ics")
+        putNew(server, url, ics)
+        return ActionOutcome.Done(SourceId(sourceIdOf(config.id, url.encodedPath)))
+    }
+
+    private suspend fun putNew(server: DavServer, url: Url, ics: String) {
         try {
             server.putCalendar(url, ics, ifNoneMatch = "*")
         } catch (_: PreconditionFailedException) {
             // already there: this is a re-delivery
         }
-        return ActionOutcome.Done(SourceId(sourceIdOf(config.id, url.encodedPath)))
     }
 
-    suspend fun moveEvent(a: ProposedAction.MoveEvent, target: SourceId?): ActionOutcome = onTarget("event", target) { server, config, path ->
-        if ('#' in path) return@onTarget failed("That is one occurrence of a recurring event; moving a single occurrence or the series is not supported. Tell the person to change it in their calendar.")
-        val discovery = server.discover()
-        val url = server.resolve(Url(config.caldavUrl!!), path)
-        val (etag, bytes) = server.get(url, 1_000_000) ?: return@onTarget failed("The event could not be read.")
-        val ics = bytes.toString(Charsets.UTF_8)
+    /** An occurrence's source path is `<resource>#<epoch seconds>`; the resource alone is the whole event. */
+    private class EventPath(path: String) {
+        val resource = path.substringBefore('#')
+        val occurrence: JInstant? = path.substringAfter('#', "").toLongOrNull()?.let(JInstant::ofEpochSecond)
+    }
+
+    /**
+     * Why the person may not change an event that has other people on it, or null when they may:
+     * only the organizer changes it, and telling the others needs [notify] and a server that does it.
+     */
+    private suspend fun attendeeRefusal(server: DavServer, discovery: Discovery, config: DavConfig, url: Url, ics: String, notify: Boolean, verb: String): ActionOutcome.Failed? {
         val me = myAddresses(discovery, config)
         val people = Ical.participants(ics)
         val others = people.attendees.filter { it !in me }
         if (people.organizer != null && people.organizer !in me) {
-            return@onTarget failed("Only the organizer (${people.organizer}) can move this event; you are an attendee. Propose a different time to them instead.")
+            return failed("Only the organizer (${people.organizer}) can $verb this event; the person is an attendee. They can answer the invitation (respond_to_invite) or ask the organizer.")
         }
-        if (others.isNotEmpty()) {
-            if (!a.notifyAttendees) {
-                return@onTarget failed("This event has other attendees (${others.joinToString()}); moving it notifies them. Ask again with notifyAttendees set if that's intended.")
-            }
-            if (AUTO_SCHEDULE !in server.capabilities(url)) {
-                return@onTarget failed("This calendar server does not send updates to attendees itself (no CalDAV scheduling), so I can't move an event that has attendees.")
-            }
+        if (others.isEmpty()) return null
+        if (!notify) {
+            return failed("This event has other attendees (${others.joinToString()}); this notifies them. Ask again with notifyAttendees set if that is intended.")
         }
-        val moved = try { Ical.moved(ics, a.start.toJava(), a.end.toJava()) } catch (e: IllegalArgumentException) { return@onTarget failed(e.message ?: "This event can't be edited.") }
+        if (AUTO_SCHEDULE !in server.capabilities(url)) {
+            return failed("This calendar server does not send updates to attendees itself (no CalDAV scheduling), so an event with attendees can't be changed.")
+        }
+        return null
+    }
+
+    /** What an event looks like before an edit or cancellation: its place, version and text. */
+    private class Loaded(val url: Url, val etag: String?, val ics: String, val path: EventPath)
+
+    private suspend fun load(server: DavServer, config: DavConfig, path: String): Loaded? {
+        val event = EventPath(path)
+        val url = server.resolve(Url(config.caldavUrl!!), event.resource)
+        val (etag, bytes) = try {
+            server.get(url, 1_000_000) ?: return null
+        } catch (_: NotFoundException) {
+            return null
+        }
+        return Loaded(url, etag, bytes.toString(Charsets.UTF_8), event)
+    }
+
+    /** A stored `MOVE_EVENT`: the single-event part of [updateEvent]. */
+    suspend fun moveEvent(a: ProposedAction.MoveEvent, target: SourceId?): ActionOutcome {
+        if (target?.value?.contains('#') == true) {
+            return failed("That is one occurrence of a recurring event. Use update_event with a scope to change it.")
+        }
+        return updateEvent(ProposedAction.UpdateEvent(a.idempotencyKey, a.summary, a.event, start = a.start, end = a.end, notifyAttendees = a.notifyAttendees), target)
+    }
+
+    suspend fun updateEvent(a: ProposedAction.UpdateEvent, target: SourceId?): ActionOutcome = onTarget("event", target) { server, config, path ->
+        val discovery = server.discover()
+        val event = load(server, config, path) ?: return@onTarget failed("The event could not be read.")
+        attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "change")?.let { return@onTarget it }
+        val following = uidFor(a.idempotencyKey)
+        val followingUrl = server.resolve(event.url, event.path.resource.substringBeforeLast('/') + "/" + following + ".ics")
+        if (a.scope == EventScope.FOLLOWING && server.exists(followingUrl) && event.path.occurrence?.let { IcalEdit.hasOccurrence(event.ics, it) } == false) {
+            return@onTarget ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+        }
+        val change = EventChange(
+            a.start?.toJava(), a.end?.toJava(), a.title, a.description, a.location, a.url, a.allDay, a.repeat, zoneOf(a.zone),
+        )
+        val edited = try {
+            IcalEdit.updated(event.ics, event.path.occurrence, a.scope, change, following)
+        } catch (e: IllegalArgumentException) {
+            return@onTarget failed(e.message ?: "This event can't be edited.")
+        }
         try {
-            server.putCalendar(url, moved, ifMatch = etag)
+            if (edited is Edited.Split) putNew(server, followingUrl, edited.following)
+            server.putCalendar(event.url, if (edited is Edited.Split) edited.original else (edited as Edited.Replace).ics, ifMatch = event.etag)
         } catch (_: PreconditionFailedException) {
-            return@onTarget failed("The event changed on the server while I was moving it; trying again with the new version.", retryable = true)
+            return@onTarget failed("The event changed on the server while it was being edited; trying again with the new version.", retryable = true)
         }
         ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
     }
 
-    suspend fun respond(a: ProposedAction.RespondToInvite, target: SourceId?): ActionOutcome = onTarget("invitation", target) { server, config, path ->
-        if ('#' in path) return@onTarget failed("That is one occurrence of a recurring event; answering a single occurrence is not supported.")
+    suspend fun cancelEvent(a: ProposedAction.CancelEvent, target: SourceId?): ActionOutcome = onTarget("event", target) { server, config, path ->
         val discovery = server.discover()
-        val url = server.resolve(Url(config.caldavUrl!!), path)
+        val event = load(server, config, path) ?: return@onTarget ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+        attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "cancel")?.let { return@onTarget it }
+        val removal = try {
+            IcalEdit.cancelled(event.ics, event.path.occurrence, a.scope)
+        } catch (e: IllegalArgumentException) {
+            return@onTarget failed(e.message ?: "This event can't be cancelled.")
+        }
+        try {
+            when (removal) {
+                Removal.Delete -> server.deleteCalendar(event.url, ifMatch = event.etag)
+                is Removal.Replace -> server.putCalendar(event.url, removal.ics, ifMatch = event.etag)
+            }
+        } catch (_: PreconditionFailedException) {
+            return@onTarget failed("The event changed on the server while it was being cancelled; trying again with the new version.", retryable = true)
+        }
+        ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+    }
+
+    /** Answers for the whole event: a repeating one is answered as a series, whichever occurrence is named. */
+    suspend fun respond(a: ProposedAction.RespondToInvite, target: SourceId?): ActionOutcome = onTarget("invitation", target) { server, config, path ->
+        val discovery = server.discover()
+        val url = server.resolve(Url(config.caldavUrl!!), EventPath(path).resource)
         if (AUTO_SCHEDULE !in server.capabilities(url)) {
             return@onTarget failed("This calendar server does not send replies to organizers itself (no CalDAV scheduling), so I can't answer the invitation.")
         }

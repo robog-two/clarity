@@ -7,6 +7,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.calendar.EventScope
+import net.robog.clarity.shared.calendar.Recurrence
 import net.robog.clarity.shared.noun.Handle
 
 /**
@@ -30,6 +32,15 @@ data class Constitution(
     val profile: List<String> = emptyList(),
     val updatedAt: Instant,
 ) {
+    /**
+     * The tier the person set for [kind]; a kind they said nothing about asks first. Changing or
+     * cancelling an event is never looser than what they said about moving one.
+     */
+    fun autonomyOf(kind: ActionKind): AutonomyTier {
+        val own = autonomy[kind] ?: AutonomyTier.ASK_FIRST
+        return if (kind == ActionKind.UPDATE_EVENT || kind == ActionKind.CANCEL_EVENT) maxOf(own, autonomy[ActionKind.MOVE_EVENT] ?: own) else own
+    }
+
     companion object {
         /**
          * Kinds that only the phone can approve, whatever [autonomy] says: a mechanism, not a
@@ -93,7 +104,10 @@ enum class ActionKind {
     @SerialName("save_draft") SAVE_DRAFT,
     @SerialName("send_email") SEND_EMAIL,
     @SerialName("create_event") CREATE_EVENT,
+    /** Only in rows stored before `update_event`; the agent no longer proposes it. */
     @SerialName("move_event") MOVE_EVENT,
+    @SerialName("update_event") UPDATE_EVENT,
+    @SerialName("cancel_event") CANCEL_EVENT,
     @SerialName("respond_to_invite") RESPOND_TO_INVITE,
     @SerialName("create_reminder") CREATE_REMINDER,
     @SerialName("set_do_not_disturb") SET_DO_NOT_DISTURB,
@@ -142,6 +156,14 @@ sealed interface ProposedAction {
         val attendees: List<Handle> = emptyList(),
         /** True for a private hold/focus block on the person's own calendar. */
         val hold: Boolean = true,
+        val description: String? = null,
+        val location: String? = null,
+        val url: String? = null,
+        /** [start] and [end] are then UTC midnights of the first day and of the day after the last (end exclusive). */
+        val allDay: Boolean = false,
+        val repeat: Recurrence? = null,
+        /** The person's clock: a repeating timed event keeps its wall-clock time across daylight saving. */
+        val zone: String? = null,
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.CREATE_EVENT }
 
     @Serializable @SerialName("move_event")
@@ -154,6 +176,41 @@ sealed interface ProposedAction {
         /** Other people's events need the organizer's update to go out. */
         val notifyAttendees: Boolean,
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.MOVE_EVENT }
+
+    /**
+     * Changes an event; a null field stays as it is and an empty text clears it. [event] is one
+     * occurrence for a repeating event, with [scope] saying how far the change reaches.
+     * With [allDay] [start] and [end] are UTC midnights (end exclusive), as in [CreateEvent].
+     */
+    @Serializable @SerialName("update_event")
+    data class UpdateEvent(
+        override val idempotencyKey: String,
+        override val summary: String,
+        val event: EntityId,
+        val scope: EventScope? = null,
+        val start: Instant? = null,
+        val end: Instant? = null,
+        val title: String? = null,
+        val description: String? = null,
+        val location: String? = null,
+        val url: String? = null,
+        val allDay: Boolean? = null,
+        val repeat: Recurrence? = null,
+        /** Other people's events need the organizer's update to go out. */
+        val notifyAttendees: Boolean = false,
+        val zone: String? = null,
+    ) : ProposedAction { override val kind: ActionKind get() = ActionKind.UPDATE_EVENT }
+
+    /** Deletes an event, or part of a repeating one ([scope], as in [UpdateEvent]). */
+    @Serializable @SerialName("cancel_event")
+    data class CancelEvent(
+        override val idempotencyKey: String,
+        override val summary: String,
+        val event: EntityId,
+        val scope: EventScope? = null,
+        /** Other people's events need the organizer's cancellation to go out. */
+        val notifyAttendees: Boolean = false,
+    ) : ProposedAction { override val kind: ActionKind get() = ActionKind.CANCEL_EVENT }
 
     @Serializable @SerialName("respond_to_invite")
     data class RespondToInvite(
