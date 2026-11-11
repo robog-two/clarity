@@ -360,21 +360,6 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
         SettingsGroup("Behavior") {
             groupRow(Icons.Outlined.Gavel, "Constitution", state.constitution?.let(::sentenceCase) ?: "Not written yet", onClick = onOpenConstitution)
             groupRow(Icons.Outlined.Memory, "Models", "Model for each job") { open(SettingsPage.Models) }
-        }
-
-        val mcpTitle = stringResource(R.string.mcp_title)
-        val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
-        SettingsGroup("Connections") {
-            val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
-            groupRow(
-                Icons.Outlined.Hub, "Sources",
-                if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
-                warning = failing > 0,
-            ) { open(SettingsPage.Sources) }
-            groupRow(
-                Icons.Outlined.Extension, mcpTitle, mcpSummary,
-                onClick = onOpenMcp,
-            )
             val batteryWarning = state.pushOn && !state.batteryUnrestricted
             groupRow(
                 Icons.Outlined.NotificationsActive, "Stay connected",
@@ -385,10 +370,22 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
                 },
                 warning = batteryWarning,
             ) { open(SettingsPage.Push) }
-            groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
         }
 
+        val mcpTitle = stringResource(R.string.mcp_title)
+        val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
         SettingsGroup("Your data") {
+            val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
+            groupRow(
+                Icons.Outlined.Hub, "Sources",
+                if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
+                warning = failing > 0,
+            ) { open(SettingsPage.Sources) }
+            groupRow(
+                Icons.Outlined.Extension, mcpTitle, mcpSummary,
+                onClick = onOpenMcp,
+            )
+            groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
             groupRow(Icons.Outlined.Backup, "Backups", "Every night at 2 am. Kept for 7 days.") { open(SettingsPage.Backups) }
         }
 
