@@ -134,7 +134,7 @@ fun McpContent(state: McpUiState, actions: McpActions) {
     state.confirming?.let { choice ->
         val s = state.servers.firstOrNull { it.id == choice.serverId }
         val tool = s?.tools?.firstOrNull { it.name == choice.tool }
-        if (s != null && tool != null) ConfirmAuto(s, tool, actions)
+        if (s != null && tool != null) ConfirmAlwaysOk(s, tool, actions)
     }
 }
 
@@ -148,7 +148,7 @@ private fun ServerList(state: McpUiState, actions: McpActions) {
         onBack = actions.onBack,
         title = stringResource(R.string.mcp_title),
         footer = {
-            if (state.error != null && state.servers.isEmpty()) {
+            if (state.error != null && state.rows.isEmpty()) {
                 PrimaryButton(stringResource(R.string.mcp_retry), actions.onRetry, Modifier.fillMaxWidth())
             } else {
                 PrimaryButton(stringResource(R.string.mcp_add), { actions.onAdd(null) }, Modifier.fillMaxWidth(), enabled = !state.loading)
@@ -159,11 +159,11 @@ private fun ServerList(state: McpUiState, actions: McpActions) {
         state.changeError?.let { ErrorBox(it) }
         state.suggestions.forEach { SuggestionCard(it, actions) }
         when {
-            state.loading && state.servers.isEmpty() -> LoadingSpinner()
+            state.loading && state.rows.isEmpty() -> LoadingSpinner()
             state.error != null -> ErrorBox(state.error)
-            state.servers.isEmpty() -> Hint(stringResource(R.string.mcp_empty))
+            state.rows.isEmpty() -> Hint(stringResource(R.string.mcp_empty))
         }
-        CardGroup(state.servers) { server, shape, _ -> ServerCard(server, shape) { actions.onOpen(server.id) } }
+        CardGroup(state.rows) { row, shape, _ -> ServerCard(row, shape) { actions.onOpen(row.server.id) } }
     }
 }
 
@@ -196,16 +196,19 @@ private fun SuggestionCard(suggestion: McpSuggestion, actions: McpActions) {
 }
 
 @Composable
-private fun ServerCard(server: McpServerStatus, shape: Shape, onClick: () -> Unit) {
+private fun ServerCard(row: McpRow, shape: Shape, onClick: () -> Unit) {
+    val server = row.server
     SegmentCard(shape, onClick = onClick) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Space.Medium)) {
                 Text(server.label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                StateChip(server.state)
+                StateChip(server.state, pending = row.pending)
             }
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyMedium)
-            Text(toolCountLine(server), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            server.failure()?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
+            if (!row.pending || server.tools.isNotEmpty()) {
+                Text(toolCountLine(server), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            server.failure()?.takeIf { !row.pending }?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
@@ -232,8 +235,8 @@ private fun toolCountLine(server: McpServerStatus): String {
 }
 
 @Composable
-fun StateChip(state: McpServerState, modifier: Modifier = Modifier) {
-    val (container, content) = when (state.tone()) {
+fun StateChip(state: McpServerState, modifier: Modifier = Modifier, pending: Boolean = false) {
+    val (container, content) = when (if (pending) ChipTone.Progress else state.tone()) {
         ChipTone.Progress -> MaterialTheme.colorScheme.tertiaryContainer to MaterialTheme.colorScheme.onTertiaryContainer
         ChipTone.Quiet -> MaterialTheme.colorScheme.secondaryContainer to MaterialTheme.colorScheme.onSecondaryContainer
         ChipTone.Active -> MaterialTheme.colorScheme.primary to MaterialTheme.colorScheme.onPrimary
@@ -241,7 +244,7 @@ fun StateChip(state: McpServerState, modifier: Modifier = Modifier) {
         ChipTone.Off -> MaterialTheme.colorScheme.surfaceContainerHighest to MaterialTheme.colorScheme.onSurfaceVariant
     }
     Surface(modifier, shape = CircleShape, color = container, contentColor = content) {
-        Text(stateLabel(state), Modifier.padding(horizontal = Space.Medium, vertical = Space.Small), style = MaterialTheme.typography.labelMedium)
+        Text(if (pending) stringResource(R.string.mcp_state_pending) else stateLabel(state), Modifier.padding(horizontal = Space.Medium, vertical = Space.Small), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -268,7 +271,7 @@ private fun ServerDetail(server: McpServerStatus, state: McpUiState, actions: Mc
         footer = { SecondaryButton(stringResource(R.string.mcp_edit), { actions.onEdit(server.id) }, Modifier.fillMaxWidth()) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-            StateChip(server.state)
+            StateChip(server.state, pending = state.isPending(server.id))
             if (server.description.isNotBlank()) Text(server.description, style = MaterialTheme.typography.bodyLarge)
             if (server.source.isNotBlank()) SourceLine(server.source)
             if (server.allowHosts.isNotEmpty()) Kicker(stringResource(R.string.mcp_reaches, server.allowHosts.joinToString(", ")))
@@ -276,6 +279,7 @@ private fun ServerDetail(server: McpServerStatus, state: McpUiState, actions: Mc
         }
         server.failure()?.let { ErrorBox(stringResource(R.string.mcp_state_failed), it) }
         state.changeError?.let { ErrorBox(it) }
+        if (server.tools.isNotEmpty()) Hint(stringResource(R.string.mcp_modes_explain))
         val groups = server.toolGroups()
         if (server.tools.isEmpty()) Hint(stringResource(R.string.mcp_no_tools))
         Column(verticalArrangement = Arrangement.spacedBy(Space.Large)) {
@@ -328,7 +332,7 @@ private fun ToolRow(serverId: String, tool: McpToolStatus, shape: Shape, actions
     }
 }
 
-private val MODES = listOf(McpToolMode.AUTO, McpToolMode.ASK, McpToolMode.OFF)
+private val MODES = MODE_ORDER
 
 @Composable
 private fun ModeControl(tool: McpToolStatus, name: String, onChoose: (McpToolMode) -> Unit) {
@@ -347,25 +351,24 @@ private fun ModeControl(tool: McpToolStatus, name: String, onChoose: (McpToolMod
 @Composable
 private fun modeLabel(mode: McpToolMode): String = stringResource(
     when (mode) {
-        McpToolMode.AUTO -> R.string.mcp_mode_auto
         McpToolMode.ASK -> R.string.mcp_mode_ask
-        McpToolMode.OFF -> R.string.mcp_mode_off
+        McpToolMode.AUTO -> R.string.mcp_mode_auto
+        McpToolMode.ALWAYS_OK -> R.string.mcp_mode_always_ok
     },
 )
 
 @Composable
-private fun ConfirmAuto(server: McpServerStatus, tool: McpToolStatus, actions: McpActions) {
+fun ConfirmAlwaysOk(server: McpServerStatus, tool: McpToolStatus, actions: McpActions) {
     AlertDialog(
         onDismissRequest = actions.onCancelConfirm,
-        icon = if (tool.destructive) {
+        icon = if (tool.changesThings) {
             { Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
         } else {
             null
         },
         title = { Text(stringResource(R.string.mcp_confirm_title, toolDisplayName(tool))) },
         text = {
-            val text = stringResource(R.string.mcp_confirm_text, server.label)
-            Text(if (tool.destructive) text + " " + stringResource(R.string.mcp_confirm_destructive) else text)
+            Text(stringResource(if (tool.changesThings) R.string.mcp_confirm_changes else R.string.mcp_confirm_text, server.label))
         },
         confirmButton = { TextButton(onClick = actions.onConfirm) { Text(stringResource(R.string.mcp_confirm_yes)) } },
         dismissButton = { TextButton(onClick = actions.onCancelConfirm) { Text(stringResource(R.string.mcp_confirm_no)) } },

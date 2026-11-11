@@ -125,6 +125,9 @@ interface ConnectorsRepository {
 class DefaultConnectorsRepository(
     private val api: ClarityApi,
     private val sealer: ConfigSealer,
+    /** Where a saved `mcp-host` server is noted as pending until the backend lists it. */
+    private val pending: PendingMcpServers = PendingMcpServers(),
+    private val clock: AppClock = SystemAppClock(),
 ) : ConnectorsRepository {
     override suspend fun list() = api.connectors()
 
@@ -142,9 +145,13 @@ class DefaultConnectorsRepository(
         } catch (_: SealingException) {
             return SaveConnectorOutcome.NoSealingKey
         }
-        val version = storedConfig(connector.id)?.version ?: 0L
+        val stored = storedConfig(connector.id)
+        val version = stored?.version ?: 0L
         val put = api.putConnectorConfig(connector.id, ConnectorConfig(version + 1, json))
         if (put is ApiResult.Failure) return SaveConnectorOutcome.Failed(put.error)
+        if (connector.id.value == MCP_HOST_KIND || manifest.kind == MCP_HOST_KIND) {
+            pending.add(changedServers(stored?.values, json, clock.now()))
+        }
         val grants = api.putGrants(connector.id, GrantsUpdate(manifest.produces.associateWith { GrantState.GRANTED }))
         if (grants is ApiResult.Failure) return SaveConnectorOutcome.Failed(grants.error)
         return SaveConnectorOutcome.Saved

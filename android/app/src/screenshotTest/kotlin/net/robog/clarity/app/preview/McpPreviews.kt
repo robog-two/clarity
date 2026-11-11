@@ -23,6 +23,9 @@ import net.robog.clarity.app.ui.mcp.MCP_HOST
 import net.robog.clarity.app.ui.mcp.McpActions
 import net.robog.clarity.app.ui.mcp.McpContent
 import net.robog.clarity.app.ui.mcp.McpUiState
+import net.robog.clarity.app.ui.mcp.ToolChoice
+import net.robog.clarity.app.data.PendingServer
+import kotlin.time.Instant
 import net.robog.clarity.app.ui.onboarding.ConnectorSetupContent
 import net.robog.clarity.app.ui.onboarding.ConnectorSetupState
 import net.robog.clarity.app.ui.onboarding.ItemEdit
@@ -49,18 +52,18 @@ private fun Frame(content: @Composable () -> Unit) = ClarityTheme {
     Surface(color = MaterialTheme.colorScheme.surface) { content() }
 }
 
-private fun tool(name: String, description: String, readOnly: Boolean, destructive: Boolean = false, mode: McpToolMode? = null) = McpToolStatus(
-    name = name, description = description, readOnly = readOnly, destructive = destructive,
-    mode = mode ?: if (readOnly) McpToolMode.AUTO else McpToolMode.ASK, overridden = mode != null,
+private fun tool(name: String, description: String, readOnly: Boolean, destructive: Boolean = false, mode: McpToolMode? = null, changesThings: Boolean = false) = McpToolStatus(
+    name = name, description = description, readOnly = readOnly, destructive = destructive, changesThings = changesThings,
+    mode = mode ?: McpToolMode.AUTO, overridden = mode != null,
 )
 
 private val githubTools = listOf(
     tool("list_issues", "List issues in a repository.", readOnly = true),
     tool("get_issue", "Get the details of one issue.", readOnly = true),
-    tool("search_code", "Search code across your repositories.", readOnly = true, mode = McpToolMode.OFF),
-    tool("create_issue", "Open a new issue in a repository.", readOnly = false),
-    tool("add_issue_comment", "Comment on an issue or pull request.", readOnly = false, mode = McpToolMode.AUTO),
-    tool("merge_pull_request", "Merge a pull request.", readOnly = false, destructive = true),
+    tool("search_code", "Search code across your repositories.", readOnly = true, mode = McpToolMode.ALWAYS_OK),
+    tool("create_issue", "Open a new issue in a repository.", readOnly = false, changesThings = true),
+    tool("add_issue_comment", "Comment on an issue or pull request.", readOnly = false, mode = McpToolMode.ASK, changesThings = true),
+    tool("merge_pull_request", "Merge a pull request.", readOnly = false, destructive = true, mode = McpToolMode.ALWAYS_OK, changesThings = true),
 )
 
 private val github = McpServerStatus(
@@ -114,6 +117,40 @@ fun McpSuggestionCard() = Frame {
 @PreviewTest @TallScreen @Composable
 fun McpServerDetail() = Frame {
     McpContent(McpUiState(loading = false, servers = listOf(github, canvas), selected = github.id), McpActions())
+}
+
+/** A server just saved from the editor that the backend does not list yet, next to one that is listed. */
+@PreviewTest @Screen @Composable
+fun McpServersPending() = Frame {
+    McpContent(
+        McpUiState(
+            loading = false,
+            servers = listOf(github),
+            pending = listOf(PendingServer("sb4n7x2k9m1c", "Example search", isNew = true, savedAt = Instant.parse("2026-10-30T08:12:00Z"))),
+        ),
+        McpActions(),
+    )
+}
+
+/** Always OK on a tool the server does not mark read-only, and on one that changes things. */
+@PreviewTest @Screen @Composable
+fun McpAlwaysOkConfirm() = Frame {
+    val quiet = tool("run_report", "Run a saved report.", readOnly = false)
+    val server = github.copy(tools = listOf(quiet))
+    McpContent(
+        McpUiState(loading = false, servers = listOf(server), selected = server.id, confirming = ToolChoice(server.id, quiet.name, McpToolMode.ALWAYS_OK)),
+        McpActions(),
+    )
+}
+
+@PreviewTest @Screen @Composable
+fun McpAlwaysOkConfirmDestructive() = Frame {
+    val merge = githubTools.last().copy(mode = McpToolMode.AUTO, overridden = false)
+    val server = github.copy(tools = listOf(merge))
+    McpContent(
+        McpUiState(loading = false, servers = listOf(server), selected = server.id, confirming = ToolChoice(server.id, merge.name, McpToolMode.ALWAYS_OK)),
+        McpActions(),
+    )
 }
 
 @PreviewTest @Screen @Composable
