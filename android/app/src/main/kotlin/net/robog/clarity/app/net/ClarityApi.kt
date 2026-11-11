@@ -206,7 +206,7 @@ interface ReportsApi {
 
 /** Third-party MCP servers run by the `mcp-host` connector ([McpPaths]). Adding and editing servers goes through its connector config. */
 interface McpApi {
-    suspend fun mcpServers(): ApiResult<McpServerList>
+    suspend fun mcpServers(refresh: Boolean = false): ApiResult<McpServerList>
 
     /** How Clarity may use one tool; a null mode returns it to the default. */
     suspend fun putMcpToolPolicy(serverId: String, tool: String, update: McpToolPolicyUpdate): ApiResult<Unit>
@@ -489,7 +489,8 @@ class KtorClarityApi(
 
     // --- MCP servers ---
 
-    override suspend fun mcpServers(): ApiResult<McpServerList> = get(McpPaths.SERVERS)
+    override suspend fun mcpServers(refresh: Boolean): ApiResult<McpServerList> =
+        get(if (refresh) "${McpPaths.SERVERS}?refresh=true" else McpPaths.SERVERS)
 
     override suspend fun putMcpToolPolicy(serverId: String, tool: String, update: McpToolPolicyUpdate): ApiResult<Unit> =
         putUnit(McpPaths.toolPolicy(serverId.encodeURLPathPart(), tool.encodeURLPathPart()), update)

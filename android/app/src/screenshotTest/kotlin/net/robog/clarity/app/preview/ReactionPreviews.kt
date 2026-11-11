@@ -63,21 +63,21 @@ private fun Thread(items: List<FeedItem>, dark: Boolean) = ClarityTheme(darkThem
 }
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ReactionsLight() = Thread(reactedThread, dark = false)
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ReactionsDark() = Thread(reactedThread, dark = true)
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ReactionLongMessageLight() = Thread(longThread, dark = false)
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ReactionLongMessageDark() = Thread(longThread, dark = true)

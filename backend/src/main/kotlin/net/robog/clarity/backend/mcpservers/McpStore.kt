@@ -160,8 +160,10 @@ class ExposedMcpStore(private val database: Database) : McpStore {
     }
 }
 
-/** Pure: a mode's wire spelling (`auto`, `ask`, `off`). */
+/** Pure: a mode's wire spelling (`ask`, `auto`, `always_ok`). */
 fun wireOf(mode: McpToolMode): String = mode.name.lowercase()
 
-/** Pure: a mode from its wire spelling, or null. */
-fun modeOf(wire: String): McpToolMode? = McpToolMode.entries.firstOrNull { it.name.equals(wire, ignoreCase = true) }
+/** Pure: a mode from its wire spelling (the retired `off` reads as `ask`), or null. */
+fun modeOf(wire: String): McpToolMode? =
+    if (wire.equals("off", ignoreCase = true)) McpToolMode.ASK
+    else McpToolMode.entries.firstOrNull { it.name.equals(wire, ignoreCase = true) }

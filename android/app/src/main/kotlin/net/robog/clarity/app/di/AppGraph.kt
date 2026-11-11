@@ -234,8 +234,15 @@ interface AppGraph : ViewModelGraph {
 
     @Provides fun configSealer(): ConfigSealer = TinkConfigSealer()
 
-    @Provides fun connectorsRepository(api: ClarityApi, sealer: ConfigSealer): ConnectorsRepository =
-        DefaultConnectorsRepository(api, sealer)
+    @Provides @SingleIn(AppScope::class)
+    fun pendingMcpServers(): net.robog.clarity.app.data.PendingMcpServers = net.robog.clarity.app.data.PendingMcpServers()
+
+    @Provides fun connectorsRepository(
+        api: ClarityApi,
+        sealer: ConfigSealer,
+        pending: net.robog.clarity.app.data.PendingMcpServers,
+        clock: AppClock,
+    ): ConnectorsRepository = DefaultConnectorsRepository(api, sealer, pending, clock)
 
     @Provides fun phonePermissions(context: Context): PhonePermissions = AndroidPhonePermissions(context)
 

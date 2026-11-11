@@ -1,5 +1,7 @@
 package net.robog.clarity.app.ui.mcp
 
+import net.robog.clarity.app.data.MCP_HOST_KIND
+import net.robog.clarity.app.data.PendingServer
 import net.robog.clarity.shared.connector.ConnectorSummary
 import net.robog.clarity.shared.mcp.McpServerState
 import net.robog.clarity.shared.mcp.McpServerStatus
@@ -7,7 +9,7 @@ import net.robog.clarity.shared.mcp.McpToolMode
 import net.robog.clarity.shared.mcp.McpToolStatus
 
 /** The connector that runs third-party MCP servers; its config holds one item per server. */
-const val MCP_HOST = "mcp-host"
+const val MCP_HOST = MCP_HOST_KIND
 
 /** A tool's name as a person reads it: its title, or the id with underscores as spaces ("create_issue" becomes "Create issue"). */
 fun toolDisplayName(tool: McpToolStatus): String =
@@ -36,8 +38,12 @@ data class ToolCounts(val total: Int, val reads: Int) {
 
 fun McpServerStatus.toolCounts(): ToolCounts = ToolCounts(tools.size, tools.count { it.readOnly })
 
-/** What I do with [tool] when the person has not chosen: only read-only tools run without asking. */
-fun defaultMode(tool: McpToolStatus): McpToolMode = if (tool.readOnly) McpToolMode.AUTO else McpToolMode.ASK
+/** What it does with a tool the person has not chosen a mode for: Auto, the safety check decides. */
+@Suppress("UNUSED_PARAMETER")
+fun defaultMode(tool: McpToolStatus): McpToolMode = McpToolMode.AUTO
+
+/** The modes in the order of the control. */
+val MODE_ORDER = listOf(McpToolMode.ASK, McpToolMode.AUTO, McpToolMode.ALWAYS_OK)
 
 /** A server's tools in the two groups of its detail screen, each sorted by name. */
 data class ToolGroups(val reads: List<McpToolStatus>, val changes: List<McpToolStatus>)
@@ -47,12 +53,20 @@ fun McpServerStatus.toolGroups(): ToolGroups {
     return ToolGroups(reads, changes)
 }
 
+/** A server as a row of the list: the backend's view, and whether it is saved but not shown by the backend yet. */
+data class McpRow(val server: McpServerStatus, val pending: Boolean)
+
 /**
- * Choosing Auto for a tool that changes things lets me use it without asking, so it is
- * confirmed first. Read-only tools and the other modes are set at once.
+ * The list the person sees: the backend's [servers] (a pending one marked), then the [pending] ones
+ * it does not list yet as rows under their saved label, so a save never leaves the list blank.
  */
-fun needsConfirmation(tool: McpToolStatus, mode: McpToolMode): Boolean =
-    mode == McpToolMode.AUTO && !tool.readOnly && tool.mode != McpToolMode.AUTO
+fun mergeRows(servers: List<McpServerStatus>, pending: List<PendingServer>): List<McpRow> {
+    val ids = pending.map { it.id }.toSet()
+    val listed = servers.map { McpRow(it, it.id in ids) }
+    val missing = pending.filter { p -> servers.none { it.id == p.id } }
+        .map { McpRow(McpServerStatus(id = it.id, label = it.label, state = McpServerState.INSTALLING), pending = true) }
+    return listed + missing
+}
 
 /** [tool] after the person sets [mode], or resets it with null, as the server will report it. */
 fun McpToolStatus.withMode(mode: McpToolMode?): McpToolStatus =

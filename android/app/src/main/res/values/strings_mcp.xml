@@ -5,7 +5,7 @@
     <string name="mcp_row_summary">Tools from GitHub, Canvas and more</string>
     <string name="mcp_row_not_running">Not running on your server</string>
     <string name="mcp_back_settings">settings</string>
-    <string name="mcp_intro">Tools like GitHub or Canvas, run on your server. Anything that changes things asks first.</string>
+    <string name="mcp_intro">Tools like GitHub or Canvas run on your server. By default the safety check decides what runs.</string>
     <string name="mcp_add">add server</string>
     <string name="mcp_retry">try again</string>
     <string name="mcp_empty">No tool servers yet.</string>
@@ -22,6 +22,7 @@
     <string name="mcp_state_running">Running</string>
     <string name="mcp_state_failed">Failed</string>
     <string name="mcp_state_disabled">Off</string>
+    <string name="mcp_state_pending">Pending</string>
 
     <!-- Tool counts: "12 tools: 9 read, 3 can change things" -->
     <string name="mcp_tools_none">Tools not listed yet</string>
@@ -43,11 +44,12 @@
     <string name="mcp_group_reads">Reads</string>
     <string name="mcp_group_changes">Changes things</string>
     <string name="mcp_reads_hint">These only look things up.</string>
-    <string name="mcp_changes_hint">On Ask, each use needs your OK.</string>
+    <string name="mcp_changes_hint">On Auto the safety check decides each use.</string>
+    <string name="mcp_modes_explain">Ask waits for your OK. Auto lets the safety check decide. Always OK runs without asking.</string>
     <string name="mcp_no_tools">Tools appear once it is installed.</string>
     <string name="mcp_mode_auto">Auto</string>
     <string name="mcp_mode_ask">Ask</string>
-    <string name="mcp_mode_off">Off</string>
+    <string name="mcp_mode_always_ok">Always OK</string>
     <string name="mcp_default">default</string>
     <string name="mcp_default_is">default is %1$s</string>
     <string name="mcp_reset">Reset</string>
@@ -55,10 +57,4 @@
     <string name="mcp_how_i_use">Mode for %1$s</string>
     <string name="mcp_destructive">Can delete or overwrite things</string>
 
-    <!-- Confirming Auto for a tool that changes things -->
-    <string name="mcp_confirm_title">Allow %1$s without asking?</string>
-    <string name="mcp_confirm_text">It changes things in %1$s. On Auto it won’t ask first.</string>
-    <string name="mcp_confirm_destructive">It can also delete or overwrite things.</string>
-    <string name="mcp_confirm_yes">Allow</string>
-    <string name="mcp_confirm_no">Cancel</string>
 </resources>

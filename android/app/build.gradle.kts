@@ -5,7 +5,6 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.metro)
     alias(libs.plugins.ksp)
-    alias(libs.plugins.compose.screenshot)
 }
 
 android {
@@ -45,8 +44,6 @@ android {
         }
     }
 
-    // Screenshot previews (app/src/screenshotTest); also needs the flag in gradle.properties.
-    experimentalProperties["android.experimental.enableScreenshotTest"] = true
 
     buildFeatures {
         compose = true
@@ -60,6 +57,18 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Compose preview rendering (the screenshot suite) needs the compiled resources.
+        unitTests.isIncludeAndroidResources = true
+        // Screenshot previews (app/src/screenshotTest) as an AGP test suite; needs the flags in gradle.properties.
+        // testDebugScreenshotTestDefaultTestSuite compares; updateDebugScreenshotTestDefaultTestSuite (only with --tests for approved screens) rewrites references.
+        screenshotTests.create("screenshotTest") {
+            engineVersion = libs.versions.compose.screenshot.get()
+            targetVariants.add("debug")
+            dependencies {
+                implementation(libs.compose.ui.tooling)
+                implementation(libs.compose.screenshot.validation.api)
+            }
+        }
     }
 
     packaging {
@@ -125,12 +134,15 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.ktor3)
 
-    screenshotTestImplementation(libs.compose.screenshot.validation.api)
-    screenshotTestImplementation(libs.compose.ui.tooling)
 
     testImplementation(libs.junit4)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)
     testImplementation(libs.okhttp.mockwebserver)
+}
+
+// The screenshot suite renders every preview in one JVM at 1x density (PreviewSizes.kt); 1 GB holds all of them.
+tasks.withType<Test>().configureEach {
+    if (name.contains("ScreenshotTest")) maxHeapSize = "1g"
 }

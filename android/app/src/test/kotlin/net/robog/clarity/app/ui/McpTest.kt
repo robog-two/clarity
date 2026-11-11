@@ -21,16 +21,24 @@ import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.ConnectorsRepository
 import net.robog.clarity.app.data.McpRepository
+import net.robog.clarity.app.data.MCP_PENDING_WINDOW
+import net.robog.clarity.app.data.PendingMcpServers
+import net.robog.clarity.app.data.PendingServer
+import net.robog.clarity.app.data.changedServers
+import net.robog.clarity.app.data.resolvedBy
+import net.robog.clarity.app.ui.mcp.MODE_ORDER
+import net.robog.clarity.app.ui.mcp.mergeRows
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Instant
 import net.robog.clarity.app.data.SaveConnectorOutcome
 import net.robog.clarity.app.testutil.MCP_HOST_SCHEMA
 import net.robog.clarity.app.testutil.withMain
 import net.robog.clarity.app.ui.mcp.ChipTone
 import net.robog.clarity.app.ui.mcp.MCP_HOST
 import net.robog.clarity.app.ui.mcp.McpViewModel
-import net.robog.clarity.app.ui.mcp.ToolChoice
 import net.robog.clarity.app.ui.mcp.defaultMode
 import net.robog.clarity.app.ui.mcp.isMcpHost
-import net.robog.clarity.app.ui.mcp.needsConfirmation
 import net.robog.clarity.app.ui.mcp.tone
 import net.robog.clarity.app.ui.mcp.toolCounts
 import net.robog.clarity.app.ui.mcp.toolGroups
@@ -67,7 +75,7 @@ private fun hostSummary(running: Boolean = true) = ConnectorSummary(
 private fun tool(name: String, readOnly: Boolean, destructive: Boolean = !readOnly, mode: McpToolMode? = null, title: String? = null) =
     McpToolStatus(
         name = name, title = title, description = "$name does its thing", readOnly = readOnly, destructive = destructive,
-        mode = mode ?: if (readOnly) McpToolMode.AUTO else McpToolMode.ASK, overridden = mode != null,
+        mode = mode ?: McpToolMode.AUTO, overridden = mode != null,
     )
 
 private val github = McpServerStatus(
@@ -99,7 +107,11 @@ private class FakeMcp(var servers: List<McpServerStatus> = listOf(github, canvas
     val puts = mutableListOf<Triple<String, String, McpToolMode?>>()
     val dismissed = mutableListOf<String>()
     var suggestions = listOf(McpSuggestion("s1", "Asana", "Your team plans in Asana; Clarity could see what is due.", preset = "Asana", createdAt = "2026-10-29T08:00:00Z"))
-    override suspend fun servers() = ApiResult.Success(servers)
+    val fetches = mutableListOf<Boolean>()
+    override suspend fun servers(fresh: Boolean): ApiResult<List<McpServerStatus>> {
+        fetches += fresh
+        return ApiResult.Success(servers)
+    }
     override suspend fun setToolMode(serverId: String, tool: String, mode: McpToolMode?): ApiResult<Unit> {
         puts += Triple(serverId, tool, mode)
         refuse?.let { return ApiResult.Failure(it) }
@@ -286,25 +298,95 @@ class McpPresentationTest {
         assertEquals(listOf("create_issue", "delete_branch"), groups.changes.map { it.name })
     }
 
-    @Test fun onlyReadOnlyToolsDefaultToAuto() {
+    @Test fun everyToolDefaultsToAuto() {
         assertEquals(McpToolMode.AUTO, defaultMode(tool("list_issues", readOnly = true)))
-        assertEquals(McpToolMode.ASK, defaultMode(tool("create_issue", readOnly = false)))
+        assertEquals(McpToolMode.AUTO, defaultMode(tool("create_issue", readOnly = false)))
     }
 
-    @Test fun autoForAToolThatChangesThingsIsConfirmed() {
-        assertTrue(needsConfirmation(tool("create_issue", readOnly = false), McpToolMode.AUTO))
-        assertFalse(needsConfirmation(tool("create_issue", readOnly = false), McpToolMode.OFF))
-        assertFalse(needsConfirmation(tool("list_issues", readOnly = true, mode = McpToolMode.OFF), McpToolMode.AUTO))
-        assertFalse(needsConfirmation(tool("create_issue", readOnly = false, mode = McpToolMode.AUTO), McpToolMode.AUTO), "already on Auto")
+    @Test fun theControlIsAskAutoAlwaysOkInThatOrder() {
+        assertEquals(listOf(McpToolMode.ASK, McpToolMode.AUTO, McpToolMode.ALWAYS_OK), MODE_ORDER)
+        assertEquals(McpToolMode.entries.toSet(), MODE_ORDER.toSet(), "no mode is left out of the control")
+    }
+
+    @Test fun alwaysOkIsOfferedForEveryToolIncludingDestructiveOnes() {
+        // there is nothing in a tool's status that rules a mode out: the control shows all three for every tool
+        val destructive = tool("delete_branch", readOnly = false, destructive = true)
+        MODE_ORDER.forEach { mode -> assertEquals(mode, destructive.withMode(mode).mode) }
+    }
+
+    @Test fun anUnknownModeFromANewerServerReadsAsAutoAndTheListStillLoads() {
+        val list = net.robog.clarity.shared.ClarityJson.decodeFromString<net.robog.clarity.shared.mcp.McpServerList>(
+            """{"servers":[{"id":"a","label":"A","state":"idle","tools":[{"name":"t","mode":"sometimes"},{"name":"u","mode":"always_ok"}]}]}""",
+        )
+        assertEquals(listOf(McpToolMode.AUTO, McpToolMode.ALWAYS_OK), list.servers.single().tools.map { it.mode })
     }
 
     @Test fun resettingReturnsToTheDefault() {
-        val set = tool("create_issue", readOnly = false).withMode(McpToolMode.OFF)
-        assertEquals(McpToolMode.OFF, set.mode)
+        val set = tool("create_issue", readOnly = false).withMode(McpToolMode.ALWAYS_OK)
+        assertEquals(McpToolMode.ALWAYS_OK, set.mode)
         assertTrue(set.overridden)
         val reset = set.withMode(null)
-        assertEquals(McpToolMode.ASK, reset.mode)
+        assertEquals(McpToolMode.AUTO, reset.mode)
         assertFalse(reset.overridden)
+    }
+
+    private val t0 = Instant.parse("2026-11-01T10:00:00Z")
+
+    @Test fun aSavedServerNotListedYetIsAPendingRowUnderItsLabel() {
+        val rows = mergeRows(listOf(github), listOf(PendingServer("sb1", "Sublime", isNew = true, savedAt = t0)))
+        assertEquals(listOf("GitHub", "Sublime"), rows.map { it.server.label })
+        assertEquals(listOf(false, true), rows.map { it.pending })
+        assertTrue(mergeRows(listOf(github), emptyList()).none { it.pending })
+    }
+
+    @Test fun anEditedServerStaysListedAndShowsPending() {
+        val rows = mergeRows(listOf(github, canvas), listOf(PendingServer(github.id, "GitHub", isNew = false, savedAt = t0)))
+        assertEquals(listOf(true, false), rows.map { it.pending })
+    }
+
+    @Test fun onlyNewOrChangedServersBecomePending() {
+        val stored = obj("""{"servers":[{"id":"a","label":"One","secret":{"v":1}},{"id":"b","label":"Two"}]}""")
+        val saved = obj("""{"servers":[{"id":"a","label":"One","secret":{"v":1}},{"id":"b","label":"Two renamed"},{"id":"c","label":"Three"},{"id":"d"}]}""")
+        val pending = changedServers(stored, saved, t0)
+        assertEquals(listOf("b", "c", "d"), pending.map { it.id })
+        assertEquals(listOf("Two renamed", "Three", "d"), pending.map { it.label })
+        assertEquals(listOf(false, true, true), pending.map { it.isNew })
+        assertEquals(listOf("x"), changedServers(null, obj("""{"servers":[{"id":"x","label":"x"}]}"""), t0).map { it.id })
+        assertTrue(changedServers(stored, stored, t0).isEmpty())
+        // a rename does not restart the server; a new token does
+        assertEquals(listOf(false, true, true), pending.map { it.relists })
+        val retoken = obj("""{"servers":[{"id":"a","label":"One","secret":{"v":2}},{"id":"b","label":"Two"}]}""")
+        assertEquals(listOf(true), changedServers(stored, retoken, t0).map { it.relists })
+    }
+
+    @Test fun aRenameResolvesAsSoonAsTheNewLabelIsListed() {
+        val p = PendingServer("gh", "GitHub", isNew = false, savedAt = t0, relists = false)
+        val soon = t0 + 2.seconds
+        assertTrue(p.resolvedBy(github.copy(id = "gh", listedAt = "2026-11-01T09:59:00Z"), soon), "an old listing with the new label is enough")
+        assertFalse(p.resolvedBy(github.copy(id = "gh", label = "Old name", listedAt = "2026-11-01T09:59:00Z"), soon))
+    }
+
+    @Test fun aPendingServerResolvesWhenListedWithItsToolsOrFailed() {
+        val p = PendingServer("gh", "GitHub", isNew = true, savedAt = t0)
+        val soon = t0 + 5.seconds
+        assertFalse(p.resolvedBy(null, soon))
+        assertFalse(p.resolvedBy(github.copy(id = "gh", state = McpServerState.INSTALLING), soon))
+        assertFalse(p.resolvedBy(github.copy(id = "gh", tools = emptyList()), soon), "listed but no tools yet")
+        assertTrue(p.resolvedBy(github.copy(id = "gh"), soon))
+        assertTrue(p.resolvedBy(canvas.copy(id = "gh", label = "GitHub"), soon), "a failure shows its error instead")
+        assertFalse(p.resolvedBy(github.copy(id = "gh", label = "Old name"), soon), "the saved label is not shown yet")
+    }
+
+    @Test fun anEditResolvesOnceListedAfterTheSaveOrWhenTheWindowIsOver() {
+        val p = PendingServer("gh", "GitHub", isNew = false, savedAt = t0)
+        val soon = t0 + 5.seconds
+        assertFalse(p.resolvedBy(github.copy(id = "gh", listedAt = "2026-11-01T09:59:00Z"), soon), "listed before the save")
+        assertTrue(p.resolvedBy(github.copy(id = "gh", listedAt = "2026-11-01T10:00:03Z"), soon))
+        assertTrue(p.resolvedBy(github.copy(id = "gh", listedAt = "2026-11-01T09:59:00Z"), t0 + MCP_PENDING_WINDOW))
+        // never a Pending that does not end for a server that is listed; one that is not listed stays
+        assertFalse(p.resolvedBy(null, t0 + 10.minutes))
+        assertFalse(PendingServer("sb", "Sublime", isNew = true, savedAt = t0).resolvedBy(null, t0 + 10.minutes))
+        assertTrue(PendingServer("gh", "GitHub", isNew = true, savedAt = t0).resolvedBy(github.copy(id = "gh", tools = emptyList()), t0 + MCP_PENDING_WINDOW), "listed with no tools after the window")
     }
 
     @Test fun theHostIsFoundByIdOrKind() {
@@ -315,8 +397,11 @@ class McpPresentationTest {
 }
 
 class McpViewModelTest {
+    private val clock = net.robog.clarity.app.testutil.FixedClock(Instant.parse("2026-11-01T10:00:00Z"))
+    private val pending = PendingMcpServers()
+
     private fun vm(mcp: FakeMcp = FakeMcp(), host: ConnectorSummary? = hostSummary()) =
-        McpViewModel(mcp, StoredConnectors(listOfNotNull(host))).also { it.refresh() }
+        McpViewModel(mcp, StoredConnectors(listOfNotNull(host)), pending, clock).also { it.refresh() }
 
     @Test fun loadsServersAndSuggestions() = withMain {
         val s = vm().state.value
@@ -335,37 +420,82 @@ class McpViewModelTest {
         val mcp = FakeMcp()
         val vm = vm(mcp)
         vm.open(github.id)
-        vm.chooseMode(github.id, "list_issues", McpToolMode.OFF)
-        assertEquals(Triple(github.id, "list_issues", McpToolMode.OFF), mcp.puts.single())
+        vm.chooseMode(github.id, "list_issues", McpToolMode.ASK)
+        assertEquals(Triple(github.id, "list_issues", McpToolMode.ASK), mcp.puts.single())
         val t = vm.state.value.selectedServer!!.tools.first { it.name == "list_issues" }
-        assertEquals(McpToolMode.OFF, t.mode)
+        assertEquals(McpToolMode.ASK, t.mode)
         assertTrue(t.overridden)
     }
 
-    @Test fun autoForAToolThatChangesThingsWaitsForConfirmation() = withMain {
+    @Test fun everyModeIsSetAtOnceWithNoConfirm() = withMain {
         val mcp = FakeMcp()
         val vm = vm(mcp)
-        vm.chooseMode(github.id, "create_issue", McpToolMode.AUTO)
-        assertEquals(ToolChoice(github.id, "create_issue", McpToolMode.AUTO), vm.state.value.confirming)
-        assertTrue(mcp.puts.isEmpty(), "nothing is sent before the OK")
+        vm.chooseMode(github.id, "create_issue", McpToolMode.ASK)
+        vm.chooseMode(github.id, "create_issue", McpToolMode.ALWAYS_OK)
+        vm.chooseMode(github.id, "list_issues", McpToolMode.ALWAYS_OK)
+        assertEquals(McpToolMode.ALWAYS_OK, vm.state.value.servers.first().tools.first { it.name == "create_issue" }.mode)
+        assertEquals<List<Triple<String, String, McpToolMode?>>>(
+            listOf(
+                Triple(github.id, "create_issue", McpToolMode.ASK),
+                Triple(github.id, "create_issue", McpToolMode.ALWAYS_OK),
+                Triple(github.id, "list_issues", McpToolMode.ALWAYS_OK),
+            ),
+            mcp.puts,
+        )
+    }
 
-        vm.cancelConfirm()
-        assertNull(vm.state.value.confirming)
-        assertTrue(mcp.puts.isEmpty())
+    @Test fun enteringTheScreenAsksTheBackendToListNow() = withMain {
+        val mcp = FakeMcp()
+        vm(mcp)
+        assertEquals(listOf(true), mcp.fetches)
+    }
 
-        vm.chooseMode(github.id, "create_issue", McpToolMode.AUTO)
-        vm.confirm()
-        assertEquals(Triple(github.id, "create_issue", McpToolMode.AUTO), mcp.puts.single())
-        assertEquals(McpToolMode.AUTO, vm.state.value.servers.first().tools.first { it.name == "create_issue" }.mode)
+    @Test fun aServerSavedFromTheEditorShowsAtOnceAsPendingThenAsItself() = withMain {
+        val mcp = FakeMcp(servers = listOf(github))
+        val vm = vm(mcp)
+        assertEquals(listOf("GitHub"), vm.state.value.rows.map { it.server.label })
+        pending.add(listOf(PendingServer("sb1", "Sublime", isNew = true, savedAt = clock.now)))
+        // no waiting for the backend: the row is there with the saved label
+        assertEquals(listOf("GitHub", "Sublime"), vm.state.value.rows.map { it.server.label })
+        assertTrue(vm.state.value.isPending("sb1"))
+        // the backend lists it with its tools: the row is the normal one
+        mcp.servers = listOf(github, github.copy(id = "sb1", label = "Sublime"))
+        vm.refresh()
+        assertFalse(vm.state.value.isPending("sb1"))
+        assertTrue(vm.state.value.rows.none { it.pending })
+        assertTrue(pending.servers.value.isEmpty())
+    }
+
+    @Test fun aSavedServerThatNeverShowsStaysPendingAfterTheFastWindow() = withMain {
+        val mcp = FakeMcp(servers = listOf(github))
+        val vm = vm(mcp)
+        pending.add(listOf(PendingServer("sb1", "Sublime", isNew = true, savedAt = clock.now)))
+        clock.now += MCP_PENDING_WINDOW + 1.seconds
+        vm.refresh()
+        assertEquals(listOf("GitHub", "Sublime"), vm.state.value.rows.map { it.server.label })
+        assertTrue(vm.state.value.isPending("sb1"), "no silent disappearance")
+        // a later listing still turns it into the normal row
+        mcp.servers = listOf(github, github.copy(id = "sb1", label = "Sublime"))
+        vm.refresh()
+        assertTrue(vm.state.value.rows.none { it.pending })
+    }
+
+    @Test fun aFailedPendingServerShowsItsError() = withMain {
+        val mcp = FakeMcp(servers = listOf(github, canvas))
+        val vm = vm(mcp)
+        pending.add(listOf(PendingServer("cv0000000001", "Canvas", isNew = true, savedAt = clock.now)))
+        vm.refresh()
+        assertFalse(vm.state.value.isPending("cv0000000001"))
+        assertEquals(McpServerState.FAILED, vm.state.value.rows.last().server.state)
     }
 
     @Test fun resetSendsNullAndShowsTheDefault() = withMain {
-        val mcp = FakeMcp(servers = listOf(github.copy(tools = listOf(tool("create_issue", readOnly = false, mode = McpToolMode.OFF)))))
+        val mcp = FakeMcp(servers = listOf(github.copy(tools = listOf(tool("create_issue", readOnly = false, mode = McpToolMode.ALWAYS_OK)))))
         val vm = vm(mcp)
         vm.reset(github.id, "create_issue")
         assertEquals(Triple(github.id, "create_issue", null), mcp.puts.single())
         val t = vm.state.value.servers.single().tools.single()
-        assertEquals(McpToolMode.ASK, t.mode)
+        assertEquals(McpToolMode.AUTO, t.mode)
         assertFalse(t.overridden)
     }
 

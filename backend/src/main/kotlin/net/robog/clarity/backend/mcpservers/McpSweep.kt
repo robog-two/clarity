@@ -45,7 +45,7 @@ fun sweepTask(servers: List<McpServer>, from: LocalDate): String {
 
 /**
  * On call days, [net.robog.clarity.backend.sessions.MCP_SWEEP_LEAD] before the call prep: one
- * cheap helper reads what is coming up in the person's servers (only their `auto` tools) and writes
+ * cheap helper reads what is coming up in the person's servers (only tools treated as reads: read-only on Auto, or Always OK) and writes
  * it to the `coming-up` scratch note. Skipped when no enabled server has a tool that runs without
  * asking. It never posts to the chat and wakes nobody; at most one per slot ([JobSlots]).
  */

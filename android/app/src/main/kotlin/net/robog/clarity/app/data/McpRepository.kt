@@ -8,7 +8,8 @@ import net.robog.clarity.shared.mcp.McpToolPolicyUpdate
 
 /** The person's MCP servers as the backend sees them, how each tool may be used, and Clarity's suggestions. */
 interface McpRepository {
-    suspend fun servers(): ApiResult<List<McpServerStatus>>
+    /** [fresh] asks the backend to list its host now instead of answering from its cache. */
+    suspend fun servers(fresh: Boolean = false): ApiResult<List<McpServerStatus>>
 
     /** Sets how [tool] of [serverId] may be used; null returns it to the default. */
     suspend fun setToolMode(serverId: String, tool: String, mode: McpToolMode?): ApiResult<Unit>
@@ -17,7 +18,7 @@ interface McpRepository {
 }
 
 class DefaultMcpRepository(private val api: McpApi) : McpRepository {
-    override suspend fun servers() = api.mcpServers().map { it.servers }
+    override suspend fun servers(fresh: Boolean) = api.mcpServers(fresh).map { it.servers }
     override suspend fun setToolMode(serverId: String, tool: String, mode: McpToolMode?) =
         api.putMcpToolPolicy(serverId, tool, McpToolPolicyUpdate(mode))
     override suspend fun suggestions() = api.mcpSuggestions().map { it.suggestions }

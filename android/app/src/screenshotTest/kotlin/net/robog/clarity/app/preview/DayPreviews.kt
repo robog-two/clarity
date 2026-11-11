@@ -154,15 +154,15 @@ private val todayFinished = todayFull.copy(
 @Composable private fun TodayFinished(dark: Boolean, open: Boolean) = Screen(dark) {
     TodayContent(todayFinished, {}, {}, {}, inactiveExpanded = open)
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedLight() = TodayFinished(false, open = false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFinishedFoldedDark() = TodayFinished(true, open = false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1250) @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
+@PreviewTest @LongPreview @Composable fun TodayFinishedFoldedLight() = TodayFinished(false, open = false)
+@PreviewTest @LongPreview @Composable fun TodayFinishedFoldedDark() = TodayFinished(true, open = false)
+@PreviewTest @LongPreview @Composable fun TodayFinishedOpenLight() = TodayFinished(false, open = true)
+@PreviewTest @LongPreview @Composable fun TodayFinishedOpenDark() = TodayFinished(true, open = true)
 
 /** A task that failed today sits in the main list, above the running work, until the next day. */
 @Composable private fun TodayFailedInList(dark: Boolean) = Screen(dark) { TodayContent(todayFinished, {}, {}, {}) }
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListLight() = TodayFailedInList(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun TodayFailedInListDark() = TodayFailedInList(true)
+@PreviewTest @LongPreview @Composable fun TodayFailedInListLight() = TodayFailedInList(false)
+@PreviewTest @LongPreview @Composable fun TodayFailedInListDark() = TodayFailedInList(true)
 
 @Composable private fun TodayEmpty(dark: Boolean) = Screen(dark) {
     TodayContent(TodayUiState(loading = false, kicker = "Monday, October 26th.", today = Today(date = LocalDate(2026, 10, 26))), {}, {}, {})
@@ -172,11 +172,11 @@ private val todayFinished = todayFull.copy(
     TodayContent(TodayUiState(loading = false, unavailable = true, error = "Can’t reach your server. Check your connection."), {}, {}, {})
 }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullLight() = TodayFull(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayFullDark() = TodayFull(true)
+@PreviewTest @PhonePreview @Composable fun TodayFullLight() = TodayFull(false)
+@PreviewTest @PhonePreview @Composable fun TodayFullDark() = TodayFull(true)
 // The Inactive fold open on the full day: a stale task and the parked items.
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenLight() = TodayFull(false, inactiveOpen = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun TodayQuietOpenDark() = TodayFull(true, inactiveOpen = true)
+@PreviewTest @LongPreview @Composable fun TodayQuietOpenLight() = TodayFull(false, inactiveOpen = true)
+@PreviewTest @LongPreview @Composable fun TodayQuietOpenDark() = TodayFull(true, inactiveOpen = true)
 // The morning call, until it reaches the hand-off. (Done, with a plan and no button: TodayFull.)
 private val todayNoPlan = todayFull.copy(
     today = todayFull.today!!.copy(plan = emptyList(), parked = emptyList(), called = false),
@@ -187,18 +187,18 @@ private val todayNoPlan = todayFull.copy(
     TodayContent(todayNoPlan.copy(today = todayNoPlan.today!!.copy(callStarted = started), callOffer = offer), {}, {}, {})
 }
 // No call yet today: "Start our morning meeting" with "Call me now".
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayNoCallYetLight() = TodayCall(false, CallOffer.START, started = false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayNoCallYetDark() = TodayCall(true, CallOffer.START, started = false)
+@PreviewTest @PhonePreview @Composable fun TodayNoCallYetLight() = TodayCall(false, CallOffer.START, started = false)
+@PreviewTest @PhonePreview @Composable fun TodayNoCallYetDark() = TodayCall(true, CallOffer.START, started = false)
 // This morning's call ended before the hand-off: "We didn't finish this morning" with "Call me again".
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallEndedEarlyLight() = TodayCall(false, CallOffer.RESTART, started = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallEndedEarlyDark() = TodayCall(true, CallOffer.RESTART, started = true)
+@PreviewTest @PhonePreview @Composable fun TodayCallEndedEarlyLight() = TodayCall(false, CallOffer.RESTART, started = true)
+@PreviewTest @PhonePreview @Composable fun TodayCallEndedEarlyDark() = TodayCall(true, CallOffer.RESTART, started = true)
 // This morning's call still going on with its screen gone: "call me again" above the day.
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainLight() = TodayCall(false, CallOffer.REJOIN, started = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun TodayCallAgainDark() = TodayCall(true, CallOffer.REJOIN, started = true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyLight() = TodayEmpty(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayEmptyDark() = TodayEmpty(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorLight() = TodayError(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun TodayErrorDark() = TodayError(true)
+@PreviewTest @PhonePreview @Composable fun TodayCallAgainLight() = TodayCall(false, CallOffer.REJOIN, started = true)
+@PreviewTest @PhonePreview @Composable fun TodayCallAgainDark() = TodayCall(true, CallOffer.REJOIN, started = true)
+@PreviewTest @HalfPreview @Composable fun TodayEmptyLight() = TodayEmpty(false)
+@PreviewTest @HalfPreview @Composable fun TodayEmptyDark() = TodayEmpty(true)
+@PreviewTest @HalfPreview @Composable fun TodayErrorLight() = TodayError(false)
+@PreviewTest @HalfPreview @Composable fun TodayErrorDark() = TodayError(true)
 
 // One "I'm doing" row per task status: running work gets a drawn solid, the rest a still shape.
 private val everyStatus = todayFull.copy(
@@ -210,8 +210,8 @@ private val everyStatus = todayFull.copy(
         } + DoingRow(task("sw", "A task that waits with nothing to review", "Chat, asked a question", AgentTask.Status.WAITING_FOR_YOU), null),
     ),
 )
-@PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
-@PreviewTest @Preview(widthDp = 412, heightDp = 1300) @Composable fun TodayEveryStatusDark() = Screen(true) { TodayContent(everyStatus, {}, {}, {}) }
+@PreviewTest @LongPreview @Composable fun TodayEveryStatusLight() = Screen(false) { TodayContent(everyStatus, {}, {}, {}) }
+@PreviewTest @LongPreview @Composable fun TodayEveryStatusDark() = Screen(true) { TodayContent(everyStatus, {}, {}, {}) }
 
 // ---------- Draft review ----------
 
@@ -325,25 +325,25 @@ private val moveHeld = HeldAction(
     DraftReviewContent(DraftReviewState(loading = false, held = null, message = "It may have been decided on another device."), {}, {}, {}, {})
 }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewEmailLight() = ReviewEmail(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewEmailDark() = ReviewEmail(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewNewEmailLight() = ReviewNewEmail(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewNewEmailDark() = ReviewNewEmail(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCodeLight() = ReviewCode(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCodeDark() = ReviewCode(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCredentialLight() = ReviewCredential(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun ReviewCredentialDark() = ReviewCredential(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReviewSettledLight() = ReviewSettledError(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReviewSettledDark() = ReviewSettledError(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReviewMissingLight() = ReviewMissing(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReviewMissingDark() = ReviewMissing(true)
+@PreviewTest @PhonePreview @Composable fun ReviewEmailLight() = ReviewEmail(false)
+@PreviewTest @PhonePreview @Composable fun ReviewEmailDark() = ReviewEmail(true)
+@PreviewTest @PhonePreview @Composable fun ReviewNewEmailLight() = ReviewNewEmail(false)
+@PreviewTest @PhonePreview @Composable fun ReviewNewEmailDark() = ReviewNewEmail(true)
+@PreviewTest @PhonePreview @Composable fun ReviewCodeLight() = ReviewCode(false)
+@PreviewTest @PhonePreview @Composable fun ReviewCodeDark() = ReviewCode(true)
+@PreviewTest @PhonePreview @Composable fun ReviewCredentialLight() = ReviewCredential(false)
+@PreviewTest @PhonePreview @Composable fun ReviewCredentialDark() = ReviewCredential(true)
+@PreviewTest @HalfPreview @Composable fun ReviewSettledLight() = ReviewSettledError(false)
+@PreviewTest @HalfPreview @Composable fun ReviewSettledDark() = ReviewSettledError(true)
+@PreviewTest @ShortPreview @Composable fun ReviewMissingLight() = ReviewMissing(false)
+@PreviewTest @ShortPreview @Composable fun ReviewMissingDark() = ReviewMissing(true)
 
 @Composable private fun NotNowFrame(dark: Boolean) = Screen(dark) {
     NotNowOptions(emailHeld, {}, {})
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun NotNowLight() = NotNowFrame(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun NotNowDark() = NotNowFrame(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun RuleDialogLight() = Screen(false) { Box(Modifier.fillMaxSize()) { RuleDialog(emailHeld, { _, _ -> }, {}) } }
+@PreviewTest @PhonePreview @Composable fun NotNowLight() = NotNowFrame(false)
+@PreviewTest @PhonePreview @Composable fun NotNowDark() = NotNowFrame(true)
+@PreviewTest @PhonePreview @Composable fun RuleDialogLight() = Screen(false) { Box(Modifier.fillMaxSize()) { RuleDialog(emailHeld, { _, _ -> }, {}) } }
 
 @Composable private fun Sliders(dark: Boolean) = Screen(dark) {
     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -352,8 +352,8 @@ private val moveHeld = HeldAction(
         SlideToConfirm("slide to add to calendar", {})
     }
 }
-@PreviewTest @Preview(widthDp = 412) @Composable fun SliderLight() = Sliders(false)
-@PreviewTest @Preview(widthDp = 412) @Composable fun SliderDark() = Sliders(true)
+@PreviewTest @PartPreview @Composable fun SliderLight() = Sliders(false)
+@PreviewTest @PartPreview @Composable fun SliderDark() = Sliders(true)
 
 // ---------- Constitution ----------
 
@@ -374,8 +374,8 @@ private val constitution = Constitution(
 @Composable private fun ConstitutionFull(dark: Boolean) = Screen(dark) {
     ConstitutionContent(ConstitutionUiState(loading = false, constitution = constitution), {}, {})
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun ConstitutionLight() = ConstitutionFull(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1100) @Composable fun ConstitutionDark() = ConstitutionFull(true)
+@PreviewTest @LongPreview @Composable fun ConstitutionLight() = ConstitutionFull(false)
+@PreviewTest @LongPreview @Composable fun ConstitutionDark() = ConstitutionFull(true)
 
 // ---------- Amend ----------
 
@@ -403,10 +403,10 @@ private val amendState = AmendUiState(
 @Composable private fun AmendStart(dark: Boolean) = Screen(dark) {
     AmendContent(AmendUiState(loading = false, session = Session(SessionId("s1"), SessionKind.AMEND, Session.State.ACTIVE, t0)), noMic, "← how I want to work", {}, {}, {})
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun AmendLight() = Amend(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1000) @Composable fun AmendDark() = Amend(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun AmendStartLight() = AmendStart(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun AmendStartDark() = AmendStart(true)
+@PreviewTest @LongPreview @Composable fun AmendLight() = Amend(false)
+@PreviewTest @LongPreview @Composable fun AmendDark() = Amend(true)
+@PreviewTest @HalfPreview @Composable fun AmendStartLight() = AmendStart(false)
+@PreviewTest @HalfPreview @Composable fun AmendStartDark() = AmendStart(true)
 
 // ---------- Call ----------
 
@@ -436,27 +436,27 @@ private fun call(screen: CallScreen, stage: CallStage? = CallStage.CHOOSE, ended
 @Composable private fun Call(dark: Boolean, screen: CallScreen) = Screen(dark) {
     CallContent(call(screen, ended = screen == CallScreen.Ended), mic, {}, {}, {}, {}, {}, {}, {})
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallIncomingLight() = Call(false, CallScreen.Incoming)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallIncomingDark() = Call(true, CallScreen.Incoming)
+@PreviewTest @PhonePreview @Composable fun CallIncomingLight() = Call(false, CallScreen.Incoming)
+@PreviewTest @PhonePreview @Composable fun CallIncomingDark() = Call(true, CallScreen.Incoming)
 
 // The incoming-call slider part way through each gesture.
 @Composable private fun Slide(dark: Boolean, progress: Float) = Screen(dark) {
     Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, initialProgress = progress) }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
-@PreviewTest @Preview(widthDp = 412, heightDp = 180) @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
+@PreviewTest @ShortPreview @Composable fun CallSlideAnsweringLight() = Slide(false, 0.6f)
+@PreviewTest @ShortPreview @Composable fun CallSlideDecliningDark() = Slide(true, -0.6f)
 // With TalkBack on, the slide gives way to two buttons.
 @Composable private fun AnswerPlain(dark: Boolean) = Screen(dark) {
     Box(Modifier.padding(24.dp)) { SlideToAnswer(onAnswer = {}, onDecline = {}, touchExploration = true) }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsLight() = AnswerPlain(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 200) @Composable fun CallAnswerButtonsDark() = AnswerPlain(true)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedLight() = Call(false, CallScreen.Snoozed)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallSnoozedDark() = Call(true, CallScreen.Snoozed)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallInCallLight() = Call(false, CallScreen.InCall)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallInCallDark() = Call(true, CallScreen.InCall)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallEndedLight() = Call(false, CallScreen.Ended)
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable fun CallEndedDark() = Call(true, CallScreen.Ended)
+@PreviewTest @ShortPreview @Composable fun CallAnswerButtonsLight() = AnswerPlain(false)
+@PreviewTest @ShortPreview @Composable fun CallAnswerButtonsDark() = AnswerPlain(true)
+@PreviewTest @PhonePreview @Composable fun CallSnoozedLight() = Call(false, CallScreen.Snoozed)
+@PreviewTest @PhonePreview @Composable fun CallSnoozedDark() = Call(true, CallScreen.Snoozed)
+@PreviewTest @PhonePreview @Composable fun CallInCallLight() = Call(false, CallScreen.InCall)
+@PreviewTest @PhonePreview @Composable fun CallInCallDark() = Call(true, CallScreen.InCall)
+@PreviewTest @PhonePreview @Composable fun CallEndedLight() = Call(false, CallScreen.Ended)
+@PreviewTest @PhonePreview @Composable fun CallEndedDark() = Call(true, CallScreen.Ended)
 
 // ---------- Main scaffold ----------
 
@@ -473,5 +473,5 @@ private fun call(screen: CallScreen, stage: CallStage? = CallStage.CHOOSE, ended
         TabBar(MainTab.Today, 0) {}
     }
 }
-@PreviewTest @Preview(widthDp = 412) @Composable fun ShellLight() = Shell(false)
-@PreviewTest @Preview(widthDp = 412) @Composable fun ShellDark() = Shell(true)
+@PreviewTest @PartPreview @Composable fun ShellLight() = Shell(false)
+@PreviewTest @PartPreview @Composable fun ShellDark() = Shell(true)

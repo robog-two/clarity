@@ -357,7 +357,7 @@ services:
       CLARITY_URL: http://backend:8080
       CLARITY_CONNECTOR_KEY_FILE: /run/secrets/connector_mcphost_key
       CLARITY_CONNECTOR_ID: mcphost
-      CLARITY_SYNC_INTERVAL: ${CLARITY_MCPHOST_SYNC_INTERVAL:-30s}
+      CLARITY_SYNC_INTERVAL: ${CLARITY_MCPHOST_SYNC_INTERVAL:-5s}
       CLARITY_STATE_DIR: /data/supervisor
       MCPHOST_KEY_FILE: /run/secrets/mcphost_key
       MCPHOST_PROXY: egress-mcp:3128

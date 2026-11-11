@@ -45,6 +45,8 @@ data class HostTool(
     val readOnly: Boolean = false,
     /** `annotations.destructiveHint`; when absent, true unless read-only (the MCP default). */
     val destructive: Boolean = !readOnly,
+    /** True only when the server set `annotations.destructiveHint` to true itself (not the MCP default). */
+    val destructiveHint: Boolean = false,
 )
 
 /** One configured server as `GET /servers` reports it. */
@@ -181,7 +183,8 @@ fun parseHostTool(raw: JsonElement): HostTool? {
     val name = o.string("name")?.ifEmpty { null } ?: return null
     val annotations = o["annotations"] as? JsonObject
     val readOnly = ((annotations?.get("readOnlyHint") as? JsonPrimitive)?.booleanOrNull ?: false) && !looksLikeWrite(name)
-    val destructive = (annotations?.get("destructiveHint") as? JsonPrimitive)?.booleanOrNull ?: !readOnly
+    val destructiveHint = (annotations?.get("destructiveHint") as? JsonPrimitive)?.booleanOrNull
+    val destructive = destructiveHint ?: !readOnly
     return HostTool(
         name = name,
         title = o.string("title") ?: annotations?.string("title"),
@@ -189,6 +192,7 @@ fun parseHostTool(raw: JsonElement): HostTool? {
         inputSchema = normalizedSchema(o["inputSchema"] as? JsonObject),
         readOnly = readOnly,
         destructive = destructive,
+        destructiveHint = destructiveHint == true,
     )
 }
 

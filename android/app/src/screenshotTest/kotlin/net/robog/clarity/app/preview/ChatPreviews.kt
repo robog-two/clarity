@@ -105,7 +105,7 @@ private fun Frame(dark: Boolean, content: @Composable () -> Unit) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ChatThreadLight() = Frame(dark = false) {
     sampleThread.forEach { FeedItemView(it, env = env) }
@@ -113,7 +113,7 @@ fun ChatThreadLight() = Frame(dark = false) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ChatThreadDark() = Frame(dark = true) {
     sampleThread.forEach { FeedItemView(it, env = env) }
@@ -121,14 +121,14 @@ fun ChatThreadDark() = Frame(dark = true) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun AttachmentSheetPage() = Frame(dark = false) {
     AttachmentPager(listOf(waitingOn, plan, context), emptyMap())
 }
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 700)
+@HalfPreview
 @Composable
 fun HeldList() = ClarityTheme(darkTheme = false) {
     Surface(color = MaterialTheme.colorScheme.surface) {
@@ -175,18 +175,18 @@ private fun AskMeeting(dark: Boolean) = ClarityTheme(darkTheme = dark) {
 }
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 915)
+@PhonePreview
 @Composable
 fun AskWithMeetingLight() = AskMeeting(dark = false)
 
 @PreviewTest
-@Preview(widthDp = 412, heightDp = 915)
+@PhonePreview
 @Composable
 fun AskWithMeetingDark() = AskMeeting(dark = true)
 
 /** The two pills: a compaction topic and a meeting, light and dark. */
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ChatPills() = Column {
     Frame(dark = false) {
@@ -201,7 +201,7 @@ fun ChatPills() = Column {
 
 /** The composer empty (send disabled) and with the mic muted in a call. */
 @PreviewTest
-@Preview(widthDp = 412)
+@PartPreview
 @Composable
 fun ComposerStates() = Frame(dark = false) {
     ChatComposer("", {}, {}, ComposerMic(live = false, description = "Microphone", state = "Off", action = "Talk"), {})

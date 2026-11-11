@@ -26,8 +26,9 @@ If it does not work for you, stop and report.
   data leaves the server except the MCP servers themselves, which are the person's own accounts.
 - **Unknown code is untrusted.** A server is third-party code with the person's token. It must not
   reach the backend's database, other servers' tokens or files, the LAN, or hosts it was not given.
-- **Writes are approved.** Only tools the server marks read-only run without asking, unless the
-  person chooses otherwise per tool.
+- **Writes are checked.** Only tools the server marks read-only skip the safety check on Auto; any
+  other tool on Auto goes through it, Ask always asks, and the person can vouch for a tool with
+  Always OK.
 - **Never post to the chat.** Suggestions live in Settings; the sweep's findings go to the morning call.
 - **Resources:** one container however many servers; servers run only while used.
 
@@ -149,15 +150,16 @@ everything else keeps working).
 - **Who sees what.** The lead never gets third-party tools. It gets a short index ("Your MCP
   servers: GitHub — your repos, issues and PRs; ...") as a system message only when it changes,
   like the collection index. `delegate` gains `servers: [label]`; a helper gets the tools of those
-  servers only, never all third-party tools by default. Tools whose mode is `off` are never sent.
-- **Modes** (`McpToolMode`): default `auto` when `annotations.readOnlyHint == true`, else `ask`.
+  servers only, never all third-party tools by default. Every tool of such a server is offered (there is no off).
+- **Modes** (`McpToolMode`: `ask`, `auto`, `always_ok`): default `auto` for every tool. Always OK
+  behaves like a server-marked read-only tool (hard limits only, sweep included). See ARCHITECTURE.md.
   The person's choice is stored per (server id, tool name) in Postgres (new Flyway migration) and
   served/changed by the `McpPaths` routes (device auth). An `ask` call becomes a
   `ProposedAction.ExternalTool` with `server = "mcp:<id>"`, held for approval exactly like other
   approved actions (the same held card, the same `/api/v1/held` flow; the summary names the server,
   the tool and the key inputs). The backend performs the call itself once approved and the result
   reaches the helper (or its inbox) the way the browser's approved steps do. Approval is never
-  remembered across calls unless the person sets the tool to `auto`.
+  remembered across calls unless the person sets the tool to Always OK.
 - **Untrusted results.** Third-party results are quoted as untrusted and taint the run, like web
   pages. They go through the existing large-result handling.
 - **Memory per server.** When a server is first listed, ensure a memory collection named after its
@@ -166,8 +168,8 @@ everything else keeps working).
   limited to that server's collection. The existing secret detector applies. The daily memory
   tidy may file facts from the journal into these collections like any other.
 - **Morning sweep.** A durable job `mcp-sweep` runs 30 minutes before the morning call prep on
-  call days, only when at least one enabled server has an `auto` tool. It starts one helper on the
-  helper model with only `auto` tools of all enabled servers (never `ask` tools), the server
+  call days, only when at least one enabled server has a tool treated as a read (read-only on Auto, or Always OK).
+  It starts one helper on the helper model with only those tools of all enabled servers (never `ask` tools), the server
   collections, and a per-run cap of $0.03 and 12 tool calls. It looks for what is coming up in the
   next 7 days. It follows each collection's "Sweep recipe" note when present and updates it when it
   learned a better way. It writes its findings with `set_scratch` (key `coming-up`, TTL 20 h, at
@@ -186,16 +188,17 @@ everything else keeps working).
   then the item form). Editing and removing a server use the same editor. If `mcp-host` is not
   running, show the existing "not running on your server" state.
 - **Server detail** shows its tools in two groups, "Reads" and "Changes things", each with a
-  three-way segmented control Auto / Ask / Off (`PUT McpPaths.toolPolicy`), a "default" hint when
+  three-way segmented control Ask / Auto / Always OK (`PUT McpPaths.toolPolicy`), a "default" hint when
   not overridden, and a "Reset" action when overridden. Destructive tools get a warning icon.
-  Turning a tool that changes things to Auto asks for confirmation.
+  Every mode is set at once with no confirm, since one tap undoes it.
 - **Suggestions** appear at the top of the MCP screen ("Clarity suggests: Canvas — ..."), with
   "Set up" (opens the add flow on that preset) and "Dismiss".
 - Material 3 expressive like the rest of Settings; no work on the UI thread; strings in resources.
 - **Screenshots:** previews in `app/src/screenshotTest` for: the server list (with one of each
   state), add-server preset picker, the server editor, server detail with both groups, a
-  suggestion, and the not-running state; light and dark, phone width. Render them with
-  `updateDebugScreenshotTest` and keep the reference PNGs.
+  suggestion, and the not-running state; light and dark, phone width. Sizes come from
+  `PreviewSizes.kt`; `testDebugScreenshotTestDefaultTestSuite` compares and the update task rewrites
+  references only for screens the person approved.
 
 ## Tests (no real services, no real model calls)
 
@@ -206,12 +209,12 @@ everything else keeps working).
   (never touch the running `clarity_*` containers): the fake server works through the host, a
   server cannot reach a host not on its list, cannot reach a private address, and cannot read
   another server's home or environment. `./gradlew :computers:mcphost:test` passes.
-- **backend:** default modes from annotations; overrides; `ask` holds and runs on approval; `off`
-  never sent; helper gets only the requested servers; lead gets the index only when it changes;
-  collection created once; `save_note` limited; sweep schedule, tools offered (auto only), cap,
+- **backend:** default modes from annotations; overrides; `ask` holds and runs on approval; every
+  tool offered; helper gets only the requested servers; lead gets the index only when it changes;
+  collection created once; `save_note` limited; sweep schedule, tools offered (reads and Always OK only), cap,
   scratch output, no chat post; suggestion limits; routes. Full `./gradlew :backend:test` passes.
 - **app:** JVM tests for the presentation (state chips, groups, counts, policy changes, reset,
-  confirmation) and `assembleDebug testDebugUnitTest lintDebug` in `android/` pass.
+  pending rows) and `assembleDebug testDebugUnitTest lintDebug` in `android/` pass.
 
 ## Reports
 

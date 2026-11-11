@@ -26,20 +26,20 @@ private fun Prompt(dark: Boolean, permission: CallPermission) = ClarityTheme(dar
     }
 }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable
+@PreviewTest @PhonePreview @Composable
 fun CallPermissionFullScreenLight() = Prompt(false, CallPermission.FullScreen)
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable
+@PreviewTest @PhonePreview @Composable
 fun CallPermissionFullScreenDark() = Prompt(true, CallPermission.FullScreen)
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable
+@PreviewTest @PhonePreview @Composable
 fun CallPermissionNotificationsLight() = Prompt(false, CallPermission.Notifications)
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable
+@PreviewTest @PhonePreview @Composable
 fun CallPermissionExactAlarmsLight() = Prompt(false, CallPermission.ExactAlarms)
 
 /** Settings, morning call page, with only the full-screen permission missing. */
-@PreviewTest @Preview(widthDp = 412, heightDp = 915) @Composable
+@PreviewTest @PhonePreview @Composable
 fun SettingsCallWithoutFullScreen() = ClarityTheme(darkTheme = false) {
     Surface(color = MaterialTheme.colorScheme.surface) {
         SettingsContent(

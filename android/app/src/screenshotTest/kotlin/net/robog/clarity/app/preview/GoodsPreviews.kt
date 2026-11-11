@@ -72,8 +72,8 @@ private fun ReportCardInThread(dark: Boolean) = Goods(dark) {
     }
 }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 420) @Composable fun ReportCardLight() = ReportCardInThread(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 420) @Composable fun ReportCardDark() = ReportCardInThread(true)
+@PreviewTest @ShortPreview @Composable fun ReportCardLight() = ReportCardInThread(false)
+@PreviewTest @ShortPreview @Composable fun ReportCardDark() = ReportCardInThread(true)
 
 // ---------- the viewer ----------
 
@@ -121,10 +121,10 @@ private val shared = viewer.copy(linkOn = true, linkDownloads = 3)
 @Composable
 private fun Viewer(dark: Boolean, state: ReportUiState) = Goods(dark) { ReportContent(state, {}, "Goods", {}, {}, {}) }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerLight() = Viewer(false, viewer)
-@PreviewTest @Preview(widthDp = 412, heightDp = 1500) @Composable fun ReportViewerDark() = Viewer(true, viewer)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerFabLight() = Viewer(false, shared)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerFabDark() = Viewer(true, shared)
+@PreviewTest @LongPreview @Composable fun ReportViewerLight() = Viewer(false, viewer)
+@PreviewTest @LongPreview @Composable fun ReportViewerDark() = Viewer(true, viewer)
+@PreviewTest @HalfPreview @Composable fun ReportViewerFabLight() = Viewer(false, shared)
+@PreviewTest @HalfPreview @Composable fun ReportViewerFabDark() = Viewer(true, shared)
 
 /**
  * The menu open. The screenshot tool draws only the first frame, before the menu items' entry
@@ -155,8 +155,8 @@ private fun MenuOpen(dark: Boolean) = Goods(dark) {
         }
     }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerMenuOpenLight() = MenuOpen(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportViewerMenuOpenDark() = MenuOpen(true)
+@PreviewTest @HalfPreview @Composable fun ReportViewerMenuOpenLight() = MenuOpen(false)
+@PreviewTest @HalfPreview @Composable fun ReportViewerMenuOpenDark() = MenuOpen(true)
 
 /** The share settings sheet over the viewer (drawn in place: a modal sheet is its own window). */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -178,13 +178,13 @@ private fun SettingsSheet(dark: Boolean, state: ReportUiState) = Goods(dark) {
         }
     }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOnLight() = SettingsSheet(false, shared)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOnDark() = SettingsSheet(true, shared)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ShareSettingsOffLight() = SettingsSheet(false, viewer)
-@PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerLoading() = Viewer(false, ReportUiState())
-@PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorLight() =
+@PreviewTest @HalfPreview @Composable fun ShareSettingsOnLight() = SettingsSheet(false, shared)
+@PreviewTest @HalfPreview @Composable fun ShareSettingsOnDark() = SettingsSheet(true, shared)
+@PreviewTest @HalfPreview @Composable fun ShareSettingsOffLight() = SettingsSheet(false, viewer)
+@PreviewTest @ShortPreview @Composable fun ReportViewerLoading() = Viewer(false, ReportUiState())
+@PreviewTest @ShortPreview @Composable fun ReportViewerErrorLight() =
     Viewer(false, ReportUiState(loading = false, error = "Can’t reach your server right now."))
-@PreviewTest @Preview(widthDp = 412, heightDp = 400) @Composable fun ReportViewerErrorDark() =
+@PreviewTest @ShortPreview @Composable fun ReportViewerErrorDark() =
     Viewer(true, ReportUiState(loading = false, error = "Can’t reach your server right now."))
 
 // ---------- a report with an image ----------
@@ -219,8 +219,8 @@ private fun WithImage(dark: Boolean) = Goods(dark) {
         ReportContent(withImage, {}, "Goods", {}, {}, {})
     }
 }
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageLight() = WithImage(false)
-@PreviewTest @Preview(widthDp = 412, heightDp = 700) @Composable fun ReportWithImageDark() = WithImage(true)
+@PreviewTest @HalfPreview @Composable fun ReportWithImageLight() = WithImage(false)
+@PreviewTest @HalfPreview @Composable fun ReportWithImageDark() = WithImage(true)
 
 // ---------- the Goods tab ----------
 
@@ -237,7 +237,7 @@ private val goods = goodsRows(
 @Composable
 private fun GoodsTab(dark: Boolean, state: GoodsUiState) = Goods(dark) { GoodsContent(state, {}, {}) }
 
-@PreviewTest @Preview(widthDp = 412, heightDp = 760) @Composable fun GoodsTabLight() = GoodsTab(false, GoodsUiState(loading = false, rows = goods))
-@PreviewTest @Preview(widthDp = 412, heightDp = 760) @Composable fun GoodsTabDark() = GoodsTab(true, GoodsUiState(loading = false, rows = goods))
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun GoodsTabEmptyLight() = GoodsTab(false, GoodsUiState(loading = false))
-@PreviewTest @Preview(widthDp = 412, heightDp = 600) @Composable fun GoodsTabEmptyDark() = GoodsTab(true, GoodsUiState(loading = false))
+@PreviewTest @PhonePreview @Composable fun GoodsTabLight() = GoodsTab(false, GoodsUiState(loading = false, rows = goods))
+@PreviewTest @PhonePreview @Composable fun GoodsTabDark() = GoodsTab(true, GoodsUiState(loading = false, rows = goods))
+@PreviewTest @HalfPreview @Composable fun GoodsTabEmptyLight() = GoodsTab(false, GoodsUiState(loading = false))
+@PreviewTest @HalfPreview @Composable fun GoodsTabEmptyDark() = GoodsTab(true, GoodsUiState(loading = false))

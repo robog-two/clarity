@@ -20,14 +20,19 @@ import kotlinx.serialization.json.JsonPrimitive
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.respondEither
+import net.robog.clarity.backend.mcpservers.McpWake
+import net.robog.clarity.backend.mcpservers.expectedServers
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.api.ApiPaths
 import net.robog.clarity.shared.connector.GrantsUpdate
 
+/** The connector id of the `mcp-host` container. */
+private const val MCP_HOST_CONNECTOR = "mcphost"
+
 /** App-facing connector management (`/api/v1/connectors`), device-authenticated. */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class ConnectorRoutes(private val registry: ConnectorRegistry) : HttpModule {
+class ConnectorRoutes(private val registry: ConnectorRegistry, private val mcpWake: McpWake) : HttpModule {
     override fun install(application: Application) {
         application.routing {
             authenticate(AuthProviders.DEVICE) {
@@ -39,6 +44,7 @@ class ConnectorRoutes(private val registry: ConnectorRegistry) : HttpModule {
                         val result = call.connectorId().let { id ->
                             id.fold({ it.left() }, { registry.setGrants(it, update.grants) })
                         }
+                        if (result.isRight() && call.parameters["id"] == MCP_HOST_CONNECTOR) mcpWake.kick()
                         call.respondEither(result)
                     }
                     get("{id}/config") {
@@ -46,7 +52,10 @@ class ConnectorRoutes(private val registry: ConnectorRegistry) : HttpModule {
                     }
                     put("{id}/config") {
                         val values = configValues(call.receive<JsonObject>())
-                        call.respondEither(call.connectorId().let { id -> id.fold({ it.left() }, { registry.setConfig(it, values) }) })
+                        val result = call.connectorId().let { id -> id.fold({ it.left() }, { registry.setConfig(it, values) }) }
+                        // The host picks its config up on its next poll; list it quickly until the saved servers show.
+                        if (result.isRight() && call.parameters["id"] == MCP_HOST_CONNECTOR) mcpWake.kick(expectedServers(values))
+                        call.respondEither(result)
                     }
                 }
             }
