@@ -290,6 +290,27 @@ class DavEventsTest : FunSpec({
         }
     }
 
+    context("a wrong occurrence is a failure, not a done") {
+        test("cancelling or editing an occurrence that is not in the series fails and writes nothing") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val before = dav.text(path)
+            actions.cancelEvent(cancel("c1", EventScope.THIS), occurrence(path, "2026-11-03 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "not in the series"
+            actions.cancelEvent(cancel("c2", EventScope.FOLLOWING), occurrence(path, "2026-11-03 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe false
+            dav.text(path) shouldBe before
+        }
+    }
+
+    test("reading stops at the limit instead of buffering a larger body") {
+        val dav = fake()
+        dav.put("${CAL}big.bin", "text/calendar", "x".repeat(2_000))
+        DavServer(config(), dav.engine).use { server ->
+            server.get(server.resolve(io.ktor.http.Url("https://dav.test/dav/"), "${CAL}big.bin"), 100) shouldBe null
+            server.get(server.resolve(io.ktor.http.Url("https://dav.test/dav/"), "${CAL}big.bin"), 5_000)!!.second.size shouldBe 2_000
+        }
+    }
+
     context("versions and size") {
         test("an event too large to read is not reported as cancelled") {
             val dav = fake()
@@ -308,9 +329,9 @@ class DavEventsTest : FunSpec({
             val path = actions.createGym()
             val before = dav.text(path)
             dav.omitEtag = true
-            actions.updateEvent(update("u1", EventScope.SERIES) { it.copy(title = "x") }, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
-            actions.cancelEvent(cancel("c1", EventScope.SERIES), occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
-            actions.respond(ProposedAction.RespondToInvite("r1", "accept", EntityId("e"), InviteResponse.ACCEPT), SourceId(path)).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
+            actions.updateEvent(update("u1", EventScope.SERIES) { it.copy(title = "x") }, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().also { it.retryable shouldBe false; it.message shouldContain "no version tag" }
+            actions.cancelEvent(cancel("c1", EventScope.SERIES), occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe false
+            actions.respond(ProposedAction.RespondToInvite("r1", "accept", EntityId("e"), InviteResponse.ACCEPT), SourceId(path)).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe false
             dav.text(path) shouldBe before
             dav.requests.none { it == "DELETE $path" } shouldBe true
         }

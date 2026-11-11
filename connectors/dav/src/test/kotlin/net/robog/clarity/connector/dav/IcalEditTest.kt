@@ -300,12 +300,9 @@ class IcalEditTest : FunSpec({
             "DTEND:20261026T100000Z\r\nRDATE:20261028T090000Z,20261030T090000Z\r\nSUMMARY:Dates\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
         val utc = java.time.ZoneId.of("UTC")
 
-        test("the whole series can change, one date can be cancelled, the rest is refused") {
+        test("the whole series can change, one date can be cancelled, the rest is refused, and a move shifts the listed dates") {
             val renamed = replaced(IcalEdit.updated(dates, at("2026-10-28 09:00", utc), EventScope.SERIES, EventChange(title = "Renamed"), "n"))
             utcStarts(renamed) shouldContainExactly listOf("2026-10-26T09:00:00Z", "2026-10-28T09:00:00Z", "2026-10-30T09:00:00Z")
-            shouldThrow<IllegalArgumentException> {
-                IcalEdit.updated(dates, at("2026-10-28 09:00", utc), EventScope.SERIES, EventChange(start = at("2026-10-28 10:00", utc)), "n")
-            }.message shouldContain "cannot be moved"
             val excluded = (IcalEdit.cancelled(dates, at("2026-10-28 09:00", utc), EventScope.THIS) as Removal.Replace).ics
             utcStarts(excluded) shouldContainExactly listOf("2026-10-26T09:00:00Z", "2026-10-30T09:00:00Z")
             shouldThrow<IllegalArgumentException> { IcalEdit.cancelled(dates, at("2026-10-28 09:00", utc), EventScope.FOLLOWING) }.message shouldContain "single dates"

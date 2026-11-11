@@ -233,7 +233,11 @@ object ProposedActions {
     private fun place(location: String?) = location?.takeIf(String::isNotBlank)?.let { " at ${oneLine(it, PLACE_CHARS)}" }.orEmpty()
 
     /** The site of a link, for the card: what the person can judge it by. */
-    private fun host(link: String) = oneLine(runCatching { java.net.URI(link).host }.getOrNull().orEmpty(), 60)
+    private fun host(link: String) =
+        oneLine(runCatching { java.net.IDN.toASCII(hostOf(java.net.URI(link))) }.getOrNull().orEmpty(), 60)
+
+    /** The host of [uri]; java.net.URI leaves it null for letters outside ASCII, so it is read from the authority. */
+    private fun hostOf(uri: java.net.URI): String = uri.host ?: uri.authority?.substringAfterLast('@')?.substringBefore(':').orEmpty()
 
     /**
      * The start and end of an event as stored. All-day: `start` is a date and `end` the last day
@@ -269,7 +273,7 @@ object ProposedActions {
     private fun link(raw: String?): String? {
         val text = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
         val uri = runCatching { java.net.URI(text) }.getOrNull()
-        require(uri != null && uri.scheme?.lowercase() in setOf("http", "https") && !uri.host.isNullOrEmpty()) { "`url` must be a web link like https://example.com/page" }
+        require(uri != null && uri.scheme?.lowercase() in setOf("http", "https") && hostOf(uri).isNotEmpty()) { "`url` must be a web link like https://example.com/page" }
         return text
     }
 

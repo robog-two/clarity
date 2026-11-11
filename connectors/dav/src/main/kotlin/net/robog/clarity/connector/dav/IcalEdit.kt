@@ -1,7 +1,7 @@
 package net.robog.clarity.connector.dav
 
 import java.net.URI
-import java.time.DateTimeException
+import java.util.concurrent.CancellationException
 import java.time.Duration
 import java.time.Instant as JInstant
 import java.time.LocalDate
@@ -35,6 +35,7 @@ import net.fortuna.ical4j.model.property.RecurrenceId
 import net.fortuna.ical4j.model.property.Summary
 import net.fortuna.ical4j.model.property.Uid
 import net.fortuna.ical4j.model.property.Url
+import net.fortuna.ical4j.model.property.XProperty
 import net.robog.clarity.connector.dav.Ical.has
 import net.robog.clarity.connector.dav.Ical.length
 import net.robog.clarity.connector.dav.Ical.occurrenceStarts
@@ -99,7 +100,7 @@ sealed interface Edited {
     /** The original series ended before the occurrence, and [following] is a new object that carries on from it. */
     data class Split(val original: String, val following: String) : Edited
 
-    /** The object already has this change (an earlier delivery of the same edit did it); nothing to write. */
+    /** The object already carries this action's marker (an earlier delivery did it); nothing to write. */
     data object Applied : Edited
 }
 
@@ -110,6 +111,9 @@ sealed interface Removal {
 
     /** The object stays with this new text. */
     data class Replace(val ics: String) : Removal
+
+    /** The object already carries this cancellation (an earlier delivery of the same action did it). */
+    data object Applied : Removal
 }
 
 // ---- writing blocks shared by creating and editing --------------------------------------------
@@ -246,46 +250,48 @@ object IcalEdit {
     /**
      * [ics] with the event changed. [occurrence] and [scope] say what part of a repeating event; they
      * are ignored for a single event. [followingUid] names the new series a [EventScope.FOLLOWING]
-     * edit starts.
+     * edit starts. The edit is marked with [actionKey] (an idempotency key): an object that already
+     * carries the mark was edited by an earlier delivery of the same action and gives [Edited.Applied].
      */
-    fun updated(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String): Edited =
-        cleanly { edit(ics, occurrence, scope, change, followingUid) }
+    fun updated(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String, actionKey: String? = null): Edited =
+        cleanly { edit(ics, occurrence, scope, change, followingUid, actionKey) }
 
-    /** [block]'s result; a calendar library or date failure on a strange object is a message for the model, not a crash. */
+    /**
+     * [block]'s result. A failure inside the calendar library or the date arithmetic on a strange object
+     * is a message for the model, not a crash; cancellation of the calling coroutine still passes.
+     */
     private inline fun <T> cleanly(block: () -> T): T =
         try {
             block()
-        } catch (e: DateTimeException) {
-            throw IllegalArgumentException("This event could not be edited: ${e.message}")
+        } catch (e: IllegalArgumentException) {
+            throw e
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: ParserException) {
             throw IllegalArgumentException("This event could not be read: ${e.message}")
-        } catch (e: NoSuchElementException) {
-            throw IllegalArgumentException("This event is missing a part that editing needs.")
+        } catch (e: RuntimeException) {
+            throw IllegalArgumentException("This event could not be edited: ${e.message ?: e.javaClass.simpleName}")
         }
 
-    private fun edit(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String): Edited {
-        val parts = Parts.of(ics)
+    private fun edit(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String, actionKey: String?): Edited {
+        val parts = Parts.of(ics, actionKey)
         val master = parts.master
+        if (parts.alreadyDone()) return Edited.Applied
         if (!master.repeats()) {
             editInPlace(master, change, fallbackZone = change.zone.takeIf { change.repeat != null })
             return Edited.Replace(parts.finish())
         }
         requireNotNull(scope) { "This event repeats. Say what to change: `this`, `following` or `series`." }
         val at = occurrence ?: master.seedInstant()
-        // a re-delivered series move: the old occurrence is gone and the series is already at the new start
-        if (scope == EventScope.SERIES && change.start != null && !parts.isOccurrence(at) && parts.isOccurrence(change.start)) return Edited.Applied
         parts.requireOccurrence(at)
         require(!master.has("RDATE") || scope == EventScope.SERIES) {
             "This repeating event lists single dates, so only the whole series can be changed."
-        }
-        require(!master.has("RDATE") || change.start == null) {
-            "This repeating event lists single dates, so its time cannot be moved as a series. Cancel it and create a new one."
         }
         require(change.allDay == null || change.allDay == (master.startTemporal() is LocalDate)) {
             "A repeating event cannot switch between all-day and timed. Cancel it and create a new one."
         }
         return when {
-            scope == EventScope.FOLLOWING && at == master.seedInstant() -> edit(ics, occurrence, EventScope.SERIES, change, followingUid)
+            scope == EventScope.FOLLOWING && at == master.seedInstant() -> edit(ics, occurrence, EventScope.SERIES, change, followingUid, actionKey)
             scope == EventScope.SERIES -> Edited.Replace(parts.updateSeries(at, change))
             scope == EventScope.THIS -> {
                 require(change.repeat == null) { "`repeat` cannot change for a single occurrence. Use scope `following` or `series`." }
@@ -295,12 +301,13 @@ object IcalEdit {
         }
     }
 
-    /** What is left of [ics] once [scope] of the event is cancelled; see [updated] for [occurrence]. */
-    fun cancelled(ics: String, occurrence: JInstant?, scope: EventScope?): Removal = cleanly { cancel(ics, occurrence, scope) }
+    /** What is left of [ics] once [scope] of the event is cancelled; see [updated] for [occurrence] and [actionKey]. */
+    fun cancelled(ics: String, occurrence: JInstant?, scope: EventScope?, actionKey: String? = null): Removal = cleanly { cancel(ics, occurrence, scope, actionKey) }
 
-    private fun cancel(ics: String, occurrence: JInstant?, scope: EventScope?): Removal {
-        val parts = Parts.of(ics)
+    private fun cancel(ics: String, occurrence: JInstant?, scope: EventScope?, actionKey: String?): Removal {
+        val parts = Parts.of(ics, actionKey)
         val master = parts.master
+        if (parts.alreadyDone()) return Removal.Applied
         if (!master.repeats()) return Removal.Delete
         requireNotNull(scope) { "This event repeats. Say what to cancel: `this`, `following` or `series`." }
         val at = occurrence ?: master.seedInstant()
@@ -312,24 +319,35 @@ object IcalEdit {
         }
     }
 
-    /** True when cancelling [scope] at [at] has nothing left to do: a repeating event whose occurrence is already excluded or cut off. */
-    fun alreadyCancelled(ics: String, at: JInstant, scope: EventScope?): Boolean = cleanly {
-        val parts = Parts.of(ics)
-        parts.master.repeats() && (scope == EventScope.THIS || scope == EventScope.FOLLOWING) && !parts.isOccurrence(at)
-    }
+    private const val MARKER = "X-CLARITY-ACTION"
+    private const val MAX_MARKERS = 20
 
-    /** True when the occurrence starting at [at] is one of the series in [ics] (a changed occurrence counts at its original time). */
-    fun hasOccurrence(ics: String, at: JInstant): Boolean = cleanly { Parts.of(ics).isOccurrence(at) }
+    /** What an action key looks like in the object: a short hash, so no key text can break the line. */
+    private fun markerOf(key: String): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }.take(24)
 
-    private class Parts(val calendar: Calendar, val master: VEvent, val overrides: List<VEvent>) {
+    private class Parts(val calendar: Calendar, val master: VEvent, val overrides: List<VEvent>, val key: String?) {
         val hint: ZoneId = calendar.zoneHint()
         val zone: ZoneId? = master.tzid()
+
+        private fun VEvent.markers(): List<String> = getProperties<Property>(MARKER).map { it.value }
+
+        /** True when an earlier delivery of this action already changed the object. */
+        fun alreadyDone(): Boolean = key != null && calendar.getComponents<VEvent>("VEVENT").any { markerOf(key) in it.markers() }
+
+        /** Records this action on [event]; the oldest marks fall away so they do not pile up. */
+        fun mark(event: VEvent = master) {
+            if (key == null) return
+            val kept = (event.markers() + markerOf(key)).takeLast(MAX_MARKERS)
+            event.removeAll<VEvent>(MARKER)
+            kept.forEach { event.add<VEvent>(XProperty(MARKER, it)) }
+        }
 
         /** [at] in the kind of time the series starts in. */
         fun startLike(at: JInstant): Temporal = startAt(at, master.startTemporal() is LocalDate, master.startTemporal() is LocalDateTime, zone)
 
         companion object {
-            fun of(ics: String): Parts {
+            fun of(ics: String, key: String? = null): Parts {
                 val calendar = Ical.parse(withoutKnownTimeZones(ics))
                 val events = calendar.getComponents<VEvent>("VEVENT")
                 val master = events.firstOrNull { !it.has("RECURRENCE-ID") }
@@ -337,12 +355,16 @@ object IcalEdit {
                 require(!master.repeats() || events.none { it.startTemporal() is ZonedDateTime && it.tzid() == null }) {
                     "This repeating event uses a time zone that cannot be edited here. Tell the person to change it in their calendar."
                 }
-                return Parts(calendar, master, events.filter { it.has("RECURRENCE-ID") })
+                val overrides = events.filter { it.has("RECURRENCE-ID") }
+                require(events.all { it.startTemporal() != null }) { "This calendar entry has a part without a start, so it can't be edited here." }
+                require(overrides.all { it.recurrenceInstant() != null }) { "This calendar entry has a changed occurrence that can't be read, so it can't be edited here." }
+                return Parts(calendar, master, overrides, key)
             }
         }
 
         fun finish(): String {
             Ical.bumpSequence(master)
+            mark()
             return calendar.withTimeZones().toString()
         }
 
@@ -388,7 +410,12 @@ object IcalEdit {
                     master.add<VEvent>(rruleFromText(ruleAfterMove(rule, seed, movedSeed, zone)))
                 }
                 setExdates(master, exdates(master).map(shift), zone)
-                overrides.forEach { it.moveBy(shift) }
+                val listed = master.getProperties<RDate<Temporal>>("RDATE").flatMap { it.dates.orEmpty() }.map { it.inZone(zone) }
+                if (listed.isNotEmpty()) {
+                    master.removeAll<VEvent>("RDATE")
+                    listed.map(shift).let { master.add<VEvent>(RDate(dateParameters(it, zone), DateList(it))) }
+                }
+                overrides.forEach { it.moveBy(at, newStart) }
             }
             master.applyText(change)
             if (change.repeat == null) overrides.forEach { it.applyText(change, base = before) }
@@ -396,7 +423,8 @@ object IcalEdit {
         }
 
         /** A changed occurrence of a series that moved: it keeps its own length and follows by the same shift, so it still matches its slot. */
-        private fun VEvent.moveBy(shift: (Temporal) -> Temporal) {
+        private fun VEvent.moveBy(from: JInstant, to: JInstant) {
+            val shift = wallShift(from, to, tzid() ?: zone)
             replaceRecurrenceId(shift(recurrenceTemporal()))
             val start = startTemporal()!!
             setTimes(shift(start), length(start))
@@ -408,6 +436,7 @@ object IcalEdit {
             if (existing != null) {
                 editInPlace(existing, change, fallbackZone = null)
                 Ical.bumpSequence(existing)
+                mark()
                 return calendar.withTimeZones().toString()
             }
             val seed = master.startTemporal()!!
@@ -418,6 +447,7 @@ object IcalEdit {
             editInPlace(copy, change, fallbackZone = null)
             Ical.bumpSequence(copy)
             calendar.add<Calendar>(copy)
+            mark()
             return calendar.withTimeZones().toString()
         }
 
@@ -437,8 +467,9 @@ object IcalEdit {
             calendar.getProperties<Property>().forEach { following.add<Calendar>(it) }
             calendar.getComponents<VTimeZone>("VTIMEZONE").forEach { following.add<Calendar>(it) }
             val fresh = master.copy()
-            fresh.removeAll<VEvent>("UID", "RRULE", "EXDATE", "RECURRENCE-ID", "SEQUENCE")
+            fresh.removeAll<VEvent>("UID", "RRULE", "EXDATE", "RECURRENCE-ID", "SEQUENCE", MARKER)
             fresh.add<VEvent>(Uid(followingUid))
+            mark(fresh)
             val startsAt = startAt(newStart, seed is LocalDate, seed is LocalDateTime, zone)
             fresh.setTimes(startsAt, change.end?.let { Duration.between(newStart, it) } ?: length)
             fresh.add<VEvent>(
@@ -450,7 +481,7 @@ object IcalEdit {
             following.add<Calendar>(fresh)
             later.forEach { o ->
                 val moved = o.copy()
-                moved.moveBy(shift)
+                moved.moveBy(at, newStart)
                 moved.removeAll<VEvent>("UID")
                 moved.add<VEvent>(Uid(followingUid))
                 moved.applyText(change, base = oldMaster)
@@ -483,9 +514,9 @@ object IcalEdit {
         }
 
         /** Maps a date of this series to the date it has once the occurrence at [from] is moved to [to], on the wall clock. */
-        fun wallShift(from: JInstant, to: JInstant): (Temporal) -> Temporal = { t ->
+        fun wallShift(from: JInstant, to: JInstant, on: ZoneId? = zone): (Temporal) -> Temporal = { t ->
             when (t) {
-                is ZonedDateTime -> (zone ?: realZone(t.zone.id))?.let { z ->
+                is ZonedDateTime -> (on ?: realZone(t.zone.id))?.let { z ->
                     t.toLocalDateTime().plus(Duration.between(from.atZone(z).toLocalDateTime(), to.atZone(z).toLocalDateTime())).atZone(z)
                 } ?: t
                 is LocalDate -> t.plusDays(ChronoUnit.DAYS.between(LocalDate.ofInstant(from, UTC_ZONE), LocalDate.ofInstant(to, UTC_ZONE)))
@@ -496,7 +527,7 @@ object IcalEdit {
             }
         }
 
-        fun VEvent.recurrenceTemporal(): Temporal = getProperty<RecurrenceId<Temporal>>("RECURRENCE-ID").get().date.inZone(zone)
+        fun VEvent.recurrenceTemporal(): Temporal = getProperty<RecurrenceId<Temporal>>("RECURRENCE-ID").get().date.inZone(tzid() ?: zone)
 
         fun exdates(event: VEvent): List<Temporal> =
             event.getProperties<ExDate<Temporal>>("EXDATE").flatMap { it.dates.orEmpty() }.map { it.inZone(zone) }

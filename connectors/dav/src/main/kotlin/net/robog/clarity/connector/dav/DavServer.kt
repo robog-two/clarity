@@ -37,13 +37,15 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.auth.Auth
-import io.ktor.client.statement.readRawBytes
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.http.content.TextContent
 import io.ktor.utils.io.core.use
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import kotlinx.coroutines.flow.toList
 import kotlin.time.Instant
 
@@ -261,12 +263,12 @@ class DavServer(private val config: DavConfig, engine: HttpClientEngine = CIO.cr
         return out
     }
 
-    /** GET [url]; null when the body is larger than [limit]. Returns ETag and bytes. */
+    /** GET [url]; null when the body is larger than [limit], which is enforced while reading, not after. Returns ETag and bytes. */
     suspend fun get(url: Url, limit: Long = MAX_EXTRACT_BYTES): Pair<String?, ByteArray>? =
         DavResource(http, url).get(Headers.build { append(HttpHeaders.Accept, "*/*") }) { response ->
             val declared = response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
             if (declared != null && declared > limit) null
-            else response.readRawBytes().let { if (it.size > limit) null else response.headers[HttpHeaders.ETag] to it }
+            else response.bodyAsChannel().readRemaining(limit + 1).readByteArray().let { if (it.size > limit) null else response.headers[HttpHeaders.ETag] to it }
         }
 
     /**
@@ -290,14 +292,6 @@ class DavServer(private val config: DavConfig, engine: HttpClientEngine = CIO.cr
             // gone already
         }
     }
-
-    /** True when something answers a GET at [url]. */
-    suspend fun exists(url: Url): Boolean =
-        try {
-            DavResource(http, url).get(Headers.build { append(HttpHeaders.Accept, "*/*") }) { true }
-        } catch (_: NotFoundException) {
-            false
-        }
 
     /** DAV compliance classes the server announces for [url] (e.g. `calendar-auto-schedule`). */
     suspend fun capabilities(url: Url): Set<String> = DavResource(http, url).options().davCapabilities

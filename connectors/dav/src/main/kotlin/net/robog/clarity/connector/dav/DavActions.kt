@@ -154,8 +154,8 @@ class DavActions(
 
     private fun tooLarge() = failed("The event is larger than ${EDIT_LIMIT / 1_000_000} MB, so it can't be changed here.")
 
-    /** Without a version to match, a write could overwrite someone else's change: try again later instead. */
-    private fun noVersion() = failed("The server gave no version of the event, so it can't be changed safely right now.", retryable = true)
+    /** Without a version to match, a write could overwrite someone else's change; a server that never sends one will not start to. */
+    private fun noVersion() = failed("This calendar server gives no version tag for events, so edits can't be made safely. Tell the person to change it in their calendar.")
 
     /** A stored `MOVE_EVENT`: the single-event part of [updateEvent]. */
     suspend fun moveEvent(a: ProposedAction.MoveEvent, target: SourceId?): ActionOutcome {
@@ -181,11 +181,7 @@ class DavActions(
             a.start?.toJava(), a.end?.toJava(), a.title, a.description, a.location, a.url, a.allDay, a.repeat, zoneOf(a.zone),
         )
         val edited = try {
-            // a re-delivered split: the original already ends before the occurrence and the new series is there
-            val delivered = a.scope == EventScope.FOLLOWING && server.exists(followingUrl) &&
-                event.path.occurrence?.let { !IcalEdit.hasOccurrence(event.ics, it) } == true
-            if (delivered) return@onTarget done
-            IcalEdit.updated(event.ics, event.path.occurrence, a.scope, change, following)
+            IcalEdit.updated(event.ics, event.path.occurrence, a.scope, change, following, a.idempotencyKey)
         } catch (e: IllegalArgumentException) {
             return@onTarget failed(e.message ?: "This event can't be edited.")
         }
@@ -215,14 +211,13 @@ class DavActions(
         val etag = event.etag ?: return@onTarget noVersion()
         attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "cancel")?.let { return@onTarget it }
         val removal = try {
-            // a re-delivery: the occurrence is already excluded or cut off
-            if (event.path.occurrence?.let { IcalEdit.alreadyCancelled(event.ics, it, a.scope) } == true) return@onTarget done
-            IcalEdit.cancelled(event.ics, event.path.occurrence, a.scope)
+            IcalEdit.cancelled(event.ics, event.path.occurrence, a.scope, a.idempotencyKey)
         } catch (e: IllegalArgumentException) {
             return@onTarget failed(e.message ?: "This event can't be cancelled.")
         }
         try {
             when (removal) {
+                Removal.Applied -> return@onTarget done
                 Removal.Delete -> server.deleteCalendar(event.url, ifMatch = etag)
                 is Removal.Replace -> server.putCalendar(event.url, removal.ics, ifMatch = etag)
             }

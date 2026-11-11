@@ -228,11 +228,12 @@ fun Recurrence.describe(start: LocalDate? = null): String {
 /**
  * The rule once the series' start moves from [from] to [to] (every occurrence moves by the same
  * days): weekdays and the end date move with it, an "nth weekday" is recomputed for the new date.
- * Null when that is not expressible: a "last weekday" that the new date is not in the last week
+ * The same date gives the rule back unchanged. Null when that is not expressible: a "last weekday" that the new date is not in the last week
  * of its month for, or a every-other-week rule whose days would land in different weeks.
  */
 fun Recurrence.movedTo(from: LocalDate, to: LocalDate): Recurrence? {
     val delta = from.daysUntil(to)
+    if (delta == 0) return this // only the time of day changes: the pattern stays as it is, whatever the start was
     fun DayOfWeek.moved() = DayOfWeek((((isoDayNumber - 1 + delta) % 7 + 7) % 7) + 1)
     fun weekIndex(day: DayOfWeek) = (day.isoDayNumber - 1 + delta).let { (it - ((it % 7) + 7) % 7) / 7 }
     if (frequency == Frequency.WEEKLY && interval > 1 && days.map(::weekIndex).distinct().size > 1) return null
