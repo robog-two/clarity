@@ -53,13 +53,6 @@ fun McpServerStatus.toolGroups(): ToolGroups {
     return ToolGroups(reads, changes)
 }
 
-/**
- * Always OK lets a tool run without the safety check asking, so on a tool the server does not
- * mark read-only it is confirmed first. Read-only tools and the other modes are set at once.
- */
-fun needsConfirmation(tool: McpToolStatus, mode: McpToolMode): Boolean =
-    mode == McpToolMode.ALWAYS_OK && !tool.readOnly && tool.mode != McpToolMode.ALWAYS_OK
-
 /** A server as a row of the list: the backend's view, and whether it is saved but not shown by the backend yet. */
 data class McpRow(val server: McpServerStatus, val pending: Boolean)
 

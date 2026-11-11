@@ -23,7 +23,17 @@ val MCP_PENDING_WINDOW: Duration = 30.seconds
  * A server the person just saved (new, or edited) that the backend's listing may not show yet. The
  * servers screen shows it as "Pending" under [label] until the listing reflects it.
  */
-data class PendingServer(val id: String, val label: String, val isNew: Boolean, val savedAt: Instant)
+data class PendingServer(
+    val id: String,
+    val label: String,
+    val isNew: Boolean,
+    val savedAt: Instant,
+    /** The edit changes how the server runs, so the host restarts it and lists it again. */
+    val relists: Boolean = true,
+)
+
+/** Item fields the host does not run with: changing only these never restarts or re-lists a server. */
+private val DISPLAY_ONLY_FIELDS = setOf("label", "description", "preset")
 
 /**
  * Pure: the servers of a saved `mcp-host` config ([saved]) that are new or differ from the [stored]
@@ -41,14 +51,17 @@ fun changedServers(stored: JsonObject?, saved: JsonObject, now: Instant): List<P
     return items(saved).mapNotNull { (id, item) ->
         if (before[id] == item) return@mapNotNull null
         val label = (item["label"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.trim().orEmpty()
-        PendingServer(id, label.ifEmpty { id }, isNew = id !in before, savedAt = now)
+        val old = before[id]
+        val relists = old == null || old.filterKeys { it !in DISPLAY_ONLY_FIELDS } != item.filterKeys { it !in DISPLAY_ONLY_FIELDS }
+        PendingServer(id, label.ifEmpty { id }, isNew = old == null, savedAt = now, relists = relists)
     }
 }
 
 /**
  * Pure: whether [listed] (the backend's row for [PendingServer.id], or null) shows what was saved. A
  * new server needs a listed row with its label, not installing, and either its tools or a final
- * state. An edit also needs a listing made after the save. After [window] a row that is listed
+ * state. An edit that changes how it runs also needs a listing made after the save (a name or
+ * description change does not restart it, so its label is enough). After [window] a row that is listed
  * (and not installing) counts either way: the person keeps what the backend says rather than a
  * "Pending" that never ends. A new server that is still not listed stays pending.
  */
@@ -58,7 +71,7 @@ fun PendingServer.resolvedBy(listed: McpServerStatus?, now: Instant, window: Dur
     if (now - savedAt >= window) return true
     val started = listed.state == McpServerState.FAILED || listed.state == McpServerState.DISABLED || listed.tools.isNotEmpty()
     if (listed.label != label || !started) return false
-    if (isNew) return true
+    if (isNew || !relists) return true
     val listedAt = listed.listedAt?.let { runCatching { Instant.parse(it) }.getOrNull() }
     return listedAt != null && listedAt >= savedAt
 }

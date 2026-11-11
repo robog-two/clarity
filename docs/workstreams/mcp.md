@@ -190,7 +190,7 @@ everything else keeps working).
 - **Server detail** shows its tools in two groups, "Reads" and "Changes things", each with a
   three-way segmented control Ask / Auto / Always OK (`PUT McpPaths.toolPolicy`), a "default" hint when
   not overridden, and a "Reset" action when overridden. Destructive tools get a warning icon.
-  Turning a tool the server does not mark read-only to Always OK asks for confirmation.
+  Every mode is set at once with no confirm, since one tap undoes it.
 - **Suggestions** appear at the top of the MCP screen ("Clarity suggests: Canvas — ..."), with
   "Set up" (opens the add flow on that preset) and "Dismiss".
 - Material 3 expressive like the rest of Settings; no work on the UI thread; strings in resources.
@@ -213,7 +213,7 @@ everything else keeps working).
   collection created once; `save_note` limited; sweep schedule, tools offered (reads and Always OK only), cap,
   scratch output, no chat post; suggestion limits; routes. Full `./gradlew :backend:test` passes.
 - **app:** JVM tests for the presentation (state chips, groups, counts, policy changes, reset,
-  confirmation) and `assembleDebug testDebugUnitTest lintDebug` in `android/` pass.
+  pending rows) and `assembleDebug testDebugUnitTest lintDebug` in `android/` pass.
 
 ## Reports
 

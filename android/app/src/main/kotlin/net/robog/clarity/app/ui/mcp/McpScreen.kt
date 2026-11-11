@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -73,8 +72,6 @@ data class McpActions(
     val onEdit: (serverId: String) -> Unit = {},
     val onMode: (serverId: String, tool: String, mode: McpToolMode) -> Unit = { _, _, _ -> },
     val onReset: (serverId: String, tool: String) -> Unit = { _, _ -> },
-    val onConfirm: () -> Unit = {},
-    val onCancelConfirm: () -> Unit = {},
     val onDismiss: (suggestionId: String) -> Unit = {},
 )
 
@@ -111,8 +108,6 @@ fun McpScreen(
             onEdit = onEdit,
             onMode = viewModel::chooseMode,
             onReset = viewModel::reset,
-            onConfirm = viewModel::confirm,
-            onCancelConfirm = viewModel::cancelConfirm,
             onDismiss = viewModel::dismiss,
         ),
     )
@@ -130,11 +125,6 @@ fun McpContent(state: McpUiState, actions: McpActions) {
         )
         server != null -> ServerDetail(server, state, actions)
         else -> ServerList(state, actions)
-    }
-    state.confirming?.let { choice ->
-        val s = state.servers.firstOrNull { it.id == choice.serverId }
-        val tool = s?.tools?.firstOrNull { it.name == choice.tool }
-        if (s != null && tool != null) ConfirmAlwaysOk(s, tool, actions)
     }
 }
 
@@ -357,22 +347,3 @@ private fun modeLabel(mode: McpToolMode): String = stringResource(
     },
 )
 
-@Composable
-fun ConfirmAlwaysOk(server: McpServerStatus, tool: McpToolStatus, actions: McpActions) {
-    AlertDialog(
-        onDismissRequest = actions.onCancelConfirm,
-        icon = if (tool.changesThings) {
-            { Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = MaterialTheme.colorScheme.error) }
-        } else {
-            null
-        },
-        title = { Text(stringResource(R.string.mcp_confirm_title, toolDisplayName(tool))) },
-        text = {
-            Text(stringResource(if (tool.changesThings) R.string.mcp_confirm_changes else R.string.mcp_confirm_text, server.label))
-        },
-        confirmButton = { TextButton(onClick = actions.onConfirm) { Text(stringResource(R.string.mcp_confirm_yes)) } },
-        dismissButton = { TextButton(onClick = actions.onCancelConfirm) { Text(stringResource(R.string.mcp_confirm_no)) } },
-        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-        iconContentColor = Color.Unspecified,
-    )
-}

@@ -121,8 +121,6 @@ data class McpToolStatus(
     val readOnly: Boolean = false,
     /** From the server's `destructiveHint` annotation; true when absent and not read-only (the MCP default). */
     val destructive: Boolean = false,
-    /** True when the tool's name reads as a change (`create_issue`) or the server marks it destructive: Always OK then warns plainly. */
-    val changesThings: Boolean = false,
     /** The mode in effect: the person's choice, or [McpToolMode.AUTO]. */
     val mode: McpToolMode,
     /** True when [mode] is the person's choice rather than the default. */

@@ -5,7 +5,7 @@
     <string name="mcp_row_summary">Tools from GitHub, Canvas and more</string>
     <string name="mcp_row_not_running">Not running on your server</string>
     <string name="mcp_back_settings">settings</string>
-    <string name="mcp_intro">Tools like GitHub or Canvas, run on your server. By default the safety check decides what runs.</string>
+    <string name="mcp_intro">Tools like GitHub or Canvas run on your server. By default the safety check decides what runs.</string>
     <string name="mcp_add">add server</string>
     <string name="mcp_retry">try again</string>
     <string name="mcp_empty">No tool servers yet.</string>
@@ -44,7 +44,7 @@
     <string name="mcp_group_reads">Reads</string>
     <string name="mcp_group_changes">Changes things</string>
     <string name="mcp_reads_hint">These only look things up.</string>
-    <string name="mcp_changes_hint">On Auto, the safety check decides each use.</string>
+    <string name="mcp_changes_hint">On Auto the safety check decides each use.</string>
     <string name="mcp_modes_explain">Ask waits for your OK. Auto lets the safety check decide. Always OK runs without asking.</string>
     <string name="mcp_no_tools">Tools appear once it is installed.</string>
     <string name="mcp_mode_auto">Auto</string>
@@ -57,10 +57,4 @@
     <string name="mcp_how_i_use">Mode for %1$s</string>
     <string name="mcp_destructive">Can delete or overwrite things</string>
 
-    <!-- Confirming Always OK for a tool the server does not mark read-only -->
-    <string name="mcp_confirm_title">Always OK for %1$s?</string>
-    <string name="mcp_confirm_text">Calls to it run without the safety check asking. Only your hard limits still apply.</string>
-    <string name="mcp_confirm_changes">It changes or deletes things in %1$s and will run without asking. Your hard limits still apply.</string>
-    <string name="mcp_confirm_yes">Always OK</string>
-    <string name="mcp_confirm_no">Cancel</string>
 </resources>

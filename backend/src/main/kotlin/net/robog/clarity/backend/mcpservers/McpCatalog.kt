@@ -105,7 +105,6 @@ fun toolStatusOf(view: McpToolView): McpToolStatus = McpToolStatus(
     description = firstSentence(view.tool.description),
     readOnly = view.tool.readOnly,
     destructive = view.tool.destructive,
-    changesThings = looksLikeWrite(view.tool.name) || view.tool.destructiveHint,
     mode = view.mode,
     overridden = view.overridden,
 )
@@ -127,7 +126,7 @@ fun renderMcpIndex(servers: List<McpServer>, maxDescription: Int = 120): String?
     return buildString {
         append(MCP_INDEX_PREFIX)
         append(" The person's MCP servers. You cannot use them yourself: give a helper the ones its task needs with delegate(servers=[\"<label>\"]), on every delegate that needs them, retries too: a helper has no other way into these services. ")
-        append("Calls that change something wait for the person's approval. Each server has a memory collection of the same name with notes for using it.")
+        append("A call waits for the person's approval when they set that tool to Ask or the safety check holds it. Each server has a memory collection of the same name with notes for using it.")
         usable.forEach { s ->
             val d = s.host.description.replace(Regex("\\s+"), " ").trim()
             append("\n- ").append(s.label)

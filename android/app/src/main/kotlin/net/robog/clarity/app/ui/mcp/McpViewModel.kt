@@ -31,9 +31,6 @@ import net.robog.clarity.shared.mcp.McpToolMode
 /** How often the list is checked while a saved server is pending. */
 private val PENDING_POLL = 1500.milliseconds
 
-/** A tool's mode the person picked; waiting for their OK when it lets a tool that changes things run alone. */
-data class ToolChoice(val serverId: String, val tool: String, val mode: McpToolMode)
-
 data class McpUiState(
     val loading: Boolean = true,
     /** The `mcp-host` connector is not running on the server (or not set up there at all). */
@@ -46,7 +43,6 @@ data class McpUiState(
     val error: String? = null,
     /** The server whose detail is open. */
     val selected: String? = null,
-    val confirming: ToolChoice? = null,
     /** Why the last change to a tool or a suggestion did not go through. */
     val changeError: String? = null,
 ) {
@@ -132,27 +128,15 @@ class McpViewModel(
 
     fun open(serverId: String) = _state.update { it.copy(selected = serverId, changeError = null) }
 
-    fun close() = _state.update { it.copy(selected = null, confirming = null, changeError = null) }
+    fun close() = _state.update { it.copy(selected = null, changeError = null) }
 
     /** A segment of a tool's Ask / Auto / Always OK control was tapped. */
     fun chooseMode(serverId: String, tool: String, mode: McpToolMode) {
         val current = _state.value.servers.firstOrNull { it.id == serverId }?.tools?.firstOrNull { it.name == tool } ?: return
         if (current.mode == mode && current.overridden) return
-        if (needsConfirmation(current, mode)) {
-            _state.update { it.copy(confirming = ToolChoice(serverId, tool, mode)) }
-        } else {
-            apply(serverId, tool, mode)
-        }
+        // Set at once, no confirm: a mistake is one tap to undo.
+        apply(serverId, tool, mode)
     }
-
-    /** "Allow" in the confirmation. */
-    fun confirm() {
-        val choice = _state.value.confirming ?: return
-        _state.update { it.copy(confirming = null) }
-        apply(choice.serverId, choice.tool, choice.mode)
-    }
-
-    fun cancelConfirm() = _state.update { it.copy(confirming = null) }
 
     /** Back to the default for this tool. */
     fun reset(serverId: String, tool: String) = apply(serverId, tool, null)

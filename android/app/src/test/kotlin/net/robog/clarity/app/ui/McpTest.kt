@@ -37,10 +37,8 @@ import net.robog.clarity.app.testutil.withMain
 import net.robog.clarity.app.ui.mcp.ChipTone
 import net.robog.clarity.app.ui.mcp.MCP_HOST
 import net.robog.clarity.app.ui.mcp.McpViewModel
-import net.robog.clarity.app.ui.mcp.ToolChoice
 import net.robog.clarity.app.ui.mcp.defaultMode
 import net.robog.clarity.app.ui.mcp.isMcpHost
-import net.robog.clarity.app.ui.mcp.needsConfirmation
 import net.robog.clarity.app.ui.mcp.tone
 import net.robog.clarity.app.ui.mcp.toolCounts
 import net.robog.clarity.app.ui.mcp.toolGroups
@@ -310,15 +308,6 @@ class McpPresentationTest {
         assertEquals(McpToolMode.entries.toSet(), MODE_ORDER.toSet(), "no mode is left out of the control")
     }
 
-    @Test fun alwaysOkForAToolThatIsNotReadOnlyIsConfirmed() {
-        assertTrue(needsConfirmation(tool("create_issue", readOnly = false), McpToolMode.ALWAYS_OK))
-        assertTrue(needsConfirmation(tool("delete_branch", readOnly = false, mode = McpToolMode.ASK), McpToolMode.ALWAYS_OK))
-        assertFalse(needsConfirmation(tool("create_issue", readOnly = false), McpToolMode.AUTO), "Auto needs no confirm")
-        assertFalse(needsConfirmation(tool("create_issue", readOnly = false), McpToolMode.ASK))
-        assertFalse(needsConfirmation(tool("list_issues", readOnly = true), McpToolMode.ALWAYS_OK), "the server says it only reads")
-        assertFalse(needsConfirmation(tool("create_issue", readOnly = false, mode = McpToolMode.ALWAYS_OK), McpToolMode.ALWAYS_OK), "already on Always OK")
-    }
-
     @Test fun alwaysOkIsOfferedForEveryToolIncludingDestructiveOnes() {
         // there is nothing in a tool's status that rules a mode out: the control shows all three for every tool
         val destructive = tool("delete_branch", readOnly = false, destructive = true)
@@ -364,6 +353,17 @@ class McpPresentationTest {
         assertEquals(listOf(false, true, true), pending.map { it.isNew })
         assertEquals(listOf("x"), changedServers(null, obj("""{"servers":[{"id":"x","label":"x"}]}"""), t0).map { it.id })
         assertTrue(changedServers(stored, stored, t0).isEmpty())
+        // a rename does not restart the server; a new token does
+        assertEquals(listOf(false, true, true), pending.map { it.relists })
+        val retoken = obj("""{"servers":[{"id":"a","label":"One","secret":{"v":2}},{"id":"b","label":"Two"}]}""")
+        assertEquals(listOf(true), changedServers(stored, retoken, t0).map { it.relists })
+    }
+
+    @Test fun aRenameResolvesAsSoonAsTheNewLabelIsListed() {
+        val p = PendingServer("gh", "GitHub", isNew = false, savedAt = t0, relists = false)
+        val soon = t0 + 2.seconds
+        assertTrue(p.resolvedBy(github.copy(id = "gh", listedAt = "2026-11-01T09:59:00Z"), soon), "an old listing with the new label is enough")
+        assertFalse(p.resolvedBy(github.copy(id = "gh", label = "Old name", listedAt = "2026-11-01T09:59:00Z"), soon))
     }
 
     @Test fun aPendingServerResolvesWhenListedWithItsToolsOrFailed() {
@@ -427,35 +427,17 @@ class McpViewModelTest {
         assertTrue(t.overridden)
     }
 
-    @Test fun alwaysOkForAToolThatIsNotReadOnlyWaitsForConfirmation() = withMain {
-        val mcp = FakeMcp()
-        val vm = vm(mcp)
-        vm.chooseMode(github.id, "create_issue", McpToolMode.ALWAYS_OK)
-        assertEquals(ToolChoice(github.id, "create_issue", McpToolMode.ALWAYS_OK), vm.state.value.confirming)
-        assertTrue(mcp.puts.isEmpty(), "nothing is sent before the OK")
-
-        vm.cancelConfirm()
-        assertNull(vm.state.value.confirming)
-        assertTrue(mcp.puts.isEmpty())
-
-        vm.chooseMode(github.id, "create_issue", McpToolMode.ALWAYS_OK)
-        vm.confirm()
-        assertEquals(Triple(github.id, "create_issue", McpToolMode.ALWAYS_OK), mcp.puts.single())
-        assertEquals(McpToolMode.ALWAYS_OK, vm.state.value.servers.first().tools.first { it.name == "create_issue" }.mode)
-    }
-
-    @Test fun autoNeedsNoConfirmAndAlwaysOkOnAReadOnlyToolIsSetAtOnce() = withMain {
+    @Test fun everyModeIsSetAtOnceWithNoConfirm() = withMain {
         val mcp = FakeMcp()
         val vm = vm(mcp)
         vm.chooseMode(github.id, "create_issue", McpToolMode.ASK)
-        vm.chooseMode(github.id, "create_issue", McpToolMode.AUTO)
-        assertNull(vm.state.value.confirming)
+        vm.chooseMode(github.id, "create_issue", McpToolMode.ALWAYS_OK)
         vm.chooseMode(github.id, "list_issues", McpToolMode.ALWAYS_OK)
-        assertNull(vm.state.value.confirming)
+        assertEquals(McpToolMode.ALWAYS_OK, vm.state.value.servers.first().tools.first { it.name == "create_issue" }.mode)
         assertEquals<List<Triple<String, String, McpToolMode?>>>(
             listOf(
                 Triple(github.id, "create_issue", McpToolMode.ASK),
-                Triple(github.id, "create_issue", McpToolMode.AUTO),
+                Triple(github.id, "create_issue", McpToolMode.ALWAYS_OK),
                 Triple(github.id, "list_issues", McpToolMode.ALWAYS_OK),
             ),
             mcp.puts,

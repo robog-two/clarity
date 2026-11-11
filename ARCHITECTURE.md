@@ -626,8 +626,8 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   claims (display, `McpToolStatus.readOnly`); what the backend does with a tool follows
   `treatedAsRead(view)`: Always OK, or Auto on a tool marked read-only. That one function decides the
   gate (`HARD_LINES` against `GUARD`), the tool's effect (`READ` against `EXTERNAL`) and the morning
-  sweep (`sweepRead`). Always OK is allowed on every tool, writes and destructive ones included, with
-  a confirm in the app; it is the person vouching for the tool.
+  sweep (`sweepRead`). Always OK is allowed on every tool, writes and destructive ones included, and
+  is set at once with no confirm (one tap undoes it); it is the person vouching for the tool.
 - **`auto`** calls still pass governance. A tool treated as a read gets only the person's hard limits
   (`hardLineVerdict`, no model call: a "never" kind such as payments blocks it, "never alone" holds it
   for the phone, a never-store topic holds it). Any other tool on Auto goes through `gateLocal` with
@@ -651,7 +651,8 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   and a `save_note` limited to their collections (same secret and failure checks). The memory tidy
   keeps those collections' names and their "Sweep recipe:" notes.
 - **Morning sweep** (`mcp-sweep`): 30 minutes before the call prep on call days, when an enabled
-  server has a tool treated as a read (`sweepRead`: read-only on Auto, or Always OK), one helper
+  server has a tool treated as a read (`sweepRead`: read-only on Auto, or Always OK, never a
+  write-named or destructive tool even on Always OK), one helper
   (helper model, `profile = mcp-sweep`) gets only those tools of the enabled servers (a call the person's hard limits would hold is
   skipped with an error: the sweep never asks or waits), `open_collection`, the limited `save_note` and a `set_scratch` that
   writes the keyed note `coming-up` (20 h, at most 1,200 characters, every line starting with its
@@ -664,7 +665,7 @@ The static `CLARITY_MCP_SERVERS` (sandbox, browser) are separate and unchanged.
   faster) for up to 30 s, until the listing has exactly the saved servers with their labels, none
   installing, each with its tools (a failed or switched-off one is as far as it gets), then goes back
   to the 60 s tick. The host still picks its config up by polling (`CLARITY_MCPHOST_SYNC_INTERVAL`,
-  30 s in the compose default, so keep it low); `GET /api/v1/mcp/servers?refresh=true` lists the
+  5 s in the compose default: a conditional GET answered 304 when nothing changed); `GET /api/v1/mcp/servers?refresh=true` lists the
   host first (waiting up to 3 s). In the app, the editor notes each new or changed server as pending
   (`PendingMcpServers`) the moment the save succeeds; the servers screen shows it as a "Pending" row
   under its saved label, re-fetches every 1.5 s for up to 30 s, and turns it into the normal row (or
