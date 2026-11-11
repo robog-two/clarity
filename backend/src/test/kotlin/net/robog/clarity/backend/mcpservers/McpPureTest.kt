@@ -143,8 +143,10 @@ class McpPureTest : FunSpec({
             treatedAsRead(McpToolView(writeTool("create_x"), m, true)) shouldBe (m == McpToolMode.ALWAYS_OK)
             treatedAsRead(McpToolView(destructive, m, true)) shouldBe (m == McpToolMode.ALWAYS_OK)
         }
-        // the sweep follows the same rule
-        sweepRead(McpToolView(writeTool("create_x"), McpToolMode.ALWAYS_OK, true)) shouldBe true
+        // the sweep follows the same rule, but never takes a write-like or destructive tool, even on Always OK
+        sweepRead(McpToolView(writeTool("create_x"), McpToolMode.ALWAYS_OK, true)) shouldBe false
+        sweepRead(McpToolView(HostTool("wipe_x", destructiveHint = true), McpToolMode.ALWAYS_OK, true)) shouldBe false
+        sweepRead(McpToolView(writeTool("search_x"), McpToolMode.ALWAYS_OK, true)) shouldBe true
         sweepRead(McpToolView(writeTool("create_x"), McpToolMode.AUTO, false)) shouldBe false
         sweepRead(McpToolView(readTool("list_a"), McpToolMode.AUTO, false)) shouldBe true
         sweepRead(McpToolView(readTool("list_a"), McpToolMode.ASK, true)) shouldBe false

@@ -400,11 +400,12 @@ class McpApprovals(
 }
 
 /**
- * Pure: whether the sweep may use [view]: [treatedAsRead], so `auto` and marked read-only (a
- * write-named tool never is, [looksLikeWrite]) or `always_ok`. The sweep still skips what the
- * person's hard limits would hold.
+ * Pure: whether the sweep may use [view]: [treatedAsRead], but never a tool that looks like a write
+ * or is marked destructive, even on Always OK: the sweep only reads, unattended. The person's Always OK
+ * still lets helpers run such a tool without asking. The sweep also skips what their hard limits would hold.
  */
-fun sweepRead(view: McpToolView): Boolean = treatedAsRead(view)
+fun sweepRead(view: McpToolView): Boolean =
+    treatedAsRead(view) && !looksLikeWrite(view.tool.name) && !view.tool.destructiveHint
 
 /** A tool-call allowance shared by a run's tools. */
 class CallBudget(private val max: Int, used: Int = 0) {

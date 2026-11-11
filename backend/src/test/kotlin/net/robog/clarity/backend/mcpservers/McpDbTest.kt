@@ -466,22 +466,26 @@ class McpDbTest : FunSpec({
 
     test("the sweep uses tools treated as reads (read-only on Auto, or Always OK) and never holds: what the person's limits would hold is skipped") {
         val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_y","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
-        val host = FakeMcpHost(listOf(hostServer("gh", "GitHub", readTool("list_a"), writeTool("create_x"), faked), hostServer("w", "Writer", writeTool("post_z"))))
+        val host = FakeMcpHost(listOf(hostServer("gh", "GitHub", readTool("list_a"), writeTool("create_x"), faked), hostServer("w", "Writer", writeTool("post_z"), writeTool("search_z"))))
         val r = rig(host)
         // on Auto a write-like tool is not a read, whatever the server says
         r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
         r.mcpKit.sweepTools(helperScope(), r.mcpKit.byIds(listOf("gh", "w")), 0).map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
         r.mcpCatalog.setMode("gh", "create_x", McpToolMode.ASK)
         r.mcpCatalog.setMode("w", "post_z", McpToolMode.ALWAYS_OK)
+        // an Always OK write tool is never swept; an Always OK tool the server leaves unmarked is
+        r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
+        r.mcpCatalog.setMode("w", "search_z", McpToolMode.ALWAYS_OK)
         r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh", "w")
         r.mcpCatalog.setMode("w", "post_z", McpToolMode.AUTO)
+        r.mcpCatalog.setMode("w", "search_z", McpToolMode.AUTO)
         r.mcpCatalog.setMode("gh", "create_x", McpToolMode.ALWAYS_OK)
         r.mcpCatalog.setMode("gh", "delete_y", McpToolMode.AUTO)
-        // a server whose only tool writes on Auto is not swept; an Always OK write tool is
+        // a server whose tools are not reads on Auto is not swept; an Always OK write tool is not either
         r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
         val scope = helperScope()
         val tools = r.toolbox.sweepTools(scope, listOf("gh", "w"), 0).tools
-        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__create_x", "mcp_github__list_a")
+        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
         val list = tools.first { it.name == "mcp_github__list_a" }
         ok(list.call()) shouldContain "list_a done"
         // never alone: skipped, with no approval request and no wait
