@@ -194,6 +194,29 @@ fun mayAsk(questions: List<HelperQuestion>, toolUseId: String): Boolean {
     return open.toolUseId == toolUseId
 }
 
+/**
+ * Pure: the open questions that no call of the resumed run will wait on: all of them unless the [journal]
+ * ends on `ask_lead` calls, and then all but the lowest-numbered open one whose call is among them.
+ */
+fun staleQuestions(questions: List<HelperQuestion>, journal: List<Message>): List<Int> {
+    val open = questions.filter { it.open }.sortedBy { it.seq }
+    val replayed = journal.lastOrNull()?.takeIf { it.role == Role.ASSISTANT }?.content
+        ?.filterIsInstance<Block.ToolUse>()?.filter { it.name == "ask_lead" }?.map { it.id }?.toSet().orEmpty()
+    val keep = open.firstOrNull { it.toolUseId in replayed }
+    return open.filter { it !== keep }.map { it.seq }
+}
+
+/**
+ * Pure: what the lead hears when it writes to or cancels a helper that no longer takes it. A helper
+ * that [closing] but still open is only finishing: nothing is lost, the lead can try again shortly.
+ */
+fun finishedRefusal(id: String, status: String, closing: Boolean): String = when {
+    status in RunStatus.OPEN && closing -> "Helper $id is finishing; try again shortly."
+    status == RunStatus.CANCELLED || status == RunStatus.FAILED ->
+        "Helper $id already $status. Start a new one with delegate and say why in retryReason."
+    else -> "Helper $id already $status. To send its work back with feedback use revise_helper."
+}
+
 /** What a helper reads when it asks while another question of its own is open. */
 const val ONE_QUESTION_AT_A_TIME: String = "One question at a time: wait for the answer to your open question before asking another."
 

@@ -796,4 +796,54 @@ class HelperMessagingTest : FunSpec({
             }
         }
     }
+
+    context("restarts and cleanup") {
+        test("an open question of a call the resume does not replay cannot block the one it does") {
+            val r = LeadRig(database).also { it.reset() }
+            val id = "bd1f0c52-0b0e-4d7e-8f0f-5c8d3a2b9e11"
+            r.runs.create(id, null, "helper", "Choose a plumber.", null, Clock.System.now())
+            r.journal.append(id, Message.user("Task from the lead agent:\nChoose a plumber."))
+            r.journal.append(id, Message(Role.ASSISTANT, listOf(Block.ToolUse("q2", "ask_lead", args("question" to "C or D?")))))
+            r.runs.ask(id, "q1", "A or B?", Clock.System.now(), 3)
+            r.runs.ask(id, "q2", "C or D?", Clock.System.now(), 3)
+            r.model.handler = { end("Chose D.") }
+            r.serving {
+                until("the replayed question to wait") { runs.questions(id).takeIf { it.size == 2 && it[0].timedOut } }
+                helpers.message(id, "D").shouldBeInstanceOf<Either.Right<String>>().value shouldContain "Answered"
+                awaitRun(id)
+                runs.questions(id).map { it.timedOut to it.answer } shouldContainExactly listOf(true to null, false to "D")
+                runs.get(id)!!.status shouldBe RunStatus.DONE
+            }
+        }
+
+        test("the lowest open question is the one an answer goes to") {
+            val r = LeadRig(database).also { it.reset() }
+            val id = "be1f0c52-0b0e-4d7e-8f0f-5c8d3a2b9e11"
+            r.runs.create(id, null, "helper", "Choose a plumber.", null, Clock.System.now())
+            r.runs.ask(id, "q1", "A or B?", Clock.System.now(), 3)
+            r.runs.ask(id, "q2", "C or D?", Clock.System.now(), 3)
+            r.runs.answer(id, "A", Clock.System.now()).shouldNotBeNull().seq shouldBe 1
+        }
+
+        test("a failed or cancelled helper keeps no taint, a done one keeps it for its revision") {
+            val r = LeadRig(database).also { it.reset() }
+            var calls = 0
+            r.model.handler = { request ->
+                when {
+                    "FAILING" in shown(request) -> error("model down")
+                    calls++ == 0 -> callTool("m1", "search_memory", args("query" to "plumbers"))
+                    else -> end("done")
+                }
+            }
+            r.serving {
+                val done = begin("Find plumbers.")
+                awaitRun(done)
+                helpers.isTainted(done) shouldBe true
+                val failed = begin("FAILING task.")
+                awaitRun(failed)
+                runs.get(failed)!!.status shouldBe RunStatus.FAILED
+                helpers.isTainted(failed).shouldBeNull()
+            }
+        }
+    }
 })
