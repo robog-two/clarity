@@ -52,7 +52,7 @@ fun effectiveKind(action: ProposedAction): ActionKind =
  * The tier that applies to [kind]: the person's own setting from the interview (a "never" is
  * always respected), else "ask first". Vault kinds can never be looser than "never alone".
  */
-fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
+private fun kindTier(kind: ActionKind, constitution: Constitution): AutonomyTier {
     val set = constitution.autonomyOf(kind)
     return when {
         set == AutonomyTier.NEVER -> AutonomyTier.NEVER
@@ -66,13 +66,11 @@ fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
  * looser than a "never" the person set on moving events (the phone no longer shows that setting).
  */
 fun tierOf(action: ProposedAction, constitution: Constitution): AutonomyTier {
-    val tier = tierOf(effectiveKind(action), constitution)
-    val movesTime = action is ProposedAction.UpdateEvent && (action.start != null || action.end != null)
+    val tier = kindTier(effectiveKind(action), constitution)
+    val movesTime = action is ProposedAction.UpdateEvent && (action.start != null || action.end != null || action.repeat != null || action.allDay != null)
     return if (movesTime && constitution.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER) AutonomyTier.NEVER else tier
 }
 
-/** Kinds the person ruled out entirely ("never"): refused, and not approvable until amended. */
-fun isHardLineKind(kind: ActionKind, constitution: Constitution): Boolean = tierOf(kind, constitution) == AutonomyTier.NEVER
 
 /** Actions that reach other people or outside systems; untrusted-content influence matters most here. */
 fun isExternal(action: ProposedAction): Boolean = when (action) {
@@ -256,7 +254,7 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (isHardLineKind(effectiveKind(action), constitution)) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
+    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
         return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"

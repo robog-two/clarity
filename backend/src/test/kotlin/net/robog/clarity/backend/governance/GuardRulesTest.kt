@@ -128,6 +128,28 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(title.copy(url = "https://example.com"), c, trusted()).decision shouldBe Decision.ALLOW
     }
 
+    test("approving an update with an edited time is stopped by a never on moving, a wording-only one is not") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val at = kotlin.time.Instant.parse("2026-10-26T14:00:00Z")
+        val held = GuardVerdict(Decision.ASK, emptyList(), "asking")
+        val wording = ProposedAction.UpdateEvent("k", "s", id, title = "x")
+        hardLineViolation(wording, held, c) shouldBe null
+        // what approve() checks is the edited action the person sent, not the one that was held
+        hardLineViolation(wording.copy(start = at), held, c) shouldContain "hard line"
+        hardLineViolation(wording.copy(repeat = net.robog.clarity.shared.calendar.Recurrence(net.robog.clarity.shared.calendar.Frequency.DAILY)), held, c) shouldContain "hard line"
+        hardLineViolation(wording.copy(allDay = true), held, c) shouldContain "hard line"
+        tierOf(wording.copy(end = at), c) shouldBe AutonomyTier.NEVER
+        tierOf(wording, c) shouldBe AutonomyTier.DO_THEN_TELL
+    }
+
+    test("the prompt says changing an event's time follows a never on moving") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        net.robog.clarity.backend.agent.renderConstitution(c) shouldContain "time, repeat or all-day setting also follows move_event"
+        net.robog.clarity.backend.agent.renderConstitution(constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST)))
+            .contains("also follows move_event") shouldBe false
+    }
+
     test("outside content cannot rewrite the rest of a series either") {
         val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
         val title = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e1"), net.robog.clarity.shared.calendar.EventScope.FOLLOWING, title = "x")

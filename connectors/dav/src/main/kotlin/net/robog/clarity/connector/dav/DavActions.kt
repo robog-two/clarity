@@ -97,6 +97,20 @@ class DavActions(
         return ActionOutcome.Done(SourceId(sourceIdOf(config.id, url.encodedPath)))
     }
 
+    /**
+     * The new series of a split. One that is already there came from an earlier attempt whose second write
+     * failed; it is replaced (by its own version) with what the latest original gives, not kept stale.
+     */
+    private suspend fun putFollowing(server: DavServer, url: Url, ics: String): ActionOutcome.Failed? {
+        try {
+            server.putCalendar(url, ics, ifNoneMatch = "*")
+        } catch (_: PreconditionFailedException) {
+            val etag = server.get(url, EDIT_LIMIT)?.first ?: return noVersion()
+            server.putCalendar(url, ics, ifMatch = etag)
+        }
+        return null
+    }
+
     private suspend fun putNew(server: DavServer, url: Url, ics: String) {
         try {
             server.putCalendar(url, ics, ifNoneMatch = "*")
@@ -174,6 +188,12 @@ class DavActions(
             Load.TooLarge -> return@onTarget tooLarge()
         }
         val etag = event.etag ?: return@onTarget noVersion()
+        // a re-delivery is done whatever the attendees or the server can do now
+        try {
+            if (IcalEdit.alreadyMarked(event.ics, a.idempotencyKey)) return@onTarget done
+        } catch (e: IllegalArgumentException) {
+            return@onTarget failed(e.message ?: "This event can't be edited.")
+        }
         attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "change")?.let { return@onTarget it }
         val following = uidFor(a.idempotencyKey)
         val followingUrl = server.resolve(event.url, event.path.resource.substringBeforeLast('/') + "/" + following + ".ics")
@@ -190,7 +210,7 @@ class DavActions(
                 Edited.Applied -> return@onTarget done
                 is Edited.Replace -> server.putCalendar(event.url, edited.ics, ifMatch = etag)
                 is Edited.Split -> {
-                    putNew(server, followingUrl, edited.following)
+                    putFollowing(server, followingUrl, edited.following)?.let { return@onTarget it }
                     server.putCalendar(event.url, edited.original, ifMatch = etag)
                 }
             }
@@ -209,6 +229,11 @@ class DavActions(
             Load.TooLarge -> return@onTarget tooLarge()
         }
         val etag = event.etag ?: return@onTarget noVersion()
+        try {
+            if (IcalEdit.alreadyMarked(event.ics, a.idempotencyKey)) return@onTarget done
+        } catch (e: IllegalArgumentException) {
+            return@onTarget failed(e.message ?: "This event can't be cancelled.")
+        }
         attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "cancel")?.let { return@onTarget it }
         val removal = try {
             IcalEdit.cancelled(event.ics, event.path.occurrence, a.scope, a.idempotencyKey)

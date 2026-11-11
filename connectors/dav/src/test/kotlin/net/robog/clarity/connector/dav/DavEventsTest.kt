@@ -290,6 +290,46 @@ class DavEventsTest : FunSpec({
         }
     }
 
+    context("a delivery that was already done stays done") {
+        test("even when the event now has attendees the server could not notify") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val action = update("u1", EventScope.THIS) { it.copy(title = "Once") }
+            actions.updateEvent(action, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            // the same event gains an attendee and the server stops scheduling: a fresh action would be refused, the repeat is not
+            dav.put(path, "text/calendar", dav.text(path).replace("END:VEVENT", "ORGANIZER:mailto:me@example.com\r\nATTENDEE:mailto:bob@example.com\r\nEND:VEVENT"))
+            actions.updateEvent(action, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            actions.updateEvent(update("u2", EventScope.THIS) { it.copy(title = "Twice") }, occurrence(path, "2026-11-04 07:00"))
+                .shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "notifyAttendees"
+        }
+    }
+
+    context("a split whose second write failed") {
+        test("the new series is rebuilt from the latest original, not kept stale") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val target = occurrence(path, "2026-11-02 07:00")
+            val action = update("u1", EventScope.FOLLOWING) { it.copy(title = "Gym B") }
+            val newPath = "${CAL}${uidFor("u1")}.ics"
+            // someone moves the whole series to another place after the new series was written and before the original is
+            dav.beforeWrite = { p ->
+                if (p == path) {
+                    dav.put(p, "text/calendar", dav.text(p).replace("LOCATION:Pool", "LOCATION:Deck"))
+                    dav.beforeWrite = null
+                }
+            }
+            actions.updateEvent(action, target).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
+            dav.text(newPath) shouldContain "LOCATION:Pool" // written from the version before the rename
+            actions.updateEvent(action, target).shouldBeInstanceOf<ActionOutcome.Done>()
+            dav.text(newPath) shouldContain "SUMMARY:Gym B"
+            dav.text(newPath) shouldContain "LOCATION:Deck"
+            dav.text(path) shouldContain "LOCATION:Deck"
+            localStarts(dav.text(newPath)) shouldContainExactly listOf("2026-11-02 07:00", "2026-11-04 07:00", "2026-11-06 07:00")
+        }
+    }
+
     context("a wrong occurrence is a failure, not a done") {
         test("cancelling or editing an occurrence that is not in the series fails and writes nothing") {
             val dav = fake()
