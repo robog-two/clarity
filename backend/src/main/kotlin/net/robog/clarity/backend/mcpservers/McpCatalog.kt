@@ -37,12 +37,25 @@ data class McpServer(val host: HostServer, val collection: String?, val tools: L
     /** Switched on in its config (a failed server is retried on its next call). */
     val enabled: Boolean get() = host.state != McpServerState.DISABLED
 
-    /** Tools a run may be given: everything not switched off. */
-    val usable: List<McpToolView> get() = tools.filter { it.mode != McpToolMode.OFF }
+    /** Tools a run may be given: every one (there is no off). */
+    val usable: List<McpToolView> get() = tools
 }
 
-/** Pure: the mode a tool has unless the person chose one: only tools the server marks read-only run without asking. */
-fun defaultMode(tool: HostTool): McpToolMode = if (tool.readOnly) McpToolMode.AUTO else McpToolMode.ASK
+/** Pure: the mode a tool has unless the person chose one: Auto, for every tool (the safety check decides). */
+@Suppress("UNUSED_PARAMETER")
+fun defaultMode(tool: HostTool): McpToolMode = McpToolMode.AUTO
+
+/**
+ * Pure: whether [view] is treated as a read: the server marks it read-only and it is on Auto
+ * (hard limits only, no guard), or the person set it to Always OK (they vouch for it, even for a
+ * write-named or destructive tool). Decides the gate, the effect, the sweep and the description.
+ * `view.tool.readOnly` alone only says what the server claims.
+ */
+fun treatedAsRead(view: McpToolView): Boolean = when (view.mode) {
+    McpToolMode.ALWAYS_OK -> true
+    McpToolMode.AUTO -> view.tool.readOnly
+    McpToolMode.ASK -> false
+}
 
 /** Pure: [label] as a tool-name slug: lowercase `[a-z0-9_]`, at most 24 characters. */
 fun serverSlug(label: String): String =
@@ -92,6 +105,7 @@ fun toolStatusOf(view: McpToolView): McpToolStatus = McpToolStatus(
     description = firstSentence(view.tool.description),
     readOnly = view.tool.readOnly,
     destructive = view.tool.destructive,
+    changesThings = looksLikeWrite(view.tool.name) || view.tool.destructiveHint,
     mode = view.mode,
     overridden = view.overridden,
 )
@@ -103,8 +117,8 @@ const val MCP_INDEX_PREFIX = "[mcp servers]"
 const val NO_MCP_SERVERS = "$MCP_INDEX_PREFIX None are set up now."
 
 /**
- * Pure: the lead's index of the person's servers: each enabled server that has a tool not switched
- * off, by label, with its one-line description. Null when there are none. Nothing that changes
+ * Pure: the lead's index of the person's servers: each enabled server that has a tool,
+ * by label, with its one-line description. Null when there are none. Nothing that changes
  * often (state, tool counts) is in it, so it is rarely re-sent.
  */
 fun renderMcpIndex(servers: List<McpServer>, maxDescription: Int = 120): String? {

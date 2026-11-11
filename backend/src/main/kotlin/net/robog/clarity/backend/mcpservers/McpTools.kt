@@ -184,12 +184,12 @@ class McpCalls(
 
     /**
      * Runs an `auto` tool. One the server marks read-only (and whose name does not look like a write)
-     * passes the person's hard limits only, without a model call; any other (the person set a write
-     * tool to Auto) goes through the full guard. Whatever they do not allow is held or blocked like
-     * an `ask` call.
+     * passes the person's hard limits only, without a model call; any other goes through the full
+     * guard. An `always_ok` tool ([asRead]) is treated like the first kind: hard limits only.
+     * Whatever they do not allow is held or blocked like an `ask` call.
      */
-    suspend fun auto(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject): ToolResult =
-        gated(scope, server, tool, input, if (tool.readOnly) McpGate.HARD_LINES else McpGate.GUARD)
+    suspend fun auto(scope: RunScope, server: McpServer, tool: HostTool, input: JsonObject, asRead: Boolean = tool.readOnly): ToolResult =
+        gated(scope, server, tool, input, if (asRead) McpGate.HARD_LINES else McpGate.GUARD)
 
     /**
      * A sweep read: runs within the person's hard limits; anything they would hold or block is
@@ -399,8 +399,12 @@ class McpApprovals(
     }
 }
 
-/** Pure: whether the sweep may use [view]: `auto` and read-only (a write-named tool never is, [looksLikeWrite]). */
-fun sweepRead(view: McpToolView): Boolean = view.mode == McpToolMode.AUTO && view.tool.readOnly
+/**
+ * Pure: whether the sweep may use [view]: [treatedAsRead], so `auto` and marked read-only (a
+ * write-named tool never is, [looksLikeWrite]) or `always_ok`. The sweep still skips what the
+ * person's hard limits would hold.
+ */
+fun sweepRead(view: McpToolView): Boolean = treatedAsRead(view)
 
 /** A tool-call allowance shared by a run's tools. */
 class CallBudget(private val max: Int, used: Int = 0) {
@@ -433,8 +437,8 @@ fun suggestionRefusal(label: String, configured: List<String>, open: List<String
 const val MAX_SUGGESTIONS_PER_WEEK = 3
 
 /**
- * The tools that reach the person's servers: per server its usable tools (`auto` ones run, `ask`
- * ones are held; `off` ones are never built), the server's notes, the sweep's scratch note and the
+ * The tools that reach the person's servers: per server its tools (`auto` and `always_ok` ones run within
+ * their gate, `ask` ones are held), the server's notes, the sweep's scratch note and the
  * lead's `suggest_mcp_server`. Every server result taints the run.
  */
 @Inject
@@ -458,7 +462,7 @@ class McpToolKit(
     suspend fun sweepable(): List<McpServer> = catalog.servers().filter { s -> s.enabled && s.tools.any(::sweepRead) }
 
     /**
-     * The tools of [servers] for [scope], `off` never. For the [sweep] only read-only `auto` tools,
+     * The tools of [servers] for [scope]. For the [sweep] only tools treated as reads ([sweepRead]),
      * which never hold: what the person's limits would hold is skipped instead.
      */
     fun serverTools(scope: RunScope, servers: List<McpServer>, sweep: Boolean = false): List<Tool> =
@@ -473,7 +477,7 @@ class McpToolKit(
         memoryTools.saveNoteIn(servers.associate { collectionOf(it) to serverCollectionDescription(it.label) }),
     )
 
-    /** The morning sweep's tools: `auto` tools only, the servers' notes, all within [MCP_SWEEP_MAX_TOOL_CALLS], and its scratch note. */
+    /** The morning sweep's tools: tools treated as reads only, the servers' notes, all within [MCP_SWEEP_MAX_TOOL_CALLS], and its scratch note. */
     fun sweepTools(scope: RunScope, servers: List<McpServer>, used: Int): List<Tool> {
         val budget = CallBudget(MCP_SWEEP_MAX_TOOL_CALLS, used)
         val spent = "You have used your $MCP_SWEEP_MAX_TOOL_CALLS tool calls. Write what you found now with set_scratch, then finish."
@@ -559,6 +563,7 @@ class McpToolKit(
         private val sweep: Boolean,
     ) : Tool {
         private val ask = view.mode == McpToolMode.ASK
+        private val asRead = treatedAsRead(view)
         override val name = mcpToolName(server.label, view.tool.name)
         override val description: String = buildString {
             append('[').append(server.label).append("] ")
@@ -567,13 +572,13 @@ class McpToolKit(
             if (ask) append(" Each call waits for the person's approval; once they approve, it runs and you get its result.")
         }
         override val inputSchema: JsonObject = view.tool.inputSchema
-        override val effect = if (view.tool.readOnly) ToolEffect.READ else ToolEffect.EXTERNAL
+        override val effect = if (asRead) ToolEffect.READ else ToolEffect.EXTERNAL
 
         override suspend fun invoke(input: JsonObject): ToolResult {
             val result = when {
                 sweep -> calls.sweep(server, view.tool, input)
                 ask -> calls.ask(scope, server, view.tool, input)
-                else -> calls.auto(scope, server, view.tool, input)
+                else -> calls.auto(scope, server, view.tool, input, asRead)
             }
             // Third-party output, like a web page.
             scope.taint()

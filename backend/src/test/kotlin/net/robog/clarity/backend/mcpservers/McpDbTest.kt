@@ -3,7 +3,10 @@ package net.robog.clarity.backend.mcpservers
 import io.kotest.assertions.withClue
 import io.kotest.core.annotation.EnabledIf
 import io.kotest.core.spec.style.FunSpec
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.collections.shouldBeEmpty
+import io.kotest.matchers.comparables.shouldBeLessThan
+import io.kotest.matchers.ints.shouldBeInRange
 import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
@@ -36,7 +39,9 @@ import io.ktor.server.testing.testApplication
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Clock
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +64,17 @@ import net.robog.clarity.backend.agent.callTool
 import net.robog.clarity.backend.agent.end
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.DevicePrincipal
+import net.robog.clarity.backend.config.AgentConfig
+import net.robog.clarity.backend.config.AppConfig
+import net.robog.clarity.backend.config.ConnectorsConfig
+import net.robog.clarity.backend.config.EnrollmentConfig
+import net.robog.clarity.backend.config.EnrollmentMode
+import net.robog.clarity.backend.config.HttpConfig
+import net.robog.clarity.backend.config.InstanceConfig
+import net.robog.clarity.backend.connectors.ConnectorRegistry
+import net.robog.clarity.backend.connectors.ConnectorRoutes
+import net.robog.clarity.backend.connectors.ConnectorTests
+import net.robog.clarity.backend.governance.OutboxSignals
 import net.robog.clarity.backend.config.DatabaseConfig
 import net.robog.clarity.backend.config.Secret
 import net.robog.clarity.backend.governance.ConnectorRouter
@@ -88,6 +104,7 @@ import net.robog.clarity.shared.governance.HeldDecision
 import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.mcp.McpPaths
 import net.robog.clarity.shared.mcp.McpServerList
+import net.robog.clarity.shared.mcp.McpServerState
 import net.robog.clarity.shared.mcp.McpSuggestionList
 import net.robog.clarity.shared.mcp.McpToolMode
 import net.robog.clarity.shared.mcp.McpToolPolicyUpdate
@@ -183,15 +200,14 @@ class McpDbTest : FunSpec({
         rig(FakeMcpHost(emptyList())).mcpCatalog.list() shouldBe McpServerList(emptyList())
     }
 
-    test("a helper gets only the servers named, never off tools, with notes limited to their collections; the lead gets none") {
+    test("a helper gets only the servers named, with every tool of them and notes limited to their collections; the lead gets none") {
         val host = FakeMcpHost(listOf(github(), canvas()))
         val r = rig(host)
-        r.mcpCatalog.setMode("gh", "delete_repo", McpToolMode.OFF)
         val scope = helperScope()
         val none = r.toolbox.helperTools(scope, null).tools.tools.map { it.name }
         none.filter { it.startsWith("mcp_") }.shouldBeEmpty()
         val names = r.toolbox.helperTools(scope, null, listOf("gh")).tools.tools.map { it.name }
-        names.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__create_issue", "mcp_github__list_issues")
+        names.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__create_issue", "mcp_github__delete_repo", "mcp_github__list_issues")
         names shouldContain "save_note"
         names shouldContain "open_collection"
         // a narrowed helper still gets the server's notes
@@ -260,10 +276,10 @@ class McpDbTest : FunSpec({
         ok(create().call("title" to "b")) shouldContain "has not answered"
         r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.rationale shouldContain "the model wants a look"
         host.calls shouldHaveSize 1
-        // a server claiming a write is read-only is not believed: it asks by default
+        // a server claiming a write is read-only is not believed: it is not marked read-only, so Auto sends it through the guard
         val liar = FakeMcpHost(listOf(hostServer("x", "Liar", parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_everything","annotations":{"readOnlyHint":true}}"""))!!)))
         val r2 = rig(liar)
-        r2.mcpCatalog.servers().single().tools.single().mode shouldBe McpToolMode.ASK
+        r2.mcpCatalog.servers().single().tools.single().let { it.mode shouldBe McpToolMode.AUTO; it.tool.readOnly shouldBe false }
     }
 
     test("a call held because the run read outside content says so in terms of the person's own server") {
@@ -283,6 +299,7 @@ class McpDbTest : FunSpec({
         host.answer = { ToolResult.Ok("created #7") }
         val r = rig(host, wait = 30.seconds)
         r.letToolsRunAlone()
+        r.mcpCatalog.setMode("gh", "create_issue", McpToolMode.ASK)
         val scope = helperScope()
         val create = r.toolbox.helperTools(scope, null, listOf("gh")).tools.tools.first { it.name == "mcp_github__create_issue" }
         create.description shouldContain "waits for the person's approval"
@@ -447,18 +464,24 @@ class McpDbTest : FunSpec({
         }
     }
 
-    test("the sweep uses only read-only auto tools and never holds: what the person's limits would hold is skipped") {
+    test("the sweep uses tools treated as reads (read-only on Auto, or Always OK) and never holds: what the person's limits would hold is skipped") {
         val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_y","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
         val host = FakeMcpHost(listOf(hostServer("gh", "GitHub", readTool("list_a"), writeTool("create_x"), faked), hostServer("w", "Writer", writeTool("post_z"))))
         val r = rig(host)
-        r.mcpCatalog.setMode("gh", "create_x", McpToolMode.AUTO)
-        r.mcpCatalog.setMode("gh", "delete_y", McpToolMode.AUTO)
+        // on Auto a write-like tool is not a read, whatever the server says
+        r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
+        r.mcpKit.sweepTools(helperScope(), r.mcpKit.byIds(listOf("gh", "w")), 0).map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
+        r.mcpCatalog.setMode("gh", "create_x", McpToolMode.ASK)
+        r.mcpCatalog.setMode("w", "post_z", McpToolMode.ALWAYS_OK)
+        r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh", "w")
         r.mcpCatalog.setMode("w", "post_z", McpToolMode.AUTO)
-        // a server whose only auto tool writes is not swept
+        r.mcpCatalog.setMode("gh", "create_x", McpToolMode.ALWAYS_OK)
+        r.mcpCatalog.setMode("gh", "delete_y", McpToolMode.AUTO)
+        // a server whose only tool writes on Auto is not swept; an Always OK write tool is
         r.mcpKit.sweepable().map { it.id } shouldContainExactly listOf("gh")
         val scope = helperScope()
         val tools = r.toolbox.sweepTools(scope, listOf("gh", "w"), 0).tools
-        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__list_a")
+        tools.map { it.name }.filter { it.startsWith("mcp_") } shouldContainExactly listOf("mcp_github__create_x", "mcp_github__list_a")
         val list = tools.first { it.name == "mcp_github__list_a" }
         ok(list.call()) shouldContain "list_a done"
         // never alone: skipped, with no approval request and no wait
@@ -585,8 +608,186 @@ class McpDbTest : FunSpec({
         r.inbox.pending().map { it.item }.filterIsInstance<InboxItem.McpCallResult>() shouldHaveSize 1
     }
 
+    test("Always OK passes only the person's hard limits, even for a write-named tool; the guard model is never asked and the description has no approval line") {
+        val host = FakeMcpHost(listOf(github()))
+        val r = rig(host)
+        r.letToolsRunAlone()
+        r.mcpCatalog.setMode("gh", "delete_repo", McpToolMode.ALWAYS_OK)
+        r.mcpCatalog.setMode("gh", "create_issue", McpToolMode.AUTO)
+        r.guardVerdict = net.robog.clarity.shared.governance.GuardVerdict(net.robog.clarity.shared.governance.Decision.DENY, emptyList(), "model says no")
+        suspend fun tool(name: String) = r.toolbox.helperTools(helperScope(), null, listOf("gh")).tools.tools.first { it.name == name }
+        tool("mcp_github__delete_repo").description shouldNotContain "waits for the person's approval"
+        tool("mcp_github__delete_repo").effect shouldBe net.robog.clarity.harness.ToolEffect.READ
+        tool("mcp_github__create_issue").effect shouldBe net.robog.clarity.harness.ToolEffect.EXTERNAL
+        ok(tool("mcp_github__delete_repo").call("repo" to "clarity")) shouldContain "delete_repo done"
+        r.heldStore.list().shouldBeEmpty()
+        // Auto on the same kind of tool goes to the guard, which says no
+        ok(tool("mcp_github__create_issue").call("title" to "a")) shouldContain "Blocked"
+        host.calls shouldHaveSize 1
+        // the person's hard limits still hold an Always OK tool
+        r.constitutions.saveVersion { it.copy(autonomy = mapOf(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE)) }
+        ok(tool("mcp_github__delete_repo").call("repo" to "clarity")) shouldContain "has not answered"
+        host.calls shouldHaveSize 1
+    }
+
+    test("V46: tool policies set to off become ask, the other modes stay, and always_ok is accepted") {
+        java.sql.DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password).use { it.createStatement().execute("CREATE DATABASE v46_check") }
+        val url = postgres.jdbcUrl.replace(Regex("/[^/?]+(\\?|$)"), "/v46_check$1")
+        val dataSource = DatabaseFactory.dataSource(DatabaseConfig(url, postgres.username, Secret(postgres.password), maxPoolSize = 2))
+        try {
+            org.flywaydb.core.Flyway.configure().dataSource(dataSource).locations("classpath:db/migration").target("45").load().migrate()
+            val old = Database.connect(dataSource)
+            old.tx {
+                exec(
+                    "INSERT INTO mcp_tool_policy (server_id, tool, mode, updated_at) VALUES " +
+                        "('s', 'a', 'off', now()), ('s', 'b', 'auto', now()), ('s', 'c', 'ask', now())",
+                )
+            }
+            DatabaseFactory.migrate(dataSource)
+            val store = ExposedMcpStore(Database.connect(dataSource))
+            store.policies() shouldBe mapOf("s" to mapOf("a" to McpToolMode.ASK, "b" to McpToolMode.AUTO, "c" to McpToolMode.ASK))
+            store.setPolicy("s", "a", McpToolMode.ALWAYS_OK, Clock.System.now())
+            store.policies().getValue("s").getValue("a") shouldBe McpToolMode.ALWAYS_OK
+            shouldThrow<Exception> { Database.connect(dataSource).tx { exec("INSERT INTO mcp_tool_policy (server_id, tool, mode, updated_at) VALUES ('s', 'd', 'off', now())") } }
+        } finally {
+            dataSource.close()
+        }
+    }
+
+    test("saving a server wakes the refresher: it lists every second until the saved server shows, with its tools, then goes back to its slow tick") {
+        val host = FakeMcpHost(emptyList())
+        val r = LeadRig(database, mcpHost = host, mcpRefreshOnRead = false).also { it.reset() }
+        val wake = McpWake()
+        val refresher = McpRefresher(r.mcpCatalog, wake, every = 1.hours, bootAttempts = 5, bootPause = 20.milliseconds)
+        val job = background.launch { refresher.run() }
+        try {
+            withTimeout(5.seconds) { while (host.listings == 0) delay(10) }
+            r.mcpCatalog.servers().shouldBeEmpty()
+            // the host picks the saved config up a moment later, installs the server, then lists its tools
+            val saved = TimeSource.Monotonic.markNow()
+            wake.kick(mapOf("gh" to "GitHub"))
+            background.launch {
+                delay(1500)
+                host.servers = listOf(hostServer("gh", "GitHub", state = McpServerState.INSTALLING))
+                delay(1200)
+                host.servers = listOf(github())
+            }
+            withTimeout(15.seconds) { while (r.mcpCatalog.servers().firstOrNull()?.tools.isNullOrEmpty()) delay(20) }
+            val took = saved.elapsedNow()
+            println("MCP SYNC MEASURED: saved -> listed with tools in $took (host config pickup 2.7 s of that)")
+            took shouldBeLessThan 6.seconds
+            // settled: no more fast listing
+            delay(300)
+            val settledAt = host.listings
+            delay(2500)
+            host.listings shouldBe settledAt
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    test("a kick whose server never shows stops listing quickly after the window, and never faster than once a second") {
+        val host = FakeMcpHost(emptyList())
+        val r = LeadRig(database, mcpHost = host, mcpRefreshOnRead = false).also { it.reset() }
+        val wake = McpWake()
+        val refresher = McpRefresher(r.mcpCatalog, wake, every = 1.hours, bootAttempts = 5, bootPause = 20.milliseconds, fastEvery = 1.milliseconds, fastWindow = 3.seconds)
+        val job = background.launch { refresher.run() }
+        try {
+            withTimeout(5.seconds) { while (host.listings == 0) delay(10) }
+            val before = host.listings
+            wake.kick(mapOf("never" to "Never"))
+            delay(2500)
+            // about one listing a second even though fastEvery asked for less
+            (host.listings - before) shouldBeInRange 2..4
+            delay(2500)
+            val after = host.listings
+            delay(1500)
+            host.listings shouldBe after
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    test("saving the mcp-host config through the connector route wakes the refresher with the saved servers; grants wake it too; other connectors do not") {
+        val registry = connectorRegistry(database, postgres)
+        registry.provision(net.robog.clarity.shared.ConnectorId("mcphost"), ByteArray(32))
+        registry.provision(net.robog.clarity.shared.ConnectorId("mail"), ByteArray(32) { 1 })
+        val wake = McpWake()
+        testApplication {
+            val client = connectorRoutes(registry, wake)
+            suspend fun putTo(path: String, body: String) = client.put(path) {
+                header(HttpHeaders.Authorization, DEVICE); contentType(ContentType.Application.Json); setBody(body)
+            }.status
+            putTo("/api/v1/connectors/mail/config", """{"servers":[{"id":"x","label":"X"}]}""") shouldBe HttpStatusCode.OK
+            wake.poll() shouldBe null
+            putTo("/api/v1/connectors/mcphost/config", """{"servers":[{"id":"gh","label":"GitHub"},{"id":"cv","label":"Canvas"}]}""") shouldBe HttpStatusCode.OK
+            wake.poll().shouldNotBeNull().expected shouldBe mapOf("gh" to "GitHub", "cv" to "Canvas")
+            putTo("/api/v1/connectors/mcphost/grants", """{"grants":{}}""") shouldBe HttpStatusCode.OK
+            wake.poll().shouldNotBeNull().expected shouldBe null
+            putTo("/api/v1/connectors/mail/grants", """{"grants":{}}""") shouldBe HttpStatusCode.OK
+            wake.poll() shouldBe null
+            // a failed save wakes nothing
+            putTo("/api/v1/connectors/nope/config", """{"servers":[]}""") shouldBe HttpStatusCode.NotFound
+            wake.poll() shouldBe null
+        }
+    }
+
+    test("end to end: save the config, the host picks it up a moment later, and the app's next read lists the server within seconds") {
+        val host = FakeMcpHost(emptyList())
+        val r = LeadRig(database, mcpHost = host, mcpRefreshOnRead = false).also { it.reset() }
+        val registry = connectorRegistry(database, postgres)
+        registry.provision(net.robog.clarity.shared.ConnectorId("mcphost"), ByteArray(32))
+        val wake = McpWake()
+        val job = background.launch { McpRefresher(r.mcpCatalog, wake, every = 1.hours, bootAttempts = 5, bootPause = 20.milliseconds).run() }
+        try {
+            withTimeout(5.seconds) { while (host.listings == 0) delay(10) }
+            testApplication {
+                application {
+                    install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
+                    install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
+                    ConnectorRoutes(registry, wake).install(this)
+                    McpRoutes(r.mcpCatalog, r.mcpStore).install(this)
+                }
+                val client = createClient { install(ContentNegotiation) { json(ClarityJson) } }
+                val started = TimeSource.Monotonic.markNow()
+                client.put("/api/v1/connectors/mcphost/config") {
+                    header(HttpHeaders.Authorization, DEVICE); contentType(ContentType.Application.Json)
+                    setBody("""{"servers":[{"id":"gh","label":"GitHub"}]}""")
+                }.status shouldBe HttpStatusCode.OK
+                background.launch { delay(2000); host.servers = listOf(github()) } // the host's config poll and start
+                var tools = 0
+                withTimeout(15.seconds) {
+                    while (tools == 0) {
+                        tools = client.get(McpPaths.SERVERS) { header(HttpHeaders.Authorization, DEVICE) }.body<McpServerList>().servers.firstOrNull()?.tools?.size ?: 0
+                        if (tools == 0) delay(250)
+                    }
+                }
+                val took = started.elapsedNow()
+                println("MCP E2E MEASURED: PUT config -> GET servers shows GitHub with $tools tools in $took (host pickup 2.0 s of that)")
+                took shouldBeLessThan 5.seconds
+            }
+        } finally {
+            job.cancelAndJoin()
+        }
+    }
+
+    test("GET servers reads the cache; ?refresh=true lists the host first (a new server shows at once)") {
+        val host = FakeMcpHost(listOf(github()))
+        val r = LeadRig(database, mcpHost = host, mcpRefreshOnRead = false).also { it.reset() }
+        r.mcpCatalog.refresh()
+        testApplication {
+            val client = routes(r)
+            host.servers = listOf(github(), canvas())
+            val cached = client.get(McpPaths.SERVERS) { header(HttpHeaders.Authorization, DEVICE) }.body<McpServerList>()
+            cached.servers shouldHaveSize 1
+            val fresh = client.get("${McpPaths.SERVERS}?refresh=true") { header(HttpHeaders.Authorization, DEVICE) }.body<McpServerList>()
+            fresh.servers shouldHaveSize 2
+        }
+    }
+
     test("routes: servers with modes, a tool's mode set and reset, suggestions listed and dismissed; all need a device") {
-        val r = rig(FakeMcpHost(listOf(github())))
+        val host = FakeMcpHost(listOf(github()))
+        val r = rig(host)
         r.mcpStore.addSuggestion("Canvas", "Your assignments.", null, Clock.System.now())
         testApplication {
             val client = routes(r)
@@ -597,8 +798,9 @@ class McpDbTest : FunSpec({
             val list = client.get(McpPaths.SERVERS) { header(HttpHeaders.Authorization, DEVICE) }.body<McpServerList>()
             val gh = list.servers.single()
             gh.collection shouldBe "github"
+
             gh.tools.map { it.name to it.mode } shouldContainExactly listOf(
-                "list_issues" to McpToolMode.AUTO, "create_issue" to McpToolMode.ASK, "delete_repo" to McpToolMode.ASK,
+                "list_issues" to McpToolMode.AUTO, "create_issue" to McpToolMode.AUTO, "delete_repo" to McpToolMode.AUTO,
             )
             gh.tools.first { it.name == "delete_repo" }.destructive shouldBe true
 
@@ -607,11 +809,16 @@ class McpDbTest : FunSpec({
                 contentType(ContentType.Application.Json)
                 setBody(McpToolPolicyUpdate(mode))
             }
-            val set = put("create_issue", McpToolMode.AUTO)
+            val set = put("create_issue", McpToolMode.ASK)
             set.status shouldBe HttpStatusCode.OK
-            set.body<McpToolStatus>().let { it.mode shouldBe McpToolMode.AUTO; it.overridden shouldBe true }
-            r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.AUTO))
-            put("create_issue", null).body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe false }
+            set.body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe true }
+            r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.ASK))
+            // Always OK is allowed on every tool, a write-named and a destructive one included
+            put("create_issue", McpToolMode.ALWAYS_OK).body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ALWAYS_OK; it.overridden shouldBe true }
+            put("delete_repo", McpToolMode.ALWAYS_OK).status shouldBe HttpStatusCode.OK
+            r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.ALWAYS_OK, "delete_repo" to McpToolMode.ALWAYS_OK))
+            put("delete_repo", null)
+            put("create_issue", null).body<McpToolStatus>().let { it.mode shouldBe McpToolMode.AUTO; it.overridden shouldBe false }
             r.mcpStore.policies() shouldBe emptyMap()
             // the app's reset: ClarityJson leaves the null out, so the body is `{}`; an explicit null works too
             suspend fun putRaw(body: String) = client.put(McpPaths.toolPolicy("gh", "create_issue")) {
@@ -621,16 +828,20 @@ class McpDbTest : FunSpec({
             }
             ClarityJson.encodeToString(McpToolPolicyUpdate.serializer(), McpToolPolicyUpdate(null)) shouldBe "{}"
             for (reset in listOf("{}", """{"mode":null}""")) {
-                put("create_issue", McpToolMode.OFF).status shouldBe HttpStatusCode.OK
-                r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.OFF))
+                put("create_issue", McpToolMode.ALWAYS_OK).status shouldBe HttpStatusCode.OK
+                r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.ALWAYS_OK))
                 val cleared = putRaw(reset)
                 cleared.status shouldBe HttpStatusCode.OK
-                cleared.body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe false }
+                cleared.body<McpToolStatus>().let { it.mode shouldBe McpToolMode.AUTO; it.overridden shouldBe false }
                 r.mcpStore.policies() shouldBe emptyMap()
             }
-            put("nope", McpToolMode.OFF).status shouldBe HttpStatusCode.NotFound
+            // an app that still sends the retired `off` gets `ask`
+            putRaw("""{"mode":"off"}""").body<McpToolStatus>().let { it.mode shouldBe McpToolMode.ASK; it.overridden shouldBe true }
+            r.mcpStore.policies() shouldBe mapOf("gh" to mapOf("create_issue" to McpToolMode.ASK))
+            put("create_issue", null)
+            put("nope", McpToolMode.ASK).status shouldBe HttpStatusCode.NotFound
             client.put(McpPaths.toolPolicy("zz", "x")) {
-                header(HttpHeaders.Authorization, DEVICE); contentType(ContentType.Application.Json); setBody(McpToolPolicyUpdate(McpToolMode.OFF))
+                header(HttpHeaders.Authorization, DEVICE); contentType(ContentType.Application.Json); setBody(McpToolPolicyUpdate(McpToolMode.ASK))
             }.status shouldBe HttpStatusCode.NotFound
 
             val suggestions = client.get(McpPaths.SUGGESTIONS) { header(HttpHeaders.Authorization, DEVICE) }.body<McpSuggestionList>()
@@ -643,6 +854,29 @@ class McpDbTest : FunSpec({
 })
 
 private const val DEVICE = "Bearer device"
+
+private fun connectorRegistry(database: Database, postgres: PostgreSQLContainer): ConnectorRegistry {
+    val dir = java.nio.file.Files.createTempDirectory("clarity-mcp")
+    val config = AppConfig(
+        instance = InstanceConfig("t"),
+        http = HttpConfig(0),
+        database = DatabaseConfig(postgres.jdbcUrl, postgres.username, Secret(postgres.password), maxPoolSize = 2),
+        dataDir = dir,
+        enrollment = EnrollmentConfig(EnrollmentMode.TOFU, token = null),
+        connectors = ConnectorsConfig(autoGrant = false, secretsDir = dir.resolve("secrets")),
+        agent = AgentConfig(reviewInterval = 2.hours),
+    )
+    return ConnectorRegistry(database, Clock.System, config, ConnectorTests(database, Clock.System, OutboxSignals()))
+}
+
+private fun ApplicationTestBuilder.connectorRoutes(registry: ConnectorRegistry, wake: McpWake): HttpClient {
+    application {
+        install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
+        install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
+        ConnectorRoutes(registry, wake).install(this)
+    }
+    return createClient { install(ContentNegotiation) { json(ClarityJson) } }
+}
 
 private fun ApplicationTestBuilder.routes(r: LeadRig): HttpClient {
     application {

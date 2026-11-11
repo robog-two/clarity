@@ -17,6 +17,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import net.robog.clarity.backend.agent.inboxFor
 import net.robog.clarity.backend.config.McpHostConfig
@@ -67,7 +68,7 @@ class McpPureTest : FunSpec({
         val faked = parseHostTool(ClarityJson.parseToJsonElement("""{"name":"delete_repo","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull()
         faked.readOnly shouldBe false
         faked.destructive shouldBe true
-        defaultMode(faked) shouldBe McpToolMode.ASK
+        defaultMode(faked) shouldBe McpToolMode.AUTO
         toolStatusOf(withModes(listOf(faked), emptyMap()).single()).readOnly shouldBe false
         parseHostTool(ClarityJson.parseToJsonElement("""{"name":"list_repos","annotations":{"readOnlyHint":true}}""")).shouldNotBeNull().readOnly shouldBe true
     }
@@ -123,15 +124,54 @@ class McpPureTest : FunSpec({
         servers[1].state shouldBe McpServerState.FAILED
     }
 
-    test("modes: auto only for read-only tools, the person's choice wins and is marked") {
+    test("modes: Auto is the default for every tool, the person's choice wins and is marked") {
         defaultMode(readTool("a")) shouldBe McpToolMode.AUTO
-        defaultMode(writeTool("b")) shouldBe McpToolMode.ASK
-        val views = withModes(listOf(readTool("a"), writeTool("b"), writeTool("c")), mapOf("b" to McpToolMode.AUTO, "c" to McpToolMode.OFF))
-        views.map { it.mode } shouldContainExactly listOf(McpToolMode.AUTO, McpToolMode.AUTO, McpToolMode.OFF)
+        defaultMode(writeTool("b")) shouldBe McpToolMode.AUTO
+        val views = withModes(listOf(readTool("a"), writeTool("b"), writeTool("c")), mapOf("b" to McpToolMode.ASK, "c" to McpToolMode.ALWAYS_OK))
+        views.map { it.mode } shouldContainExactly listOf(McpToolMode.AUTO, McpToolMode.ASK, McpToolMode.ALWAYS_OK)
         views.map { it.overridden } shouldContainExactly listOf(false, true, true)
         val status = toolStatusOf(views[0].copy(tool = readTool("a", "First sentence here. Second one.")))
         status.description shouldBe "First sentence here."
         status.readOnly shouldBe true
+    }
+
+    test("treated as a read: Always OK on any tool (writes and destructive ones too), Auto only when the server says read-only, never Ask") {
+        val destructive = HostTool("delete_repo", destructive = true)
+        val modes = McpToolMode.entries
+        modes.forEach { m ->
+            treatedAsRead(McpToolView(readTool("list_a"), m, true)) shouldBe (m != McpToolMode.ASK)
+            treatedAsRead(McpToolView(writeTool("create_x"), m, true)) shouldBe (m == McpToolMode.ALWAYS_OK)
+            treatedAsRead(McpToolView(destructive, m, true)) shouldBe (m == McpToolMode.ALWAYS_OK)
+        }
+        // the sweep follows the same rule
+        sweepRead(McpToolView(writeTool("create_x"), McpToolMode.ALWAYS_OK, true)) shouldBe true
+        sweepRead(McpToolView(writeTool("create_x"), McpToolMode.AUTO, false)) shouldBe false
+        sweepRead(McpToolView(readTool("list_a"), McpToolMode.AUTO, false)) shouldBe true
+        sweepRead(McpToolView(readTool("list_a"), McpToolMode.ASK, true)) shouldBe false
+    }
+
+    test("wire names: the retired off reads as ask, always_ok round-trips") {
+        wireOf(McpToolMode.ALWAYS_OK) shouldBe "always_ok"
+        modeOf("always_ok") shouldBe McpToolMode.ALWAYS_OK
+        modeOf("off") shouldBe McpToolMode.ASK
+        modeOf("nonsense") shouldBe null
+    }
+
+    test("saved servers: the expected listing is the config's items; settled needs exactly those, labelled, started or ended") {
+        val values = ClarityJson.parseToJsonElement("""{"servers":[{"id":"a","label":"Sublime"},{"id":"b"},{"label":"no id"}]}""").jsonObject
+        expectedServers(values) shouldBe mapOf("a" to "Sublime", "b" to null)
+        expectedServers(buildJsonObject { }) shouldBe null
+        val expected = expectedServers(values)
+        listingSettled(null, null) shouldBe true
+        listingSettled(expected, null) shouldBe false
+        val a = hostServer("a", "Sublime", readTool("x"), state = McpServerState.IDLE)
+        val b = hostServer("b", "Other", state = McpServerState.FAILED)
+        listingSettled(expected, listOf(a, b)) shouldBe true
+        listingSettled(expected, listOf(a)) shouldBe false
+        listingSettled(expected, listOf(a, b, hostServer("c", "Gone", readTool("y")))) shouldBe false
+        listingSettled(expected, listOf(a.copy(label = "Old name"), b)) shouldBe false
+        listingSettled(expected, listOf(a.copy(state = McpServerState.INSTALLING), b)) shouldBe false
+        listingSettled(expected, listOf(a.copy(tools = emptyList()), b)) shouldBe false
     }
 
     test("tool names: mcp_<slug>__<tool>, slug lowercase [a-z0-9_] at most 24, whole name at most 64") {
@@ -146,7 +186,7 @@ class McpPureTest : FunSpec({
 
     test("the lead's index names enabled servers with usable tools, by label, and nothing that changes often") {
         val gh = McpServer(hostServer("1", "GitHub", readTool("a"), state = McpServerState.RUNNING), "github", withModes(listOf(readTool("a")), emptyMap()))
-        val off = McpServer(hostServer("2", "Asana", writeTool("b")), "asana", withModes(listOf(writeTool("b")), mapOf("b" to McpToolMode.OFF)))
+        val off = McpServer(hostServer("2", "Asana"), "asana", emptyList())
         val disabled = McpServer(hostServer("3", "Notion", readTool("c"), state = McpServerState.DISABLED), "notion", withModes(listOf(readTool("c")), emptyMap()))
         val canvas = McpServer(hostServer("4", "canvas", writeTool("d"), description = ""), "canvas", withModes(listOf(writeTool("d")), emptyMap()))
         val index = renderMcpIndex(listOf(gh, off, disabled, canvas)).shouldNotBeNull()

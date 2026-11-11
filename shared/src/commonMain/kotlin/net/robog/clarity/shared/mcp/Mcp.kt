@@ -1,7 +1,13 @@
 package net.robog.clarity.shared.mcp
 
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 
 /**
  * Third-party MCP servers run by the `mcp-host` connector (see `docs/workstreams/mcp.md`).
@@ -20,17 +26,45 @@ object McpPaths {
     const val SUGGESTIONS = "/api/v1/mcp/suggestions"
 }
 
-/** How Clarity may use one tool. */
-@Serializable
+/**
+ * How Clarity may use one tool. Decoding is lenient both ways: `off` (the retired mode of older
+ * apps) reads as [ASK], and a mode this build does not know (from a newer server) as [AUTO], so
+ * one unknown value never fails a whole list.
+ */
+@Serializable(with = McpToolModeSerializer::class)
 enum class McpToolMode {
-    /** Runs without asking. The default only for tools the server marks read-only. */
-    @SerialName("auto") AUTO,
-
-    /** Each call waits for the person's approval, like sending an email. The default for every other tool. */
+    /** Each call waits for the person's approval, like sending an email. */
     @SerialName("ask") ASK,
 
-    /** Never offered to Clarity. */
-    @SerialName("off") OFF,
+    /**
+     * Runs when the safety check allows it. A tool the server marks read-only only has to pass the
+     * person's hard limits; any other goes through the full guard. The default for every tool.
+     */
+    @SerialName("auto") AUTO,
+
+    /**
+     * The person vouches for the tool. It runs like a tool the server marks read-only: no safety
+     * check asking, only the person's hard limits. Allowed on every tool, writes included.
+     */
+    @SerialName("always_ok") ALWAYS_OK,
+}
+
+object McpToolModeSerializer : KSerializer<McpToolMode> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("McpToolMode", PrimitiveKind.STRING)
+
+    override fun serialize(encoder: Encoder, value: McpToolMode) = encoder.encodeString(wire(value))
+
+    override fun deserialize(decoder: Decoder): McpToolMode = when (decoder.decodeString()) {
+        "ask", "off" -> McpToolMode.ASK
+        "always_ok" -> McpToolMode.ALWAYS_OK
+        else -> McpToolMode.AUTO
+    }
+
+    private fun wire(mode: McpToolMode) = when (mode) {
+        McpToolMode.ASK -> "ask"
+        McpToolMode.AUTO -> "auto"
+        McpToolMode.ALWAYS_OK -> "always_ok"
+    }
 }
 
 /** Where a server is in its life. */
@@ -87,7 +121,9 @@ data class McpToolStatus(
     val readOnly: Boolean = false,
     /** From the server's `destructiveHint` annotation; true when absent and not read-only (the MCP default). */
     val destructive: Boolean = false,
-    /** The mode in effect: the person's choice, or the default from [readOnly]. */
+    /** True when the tool's name reads as a change (`create_issue`) or the server marks it destructive: Always OK then warns plainly. */
+    val changesThings: Boolean = false,
+    /** The mode in effect: the person's choice, or [McpToolMode.AUTO]. */
     val mode: McpToolMode,
     /** True when [mode] is the person's choice rather than the default. */
     val overridden: Boolean = false,

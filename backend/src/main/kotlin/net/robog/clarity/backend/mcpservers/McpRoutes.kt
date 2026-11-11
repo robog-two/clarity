@@ -13,11 +13,13 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import kotlin.time.Duration
+import kotlin.time.TimeSource
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.http.EdgeProblem
@@ -39,6 +41,8 @@ class McpRoutes(private val catalog: McpCatalog, private val store: McpStore) : 
         application.routing {
             authenticate(AuthProviders.DEVICE) {
                 get(McpPaths.SERVERS) {
+                    // ?refresh=true lists the host now (up to 3 s) instead of reading the cache
+                    if (call.request.queryParameters["refresh"] == "true") withTimeoutOrNull(3.seconds) { catalog.refresh() }
                     val list = catalog.list()
                     if (list == null) call.respondProblem(EdgeProblem.Unavailable("The MCP host is not reachable right now."))
                     else call.respond(list)
@@ -71,17 +75,22 @@ class McpRoutes(private val catalog: McpCatalog, private val store: McpStore) : 
 /**
  * Keeps the host's listing fresh in the background, so lead turns, helper starts and routes only
  * read the cache: at boot until the host answers (it may still be starting), then every [every].
- * Closes the host's MCP sessions at shutdown.
+ * A [McpWake] kick (a server saved, grants changed) lists at once and then every [fastEvery] for up
+ * to [fastWindow], until the listing shows what was saved ([listingSettled]): the host needs a few
+ * seconds to pick up its config and start a server. Closes the host's MCP sessions at shutdown.
  */
 @ContributesIntoSet(AppScope::class)
 class McpRefresher(
     private val catalog: McpCatalog,
+    private val wake: McpWake = McpWake(),
     private val every: Duration = 60.seconds,
     private val bootAttempts: Int = 10,
     private val bootPause: Duration = 3.seconds,
+    private val fastEvery: Duration = 1.seconds,
+    private val fastWindow: Duration = 30.seconds,
 ) : BackgroundService {
     @Inject
-    constructor(catalog: McpCatalog) : this(catalog, 60.seconds)
+    constructor(catalog: McpCatalog, wake: McpWake) : this(catalog, wake, 60.seconds)
 
     override val name = "mcp-host"
 
@@ -93,11 +102,23 @@ class McpRefresher(
                 if (attempt < bootAttempts) delay(bootPause)
             }
             while (true) {
-                delay(every)
+                val kick = wake.next(every)
                 catalog.refresh()
+                if (kick != null) listQuickly(kick)
             }
         } finally {
             withContext(NonCancellable) { catalog.close() }
+        }
+    }
+
+    /** Lists every [fastEvery] (at least one second) until [first] shows or [fastWindow] is over; a newer kick restarts the window. */
+    private suspend fun listQuickly(first: McpKick) {
+        var kick = first
+        var deadline = TimeSource.Monotonic.markNow() + fastWindow
+        while (!listingSettled(kick.expected, catalog.hostServers()) && deadline.hasNotPassedNow()) {
+            delay(maxOf(fastEvery, 1.seconds))
+            wake.poll()?.let { kick = it; deadline = TimeSource.Monotonic.markNow() + fastWindow }
+            catalog.refresh()
         }
     }
 }
