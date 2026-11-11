@@ -259,6 +259,9 @@ class HelperManager(
         /** The helper's own scope, so what the lead taints reaches the running helper. */
         @Volatile var scope: RunScope? = null
 
+        /** Set once the job body runs; a job cancelled before that is cleaned up by its completion handler. */
+        val began = AtomicBoolean(false)
+
         /** Whether the run holds one of the concurrency permits (it lets go while it waits for the lead). */
         val held = AtomicBoolean(false)
 
@@ -349,7 +352,7 @@ class HelperManager(
             runs.reopen(id, config.helperMaxRevisions, neutralizeMarkers(feedback), clock.now())
                 ?: return@withLock "Helper $id could not be reopened; it may have changed meanwhile. Check with list_helpers.".left()
             val reopened = requireNotNull(runs.get(id))
-            start(reopened)
+            if (!start(reopened)) return@withLock "Helper $id could not be started again right now; try revise_helper once more.".left()
             "Helper $id is working on your feedback (revision ${reopened.revisions} of ${config.helperMaxRevisions}). Its new result will arrive in your inbox.".right()
         }
     }
@@ -361,7 +364,8 @@ class HelperManager(
         return inspectHelper(
             InspectView(
                 clean, scrubMessages(journal.load(id), grants::scrub), runs.costUsed(id), dollarsToMicros(config.helperMaxCostUsd), config.helperMaxTurns,
-                config.helperMaxRevisions, runs.changes(id), runs.questions(id),
+                config.helperMaxRevisions, runs.changes(id),
+                runs.questions(id).map { it.copy(text = grants.scrub(it.text), answer = it.answer?.let(grants::scrub)) },
             ),
         ).right()
     }
@@ -418,10 +422,13 @@ class HelperManager(
         }
     }
 
-    private suspend fun askOpen(run: HelperRun, toolUseId: String, question: String): Either<String, String> {
+    private suspend fun askOpen(run: HelperRun, toolUseId: String, rawQuestion: String): Either<String, String> {
+        // After a restart only the call that owns the stored open question may wait on it.
+        if (!mayAsk(runs.questions(run.id), toolUseId)) return ONE_QUESTION_AT_A_TIME.left()
+        val question = grants.scrub(rawQuestion)
         val asked = runs.ask(run.id, toolUseId, question, clock.now(), config.helperMaxQuestions) ?: return askLimitText(config.helperMaxQuestions).left()
         // Always sent: the dedup key makes it once, and a crash between storing and sending loses nothing.
-        inbox.enqueue(InboxItem.HelperAsks(run.id, asked.seq, run.task, asked.text), dedupKey = "helper-question:${run.id}:${asked.seq}")
+        inbox.enqueue(InboxItem.HelperAsks(run.id, asked.seq, run.task, grants.scrub(asked.text)), dedupKey = "helper-question:${run.id}:${asked.seq}")
         val waiter = waiters.computeIfAbsent(run.id to asked.seq) { CompletableDeferred() }
         try {
             // Looked at after the waiter is in place, so an answer cannot fall between the two.
@@ -455,8 +462,14 @@ class HelperManager(
         val run = runs.get(id) ?: return@withLock "No helper with id $id.".left()
         if (run.status !in RunStatus.OPEN) return@withLock "Helper $id already ${run.status}.".left()
         val state = states[id]
-        val record = suspend { runs.finish(id, RunStatus.CANCELLED, null, null, "cancelled by the lead", clock.now()) }
-        if (state == null) record() else state.lock.withLock { state.closing = true; record() }
+        val record = suspend {
+            // Looked at again under the run's lock: it may have finished while this waited.
+            val now = runs.get(id)
+            if (now == null || now.status !in RunStatus.OPEN || state?.closing == true) false
+            else { runs.finish(id, RunStatus.CANCELLED, null, null, "cancelled by the lead", clock.now()); true }
+        }
+        val cancelled = if (state == null) record() else state.lock.withLock { if (record()) { state.closing = true; true } else false }
+        if (!cancelled) return@withLock "Helper $id already finished.".left()
         jobs.remove(id)?.cancel()
         "Helper $id cancelled.".right()
     }
@@ -464,27 +477,38 @@ class HelperManager(
     /** Waits for every running helper to finish (tests). */
     internal suspend fun joinAll() = jobs.values.toList().forEach { it.join() }
 
-    private suspend fun start(run: HelperRun) {
+    /** Starts the run's job; false when one is already active for it. */
+    private suspend fun start(run: HelperRun): Boolean {
         val parent = scope.await()
         val state = RunState()
-        if (states.putIfAbsent(run.id, state) != null) return
+        if (states.putIfAbsent(run.id, state) != null) return false
         // Lazy, so the job is in [jobs] before it can end and remove itself.
         val job = parent.launch(start = CoroutineStart.LAZY) {
-            val self = requireNotNull(coroutineContext[Job])
+            state.began.set(true)
             try {
                 permits.acquire()
                 state.held.set(true)
                 execute(run, state)
             } finally {
                 if (state.held.getAndSet(false)) permits.release()
-                jobs.remove(run.id, self)
+                // The state goes first: whoever finds no job finds no state either, and can start a new one.
                 states.remove(run.id, state)
+                jobs.remove(run.id, coroutineContext[Job])
                 // Finished, failed or cancelled: the browser goes to the next run.
                 withContext(NonCancellable) { runCatching { toolbox.value.runEnded(run.id) } }
             }
         }
         jobs[run.id] = job
+        // A job cancelled before it ever began has no body to clean up after it.
+        job.invokeOnCompletion {
+            if (!state.began.get()) {
+                states.remove(run.id, state)
+                jobs.remove(run.id, job)
+                parent.launch { runCatching { toolbox.value.runEnded(run.id) } }
+            }
+        }
         job.start()
+        return true
     }
 
     private suspend fun execute(run: HelperRun, state: RunState) {
@@ -507,8 +531,11 @@ class HelperManager(
             runs.markRunning(run.id)
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
-            val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task)
+            // What the helper reads from outside is remembered for later (a revision starts as tainted as it ended).
+            val runScope = RunScope(run.id, isLead = false, untrusted = taint[run.id] ?: true, purpose = run.task, onTaint = { taint[run.id] = true })
             state.scope = runScope
+            // The lead may have tainted it between reading the flag and publishing the scope.
+            if (taint[run.id] == true) runScope.taint()
             val sweep = run.profile == MCP_SWEEP_PROFILE
             val plan = if (sweep) HelperRunPlan(null, null) else helperRunPlan(run.tools, config.webSearch.tool())
             val set = if (sweep) {
@@ -567,21 +594,21 @@ class HelperManager(
                     harness.resume(run.id, nudged, interrupts.receiveAsFlow()).collect { onEvent(it) }
                 }
                 val ended = !sweep && endedItsTurn(terminal)
-                val (ok, text) = helperOutcome(terminal)
-                val checks = checkCriteria(run, ok, text)
-                // Under the lock no change can slip in between the last look and the decision to finish.
-                val again = state.lock.withLock {
+                // Under the lock no change can slip in between the last look and the decision to finish;
+                // once decided nothing more is accepted, and the check below runs outside the lock.
+                val unreadAtEnd = state.lock.withLock {
                     val unread = if (ended) unreadCount(run.id, state) else 0
-                    if (finishDecision(ended, rounds, MAX_LATE_ROUNDS, unread) == FinishDecision.RUN_AGAIN) true
-                    else {
-                        state.closing = true
-                        persistFinish(run, ok, text, terminal?.usage, checks, unreadAtEnd = if (ended) unread else 0)
-                        finished = true
-                        false
-                    }
+                    if (finishDecision(ended, rounds, MAX_LATE_ROUNDS, unread) == FinishDecision.RUN_AGAIN) null
+                    else { state.closing = true; unread }
                 }
-                if (!again) break
-                rounds++
+                if (unreadAtEnd == null) {
+                    rounds++
+                    continue
+                }
+                val (ok, text) = helperOutcome(terminal)
+                persistFinish(run, ok, text, terminal?.usage, checkCriteria(run, ok, text), unreadAtEnd)
+                finished = true
+                break
             }
         } catch (e: CancellationException) {
             throw e // cancel_helper already recorded its status; a shutdown leaves the run open to resume at boot
@@ -595,11 +622,8 @@ class HelperManager(
             log.warn { "helper ${run.id} hit its spend limit (${"$"}${config.helperMaxCostUsd}) and was stopped" }
         }
         val (ok, text) = stopped?.let { false to it } ?: helperOutcome(terminal)
-        val checks = checkCriteria(run, ok && stopped == null, text)
-        state.lock.withLock {
-            state.closing = true
-            persistFinish(run, ok, text, terminal?.usage, checks, unreadAtEnd = 0)
-        }
+        state.lock.withLock { state.closing = true }
+        persistFinish(run, ok, text, terminal?.usage, checkCriteria(run, ok && stopped == null, text), unreadAtEnd = 0)
     }
 
     /** Whether the helper finished on its own, so it can still read what the lead sent. */
@@ -628,9 +652,11 @@ class HelperManager(
     }
 
     /** Records the end of [run]: its status and result, a copy of the transcript, and the result in the lead's inbox. */
-    private suspend fun persistFinish(run: HelperRun, ok: Boolean, text: String, usage: Usage?, checks: List<CriterionCheck>?, unreadAtEnd: Int) {
+    private suspend fun persistFinish(run: HelperRun, ok: Boolean, rawText: String, usage: Usage?, checks: List<CriterionCheck>?, unreadAtEnd: Int) {
         withContext(NonCancellable) {
             val now = clock.now()
+            // Released secret values never reach the stored result, the error or the lead's inbox.
+            val text = grants.scrub(rawText)
             val current = runs.get(run.id)
             if (current != null && current.status in RunStatus.OPEN) {
                 // A copy of the journal for diagnosis; only placeholders, never a released value.

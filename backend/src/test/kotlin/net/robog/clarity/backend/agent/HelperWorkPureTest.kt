@@ -530,4 +530,33 @@ class HelperWorkPureTest : FunSpec({
             Regex("</untrusted>").findAll(text).count() shouldBe 1
         }
     }
+
+    context("which call may wait on a question") {
+        fun q(seq: Int, tool: String, answered: Boolean = false) =
+            HelperQuestion(seq, tool, "Which?", NOW, answer = if (answered) "A" else null)
+
+        test("anyone may ask when nothing is open") {
+            mayAsk(emptyList(), "t1") shouldBe true
+            mayAsk(listOf(q(1, "t0", answered = true)), "t1") shouldBe true
+        }
+        test("with a question open only its own call may wait, the lowest number first") {
+            mayAsk(listOf(q(1, "t1")), "t1") shouldBe true
+            mayAsk(listOf(q(1, "t1")), "t2") shouldBe false
+            mayAsk(listOf(q(1, "t1", answered = true), q(2, "t2"), q(3, "t3")), "t2") shouldBe true
+            mayAsk(listOf(q(2, "t2"), q(3, "t3")), "t3") shouldBe false
+        }
+    }
+
+    context("taint outlives the scope") {
+        test("a run that reads untrusted content reports it once, however often it is tainted") {
+            var reported = 0
+            val scope = RunScope("r", isLead = false, untrusted = false, onTaint = { reported++ })
+            scope.taint()
+            scope.taint()
+            scope.untrusted shouldBe true
+            reported shouldBe 1
+            RunScope("r2", isLead = false, untrusted = true, onTaint = { reported++ }).taint()
+            reported shouldBe 1
+        }
+    }
 })

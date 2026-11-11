@@ -185,6 +185,15 @@ fun askRefusal(asked: Int, max: Int): String? = if (asked >= max) askLimitText(m
 /** What a helper reads when it asks past its limit of [max] questions. */
 fun askLimitText(max: Int): String = "You already asked $max questions, the limit. Use your best judgment and say in your result what you assumed."
 
+/**
+ * Pure: whether tool call [toolUseId] may wait on a question now. With a question open (stored before a
+ * restart) only the lowest-numbered open one belongs to the calls the resume replays; any other call waits for it.
+ */
+fun mayAsk(questions: List<HelperQuestion>, toolUseId: String): Boolean {
+    val open = questions.filter { it.open }.minByOrNull { it.seq } ?: return true
+    return open.toolUseId == toolUseId
+}
+
 /** What a helper reads when it asks while another question of its own is open. */
 const val ONE_QUESTION_AT_A_TIME: String = "One question at a time: wait for the answer to your open question before asking another."
 

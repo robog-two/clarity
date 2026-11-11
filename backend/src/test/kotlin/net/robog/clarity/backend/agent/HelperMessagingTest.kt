@@ -742,4 +742,58 @@ class HelperMessagingTest : FunSpec({
             }
         }
     }
+
+    context("review follow-ups") {
+        test("taint a helper gained by reading outside content is still there when it is revised") {
+            val r = LeadRig(database).also { it.reset() }
+            var calls = 0
+            r.model.handler = { if (calls++ == 0) callTool("m1", "search_memory", args("query" to "plumbers")) else end("done") }
+            r.serving {
+                val id = begin("Find plumbers.")
+                awaitRun(id)
+                // search_memory is an outside source: the run ended tainted, and a revision does not start clean.
+                helpers.isTainted(id) shouldBe true
+                helpers.revise(id, "Add prices.", untrusted = false).shouldBeInstanceOf<Either.Right<String>>()
+                helpers.isTainted(id) shouldBe true
+                awaitRun(id)
+                helpers.isTainted(id) shouldBe true
+            }
+        }
+
+        test("a released value is scrubbed from the stored result, the inbox and the questions") {
+            val secret = "Qr7-another-Secret-456"
+            val r = LeadRig(database).also { it.reset() }
+            r.grants.put("bank_login", "bank.example.com", mapOf("password" to secret), 5.minutes)
+            var calls = 0
+            r.model.handler = {
+                when (calls++) {
+                    0 -> callTool("q1", "ask_lead", args("question" to "Is $secret the right password?"))
+                    else -> end("Used $secret to log in.")
+                }
+            }
+            r.serving {
+                val id = begin("Check the account.")
+                val asked = until("the question") { r.questionsInInbox().firstOrNull() }
+                asked.question shouldNotContain secret
+                runs.questions(id).single().text shouldNotContain secret
+                helpers.inspect(id).shouldBeInstanceOf<Either.Right<String>>().value shouldNotContain secret
+                helpers.message(id, "Yes.")
+                awaitRun(id)
+                runs.get(id)!!.result.shouldNotBeNull() shouldNotContain secret
+                results().single().result shouldNotContain secret
+                results().single().result shouldContain "[secret:bank_login_password]"
+            }
+        }
+
+        test("a helper that just finished cannot be cancelled") {
+            val r = LeadRig(database).also { it.reset() }
+            r.model.handler = { end("done") }
+            r.serving {
+                val id = begin("Find plumbers.")
+                awaitRun(id)
+                helpers.cancel(id).shouldBeInstanceOf<Either.Left<String>>().value shouldContain "already"
+                runs.get(id)!!.status shouldBe RunStatus.DONE
+            }
+        }
+    }
 })
