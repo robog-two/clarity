@@ -1,5 +1,6 @@
 package net.robog.clarity.backend.agent
 
+import java.util.Locale
 import kotlin.time.Duration
 import kotlin.time.Instant
 import kotlinx.serialization.SerialName
@@ -9,7 +10,9 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.builtins.ListSerializer
 import net.robog.clarity.harness.Block
+import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.Role
 
@@ -50,14 +53,73 @@ fun changeMessage(change: TaskChange): String = when (change.kind) {
 private fun userTexts(journal: List<Message>): List<String> =
     journal.filter { it.role == Role.USER }.flatMap { it.content }.filterIsInstance<Block.Text>().map { it.text }
 
+private val MARKER_LOOKALIKE = Regex("\\[\\s*(task change|revision)\\s*#", RegexOption.IGNORE_CASE)
+
 /**
- * Pure: the [changes] the helper has not read yet. A change counts as read once its marker is in a
- * user message of the [journal], so a resume (a restart, a queued start) never sends one twice.
+ * Pure: [text] from the lead (a task, criteria, a change, feedback) with anything that looks like a
+ * delivery marker turned into plain parentheses, so lead-supplied text can never pass for a delivered change.
+ */
+fun neutralizeMarkers(text: String): String = MARKER_LOOKALIKE.replace(text) { "(" + it.groupValues[1] + " #" }
+
+/**
+ * Pure: the [changes] the helper has not read yet. A change counts as read once a user text block of
+ * the [journal] starts with its marker (as [changeMessage] writes it), so a resume (a restart, a queued
+ * start) never sends one twice, and a marker quoted inside other text counts for nothing.
  */
 fun undeliveredChanges(changes: List<TaskChange>, journal: List<Message>): List<TaskChange> {
     val texts = userTexts(journal)
-    return changes.filter { change -> texts.none { changeMarker(change) in it } }
+    return changes.filter { change -> texts.none { it.startsWith(changeMarker(change)) } }
 }
+
+/** Where a change goes to reach the helper: see [deliveryPath]. */
+enum class DeliveryPath {
+    /** Into the task message the run starts with (nothing is in its journal yet). */
+    FIRST_MESSAGE,
+
+    /** Appended to the journal (it ends on a finished assistant turn). */
+    APPEND,
+
+    /** Over the live channel, which the loop folds in at its next step. */
+    CHANNEL,
+}
+
+/** Pure: how changes reach a helper whose journal is [journal]. */
+fun deliveryPath(journal: List<Message>): DeliveryPath = when {
+    journal.isEmpty() -> DeliveryPath.FIRST_MESSAGE
+    endsOnAssistantTurn(journal) -> DeliveryPath.APPEND
+    else -> DeliveryPath.CHANNEL
+}
+
+/** Pure: whether the journal ends on an `ask_lead` call with no answer: the helper is waiting for the lead, not stuck. */
+fun endsOnOpenAsk(journal: List<Message>): Boolean =
+    journal.lastOrNull()?.let { m -> m.role == Role.ASSISTANT && m.content.any { it is Block.ToolUse && it.name == "ask_lead" } } == true
+
+/** What to do when a helper's loop ended. */
+enum class FinishDecision { RUN_AGAIN, FINISH }
+
+/**
+ * Pure: a helper that finished its turn ([endedTurn]) runs again while the lead sent it something it has
+ * not read ([unread]) and fewer than [maxRounds] extra rounds went by; every other end is final.
+ */
+fun finishDecision(endedTurn: Boolean, rounds: Int, maxRounds: Int, unread: Int): FinishDecision =
+    if (endedTurn && unread > 0 && rounds < maxRounds) FinishDecision.RUN_AGAIN else FinishDecision.FINISH
+
+/** What is stored when a run ends (see [finishPlan]). */
+data class FinishPlan(val status: String, val result: String?, val error: String?, val earlierResultStands: Boolean)
+
+/**
+ * Pure: how a run ends. A revision that fails ([revisions] above 0 and not [ok]) leaves the run done with
+ * the result it had ([previous]) and records why; the lead is told the earlier result stands.
+ */
+fun finishPlan(revisions: Int, ok: Boolean, text: String, previous: String?): FinishPlan = when {
+    ok -> FinishPlan(RunStatus.DONE, text, null, false)
+    revisions > 0 && previous != null -> FinishPlan(RunStatus.DONE, previous, text, true)
+    else -> FinishPlan(RunStatus.FAILED, text, text, false)
+}
+
+/** Pure: [messages] with every string passed through [scrub] (released secret values become placeholders). */
+fun scrubMessages(messages: List<Message>, scrub: (String) -> String): List<Message> =
+    HarnessJson.decodeFromJsonElement(ListSerializer(Message.serializer()), helperTranscript(messages, scrub))
 
 /** Pure: whether the journal ends on a finished assistant turn (no open tool calls), where a user message can be appended. */
 fun endsOnAssistantTurn(journal: List<Message>): Boolean =
@@ -65,11 +127,11 @@ fun endsOnAssistantTurn(journal: List<Message>): Boolean =
 
 /** Pure: whether [message] carries a revision's feedback; the step budget of a revision counts from the latest. */
 fun isRevisionFeedback(message: Message): Boolean =
-    message.role == Role.USER && message.content.any { it is Block.Text && "[revision #" in it.text }
+    message.role == Role.USER && message.content.any { it is Block.Text && it.text.startsWith("[${ChangeKind.REVISION.label} #") }
 
 /** Done criteria as stored: trimmed, no blanks or repeats, each cut to [DONE_WHEN_CLIP] characters, at most [DONE_WHEN_MAX]. */
 fun normalizeDoneWhen(items: List<String>?): List<String> =
-    items.orEmpty().map { clip(it.replace(Regex("\\s+"), " ").trim(), DONE_WHEN_CLIP) }.filter { it.isNotEmpty() }.distinct().take(DONE_WHEN_MAX)
+    items.orEmpty().map { clip(neutralizeMarkers(it).replace(Regex("\\s+"), " ").trim(), DONE_WHEN_CLIP) }.filter { it.isNotEmpty() }.distinct().take(DONE_WHEN_MAX)
 
 const val DONE_WHEN_CLIP = 200
 const val DONE_WHEN_MAX = 8
@@ -118,8 +180,13 @@ const val NO_ANSWER: String = "No answer came. Use your best judgment, and say i
 fun answerText(answer: String): String = "Answer from the lead: $answer"
 
 /** Pure: why a helper that asked [asked] questions already may not ask another, or null. */
-fun askRefusal(asked: Int, max: Int): String? =
-    if (asked >= max) "You already asked $max questions, the limit. Use your best judgment and say in your result what you assumed." else null
+fun askRefusal(asked: Int, max: Int): String? = if (asked >= max) askLimitText(max) else null
+
+/** What a helper reads when it asks past its limit of [max] questions. */
+fun askLimitText(max: Int): String = "You already asked $max questions, the limit. Use your best judgment and say in your result what you assumed."
+
+/** What a helper reads when it asks while another question of its own is open. */
+const val ONE_QUESTION_AT_A_TIME: String = "One question at a time: wait for the answer to your open question before asking another."
 
 /** Pure: how long a question asked at [askedAt] still waits, given the [timeout]; never negative. */
 fun askWaitLeft(askedAt: Instant, now: Instant, timeout: Duration): Duration = (timeout - (now - askedAt)).coerceAtLeast(Duration.ZERO)
@@ -274,7 +341,7 @@ data class InspectView(
 /** The most characters [inspectHelper] gives the lead. */
 const val INSPECT_MAX_CHARS = 3000
 
-private fun dollars(micros: Long): String = "$" + "%.2f".format(java.util.Locale.ROOT, micros / 1_000_000.0)
+private fun dollars(micros: Long): String = "$" + "%.2f".format(Locale.ROOT, micros / 1_000_000.0)
 
 /**
  * Pure: a compact view of a helper's work for the lead, running or finished, at most [limit]
@@ -337,7 +404,7 @@ fun inspectHelper(view: InspectView, limit: Int = INSPECT_MAX_CHARS): String {
         if (run.check.isNotEmpty()) add("Check of the done criteria: " + formatCriteriaCheck(run.check).replace('\n', ' ').let { clip(it, 400) })
     }
     val room = (limit - own.length - UNTRUSTED_WRAP).coerceAtLeast(MIN_UNTRUSTED)
-    val quoted = if (theirs.isEmpty()) "" else quoteUntrusted(UntrustedPart("helper:${run.id}", clip(theirs.joinToString("\n"), room)))
+    val quoted = if (theirs.isEmpty()) "" else quoteUntrusted(UntrustedPart("helper:${run.id}", clip(defangUntrusted(theirs.joinToString("\n")), room)))
     return (own + quoted).trimEnd()
 }
 

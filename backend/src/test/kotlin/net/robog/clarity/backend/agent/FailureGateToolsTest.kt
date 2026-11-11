@@ -133,6 +133,15 @@ class FailureGateToolsTest : FunSpec({
         question shouldBe FailureGate.BRIEF_QUESTION
     }
 
+    test("delegate refuses done criteria with known issues too") {
+        val r = rig(FakeFailureJev(p = 0.88))
+        // The task alone is too short to be judged; the criteria carry the story.
+        val input = buildJsonObject { put("task", "Find two plumbers."); put("doneWhen", JsonArray(listOf(JsonPrimitive(BRIEF_WITH_ISSUES)))) }
+        r.leadTool("delegate").invoke(input)
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldBe FailureGate.BRIEF_REFUSAL
+        r.helpers.list(openOnly = false).shouldBeEmpty()
+    }
+
     test("revise_helper refuses feedback with known issues, and a clean one passes the gate") {
         val jev = FakeFailureJev(p = 0.88)
         val r = rig(jev)

@@ -81,8 +81,11 @@ interface RunStore {
     )
     suspend fun markRunning(id: String)
 
-    /** Counts a start of run [id] (its first, or a resume after a restart) and returns how many there have been. */
-    suspend fun recordStart(id: String): Int = 1
+    /**
+     * Counts a start of run [id] (its first, or a resume after a restart) and returns how many there have
+     * been. With [counts] false (a helper waiting for the lead's answer) nothing is added.
+     */
+    suspend fun recordStart(id: String, counts: Boolean = true): Int = 1
 
     /** Helper runs started at or after [since], newest first. */
     suspend fun startedSince(since: Instant): List<HelperRun> = list(openOnly = false, limit = 200).filter { it.startedAt >= since }
@@ -172,12 +175,13 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
         database.tx { AgentRuns.update({ AgentRuns.id eq Uuid.parse(id) }) { it[status] = RunStatus.RUNNING } }
     }
 
-    override suspend fun recordStart(id: String): Int = database.tx {
+    override suspend fun recordStart(id: String, counts: Boolean): Int = database.tx {
         val uuid = Uuid.parse(id)
         // One writer per run (its own execute), so read-then-write is safe.
-        val next = (AgentRuns.select(AgentRuns.starts).where { AgentRuns.id eq uuid }.singleOrNull()?.get(AgentRuns.starts) ?: 0) + 1
-        AgentRuns.update({ AgentRuns.id eq uuid }) { it[starts] = next }
-        next
+        val current = AgentRuns.select(AgentRuns.starts).where { AgentRuns.id eq uuid }.singleOrNull()?.get(AgentRuns.starts) ?: 0
+        if (!counts) return@tx current
+        AgentRuns.update({ AgentRuns.id eq uuid }) { it[starts] = current + 1 }
+        current + 1
     }
 
     override suspend fun startedSince(since: Instant): List<HelperRun> = database.tx {

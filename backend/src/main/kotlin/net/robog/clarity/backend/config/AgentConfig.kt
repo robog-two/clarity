@@ -24,11 +24,11 @@ data class AgentConfig(
     val helperMaxResumes: Int = 3,
     /** How long a helper waits for the lead's answer to `ask_lead` (`CLARITY_HELPER_ASK_TIMEOUT`), then goes on by its own judgment. */
     val helperAskTimeout: Duration = Duration.parse("4h"),
-    /** Questions one helper run may ask the lead. */
+    /** Questions one helper run may ask the lead (`CLARITY_HELPER_MAX_QUESTIONS`). */
     val helperMaxQuestions: Int = 3,
-    /** Times the lead may send a finished helper's work back with feedback. */
+    /** Times the lead may send a finished helper's work back with feedback (`CLARITY_HELPER_MAX_REVISIONS`). */
     val helperMaxRevisions: Int = 2,
-    /** Steps a revision gets; the run's spend cap stays and what it already spent counts. */
+    /** Steps a revision gets (`CLARITY_HELPER_REVISE_STEPS`); the run's spend cap stays and what it already spent counts. */
     val helperReviseSteps: Int = 15,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,

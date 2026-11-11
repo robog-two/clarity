@@ -194,6 +194,8 @@ class HelperTools(
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
+                // The done criteria are part of the brief too.
+                !input.doneWhen.isNullOrEmpty() && gate.check(GateKind.BRIEF, "delegate", input.doneWhen.joinToString("\n")) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason, servers = input.servers.orEmpty(), doneWhen = input.doneWhen.orEmpty()).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
@@ -227,7 +229,7 @@ class HelperTools(
             if (input.feedback.isBlank()) return@tool ToolResult.Error("`feedback` must not be empty")
             // Feedback is part of the helper's brief: the same gate keeps failure stories out.
             gate.check(GateKind.BRIEF, "revise_helper", input.feedback)?.let { return@tool ToolResult.Error(it) }
-            helpers.value.revise(input.id, input.feedback).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+            helpers.value.revise(input.id, input.feedback, scope.untrusted).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
         },
         tool<MessageHelperInput>(
             name = "message_helper",
@@ -238,7 +240,7 @@ class HelperTools(
         ) { input ->
             // A message to a running helper is part of its brief: the same gate keeps failure stories out.
             gate.check(GateKind.BRIEF, "message_helper", input.message)?.let { return@tool ToolResult.Error(it) }
-            helpers.value.message(input.id, input.message).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+            helpers.value.message(input.id, input.message, scope.untrusted).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
         },
         tool<CancelHelperInput>(
             name = "cancel_helper",

@@ -34,11 +34,16 @@ const val CHECK_RESULT_CLIP = 6000
 /** Pure: the one user message of the check. Everything in it is data to compare. */
 fun criteriaCheckPrompt(criteria: List<String>, result: String, workLog: String): String = buildString {
     appendLine("<criteria>")
-    criteria.forEachIndexed { i, item -> appendLine("${i + 1}. $item") }
+    criteria.forEachIndexed { i, item -> appendLine("${i + 1}. ${defangCheckTags(item)}") }
     appendLine("</criteria>")
-    appendLine("<result>${clip(result, CHECK_RESULT_CLIP)}</result>")
-    append("<work_log>$workLog</work_log>")
+    appendLine("<result>${defangCheckTags(clip(result, CHECK_RESULT_CLIP))}</result>")
+    append("<work_log>${defangCheckTags(workLog)}</work_log>")
 }
+
+private val CHECK_TAG = Regex("<(/?)\\s*(criteria|result|work_log)", RegexOption.IGNORE_CASE)
+
+/** Pure: [text] with the check prompt's own tags turned harmless, so data cannot close its section. */
+fun defangCheckTags(text: String): String = CHECK_TAG.replace(text, "&lt;$1$2")
 
 /** [CriteriaChecker] over the triage role's structured one-shot call; any failure is "unavailable". */
 class GatewayCriteriaChecker(
