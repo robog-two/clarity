@@ -28,6 +28,9 @@ object ApiPaths {
     const val CONSTITUTION = "$APP/constitution"
     const val HELD = "$APP/held"
     const val ACTIVITY = "$APP/activity"
+    /** `GET` lists the database backups; `POST` makes one now; `POST rollback` restores one (signed on the phone). */
+    const val BACKUPS = "$APP/backups"
+    const val BACKUPS_ROLLBACK = "$BACKUPS/rollback"
     /** `GET ?run=<id>` lists a helper run's browser steps (the audit trail); `GET {id}/before.png` and `{id}/after.png` are its screenshots. */
     const val BROWSER_STEPS = "$APP/browser/steps"
     /** `GET {id}/path?from=&limit=`: a task's Agent's Path (its lead turns and every helper run linked to it). */

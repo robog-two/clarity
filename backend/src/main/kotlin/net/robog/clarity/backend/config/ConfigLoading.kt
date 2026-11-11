@@ -264,6 +264,19 @@ private class Lookup(
         )
     }
 
+    /** `CLARITY_BACKUPS` (default true), `CLARITY_BACKUP_KEEP` (7 nightly), `CLARITY_PG_DUMP` / `CLARITY_PG_RESTORE` (program names), `CLARITY_BACKUP_TIMEOUT`. */
+    context(_: Raise<ConfigError>)
+    fun backups(): BackupsConfig {
+        val defaults = BackupsConfig()
+        return BackupsConfig(
+            enabled = bool("CLARITY_BACKUPS", "backups.enabled", defaults.enabled),
+            keepNightly = int("CLARITY_BACKUP_KEEP", "backups.keepNightly", defaults.keepNightly),
+            pgDump = string("CLARITY_PG_DUMP", "backups.pgDump") ?: defaults.pgDump,
+            pgRestore = string("CLARITY_PG_RESTORE", "backups.pgRestore") ?: defaults.pgRestore,
+            timeout = duration("CLARITY_BACKUP_TIMEOUT", "backups.timeout", defaults.timeout),
+        )
+    }
+
     context(_: Raise<ConfigError>)
     fun appConfig(): AppConfig {
         val mode = string("CLARITY_ENROLLMENT_MODE", "enrollment.mode").let { raw ->
@@ -350,6 +363,7 @@ private class Lookup(
                 webSearch = webSearch(),
             ),
             reports = reports(),
+            backups = backups(),
         )
     }
 }

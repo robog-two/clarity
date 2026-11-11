@@ -6,6 +6,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
@@ -22,6 +23,7 @@ import io.ktor.server.plugins.ContentTransformationException
 import java.util.UUID
 import kotlinx.serialization.SerializationException
 import net.robog.clarity.backend.auth.AuthProviders
+import net.robog.clarity.backend.backup.Maintenance
 import net.robog.clarity.backend.auth.ConnectorAuthenticator
 import net.robog.clarity.backend.auth.DeviceAuthenticator
 import net.robog.clarity.shared.ClarityJson
@@ -37,6 +39,7 @@ private val log = KotlinLogging.logger {}
 class ServerPlugins(
     private val deviceAuth: DeviceAuthenticator,
     private val connectorAuth: ConnectorAuthenticator,
+    private val maintenance: Maintenance,
 ) {
     fun install(app: Application) = with(app) {
         install(ContentNegotiation) { json(ClarityJson) }
@@ -50,6 +53,15 @@ class ServerPlugins(
             callIdMdc("call-id")
             // A Good's public link carries its secret in the path: never logged.
             filter { call -> call.request.path().let { it !in QUIET_PATHS && !it.startsWith(ApiPaths.GOODS_PUBLIC + "/") } }
+        }
+
+        // While a rollback replaces the database nothing but the health probes is answered.
+        intercept(ApplicationCallPipeline.Plugins) {
+            if (maintenance.active && call.request.path() !in Maintenance.OPEN_PATHS) {
+                call.response.headers.append(HttpHeaders.RetryAfter, "30")
+                call.respondProblem(EdgeProblem.Unavailable("restoring a backup; try again in a minute"))
+                finish()
+            }
         }
 
         install(Authentication) {
