@@ -89,7 +89,7 @@ fun withFinish(items: List<PathItem>, runId: String, depth: Int, ok: Boolean, re
 fun countsAsStep(item: PathItem): Boolean = item is PathItem.Said || item is PathItem.Action || item is PathItem.Browser || item is PathItem.Helper
 
 private val HELPER_STARTED = Regex("""Helper ([0-9a-fA-F-]{36}) started""")
-private val INBOX_HELPER = Regex("""^Helper (\S+) (finished|failed) its task: (.*)$""")
+private val INBOX_HELPER = Regex("""^Helper (\S+) (finished|failed) its task(?: \(after revision \d+\))?: (.*)$""")
 
 /** Pure: whether [message] opens a lead turn: the person's words, or an inbox delivery. */
 fun opensLeadTurn(message: Message): Boolean = when (message.role) {
@@ -286,6 +286,9 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "list_helpers" -> "Checked on helpers" to null
         "message_helper" -> "Messaged a helper" to null
         "cancel_helper" -> "Stopped a helper" to null
+        "inspect_helper" -> "Looked at a helper's work" to null
+        "revise_helper" -> "Sent a helper's work back" to null
+        "ask_lead" -> "Asked the lead a question" to null
         "list_messages" -> count("message", "Read", "Checked mail") to arg("participant", "folder")
         "search_messages" -> count("message", "Found", "Searched mail") to arg("query")
         "list_calendar_events" -> count("event", "Found", "Checked your calendar") to arg("date", "from")
@@ -302,6 +305,8 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "send_email" -> "Sent an email" to arg("subject")
         "create_event" -> "Added an event" to listOfNotNull(arg("title", "summary"), arg("start")).joinToString(", ").ifEmpty { null }
         "move_event" -> "Moved an event" to arg("start")
+        "update_event" -> "Changed an event" to listOfNotNull(arg("title"), arg("start")).joinToString(", ").ifEmpty { null }
+        "cancel_event" -> "Cancelled an event" to null
         "respond_to_invite" -> "Answered an invite" to arg("response")
         "create_reminder" -> "Set a reminder" to listOfNotNull(arg("title"), arg("due", "at", "time")).joinToString(", ").ifEmpty { null }
         "set_do_not_disturb" -> "Changed Do Not Disturb" to null

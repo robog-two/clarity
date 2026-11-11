@@ -23,7 +23,7 @@ private fun expected(kind: ActionKind, tier: AutonomyTier, untrusted: Boolean, e
 }
 
 /** Kinds whose benign [sample] reaches other people or outside systems. */
-private val externalSamples = setOf(ActionKind.SEND_EMAIL, ActionKind.RESPOND_TO_INVITE, ActionKind.EXTERNAL_TOOL, ActionKind.PAYMENT)
+private val externalSamples = setOf(ActionKind.SEND_EMAIL, ActionKind.RESPOND_TO_INVITE, ActionKind.EXTERNAL_TOOL, ActionKind.PAYMENT, ActionKind.CANCEL_EVENT)
 
 class GuardRulesTest : FunSpec({
 
@@ -98,6 +98,129 @@ class GuardRulesTest : FunSpec({
         val move = sample(ActionKind.MOVE_EVENT) as ProposedAction.MoveEvent
         deterministicVerdict(move, c, trusted()).decision shouldBe Decision.ALLOW
         deterministicVerdict(move.copy(notifyAttendees = true), c, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("updating or cancelling an event and notifying attendees is asked about, like moving it") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val update = sample(ActionKind.UPDATE_EVENT) as ProposedAction.UpdateEvent
+        deterministicVerdict(update, c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(update.copy(notifyAttendees = true), c, trusted()).also {
+            it.decision shouldBe Decision.ASK
+            it.rationale shouldContain "other people"
+        }
+        val cancel = sample(ActionKind.CANCEL_EVENT) as ProposedAction.CancelEvent
+        deterministicVerdict(cancel, c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(cancel.copy(notifyAttendees = true), c, trusted()).decision shouldBe Decision.ASK
+        // outside content in the run makes a notice to other people ask even when nothing else does
+        deterministicVerdict(cancel.copy(notifyAttendees = true), c, untrusted).decision shouldBe Decision.ASK
+    }
+
+    test("outside content cannot cancel an event, rewrite a series, or plant a link or notes without asking") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val scope = net.robog.clarity.shared.calendar.EventScope.THIS
+        deterministicVerdict(ProposedAction.CancelEvent("k", "s", id, scope), c, untrusted).decision shouldBe Decision.ASK
+        val title = ProposedAction.UpdateEvent("k", "s", id, scope, title = "x")
+        deterministicVerdict(title, c, untrusted).decision shouldBe Decision.ALLOW
+        deterministicVerdict(title.copy(scope = net.robog.clarity.shared.calendar.EventScope.SERIES), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(url = "https://example.com"), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(description = "call this number"), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(url = "https://example.com"), c, trusted()).decision shouldBe Decision.ALLOW
+    }
+
+    test("approving an update with an edited time is stopped by a never on moving, a wording-only one is not") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val at = kotlin.time.Instant.parse("2026-10-26T14:00:00Z")
+        val held = GuardVerdict(Decision.ASK, emptyList(), "asking")
+        val wording = ProposedAction.UpdateEvent("k", "s", id, title = "x")
+        hardLineViolation(wording, held, c) shouldBe null
+        // what approve() checks is the edited action the person sent, not the one that was held
+        hardLineViolation(wording.copy(start = at), held, c) shouldContain "\"move event\" is a hard line"
+        deterministicVerdict(wording.copy(start = at), c, trusted()).rationale shouldContain "move event"
+        hardLineViolation(wording.copy(repeat = net.robog.clarity.shared.calendar.Recurrence(net.robog.clarity.shared.calendar.Frequency.DAILY)), held, c) shouldContain "hard line"
+        hardLineViolation(wording.copy(allDay = true), held, c) shouldContain "hard line"
+        tierOf(wording.copy(end = at), c) shouldBe AutonomyTier.NEVER
+        tierOf(wording, c) shouldBe AutonomyTier.DO_THEN_TELL
+    }
+
+    test("the prompt says changing an event's time follows a never on moving") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        net.robog.clarity.backend.agent.renderConstitution(c) shouldContain "time, repeat or all-day setting also follows move_event"
+        net.robog.clarity.backend.agent.renderConstitution(constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST)))
+            .contains("also follows move_event") shouldBe false
+    }
+
+    test("outside content cannot rewrite the rest of a series either") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val title = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e1"), net.robog.clarity.shared.calendar.EventScope.FOLLOWING, title = "x")
+        deterministicVerdict(title, c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title, c, trusted()).decision shouldBe Decision.ALLOW
+    }
+
+    test("a never on moving events still binds a change of time, but not a change of wording") {
+        val c = constitution(
+            autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL),
+        )
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val at = kotlin.time.Instant.parse("2026-10-26T14:00:00Z")
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at, end = at + 1.hours), c, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at), c, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, title = "x"), c, trusted()).decision shouldBe Decision.ALLOW
+        hardLineVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at), c).decision shouldBe Decision.DENY
+    }
+
+    test("a link in an event is checked against the never-store topics") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL, neverStore = listOf("clinic"))
+        val id = net.robog.clarity.shared.EntityId("e1")
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, url = "https://clinic.example.com/visit"), c, trusted()).decision shouldBe Decision.ASK
+        val hold = sample(ActionKind.CREATE_EVENT) as ProposedAction.CreateEvent
+        deterministicVerdict(hold.copy(url = "https://clinic.example.com/visit"), c, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("without a setting of its own, changing or cancelling an event asks first") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL))
+        deterministicVerdict(sample(ActionKind.MOVE_EVENT), c, trusted()).decision shouldBe Decision.ALLOW
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), c, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), c, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("a setting of its own wins over what was said about moving; without one, moving can only tighten") {
+        val own = mapOf(ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL, ActionKind.CANCEL_EVENT to AutonomyTier.DO_THEN_TELL)
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), constitution(autonomy = own), trusted()).decision shouldBe Decision.ALLOW
+        val askMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), askMove, trusted()).decision shouldBe Decision.ALLOW
+        val neverMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), neverMove, trusted()).decision shouldBe Decision.ALLOW
+        val onlyMove = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), onlyMove, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), onlyMove, trusted()).decision shouldBe Decision.DENY
+        val looseMove = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), looseMove, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("the prompt lists the tier changing and cancelling really get, not only the ones written down") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.CREATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        val text = net.robog.clarity.backend.agent.renderConstitution(c)
+        text shouldContain "update_event"
+        text shouldContain "cancel_event"
+        val own = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        net.robog.clarity.backend.agent.renderConstitution(own).lines().single { it.contains("update_event") } shouldContain "do it, then tell me"
+    }
+
+    test("an edit that lands in protected time asks, an all-day event does not") {
+        val night = block("sleep", setOf(1, 2, 3, 4, 5, 6, 7), "22:00", "07:00")
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL, protectedTimes = listOf(night))
+        val start = kotlin.time.Instant.parse("2026-03-05T06:00:00Z")
+        val move = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e1"), start = start, end = start + 1.hours)
+        deterministicVerdict(move, c, trusted()).also {
+            it.decision shouldBe Decision.ASK
+            it.rationale shouldContain "sleep"
+        }
+        deterministicVerdict(move.copy(title = "x", start = null, end = null), c, trusted()).decision shouldBe Decision.ALLOW
+        val allDay = ProposedAction.CreateEvent("k", "s", null, "Offsite", start, start + 24.hours, listOf(Handle.email("a@example.com")), hold = false, allDay = true)
+        deterministicVerdict(allDay.copy(allDay = false), c, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(allDay, c, trusted()).decision shouldBe Decision.ALLOW // its UTC midnights say nothing about the person's evenings
     }
 
     test("protected time: events with attendees ask, private holds do not, midnight-crossing blocks work") {

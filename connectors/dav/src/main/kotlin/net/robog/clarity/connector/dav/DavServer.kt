@@ -11,6 +11,7 @@ import at.bitfire.dav4jvm.ktor.PreemptiveBasicDigestAuthProvider
 import at.bitfire.dav4jvm.ktor.Response
 import at.bitfire.dav4jvm.ktor.UrlUtils
 import at.bitfire.dav4jvm.ktor.exception.HttpException
+import at.bitfire.dav4jvm.ktor.exception.NotFoundException
 import at.bitfire.dav4jvm.ktor.resolve
 import at.bitfire.dav4jvm.ktor.withTrailingSlash
 import at.bitfire.dav4jvm.property.caldav.CalDAV
@@ -36,13 +37,15 @@ import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.auth.Auth
-import io.ktor.client.statement.readRawBytes
+import io.ktor.client.statement.bodyAsChannel
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import io.ktor.http.Url
 import io.ktor.http.content.TextContent
 import io.ktor.utils.io.core.use
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
 import kotlinx.coroutines.flow.toList
 import kotlin.time.Instant
 
@@ -260,12 +263,12 @@ class DavServer(private val config: DavConfig, engine: HttpClientEngine = CIO.cr
         return out
     }
 
-    /** GET [url]; null when the body is larger than [limit]. Returns ETag and bytes. */
+    /** GET [url]; null when the body is larger than [limit], which is enforced while reading, not after. Returns ETag and bytes. */
     suspend fun get(url: Url, limit: Long = MAX_EXTRACT_BYTES): Pair<String?, ByteArray>? =
         DavResource(http, url).get(Headers.build { append(HttpHeaders.Accept, "*/*") }) { response ->
             val declared = response.headers[HttpHeaders.ContentLength]?.toLongOrNull()
             if (declared != null && declared > limit) null
-            else response.readRawBytes().let { if (it.size > limit) null else response.headers[HttpHeaders.ETag] to it }
+            else response.bodyAsChannel().readRemaining(limit + 1).readByteArray().let { if (it.size > limit) null else response.headers[HttpHeaders.ETag] to it }
         }
 
     /**
@@ -280,6 +283,15 @@ class DavServer(private val config: DavConfig, engine: HttpClientEngine = CIO.cr
                 ifNoneMatch?.let { append(HttpHeaders.IfNoneMatch, it) }
             },
         ) { it.headers[HttpHeaders.ETag] }
+
+    /** DELETE a calendar object; [ifMatch] makes it a deletion of exactly that version. A resource that is already gone counts as deleted. */
+    suspend fun deleteCalendar(url: Url, ifMatch: String? = null) {
+        try {
+            DavResource(http, url).delete(Headers.build { ifMatch?.let { append(HttpHeaders.IfMatch, it) } }) { }
+        } catch (_: NotFoundException) {
+            // gone already
+        }
+    }
 
     /** DAV compliance classes the server announces for [url] (e.g. `calendar-auto-schedule`). */
     suspend fun capabilities(url: Url): Set<String> = DavResource(http, url).options().davCapabilities

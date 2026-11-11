@@ -12,6 +12,8 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import net.robog.clarity.backend.persistence.AgentRuns
+import net.robog.clarity.backend.persistence.HelperChanges
+import net.robog.clarity.backend.persistence.HelperQuestions
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.Usage
@@ -21,6 +23,10 @@ import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
+import org.jetbrains.exposed.v1.core.isNull
+import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.max
+import org.jetbrains.exposed.v1.core.plus
 import org.jetbrains.exposed.v1.core.sum
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
@@ -53,6 +59,12 @@ data class HelperRun(
     val servers: List<String> = emptyList(),
     /** A fixed kind of helper with its own tools and caps ([MCP_SWEEP_PROFILE]); null for a delegated one. */
     val profile: String? = null,
+    /** What the lead said a good result is, one item each; the result answers them. */
+    val doneWhen: List<String> = emptyList(),
+    /** Times the lead sent the finished work back with feedback. */
+    val revisions: Int = 0,
+    /** The automatic check of [doneWhen] against the result; empty when it did not run or was unavailable. */
+    val check: List<CriterionCheck> = emptyList(),
 )
 
 interface RunStore {
@@ -65,11 +77,15 @@ interface RunStore {
         startedAt: Instant,
         servers: List<String> = emptyList(),
         profile: String? = null,
+        doneWhen: List<String> = emptyList(),
     )
     suspend fun markRunning(id: String)
 
-    /** Counts a start of run [id] (its first, or a resume after a restart) and returns how many there have been. */
-    suspend fun recordStart(id: String): Int = 1
+    /**
+     * Counts a start of run [id] (its first, or a resume after a restart) and returns how many there have
+     * been. With [counts] false (a helper waiting for the lead's answer) nothing is added.
+     */
+    suspend fun recordStart(id: String, counts: Boolean = true): Int = 1
 
     /** Helper runs started at or after [since], newest first. */
     suspend fun startedSince(since: Instant): List<HelperRun> = list(openOnly = false, limit = 200).filter { it.startedAt >= since }
@@ -87,6 +103,39 @@ interface RunStore {
 
     /** What run [id] has already spent, in millionths of a dollar, from its recorded model calls (`model_call`). */
     suspend fun costUsed(id: String): Long = 0
+
+    /** Adds what the lead sent run [id] after it started; returns it with its number. */
+    suspend fun addChange(id: String, kind: ChangeKind, text: String, at: Instant): TaskChange = TaskChange(1, kind, text, at)
+
+    /** Everything the lead sent run [id], oldest first. */
+    suspend fun changes(id: String): List<TaskChange> = emptyList()
+
+    /**
+     * Reopens finished run [id] for a revision with the lead's [feedback]: done becomes queued, its
+     * revision count goes up, its start count resets and the feedback is stored as a [ChangeKind.REVISION]
+     * (all or nothing). Null (nothing changed) unless it is done with fewer than [maxRevisions].
+     */
+    suspend fun reopen(id: String, maxRevisions: Int, feedback: String, at: Instant): TaskChange? = null
+
+    /** Keeps the automatic check of run [id]. */
+    suspend fun saveCheck(id: String, check: List<CriterionCheck>) {}
+
+    /**
+     * Records the question that tool call [toolUseId] of run [id] asks, or returns the one it already
+     * recorded (a resumed call). Null when the run asked [max] questions already.
+     */
+    suspend fun ask(id: String, toolUseId: String, text: String, at: Instant, max: Int): HelperQuestion? = null
+
+    suspend fun questions(id: String): List<HelperQuestion> = emptyList()
+
+    /** Records the lead's [answer] to the open question of run [id]; null when none is open. */
+    suspend fun answer(id: String, answer: String, at: Instant): HelperQuestion? = null
+
+    /** Closes the given open questions of run [id] without an answer (they belong to calls that no longer wait). */
+    suspend fun expireAll(id: String, seqs: Collection<Int>) = seqs.forEach { expire(id, it) }
+
+    /** Closes question [seq] of run [id] without an answer (the wait ran out). False if it was answered meanwhile. */
+    suspend fun expire(id: String, seq: Int): Boolean = false
 
     /** Runs that were queued or running when the process stopped. */
     suspend fun open(): List<HelperRun>
@@ -106,6 +155,7 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
         startedAt: Instant,
         servers: List<String>,
         profile: String?,
+        doneWhen: List<String>,
     ) {
         database.tx {
             AgentRuns.insert {
@@ -119,6 +169,7 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
                 it[AgentRuns.startedAt] = startedAt
                 it[AgentRuns.mcpServers] = servers.takeIf { s -> s.isNotEmpty() }?.let { s -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), s) }
                 it[AgentRuns.profile] = profile
+                it[AgentRuns.doneWhen] = doneWhen.takeIf { d -> d.isNotEmpty() }?.let { d -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), d) }
             }
         }
     }
@@ -127,12 +178,13 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
         database.tx { AgentRuns.update({ AgentRuns.id eq Uuid.parse(id) }) { it[status] = RunStatus.RUNNING } }
     }
 
-    override suspend fun recordStart(id: String): Int = database.tx {
+    override suspend fun recordStart(id: String, counts: Boolean): Int = database.tx {
         val uuid = Uuid.parse(id)
         // One writer per run (its own execute), so read-then-write is safe.
-        val next = (AgentRuns.select(AgentRuns.starts).where { AgentRuns.id eq uuid }.singleOrNull()?.get(AgentRuns.starts) ?: 0) + 1
-        AgentRuns.update({ AgentRuns.id eq uuid }) { it[starts] = next }
-        next
+        val current = AgentRuns.select(AgentRuns.starts).where { AgentRuns.id eq uuid }.singleOrNull()?.get(AgentRuns.starts) ?: 0
+        if (!counts) return@tx current
+        AgentRuns.update({ AgentRuns.id eq uuid }) { it[starts] = current + 1 }
+        current + 1
     }
 
     override suspend fun startedSince(since: Instant): List<HelperRun> = database.tx {
@@ -166,6 +218,93 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
     override suspend fun costUsed(id: String): Long = database.tx {
         val total = ModelCalls.costMicros.sum()
         ModelCalls.select(total).where { ModelCalls.runId eq id }.singleOrNull()?.get(total) ?: 0L
+    }
+
+    override suspend fun addChange(id: String, kind: ChangeKind, text: String, at: Instant): TaskChange = database.tx {
+        insertChange(Uuid.parse(id), kind, text, at)
+    }
+
+    /** Stores a change under the next number of run [uuid]. Inside a transaction. */
+    private fun insertChange(uuid: Uuid, kind: ChangeKind, text: String, at: Instant): TaskChange {
+        // The run row is the lock: changes to one run take their numbers one at a time.
+        AgentRuns.select(AgentRuns.id).where { AgentRuns.id eq uuid }.forUpdate().toList()
+        val highest = HelperChanges.seq.max()
+        val seq = (HelperChanges.select(highest).where { HelperChanges.runId eq uuid }.single()[highest] ?: 0) + 1
+        HelperChanges.insert {
+            it[runId] = uuid
+            it[HelperChanges.seq] = seq
+            it[HelperChanges.kind] = kind.wire
+            it[HelperChanges.text] = text
+            it[HelperChanges.at] = at
+        }
+        return TaskChange(seq, kind, text, at)
+    }
+
+    override suspend fun changes(id: String): List<TaskChange> = database.tx {
+        HelperChanges.selectAll().where { HelperChanges.runId eq Uuid.parse(id) }.orderBy(HelperChanges.seq)
+            .map { TaskChange(it[HelperChanges.seq], ChangeKind.of(it[HelperChanges.kind]), it[HelperChanges.text], it[HelperChanges.at]) }
+    }
+
+    override suspend fun reopen(id: String, maxRevisions: Int, feedback: String, at: Instant): TaskChange? = database.tx {
+        val reopened = AgentRuns.update({
+            (AgentRuns.id eq Uuid.parse(id)) and (AgentRuns.status eq RunStatus.DONE) and (AgentRuns.revisions less maxRevisions)
+        }) {
+            it[status] = RunStatus.QUEUED
+            it[finishedAt] = null
+            it[starts] = 0
+            it[criteriaCheck] = null
+            it[revisions] = revisions + 1
+        } > 0
+        if (reopened) insertChange(Uuid.parse(id), ChangeKind.REVISION, feedback, at) else null
+    }
+
+    override suspend fun saveCheck(id: String, check: List<CriterionCheck>) {
+        database.tx {
+            AgentRuns.update({ AgentRuns.id eq Uuid.parse(id) }) {
+                it[criteriaCheck] = check.takeIf { c -> c.isNotEmpty() }
+                    ?.let { c -> ClarityJson.encodeToJsonElement(ListSerializer(CriterionCheck.serializer()), c) }
+            }
+        }
+    }
+
+    override suspend fun ask(id: String, toolUseId: String, text: String, at: Instant, max: Int): HelperQuestion? = database.tx {
+        val uuid = Uuid.parse(id)
+        AgentRuns.select(AgentRuns.id).where { AgentRuns.id eq uuid }.forUpdate().toList()
+        val known = HelperQuestions.selectAll().where { (HelperQuestions.runId eq uuid) and (HelperQuestions.toolUseId eq toolUseId) }.singleOrNull()
+        if (known != null) return@tx known.toQuestion()
+        val asked = HelperQuestions.selectAll().where { HelperQuestions.runId eq uuid }.count().toInt()
+        if (asked >= max) return@tx null
+        HelperQuestions.insert {
+            it[runId] = uuid
+            it[seq] = asked + 1
+            it[HelperQuestions.toolUseId] = toolUseId
+            it[HelperQuestions.text] = text
+            it[askedAt] = at
+        }
+        HelperQuestion(asked + 1, toolUseId, text, at)
+    }
+
+    override suspend fun questions(id: String): List<HelperQuestion> = database.tx {
+        HelperQuestions.selectAll().where { HelperQuestions.runId eq Uuid.parse(id) }.orderBy(HelperQuestions.seq).map { it.toQuestion() }
+    }
+
+    override suspend fun answer(id: String, answer: String, at: Instant): HelperQuestion? = database.tx {
+        val uuid = Uuid.parse(id)
+        val open = HelperQuestions.selectAll().where {
+            (HelperQuestions.runId eq uuid) and HelperQuestions.answer.isNull() and (HelperQuestions.timedOut eq false)
+        }.orderBy(HelperQuestions.seq).firstOrNull() ?: return@tx null
+        val seq = open[HelperQuestions.seq]
+        HelperQuestions.update({ (HelperQuestions.runId eq uuid) and (HelperQuestions.seq eq seq) }) {
+            it[HelperQuestions.answer] = answer
+            it[answeredAt] = at
+        }
+        open.toQuestion().copy(answer = answer, answeredAt = at)
+    }
+
+    override suspend fun expire(id: String, seq: Int): Boolean = database.tx {
+        HelperQuestions.update({
+            (HelperQuestions.runId eq Uuid.parse(id)) and (HelperQuestions.seq eq seq) and HelperQuestions.answer.isNull()
+        }) { it[timedOut] = true } > 0
     }
 
     override suspend fun get(id: String): HelperRun? {
@@ -203,8 +342,23 @@ private fun ResultRow.toRun(): HelperRun {
         servers = this[AgentRuns.mcpServers]?.takeIf { it !is JsonNull }
             ?.let { ClarityJson.decodeFromJsonElement(ListSerializer(String.serializer()), it) }.orEmpty(),
         profile = this[AgentRuns.profile],
+        doneWhen = this[AgentRuns.doneWhen]?.takeIf { it !is JsonNull }
+            ?.let { ClarityJson.decodeFromJsonElement(ListSerializer(String.serializer()), it) }.orEmpty(),
+        revisions = this[AgentRuns.revisions],
+        check = this[AgentRuns.criteriaCheck]?.takeIf { it !is JsonNull }
+            ?.let { runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(CriterionCheck.serializer()), it) }.getOrNull() }.orEmpty(),
     )
 }
+
+private fun ResultRow.toQuestion() = HelperQuestion(
+    seq = this[HelperQuestions.seq],
+    toolUseId = this[HelperQuestions.toolUseId],
+    text = this[HelperQuestions.text],
+    askedAt = this[HelperQuestions.askedAt],
+    answer = this[HelperQuestions.answer],
+    answeredAt = this[HelperQuestions.answeredAt],
+    timedOut = this[HelperQuestions.timedOut],
+)
 
 /** The usage of every call recorded for run [id] (`model_call`), summed; null when none was. Inside a transaction. */
 private fun recordedUsage(id: String): Usage? {

@@ -95,7 +95,10 @@ sealed interface InboxItem {
     /**
      * A helper finished. Its output was derived from whatever it read, so it is quoted as untrusted.
      * [openTasks]: the still-open tasks of the person's list it worked on that the lead owns, as
-     * "id \"title\" (status)", so the lead can close them by their full id.
+     * "id \"title\" (status)", so the lead can close them by their full id. [result] is cut when it is
+     * long ([fullChars] is then its whole length). [check]: the automatic check of the done criteria
+     * ([checkUnavailable] when the helper had criteria and the check could not run). [revision]: 0 for
+     * the first result, then how many times the work was sent back.
      */
     @Serializable @SerialName("helper_result")
     data class HelperResult(
@@ -104,11 +107,36 @@ sealed interface InboxItem {
         val ok: Boolean,
         val result: String,
         val openTasks: List<String> = emptyList(),
+        val check: List<CriterionCheck> = emptyList(),
+        val checkUnavailable: Boolean = false,
+        val fullChars: Int? = null,
+        val revision: Int = 0,
+        /** A revision failed; the helper's earlier result stands. */
+        val earlierResultStands: Boolean = false,
+        /** Changes the lead sent that the helper never read. */
+        val unreadChanges: Int = 0,
     ) : InboxItem {
         override val priority get() = Priority.NORMAL
-        override val summary get() = "Helper $runId ${if (ok) "finished" else "failed"} its task: ${task.take(200)}" +
-            (if (openTasks.isEmpty()) "" else " It worked on task ${openTasks.joinToString("; ")}, still open: update it with update_task, done or failed when it is.")
-        override val untrusted get() = listOf(UntrustedPart("helper:$runId", result))
+        override val summary get() = if (earlierResultStands) {
+            "Helper $runId could not finish revision $revision of its task: ${task.take(200)}. Its earlier result stands (read it with inspect_helper, id $runId, full true); why the revision stopped is below."
+        } else "Helper $runId ${if (ok) "finished" else "failed"} its task" +
+            (if (revision > 0) " (after revision $revision)" else "") + ": ${task.take(200)}" +
+            (if (openTasks.isEmpty()) "" else " It worked on task ${openTasks.joinToString("; ")}, still open: update it with update_task, done or failed when it is.") +
+            (if (check.isNotEmpty()) " Check of its done criteria: ${checkSummary(check)} (details below)." else "") +
+            (if (checkUnavailable) " The check of its done criteria was unavailable; read the result against them yourself." else "") +
+            (fullChars?.let { " The result is $it characters and shown cut; read all of it with inspect_helper (id $runId, full true)." } ?: "") +
+            (if (unreadChanges > 0) " $unreadChanges of your changes were never read by it; send them with revise_helper if they still matter." else "")
+        override val untrusted get() = listOf(UntrustedPart("helper:$runId", result)) +
+            (if (check.isEmpty()) emptyList() else listOf(UntrustedPart("check:$runId", formatCriteriaCheck(check))))
+    }
+
+    /** A helper asked the lead a question and waits (until its timeout) for the answer. */
+    @Serializable @SerialName("helper_question")
+    data class HelperAsks(val runId: String, val seq: Int, val task: String, val question: String) : InboxItem {
+        override val priority get() = Priority.NORMAL
+        override val summary get() = "Helper $runId asks you a question (its task: ${task.take(120)}). Answer it with message_helper (id $runId); " +
+            "it waits for you and goes on by its own judgment if no answer comes."
+        override val untrusted get() = listOf(UntrustedPart("helper:$runId", question))
     }
 
     /** A connector finished (or gave up on) an action. */
@@ -238,10 +266,13 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
 
 private val UNTRUSTED_TAG = Regex("<(/?)\\s*untrusted", RegexOption.IGNORE_CASE)
 
+/** [text] with any untrusted tag turned harmless, so it cannot close a quote. */
+fun defangUntrusted(text: String): String = text.replace(UNTRUSTED_TAG, "&lt;$1untrusted")
+
 /** `<untrusted source="…">…</untrusted>`; any untrusted tag inside the content is defanged so it cannot close the quote. */
 fun quoteUntrusted(part: UntrustedPart): String {
     val source = part.source.replace("\"", "'").replace(Regex("[<>\\r\\n]"), " ")
-    return "<untrusted source=\"$source\">${part.content.replace(UNTRUSTED_TAG, "&lt;$1untrusted")}</untrusted>"
+    return "<untrusted source=\"$source\">${defangUntrusted(part.content)}</untrusted>"
 }
 
 /** Whether any item in the turn carried content from outside. */

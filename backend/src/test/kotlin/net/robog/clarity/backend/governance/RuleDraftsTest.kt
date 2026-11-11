@@ -20,6 +20,13 @@ class RuleDraftsTest : FunSpec({
         HeldAction(HeldActionId("h"), T0, action, GuardVerdict(Decision.ASK, emptyList(), "asking"), "view", emptyList(), Urgency.NORMAL, status, ruleDraft = draft)
     val event = ProposedAction.CreateEvent("k", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes)
 
+    test("a time-moving update under a never on moving gets no rule draft") {
+        val update = ProposedAction.UpdateEvent("k", "move", net.robog.clarity.shared.EntityId("e1"), start = T0)
+        val never = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.ASK_FIRST))
+        wantsRuleDraft(held(update), never) shouldBe false
+        wantsRuleDraft(held(update.copy(start = null, title = "x")), never) shouldBe true
+    }
+
     test("a waiting event gets a draft; browser steps, money, settled or drafted ones and 'never' kinds do not") {
         wantsRuleDraft(held(event), constitution()) shouldBe true
         wantsRuleDraft(held(event, HeldAction.Status.DECLINED), constitution()) shouldBe false

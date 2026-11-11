@@ -97,6 +97,8 @@ class HeldRulesTest {
         assertEquals("Sent to Dana.", executedToast(heldAction()))
         assertEquals("Draft for Dana saved.", executedToast(heldAction(action = ProposedAction.SaveDraft("k", "s", emailDraft()))))
         assertEquals("Calendar updated.", executedToast(heldAction(action = ProposedAction.MoveEvent("k", "s", net.robog.clarity.shared.EntityId("e"), T0, T0, true))))
+        assertEquals("Calendar updated.", executedToast(heldAction(action = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e"), title = "x"))))
+        assertEquals("Event cancelled.", executedToast(heldAction(action = ProposedAction.CancelEvent("k", "s", net.robog.clarity.shared.EntityId("e")))))
     }
 
     @Test fun executedTransitionTriggersTheToastOnce() {
@@ -140,6 +142,14 @@ class HeldRulesTest {
         assertFalse(canAlwaysAllow(event.copy(status = HeldAction.Status.DECLINED)))
         val click = heldAction("b", action = ProposedAction.ExternalTool("k3", "Click Sign in", "browser", "click_by_uid", kotlinx.serialization.json.JsonObject(emptyMap())))
         assertFalse(canAlwaysAllow(click))
+    }
+
+    @Test fun aBlockedTimeChangeIsNotOfferedAnAlwaysAllowRule() {
+        val move = heldAction("m", action = ProposedAction.UpdateEvent("k", "move", net.robog.clarity.shared.EntityId("e"), start = T0))
+        assertTrue(canAlwaysAllow(move), "held and waiting for a yes: offered")
+        assertFalse(canAlwaysAllow(move.copy(status = HeldAction.Status.BLOCKED)), "blocked by a never on moving: a rule for changing would not lift it")
+        val rename = heldAction("r", action = ProposedAction.UpdateEvent("k", "rename", net.robog.clarity.shared.EntityId("e"), title = "x"))
+        assertTrue(canAlwaysAllow(rename.copy(status = HeldAction.Status.BLOCKED)))
     }
 
     @Test fun theRuleEditorOpensWithTheDraftOrAPlainLine() {

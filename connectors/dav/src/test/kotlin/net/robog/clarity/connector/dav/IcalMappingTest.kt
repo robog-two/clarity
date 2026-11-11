@@ -147,7 +147,7 @@ class IcalMappingTest : FunSpec({
 
     test("moving keeps everything but the times and bumps SEQUENCE") {
         val original = ics("BEGIN:VEVENT", "UID:m-1", "DTSTAMP:20260301T000000Z", "DTSTART:20260310T090000Z", "DTEND:20260310T100000Z", "SEQUENCE:2", "SUMMARY:Review", "LOCATION:Room 1", "END:VEVENT")
-        val moved = Ical.moved(original, JInstant.parse("2026-03-11T13:00:00Z"), JInstant.parse("2026-03-11T14:00:00Z"))
+        val moved = (IcalEdit.updated(original, null, null, EventChange(start = JInstant.parse("2026-03-11T13:00:00Z"), end = JInstant.parse("2026-03-11T14:00:00Z")), "n@clarity") as Edited.Replace).ics
         moved shouldContain "SEQUENCE:3"
         val p = Ical.events(moved, "c", window).single().payload
         p.start shouldBe Instant.parse("2026-03-11T13:00:00Z")
@@ -155,11 +155,6 @@ class IcalMappingTest : FunSpec({
         p.title shouldBe "Review"
         p.location shouldBe "Room 1"
         p.icalUid shouldBe "m-1"
-    }
-
-    test("recurring events cannot be edited") {
-        val series = ics("BEGIN:VEVENT", "UID:r", "DTSTAMP:20260301T000000Z", "DTSTART:20260310T090000Z", "RRULE:FREQ=DAILY", "SUMMARY:x", "END:VEVENT")
-        shouldThrow<IllegalArgumentException> { Ical.moved(series, JInstant.now(), JInstant.now()) }.message shouldContain "recurring"
     }
 
     test("responding sets the PARTSTAT of our address only") {

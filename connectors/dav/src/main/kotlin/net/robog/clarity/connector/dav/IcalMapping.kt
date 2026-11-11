@@ -44,6 +44,8 @@ import net.fortuna.ical4j.model.property.immutable.ImmutableCalScale
 import net.fortuna.ical4j.model.property.immutable.ImmutableClazz
 import net.fortuna.ical4j.model.property.immutable.ImmutableTransp
 import net.fortuna.ical4j.model.property.immutable.ImmutableVersion
+import net.robog.clarity.shared.calendar.describe
+import net.robog.clarity.shared.calendar.parseRRule
 import net.robog.clarity.shared.governance.InviteResponse
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.Handle
@@ -135,22 +137,23 @@ object Ical {
             val overrides = group.filter { it.has("RECURRENCE-ID") }
             if (overrides.isNotEmpty()) anyRecurring = true
             val overriddenAt = overrides.mapNotNull { it.recurrenceInstant() }.toSet()
+            val repeats = master?.repeatsInWords(zoneHint)
             if (master != null) {
                 val recurring = master.has("RRULE") || master.has("RDATE")
                 if (!recurring) {
-                    master.single(calendarName, uid.ifEmpty { null })?.takeIf { plainWindow == null || it.overlaps(plainWindow) }?.let { out += EventOccurrence(null, it) }
+                    master.single(calendarName, uid.ifEmpty { null }, null)?.takeIf { plainWindow == null || it.overlaps(plainWindow) }?.let { out += EventOccurrence(null, it) }
                 } else {
                     anyRecurring = true
                     for (start in master.occurrenceStarts(window, zoneHint, "$source (UID $uid)") { failures++ }) {
                         val key = start.toInstantOrNull()!!.epochSecond
                         if (start.toInstantOrNull() in overriddenAt) continue
-                        master.occurrence(calendarName, uid, start)?.takeIf { it.overlaps(window) }?.let { out += EventOccurrence("$key", it) }
+                        master.occurrence(calendarName, uid, start, repeats)?.takeIf { it.overlaps(window) }?.let { out += EventOccurrence("$key", it) }
                     }
                 }
             }
             for (o in overrides) {
                 val recurrenceAt = o.recurrenceInstant() ?: continue
-                val payload = o.single(calendarName, "$uid#${recurrenceAt.epochSecond}") ?: continue
+                val payload = o.single(calendarName, "$uid#${recurrenceAt.epochSecond}", repeats) ?: continue
                 if (payload.overlaps(window)) out += EventOccurrence("${recurrenceAt.epochSecond}", payload)
             }
         }
@@ -160,14 +163,28 @@ object Ical {
     // ---- writing -------------------------------------------------------------------------------
 
     /** A new single event; `TRANSP:OPAQUE`, and `CLASS:PRIVATE` for a personal hold. */
-    fun newEvent(uid: String, title: String, start: JInstant, end: JInstant, hold: Boolean, attendees: List<Handle>, organizer: Handle?): String {
-        val event = VEvent(start, end, title)
-        event.add<VEvent>(Uid(uid))
+    fun newEvent(uid: String, title: String, start: JInstant, end: JInstant, hold: Boolean, attendees: List<Handle>, organizer: Handle?): String =
+        newEvent(NewEvent(uid, title, start, end, hold, attendees, organizer))
+
+    /**
+     * A new event. A repeating timed one is written on the wall clock of [NewEvent.zone] (with its
+     * VTIMEZONE), so it keeps its local time across daylight saving; a single timed one is in UTC.
+     */
+    fun newEvent(e: NewEvent): String {
+        val event = VEvent()
+        event.add<VEvent>(Uid(e.uid))
+        event.add<VEvent>(net.fortuna.ical4j.model.property.Summary(e.title))
+        val start = startAt(e.start, e.allDay, floating = false, zone = e.zone.takeIf { e.repeat != null })
+        event.setTimes(start, Duration.between(e.start, e.end))
+        e.repeat?.let { event.add<VEvent>(rruleOf(it, start, e.zone)) }
+        e.location?.takeIf(String::isNotEmpty)?.let { event.add<VEvent>(net.fortuna.ical4j.model.property.Location(it)) }
+        e.description?.takeIf(String::isNotEmpty)?.let { event.add<VEvent>(net.fortuna.ical4j.model.property.Description(it)) }
+        e.url?.takeIf(String::isNotEmpty)?.let { event.add<VEvent>(net.fortuna.ical4j.model.property.Url(URI.create(it))) }
         event.add<VEvent>(ImmutableTransp.OPAQUE)
-        if (hold) event.add<VEvent>(ImmutableClazz.PRIVATE)
-        if (attendees.isNotEmpty() && organizer != null) {
-            event.add<VEvent>(Organizer(URI.create("mailto:${organizer.value}")).also { o -> organizer.displayName?.let { o.add<Organizer>(Cn(it)) } })
-            attendees.forEach { a ->
+        if (e.hold) event.add<VEvent>(ImmutableClazz.PRIVATE)
+        if (e.attendees.isNotEmpty() && e.organizer != null) {
+            event.add<VEvent>(Organizer(URI.create("mailto:${e.organizer.value}")).also { o -> e.organizer.displayName?.let { o.add<Organizer>(Cn(it)) } })
+            e.attendees.forEach { a ->
                 val attendee = Attendee(URI.create("mailto:${a.value}"))
                 a.displayName?.let { attendee.add<Attendee>(Cn(it)) }
                 attendee.add<Attendee>(PartStat.NEEDS_ACTION)
@@ -190,35 +207,32 @@ object Ical {
         return wrap(event)
     }
 
-    /** [ics] with the (single, non-recurring) event moved to [start]..[end]. */
-    fun moved(ics: String, start: JInstant, end: JInstant): String {
-        val calendar = parse(ics)
-        val event = singleEditable(calendar)
-        event.removeAll<VEvent>("DTSTART", "DTEND", "DURATION")
-        event.add<VEvent>(DtStart(start))
-        event.add<VEvent>(DtEnd(end))
-        bumpSequence(event)
-        return calendar.toString()
-    }
-
-    /** [ics] with the PARTSTAT of the attendee [email] set per [response]; null when that address is not an attendee. */
+    /**
+     * [ics] with the PARTSTAT of the attendee [email] set per [response]; null when that address is
+     * not an attendee. A repeating event is answered as a whole: the main event and every changed
+     * occurrence take the answer.
+     */
     fun responded(ics: String, email: String, response: InviteResponse): String? {
         val calendar = parse(ics)
-        val event = singleEditable(calendar)
-        val mine = event.getProperties<Attendee>("ATTENDEE").firstOrNull { it.address().equals(email, ignoreCase = true) } ?: return null
         val state = when (response) {
             InviteResponse.ACCEPT -> PartStat.ACCEPTED
             InviteResponse.DECLINE -> PartStat.DECLINED
             InviteResponse.TENTATIVE -> PartStat.TENTATIVE
         }
-        mine.replace<Attendee>(state)
-        mine.remove<Attendee>(mine.getParameter<Parameter>("RSVP").orElse(null) ?: return calendar.toString())
+        val mine = calendar.getComponents<VEvent>("VEVENT")
+            .mapNotNull { e -> e.getProperties<Attendee>("ATTENDEE").firstOrNull { it.address().equals(email, ignoreCase = true) } }
+        if (mine.isEmpty()) return null
+        mine.forEach { a ->
+            a.replace<Attendee>(state)
+            a.getParameter<Parameter>("RSVP").orElse(null)?.let { a.remove<Attendee>(it) }
+        }
         return calendar.toString()
     }
 
-    /** Organizer and attendee addresses of the (first) event, lower-cased. */
+    /** Organizer and attendee addresses of the (main) event, lower-cased. */
     fun participants(ics: String): Participants {
-        val event = parse(ics).getComponents<VEvent>("VEVENT").firstOrNull() ?: return Participants(null, emptyList())
+        val events = parse(ics).getComponents<VEvent>("VEVENT")
+        val event = events.firstOrNull { !it.has("RECURRENCE-ID") } ?: events.firstOrNull() ?: return Participants(null, emptyList())
         return Participants(
             organizer = event.getProperty<Organizer>("ORGANIZER").orElse(null)?.address(),
             attendees = event.getProperties<Attendee>("ATTENDEE").mapNotNull { it.address() },
@@ -229,46 +243,38 @@ object Ical {
 
     // ---- internals -----------------------------------------------------------------------------
 
-    private fun wrap(event: VEvent): String {
+    internal fun wrap(event: VEvent): String {
         val calendar = Calendar()
         calendar.add<Calendar>(ProdId(PRODID))
         calendar.add<Calendar>(ImmutableVersion.VERSION_2_0)
         calendar.add<Calendar>(ImmutableCalScale.GREGORIAN)
         calendar.add<Calendar>(event)
-        return calendar.toString()
+        return calendar.withTimeZones().toString()
     }
 
-    private fun singleEditable(calendar: Calendar): VEvent {
-        val events = calendar.getComponents<VEvent>("VEVENT")
-        require(events.size == 1) { "This calendar entry has ${events.size} parts (a recurring series with exceptions); editing it is not supported." }
-        val event = events.single()
-        require(!event.has("RRULE") && !event.has("RDATE")) { "This is a recurring event; editing a single occurrence or the series is not supported." }
-        return event
-    }
-
-    private fun bumpSequence(event: VEvent) {
+    internal fun bumpSequence(event: VEvent) {
         val current = event.getProperty<Property>("SEQUENCE").orElse(null)?.value?.toIntOrNull() ?: 0
         event.removeAll<VEvent>("SEQUENCE")
         event.add<VEvent>(net.fortuna.ical4j.model.property.Sequence(current + 1))
     }
 
-    private fun Attendee.address(): String? = calAddress?.toString()?.removePrefix("mailto:")?.removePrefix("MAILTO:")?.trim()?.lowercase()?.takeIf { it.contains('@') }
-    private fun Organizer.address(): String? = calAddress?.toString()?.removePrefix("mailto:")?.removePrefix("MAILTO:")?.trim()?.lowercase()?.takeIf { it.contains('@') }
+    internal fun Attendee.address(): String? = calAddress?.toString()?.removePrefix("mailto:")?.removePrefix("MAILTO:")?.trim()?.lowercase()?.takeIf { it.contains('@') }
+    internal fun Organizer.address(): String? = calAddress?.toString()?.removePrefix("mailto:")?.removePrefix("MAILTO:")?.trim()?.lowercase()?.takeIf { it.contains('@') }
 
-    private fun VEvent.has(name: String) = getProperty<Property>(name).isPresent
+    internal fun VEvent.has(name: String) = getProperty<Property>(name).isPresent
 
-    private fun VEvent.text(name: String): String? = getProperty<Property>(name).orElse(null)?.value?.trim()?.takeIf(String::isNotEmpty)
-
-    @Suppress("UNCHECKED_CAST")
-    private fun VEvent.startTemporal(): Temporal? = (getProperty<DtStart<Temporal>>("DTSTART") as Optional<DtStart<Temporal>>).orElse(null)?.date
+    internal fun VEvent.text(name: String): String? = getProperty<Property>(name).orElse(null)?.value?.trim()?.takeIf(String::isNotEmpty)
 
     @Suppress("UNCHECKED_CAST")
-    private fun VEvent.endTemporal(): Temporal? = (getProperty<DtEnd<Temporal>>("DTEND") as Optional<DtEnd<Temporal>>).orElse(null)?.date
+    internal fun VEvent.startTemporal(): Temporal? = (getProperty<DtStart<Temporal>>("DTSTART") as Optional<DtStart<Temporal>>).orElse(null)?.date
 
     @Suppress("UNCHECKED_CAST")
-    private fun VEvent.recurrenceInstant(): JInstant? = (getProperty<RecurrenceId<Temporal>>("RECURRENCE-ID") as Optional<RecurrenceId<Temporal>>).orElse(null)?.date?.let { it.toInstantOrNull() }
+    internal fun VEvent.endTemporal(): Temporal? = (getProperty<DtEnd<Temporal>>("DTEND") as Optional<DtEnd<Temporal>>).orElse(null)?.date
 
-    private fun Temporal.toInstantOrNull(): JInstant? = when (this) {
+    @Suppress("UNCHECKED_CAST")
+    internal fun VEvent.recurrenceInstant(): JInstant? = (getProperty<RecurrenceId<Temporal>>("RECURRENCE-ID") as Optional<RecurrenceId<Temporal>>).orElse(null)?.date?.let { it.toInstantOrNull() }
+
+    internal fun Temporal.toInstantOrNull(): JInstant? = when (this) {
         is JInstant -> this
         is ZonedDateTime -> toInstant()
         is OffsetDateTime -> toInstant()
@@ -278,7 +284,7 @@ object Ical {
     }
 
     /** Length of the event; all-day events default to one day, timed ones to zero. */
-    private fun VEvent.length(start: Temporal): Duration {
+    internal fun VEvent.length(start: Temporal): Duration {
         val end = endTemporal()
         if (end != null) {
             val s = start.toInstantOrNull()
@@ -291,18 +297,34 @@ object Ical {
         return if (start is LocalDate) Duration.ofDays(1) else Duration.ZERO
     }
 
-    private fun VEvent.single(calendarName: String, icalUid: String?): CalendarEventPayload? {
+    private fun VEvent.single(calendarName: String, icalUid: String?, repeats: String?): CalendarEventPayload? {
         val start = startTemporal() ?: return null
-        return payload(calendarName, icalUid, start, length(start))
+        return payload(calendarName, icalUid, start, length(start), repeats)
     }
 
-    private fun VEvent.occurrence(calendarName: String, uid: String, start: Temporal): CalendarEventPayload? {
+    private fun VEvent.occurrence(calendarName: String, uid: String, start: Temporal, repeats: String?): CalendarEventPayload? {
         val master = startTemporal() ?: return null
         val at = start.toInstantOrNull() ?: return null
-        return payload(calendarName, "$uid#${at.epochSecond}", start, length(master))
+        return payload(calendarName, "$uid#${at.epochSecond}", start, length(master), repeats)
     }
 
-    private fun VEvent.payload(calendarName: String, icalUid: String?, start: Temporal, length: Duration): CalendarEventPayload? {
+    /** The series' rule in plain words; "repeats" when the rule says more than that can express. */
+    private fun VEvent.repeatsInWords(zoneHint: ZoneId): String? {
+        val rule = getProperties<RRule<Temporal>>("RRULE").firstOrNull()?.value
+        if (rule == null) return if (has("RDATE")) "repeats on chosen dates" else null
+        val start = startTemporal()
+        val zone = when (start) {
+            is ZonedDateTime -> start.zone
+            is LocalDate, is LocalDateTime -> UTC
+            else -> zoneHint
+        }
+        val date = start?.toInstantOrNull()?.let { LocalDate.ofInstant(it, zone) }
+            ?.let { kotlinx.datetime.LocalDate(it.year, it.monthValue, it.dayOfMonth) }
+        val clock = runCatching { kotlinx.datetime.TimeZone.of(zone.id) }.getOrDefault(kotlinx.datetime.TimeZone.UTC)
+        return parseRRule(rule, date, clock)?.describe(date) ?: "repeats"
+    }
+
+    private fun VEvent.payload(calendarName: String, icalUid: String?, start: Temporal, length: Duration, repeats: String?): CalendarEventPayload? {
         if (text("STATUS").equals("CANCELLED", ignoreCase = true)) return null
         val s = start.toInstantOrNull() ?: return null
         val allDay = start is LocalDate
@@ -319,6 +341,8 @@ object Ical {
             attendees = getProperties<Attendee>("ATTENDEE").mapNotNull { a ->
                 a.address()?.let { addr -> Handle.email(addr, a.getParameter<Cn>("CN").orElse(null)?.value) }
             },
+            url = text("URL"),
+            repeats = repeats,
         )
     }
 
@@ -331,7 +355,7 @@ object Ical {
      * then falls back to ical4j's own reading of the rule, and failing that to DTSTART and RDATEs.
      */
     @Suppress("UNCHECKED_CAST")
-    private fun VEvent.occurrenceStarts(window: TimeWindow, zoneHint: ZoneId, source: String, onFailure: () -> Unit): List<Temporal> {
+    internal fun VEvent.occurrenceStarts(window: TimeWindow, zoneHint: ZoneId, source: String, onFailure: () -> Unit): List<Temporal> {
         val seed = startTemporal() ?: return emptyList()
         val length = length(seed)
         val from = window.from.minus(length).minus(Duration.ofDays(1))
@@ -368,7 +392,7 @@ object Ical {
      * seed's own terms, is removed from the rule, and is applied as an inclusive bound.
      */
     @Suppress("UNCHECKED_CAST")
-    private fun expandRule(text: String, seed: Temporal, from: JInstant, to: JInstant, zoneHint: ZoneId): List<Temporal> {
+    internal fun expandRule(text: String, seed: Temporal, from: JInstant, to: JInstant, zoneHint: ZoneId): List<Temporal> {
         val parts = text.split(';').map(String::trim).filter(String::isNotEmpty)
         val untilPart = parts.firstOrNull { it.startsWith("UNTIL=", ignoreCase = true) }
         val until = untilPart?.let { untilInstant(it.substringAfter('='), seed, zoneHint) }
@@ -415,13 +439,13 @@ object Ical {
     }
 
     /** The zone a UTC UNTIL of an all-day series is read in: the object's first known VTIMEZONE, else UTC. */
-    private fun Calendar.zoneHint(): ZoneId =
+    internal fun Calendar.zoneHint(): ZoneId =
         getComponents<VTimeZone>("VTIMEZONE").firstNotNullOfOrNull { tz ->
             tz.getProperty<Property>("TZID").orElse(null)?.value?.trim()?.let { id -> try { ZoneId.of(id) } catch (e: Exception) { null } }
         } ?: UTC
 
     /** [instant] expressed in the same kind of temporal as [this] (zoned, local, date, instant). */
-    private fun Temporal.like(instant: JInstant): Temporal = when (this) {
+    internal fun Temporal.like(instant: JInstant): Temporal = when (this) {
         is ZonedDateTime -> instant.atZone(zone)
         is OffsetDateTime -> instant.atOffset(offset)
         is LocalDateTime -> LocalDateTime.ofInstant(instant, UTC)

@@ -235,6 +235,28 @@ class DomainToolsTest : FunSpec({
         }
     }
 
+    test("list_calendar_events shows the link and how a repeating event repeats, once per occurrence") {
+        reader.events = listOf(
+            Stored(
+                EntityId("e1"),
+                CalendarEventPayload(
+                    "gym#1", "work", "Gym", Instant.parse("2026-10-26T11:00:00Z"), Instant.parse("2026-10-26T12:00:00Z"),
+                    url = "https://example.com/gym", repeats = "every Mon, Wed and Fri until Dec 20",
+                ),
+                t0, t0,
+            ),
+        )
+        try {
+            val result = tools.getValue("list_calendar_events").invoke(obj("""{"date":"2026-10-26"}""")).shouldBeInstanceOf<ToolResult.Ok>()
+            val event = (Json.parseToJsonElement(result.content) as kotlinx.serialization.json.JsonArray).single().jsonObject
+            event["url"].toString() shouldBe "\"https://example.com/gym\""
+            event["repeats"].toString() shouldBe "\"every Mon, Wed and Fri until Dec 20\""
+            event["id"].toString() shouldBe "\"e1\""
+        } finally {
+            reader.events = null
+        }
+    }
+
     test("search_messages forwards terms and filters, and answers with a snippet instead of the body") {
         val result = tools.getValue("search_messages").invoke(
             obj("""{"query":"astrology \"club meeting\"","from":"2026-10-01","channel":"Email","limit":999}"""),

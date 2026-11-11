@@ -2,6 +2,7 @@ package net.robog.clarity.backend.governance
 
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.backend.persistence.wire
+import net.robog.clarity.shared.calendar.EventScope
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.AutonomyTier
 import net.robog.clarity.shared.governance.Constitution
@@ -51,8 +52,8 @@ fun effectiveKind(action: ProposedAction): ActionKind =
  * The tier that applies to [kind]: the person's own setting from the interview (a "never" is
  * always respected), else "ask first". Vault kinds can never be looser than "never alone".
  */
-fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
-    val set = constitution.autonomy[kind] ?: AutonomyTier.ASK_FIRST
+private fun kindTier(kind: ActionKind, constitution: Constitution): AutonomyTier {
+    val set = constitution.autonomyOf(kind)
     return when {
         set == AutonomyTier.NEVER -> AutonomyTier.NEVER
         kind in Constitution.ALWAYS_NEVER_ALONE -> AutonomyTier.NEVER_ALONE
@@ -60,8 +61,22 @@ fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
     }
 }
 
-/** Kinds the person ruled out entirely ("never"): refused, and not approvable until amended. */
-fun isHardLineKind(kind: ActionKind, constitution: Constitution): Boolean = tierOf(kind, constitution) == AutonomyTier.NEVER
+/**
+ * The tier [action] is judged by: its kind's, except that changing the time of an event is never
+ * looser than a "never" the person set on moving events (the phone no longer shows that setting).
+ */
+fun tierOf(action: ProposedAction, constitution: Constitution): AutonomyTier =
+    if (movesUnderNever(action, constitution)) AutonomyTier.NEVER else kindTier(effectiveKind(action), constitution)
+
+/** True for an update that changes when an event happens while the person said "never" to moving events. */
+private fun movesUnderNever(action: ProposedAction, constitution: Constitution): Boolean =
+    action is ProposedAction.UpdateEvent && (action.start != null || action.end != null || action.repeat != null || action.allDay != null) &&
+        constitution.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER
+
+/** The kind the person's tier is named after in a message: moving events when that is what binds. */
+private fun bindingKind(action: ProposedAction, constitution: Constitution): ActionKind =
+    if (movesUnderNever(action, constitution) && kindTier(effectiveKind(action), constitution) != AutonomyTier.NEVER) ActionKind.MOVE_EVENT else effectiveKind(action)
+
 
 /** Actions that reach other people or outside systems; untrusted-content influence matters most here. */
 fun isExternal(action: ProposedAction): Boolean = when (action) {
@@ -71,6 +86,9 @@ fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.AskCode -> false
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
+    // deleting, rewriting a whole series, or planting a link or notes is outside content's to decide, even on the person's own calendar
+    is ProposedAction.UpdateEvent -> action.notifyAttendees || action.scope in setOf(EventScope.SERIES, EventScope.FOLLOWING) || action.url != null || action.description != null
+    is ProposedAction.CancelEvent -> true
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
     is ProposedAction.SaveDraft, is ProposedAction.CreateReminder,
     is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> false
@@ -89,13 +107,14 @@ fun textOf(action: ProposedAction): String = buildString {
     when (action) {
         is ProposedAction.SaveDraft -> append(action.email.subject).append('\n').append(action.email.body)
         is ProposedAction.SendEmail -> append(action.email.subject).append('\n').append(action.email.body)
-        is ProposedAction.CreateEvent -> append(action.title)
+        is ProposedAction.CreateEvent -> append(action.title).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
+        is ProposedAction.UpdateEvent -> append(action.title.orEmpty()).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
         is ProposedAction.CreateReminder -> append(action.text)
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())
         is ProposedAction.UseCredential -> append(action.site)
         is ProposedAction.AskCode -> append(action.site).append(' ').append(action.purpose)
-        is ProposedAction.MoveEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
+        is ProposedAction.MoveEvent, is ProposedAction.CancelEvent, is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> Unit
     }
 }.lowercase()
 
@@ -122,9 +141,9 @@ fun deterministicVerdict(
 ): GuardVerdict {
     val findings = ArrayList<Finding>()
     val kind = effectiveKind(action)
-    val kindName = kind.label()
+    val kindName = bindingKind(action, constitution).label()
 
-    when (tierOf(kind, constitution)) {
+    when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you said I never do \"$kindName\"")
         AutonomyTier.NEVER_ALONE -> findings += Finding(
             Decision.ASK,
@@ -136,7 +155,7 @@ fun deterministicVerdict(
     }
     val recipients = recipientCount(action)
     if (recipients > 1) findings += Finding(Decision.ASK, "it goes out as you to $recipients people")
-    if (action is ProposedAction.MoveEvent && action.notifyAttendees) {
+    if (tellsAttendees(action)) {
         findings += Finding(Decision.ASK, "it changes an event other people are on and tells them")
     }
     val taint = if (provenance.untrustedInput && isExternal(action)) {
@@ -165,6 +184,14 @@ fun deterministicVerdict(
     return GuardVerdict(strictest, emptyList<LineId>(), "$lead$reasons.")
 }
 
+/** Changing or cancelling an event other people are on, with the organizer's notice going out. */
+private fun tellsAttendees(action: ProposedAction): Boolean = when (action) {
+    is ProposedAction.MoveEvent -> action.notifyAttendees
+    is ProposedAction.UpdateEvent -> action.notifyAttendees
+    is ProposedAction.CancelEvent -> action.notifyAttendees
+    else -> false
+}
+
 private fun askFirstReason(kindName: String) = "you want to be asked before I do \"$kindName\""
 
 /** Pure: why a call to one of the person's MCP servers is held when the run read outside content. */
@@ -182,8 +209,8 @@ fun mcpTaintRationale(action: ProposedAction.ExternalTool): String {
  */
 fun hardLineVerdict(action: ProposedAction, constitution: Constitution): GuardVerdict {
     val kind = effectiveKind(action)
-    val name = kind.label()
-    return when (tierOf(kind, constitution)) {
+    val name = bindingKind(action, constitution).label()
+    return when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you said I never do \"$name\".")
         AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "I'm asking because you said \"$name\" is never done alone.", phoneApproval = true)
         else -> {
@@ -199,9 +226,13 @@ private fun protectedOverlapOf(action: ProposedAction, constitution: Constitutio
     when (action) {
         // a private hold without attendees *protects* time; anything else intrudes on it
         is ProposedAction.CreateEvent ->
-            if (action.hold && action.attendees.isEmpty()) null
+            if (action.hold && action.attendees.isEmpty() || action.allDay) null
             else protectedOverlap(constitution.protectedTimes, action.start, action.end, zone)
         is ProposedAction.MoveEvent -> protectedOverlap(constitution.protectedTimes, action.start, action.end, zone)
+        is ProposedAction.UpdateEvent -> {
+            val (start, end) = action.start to action.end
+            if (start != null && end != null && action.allDay != true) protectedOverlap(constitution.protectedTimes, start, end, zone) else null
+        }
         else -> null
     }
 
@@ -229,7 +260,7 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (isHardLineKind(effectiveKind(action), constitution)) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
+    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${bindingKind(action, constitution).label()}\" is a hard line; change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
         return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"

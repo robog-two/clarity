@@ -105,9 +105,9 @@ class ProposedActionsTest : FunSpec({
         }.message shouldContain "not a time"
     }
 
-    test("move, respond, reminder and do-not-disturb") {
-        ProposedActions.moveEvent("k", ExternalTools.MoveEventInput("e1", "2026-10-26T09:00:00Z", "2026-10-26T10:00:00Z", true, "r"), utc)
-            .shouldBeInstanceOf<ProposedAction.MoveEvent>().notifyAttendees shouldBe true
+    test("update, respond, reminder and do-not-disturb") {
+        ProposedActions.updateEvent("k", ExternalTools.UpdateEventInput("e1", start = "2026-10-26T09:00:00Z", end = "2026-10-26T10:00:00Z", notifyAttendees = true, reason = "r"), utc)
+            .shouldBeInstanceOf<ProposedAction.UpdateEvent>().notifyAttendees shouldBe true
         ProposedActions.respond("k", ExternalTools.RespondInput("e1", InviteResponse.DECLINE, "sorry", "r"))
             .shouldBeInstanceOf<ProposedAction.RespondToInvite>().response shouldBe InviteResponse.DECLINE
         ProposedActions.reminder("k", ExternalTools.ReminderInput("call mum", "2026-10-26T18:00:00Z", "r"), utc)
@@ -130,8 +130,8 @@ class ProposedActionsTest : FunSpec({
         utcGiven.summary shouldBe "Remind at 2026-10-26T19:00-04:00 (Mon): call mum"
         ProposedActions.doNotDisturb("k", ExternalTools.DndInput("2026-11-01T01:30", reason = "r"), newYork)
             .shouldBeInstanceOf<ProposedAction.SetDoNotDisturb>().until shouldBe Instant.parse("2026-11-01T05:30:00Z") // the first 01:30
-        ProposedActions.moveEvent("k", ExternalTools.MoveEventInput("e1", "2026-10-26T23:00", "2026-10-27T01:00", false, "r"), newYork)
-            .summary shouldBe "Move event e1 to 2026-10-26T23:00-04:00 (Mon) to 2026-10-27T01:00-04:00 (Tue)"
+        ProposedActions.updateEvent("k", ExternalTools.UpdateEventInput("e1", start = "2026-10-26T23:00", end = "2026-10-27T01:00", reason = "r"), newYork)
+            .summary shouldBe "Update event e1 to 2026-10-26T23:00-04:00 (Mon) to 2026-10-27T01:00-04:00 (Tue)"
     }
 
     test("a plain date is not enough for an event, and says how to fix it") {

@@ -58,6 +58,9 @@ data class CalendarEventPayload(
     val location: String? = null,
     val description: String? = null,
     val attendees: List<Handle> = emptyList(),
+    val url: String? = null,
+    /** How a repeating event repeats, in plain words ("every Mon and Wed until Dec 20"); null for a single event. */
+    val repeats: String? = null,
 ) : Payload {
     override val noun: Noun get() = Noun.CALENDAR_EVENT
 }

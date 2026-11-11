@@ -33,7 +33,8 @@ private val REEXPAND_AFTER: Duration = Duration.ofDays(7)
  * 2: plain events of any age, series from a year back, [CollectionState.recurring], history kept.
  */
 // 3: refetch once so objects that failed to parse before the bad-line fix are read again.
-const val CAL_STATE_VERSION = 3
+// 4: refetch once so events carry their link and how they repeat.
+const val CAL_STATE_VERSION = 4
 
 private const val CHUNK = 100
 private const val MAX_FILES = 5000

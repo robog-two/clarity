@@ -11,12 +11,21 @@ import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.Line
 import net.robog.clarity.shared.governance.LineId
 import net.robog.clarity.shared.governance.NEVER_AUTOMATIC
+import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.governance.ProposeAmendment
 import net.robog.clarity.shared.governance.RuleDraft
 import net.robog.clarity.shared.governance.Section
 
-/** Pure: whether "approve automatically from now on" is offered for [held]. */
-fun canAlwaysAllow(held: HeldAction): Boolean = held.waiting && held.action.kind !in NEVER_AUTOMATIC
+/**
+ * Pure: whether "approve automatically from now on" is offered for [held]. A blocked update that
+ * changes when an event happens was stopped by a "never" on moving events, which a rule for
+ * changing events would not lift, so it is not offered.
+ */
+fun canAlwaysAllow(held: HeldAction): Boolean {
+    val action = held.action
+    val movesTime = action is ProposedAction.UpdateEvent && (action.start != null || action.end != null || action.repeat != null || action.allDay != null)
+    return held.waiting && action.kind !in NEVER_AUTOMATIC && !(movesTime && held.status == HeldAction.Status.BLOCKED)
+}
 
 /** Pure: the rule the editor opens with: the server's draft, or a plain line until it arrives. */
 fun startingRule(held: HeldAction): RuleDraft = held.ruleDraft ?: RuleDraft(

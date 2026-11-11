@@ -150,6 +150,7 @@ class GatewayGuardModel(
 fun actionTimes(action: ProposedAction): List<Pair<String, kotlin.time.Instant>> = when (action) {
     is ProposedAction.CreateEvent -> listOf("start" to action.start, "end" to action.end)
     is ProposedAction.MoveEvent -> listOf("start" to action.start, "end" to action.end)
+    is ProposedAction.UpdateEvent -> listOfNotNull(action.start?.let { "start" to it }, action.end?.let { "end" to it })
     is ProposedAction.CreateReminder -> listOf("at" to action.at)
     is ProposedAction.SetDoNotDisturb -> listOf("until" to action.until)
     else -> emptyList()
@@ -184,4 +185,4 @@ fun withPhoneApproval(verdict: GuardVerdict, action: ProposedAction, constitutio
 
 /** True when [action]'s kind is at "never alone" for this person (a "never" kind cannot be approved at all). */
 fun requiresPhoneApproval(action: ProposedAction, constitution: Constitution): Boolean =
-    tierOf(effectiveKind(action), constitution) == net.robog.clarity.shared.governance.AutonomyTier.NEVER_ALONE
+    tierOf(action, constitution) == net.robog.clarity.shared.governance.AutonomyTier.NEVER_ALONE

@@ -58,7 +58,8 @@ fun executedToast(held: HeldAction): String {
     return when (held.action.kind) {
         ActionKind.SEND_EMAIL -> if (who != null) "Sent to $who." else "Sent."
         ActionKind.SAVE_DRAFT -> if (who != null) "Draft for $who saved." else "Draft saved."
-        ActionKind.MOVE_EVENT, ActionKind.CREATE_EVENT -> "Calendar updated."
+        ActionKind.MOVE_EVENT, ActionKind.UPDATE_EVENT, ActionKind.CREATE_EVENT -> "Calendar updated."
+        ActionKind.CANCEL_EVENT -> "Event cancelled."
         ActionKind.RESPOND_TO_INVITE -> "Reply sent."
         else -> "Done."
     }

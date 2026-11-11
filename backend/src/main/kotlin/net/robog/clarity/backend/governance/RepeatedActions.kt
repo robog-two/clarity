@@ -43,8 +43,13 @@ fun actionFingerprint(action: ProposedAction): String? = when (action) {
     is ProposedAction.SendEmail -> "send_email|" + action.email.fingerprint()
     is ProposedAction.SaveDraft -> "save_draft|" + action.email.fingerprint()
     is ProposedAction.CreateEvent ->
-        "create_event|${action.calendar.orEmpty()}|${action.title.squashed().lowercase()}|${action.start}|${action.end}|${action.attendees.normalized()}|${action.hold}"
+        "create_event|${action.calendar.orEmpty()}|${action.title.squashed().lowercase()}|${action.start}|${action.end}|${action.attendees.normalized()}|${action.hold}" +
+            "|${action.allDay}|${action.repeat}|${action.location?.squashed().orEmpty()}|${action.description?.squashed().orEmpty()}|${action.url.orEmpty()}"
     is ProposedAction.MoveEvent -> "move_event|${action.event.value}|${action.start}|${action.end}|${action.notifyAttendees}"
+    is ProposedAction.UpdateEvent ->
+        "update_event|${action.event.value}|${action.scope}|${action.start}|${action.end}|${action.title?.squashed().orEmpty()}|${action.description?.squashed().orEmpty()}" +
+            "|${action.location?.squashed().orEmpty()}|${action.url.orEmpty()}|${action.allDay}|${action.repeat}|${action.notifyAttendees}"
+    is ProposedAction.CancelEvent -> "cancel_event|${action.event.value}|${action.scope}|${action.notifyAttendees}"
     is ProposedAction.RespondToInvite -> "respond_to_invite|${action.event.value}|${action.response}|${action.comment?.squashed().orEmpty()}"
     is ProposedAction.CreateReminder -> "create_reminder|${action.text.squashed().lowercase()}|${action.at}"
     is ProposedAction.SetDoNotDisturb -> "set_do_not_disturb|${action.until}|${action.allow.normalized()}"

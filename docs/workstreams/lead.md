@@ -55,7 +55,7 @@ prompts, run store, MCP tool sources), `governance/ActionGate.kt`, `GovernanceEv
    `neverStore`), `write_journal`, `read_journal`, `set_scratch`, `search_memory` (Postgres FTS over
    journal + feed + messages), `update_task`. External domain tools that call
    `ActionGate.propose` with `Provenance(runId, untrustedInput = <did this run's context include
-   untrusted parts>)`: `save_draft`, `send_email`, `create_event`, `move_event`,
+   untrusted parts>)`: `save_draft`, `send_email`, `create_event`, `update_event`, `cancel_event`,
    `respond_to_invite`, `create_reminder`, `set_do_not_disturb`; each returns the gate's text.
    Deferred behind tool search: MCP tools (browser, sandbox) and rarely used domain tools.
 7. **Helpers.** A helper is a harness run with the `helper` role, its own journal, a task

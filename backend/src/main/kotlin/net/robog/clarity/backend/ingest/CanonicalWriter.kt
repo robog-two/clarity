@@ -70,6 +70,8 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[CalendarEvents.location] = payload.location
         it[CalendarEvents.description] = payload.description
         it[CalendarEvents.attendees] = payload.attendees
+        it[CalendarEvents.url] = payload.url
+        it[CalendarEvents.repeats] = payload.repeats
     }
     is DocumentPayload -> upsert(Documents, key, now) {
         it[Documents.store] = payload.store

@@ -44,6 +44,8 @@ interface NounReader {
     /** Every email folder seen so far, e.g. INBOX, [Gmail]/Spam; sorted. */
     suspend fun emailFolders(): List<String> = emptyList()
     suspend fun calendarEvents(range: TimeRange, limit: Int = 100): List<Stored<CalendarEventPayload>>
+    /** One calendar event (or one occurrence of a repeating one) by id, or null when there is none. */
+    suspend fun calendarEvent(id: EntityId): Stored<CalendarEventPayload>? = null
     suspend fun searchContacts(query: String, limit: Int = 20): List<Stored<ContactPayload>>
     /** Full-text search over document titles, paths and extracted excerpts; best matches first. */
     suspend fun searchDocuments(query: String, limit: Int = 20): List<Stored<DocumentPayload>> = emptyList()

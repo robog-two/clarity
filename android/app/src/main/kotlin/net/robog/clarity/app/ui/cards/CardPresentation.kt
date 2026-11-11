@@ -21,6 +21,8 @@ fun slideLabel(kind: ActionKind): String = "Slide to " + approveLabel(kind)
 
 fun approveLabel(kind: ActionKind): String = when (kind) {
     ActionKind.MOVE_EVENT -> "send update"
+    ActionKind.UPDATE_EVENT -> "update event"
+    ActionKind.CANCEL_EVENT -> "cancel event"
     ActionKind.SEND_EMAIL -> "send"
     ActionKind.RESPOND_TO_INVITE -> "send reply"
     ActionKind.CREATE_EVENT -> "add to calendar"
