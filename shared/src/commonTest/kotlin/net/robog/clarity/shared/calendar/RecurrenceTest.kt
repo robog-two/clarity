@@ -126,6 +126,14 @@ class RecurrenceMoveTest {
         assertEquals(Recurrence(Frequency.DAILY), Recurrence(Frequency.DAILY).movedTo(monday, LocalDate(2026, 10, 29)))
     }
 
+    @Test fun aTimeOnlyChangeKeepsThePatternEvenFromAnOffPatternStart() {
+        val secondTuesday = Recurrence(Frequency.MONTHLY, nthWeekday = NthWeekday(2, DayOfWeek.TUESDAY), until = LocalDate(2026, 12, 20))
+        // Monday 26 Oct is not a 2nd Tuesday, and the pattern must not be rewritten to follow it
+        assertEquals(secondTuesday, secondTuesday.movedTo(monday, monday))
+        val lastFriday = Recurrence(Frequency.MONTHLY, nthWeekday = NthWeekday(NthWeekday.LAST, DayOfWeek.FRIDAY))
+        assertEquals(lastFriday, lastFriday.movedTo(LocalDate(2026, 10, 23), LocalDate(2026, 10, 23)))
+    }
+
     @Test fun theEndDateMovesToo() {
         val until = Recurrence(Frequency.DAILY, until = LocalDate(2026, 12, 20))
         assertEquals(LocalDate(2026, 12, 21), until.movedTo(monday, LocalDate(2026, 10, 27))?.until)

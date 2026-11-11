@@ -2,6 +2,7 @@ package net.robog.clarity.backend.governance
 
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.backend.persistence.wire
+import net.robog.clarity.shared.calendar.EventScope
 import net.robog.clarity.shared.governance.ActionKind
 import net.robog.clarity.shared.governance.AutonomyTier
 import net.robog.clarity.shared.governance.Constitution
@@ -60,6 +61,16 @@ fun tierOf(kind: ActionKind, constitution: Constitution): AutonomyTier {
     }
 }
 
+/**
+ * The tier [action] is judged by: its kind's, except that changing the time of an event is never
+ * looser than a "never" the person set on moving events (the phone no longer shows that setting).
+ */
+fun tierOf(action: ProposedAction, constitution: Constitution): AutonomyTier {
+    val tier = tierOf(effectiveKind(action), constitution)
+    val movesTime = action is ProposedAction.UpdateEvent && (action.start != null || action.end != null)
+    return if (movesTime && constitution.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER) AutonomyTier.NEVER else tier
+}
+
 /** Kinds the person ruled out entirely ("never"): refused, and not approvable until amended. */
 fun isHardLineKind(kind: ActionKind, constitution: Constitution): Boolean = tierOf(kind, constitution) == AutonomyTier.NEVER
 
@@ -72,7 +83,7 @@ fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
     // deleting, rewriting a whole series, or planting a link or notes is outside content's to decide, even on the person's own calendar
-    is ProposedAction.UpdateEvent -> action.notifyAttendees || action.scope == net.robog.clarity.shared.calendar.EventScope.SERIES || action.url != null || action.description != null
+    is ProposedAction.UpdateEvent -> action.notifyAttendees || action.scope in setOf(EventScope.SERIES, EventScope.FOLLOWING) || action.url != null || action.description != null
     is ProposedAction.CancelEvent -> true
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
     is ProposedAction.SaveDraft, is ProposedAction.CreateReminder,
@@ -128,7 +139,7 @@ fun deterministicVerdict(
     val kind = effectiveKind(action)
     val kindName = kind.label()
 
-    when (tierOf(kind, constitution)) {
+    when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you said I never do \"$kindName\"")
         AutonomyTier.NEVER_ALONE -> findings += Finding(
             Decision.ASK,
@@ -195,7 +206,7 @@ fun mcpTaintRationale(action: ProposedAction.ExternalTool): String {
 fun hardLineVerdict(action: ProposedAction, constitution: Constitution): GuardVerdict {
     val kind = effectiveKind(action)
     val name = kind.label()
-    return when (tierOf(kind, constitution)) {
+    return when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you said I never do \"$name\".")
         AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "I'm asking because you said \"$name\" is never done alone.", phoneApproval = true)
         else -> {

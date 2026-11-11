@@ -23,4 +23,25 @@ class OneLineTest {
     @Test fun emptyStaysEmpty() {
         assertEquals("", oneLine(" \n ", 10))
     }
+
+    @Test fun joinersOfRealScriptsAndEmojiStay() {
+        val persian = "\u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645" // ZWNJ inside a Persian word
+        assertEquals(persian, oneLine(persian, 80))
+        val family = "\uD83D\uDC69\u200D\uD83D\uDC69\u200D\uD83D\uDC67" // woman, ZWJ, woman, ZWJ, girl
+        assertEquals(family, oneLine(family, 80))
+    }
+
+    @Test fun reorderingAndHiddenCharactersGo() {
+        for (hidden in listOf("\u00AD", "\u061C", "\u202E", "\u2067", "\u2063", "\uDB40\uDC41")) {
+            assertEquals("ab", oneLine("a" + hidden + "b", 80), hidden)
+        }
+    }
+
+    @Test fun cuttingNeverLeavesALoneSurrogate() {
+        val text = "ab" + "\uD83D\uDE00".repeat(10)
+        for (max in 2..12) {
+            val kept = oneLine(text, max).dropLast(1)
+            assertEquals(kept.count { it.isHighSurrogate() }, kept.count { it.isLowSurrogate() }, "max $max")
+        }
+    }
 }

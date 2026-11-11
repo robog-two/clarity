@@ -117,21 +117,88 @@ END:VCALENDAR
         localStarts(restarted) shouldContainExactly listOf("2026-11-10 07:00", "2026-11-17 07:00", "2026-11-24 07:00")
     }
 
-    test("a series that was already moved is recognised when the same move arrives again") {
-        val moved = replaced(edit(gym(), "2026-11-04 07:00", EventScope.SERIES, EventChange(start = at("2026-11-04 08:00"), end = at("2026-11-04 09:00"))))
-        edit(moved, "2026-11-04 07:00", EventScope.SERIES, EventChange(start = at("2026-11-04 08:00"), end = at("2026-11-04 09:00"))) shouldBe Edited.Applied
+    context("the same action delivered again") {
+        val move = EventChange(start = at("2026-11-04 08:00"), end = at("2026-11-04 09:00"))
+
+        test("a marked series is not moved a second time") {
+            val daily = create("2026-10-26 07:00", "2026-10-26 08:00", Recurrence(Frequency.DAILY, count = 10))
+            val once = IcalEdit.updated(daily, at("2026-11-04 07:00"), EventScope.SERIES, move, "n", "key-1").shouldBeInstanceOf<Edited.Replace>().ics
+            localStarts(once).first() shouldBe "2026-10-26 08:00"
+            // a whole-day shift would make the old occurrence a valid slot again: only the mark tells the two apart
+            val oneDay = EventChange(start = at("2026-11-05 07:00"), end = at("2026-11-05 08:00"))
+            val shifted = IcalEdit.updated(daily, at("2026-11-04 07:00"), EventScope.SERIES, oneDay, "n", "key-2").shouldBeInstanceOf<Edited.Replace>().ics
+            localStarts(shifted).first() shouldBe "2026-10-27 07:00"
+            IcalEdit.updated(shifted, at("2026-11-04 07:00"), EventScope.SERIES, oneDay, "n", "key-2") shouldBe Edited.Applied
+            IcalEdit.updated(once, at("2026-11-04 07:00"), EventScope.SERIES, move, "n", "key-1") shouldBe Edited.Applied
+        }
+
+        test("another action key is a new action") {
+            val once = IcalEdit.updated(gym(), at("2026-11-04 07:00"), EventScope.THIS, EventChange(title = "A"), "n", "key-1").shouldBeInstanceOf<Edited.Replace>().ics
+            IcalEdit.updated(once, at("2026-11-04 07:00"), EventScope.THIS, EventChange(title = "B"), "n", "key-2").shouldBeInstanceOf<Edited.Replace>()
+        }
+
+        test("a cancelled occurrence is recognised by the mark, not by its absence") {
+            val key = "cancel-1"
+            val cut = IcalEdit.cancelled(gym(), at("2026-11-04 07:00"), EventScope.THIS, key) as Removal.Replace
+            IcalEdit.cancelled(cut.ics, at("2026-11-04 07:00"), EventScope.THIS, key) shouldBe Removal.Applied
+            val tail = IcalEdit.cancelled(gym(), at("2026-11-09 07:00"), EventScope.FOLLOWING, "cancel-2") as Removal.Replace
+            IcalEdit.cancelled(tail.ics, at("2026-11-09 07:00"), EventScope.FOLLOWING, "cancel-2") shouldBe Removal.Applied
+        }
+
+        test("a wrong occurrence is not reported as cancelled, nor an excluded one cancelled again under a new key") {
+            val cut = IcalEdit.cancelled(gym(), at("2026-11-04 07:00"), EventScope.THIS, "cancel-1") as Removal.Replace
+            shouldThrow<IllegalArgumentException> { IcalEdit.cancelled(gym(), at("2026-11-03 07:00"), EventScope.THIS, "cancel-9") }.message shouldContain "not in the series"
+            shouldThrow<IllegalArgumentException> { IcalEdit.cancelled(cut.ics, at("2026-11-04 07:00"), EventScope.THIS, "cancel-9") }.message shouldContain "not in the series"
+            shouldThrow<IllegalArgumentException> { IcalEdit.cancelled(cut.ics, at("2026-11-03 07:00"), EventScope.FOLLOWING, "cancel-9") }.message shouldContain "not in the series"
+        }
+
+        test("a split marks both halves") {
+            val split = IcalEdit.updated(gym(), at("2026-11-09 07:00"), EventScope.FOLLOWING, EventChange(title = "B"), "next@clarity", "split-1").shouldBeInstanceOf<Edited.Split>()
+            IcalEdit.updated(split.original, at("2026-11-09 07:00"), EventScope.FOLLOWING, EventChange(title = "B"), "next@clarity", "split-1") shouldBe Edited.Applied
+            IcalEdit.updated(split.following, at("2026-11-11 07:00"), EventScope.THIS, EventChange(title = "C"), "x", "split-1") shouldBe Edited.Applied
+        }
+
+        test("marks stay few") {
+            var text = gym()
+            repeat(30) { n ->
+                text = IcalEdit.updated(text, at("2026-11-04 07:00"), EventScope.THIS, EventChange(title = "t$n"), "x", "key-$n").shouldBeInstanceOf<Edited.Replace>().ics
+            }
+            Regex("X-CLARITY-ACTION").findAll(text).count() shouldBe 20
+        }
     }
 
-    context("cancelled already") {
-        test("an excluded occurrence and a cut-off tail have nothing left to cancel") {
-            val excluded = (IcalEdit.cancelled(gym(), at("2026-11-04 07:00"), EventScope.THIS) as Removal.Replace).ics
-            IcalEdit.alreadyCancelled(excluded, at("2026-11-04 07:00"), EventScope.THIS) shouldBe true
-            IcalEdit.alreadyCancelled(gym(), at("2026-11-04 07:00"), EventScope.THIS) shouldBe false
-            val cut = (IcalEdit.cancelled(gym(), at("2026-11-09 07:00"), EventScope.FOLLOWING) as Removal.Replace).ics
-            IcalEdit.alreadyCancelled(cut, at("2026-11-11 07:00"), EventScope.FOLLOWING) shouldBe true
-            IcalEdit.alreadyCancelled(cut, at("2026-11-02 07:00"), EventScope.FOLLOWING) shouldBe false
-            IcalEdit.alreadyCancelled(cut, at("2026-11-11 07:00"), EventScope.SERIES) shouldBe false
-        }
+    test("a time-only change keeps an nth weekday even when the start is off the pattern") {
+        // starts on Monday 26 October but follows the 2nd Tuesday: only the hour moves
+        val offPattern = ics("DTSTART;TZID=America/New_York:20261026T090000", "DTEND;TZID=America/New_York:20261026T100000", "RRULE:FREQ=MONTHLY;BYDAY=2TU;COUNT=3", "SUMMARY:x")
+        val moved = replaced(edit(offPattern, "2026-10-26 09:00", EventScope.SERIES, EventChange(start = at("2026-10-26 10:00"), end = at("2026-10-26 11:00"))))
+        moved shouldContain "BYDAY=2TU"
+        localStarts(moved).map { it.takeLast(5) }.toSet() shouldBe setOf("10:00")
+    }
+
+    test("listed extra dates move with a series") {
+        val listed = ics("DTSTART:20261026T120000Z", "DTEND:20261026T130000Z", "RDATE:20261028T120000Z,20261030T120000Z", "SUMMARY:Dates")
+        val moved = replaced(edit(listed, "2026-10-28 12:00", EventScope.SERIES, EventChange(start = at("2026-10-28 13:00", UTC)), UTC))
+        utcStarts(moved).map { it.take(13) } shouldContainExactly listOf("2026-10-26T13", "2026-10-28T13", "2026-10-30T13")
+    }
+
+    test("a changed occurrence in its own zone moves on that zone's clock") {
+        val text = listOf(
+            "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//t//EN",
+            "BEGIN:VEVENT", "UID:x", "DTSTAMP:20260301T000000Z", "DTSTART;TZID=America/New_York:20261026T090000", "DTEND;TZID=America/New_York:20261026T100000",
+            "RRULE:FREQ=DAILY;COUNT=4", "SUMMARY:x", "END:VEVENT",
+            "BEGIN:VEVENT", "UID:x", "DTSTAMP:20260301T000000Z", "RECURRENCE-ID;TZID=America/New_York:20261027T090000",
+            "DTSTART;TZID=Europe/Berlin:20261027T160000", "DTEND;TZID=Europe/Berlin:20261027T170000", "SUMMARY:x", "END:VEVENT",
+            "END:VCALENDAR",
+        ).joinToString("\r\n") + "\r\n"
+        val moved = replaced(edit(text, "2026-10-26 09:00", EventScope.SERIES, EventChange(start = at("2026-10-26 10:00"), end = at("2026-10-26 11:00"))))
+        moved shouldContain "DTSTART;TZID=Europe/Berlin:20261027T170000"
+        moved shouldContain "RECURRENCE-ID;TZID=Europe/Berlin:20261027T150000" // the same instant as 10:00 in New York, written on its own clock
+    }
+
+    test("an object with a part that has no start is a message, not a crash") {
+        val broken = ics("DTSTART:20261026T120000Z", "RRULE:FREQ=DAILY;COUNT=3", "SUMMARY:x") + ""
+        val noStart = broken.replace("END:VEVENT\r\nEND:VCALENDAR", "END:VEVENT\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTAMP:20260301T000000Z\r\nRECURRENCE-ID:20261027T120000Z\r\nSUMMARY:y\r\nEND:VEVENT\r\nEND:VCALENDAR")
+        shouldThrow<IllegalArgumentException> { IcalEdit.updated(noStart, at("2026-10-27 12:00", UTC), EventScope.THIS, EventChange(title = "z"), "n") }.message shouldContain "without a start"
     }
 
     context("other kinds of start") {

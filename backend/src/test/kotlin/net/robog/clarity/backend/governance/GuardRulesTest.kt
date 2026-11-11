@@ -128,6 +128,25 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(title.copy(url = "https://example.com"), c, trusted()).decision shouldBe Decision.ALLOW
     }
 
+    test("outside content cannot rewrite the rest of a series either") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val title = ProposedAction.UpdateEvent("k", "s", net.robog.clarity.shared.EntityId("e1"), net.robog.clarity.shared.calendar.EventScope.FOLLOWING, title = "x")
+        deterministicVerdict(title, c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title, c, trusted()).decision shouldBe Decision.ALLOW
+    }
+
+    test("a never on moving events still binds a change of time, but not a change of wording") {
+        val c = constitution(
+            autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL),
+        )
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val at = kotlin.time.Instant.parse("2026-10-26T14:00:00Z")
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at, end = at + 1.hours), c, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at), c, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, title = "x"), c, trusted()).decision shouldBe Decision.ALLOW
+        hardLineVerdict(ProposedAction.UpdateEvent("k", "s", id, start = at), c).decision shouldBe Decision.DENY
+    }
+
     test("a link in an event is checked against the never-store topics") {
         val c = constitution(tier = AutonomyTier.DO_THEN_TELL, neverStore = listOf("clinic"))
         val id = net.robog.clarity.shared.EntityId("e1")
