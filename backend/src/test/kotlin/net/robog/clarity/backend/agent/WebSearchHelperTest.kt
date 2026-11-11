@@ -191,7 +191,8 @@ class WebSearchHelperTest : FunSpec({
 
         val (_, listed) = delegateOnce(listOf("search_memory", "create_report"))
         listed.webSearch.shouldBeNull()
-        listed.tools.map { it.name } shouldContainExactly listOf("create_report", "search_memory")
+        // ask_lead comes with every helper: it is how it reaches the lead, not a capability.
+        listed.tools.map { it.name } shouldContainExactly listOf("ask_lead", "create_report", "search_memory")
     }
 
     test("the lead's own tools have no web search and no way to cite sources") {

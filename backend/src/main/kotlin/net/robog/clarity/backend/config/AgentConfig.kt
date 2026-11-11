@@ -22,6 +22,14 @@ data class AgentConfig(
     val helperMaxPerDay: Int = 20,
     /** Times a helper run is resumed after a restart before it is failed instead (`CLARITY_HELPER_MAX_RESUMES`). */
     val helperMaxResumes: Int = 3,
+    /** How long a helper waits for the lead's answer to `ask_lead` (`CLARITY_HELPER_ASK_TIMEOUT`), then goes on by its own judgment. */
+    val helperAskTimeout: Duration = Duration.parse("4h"),
+    /** Questions one helper run may ask the lead. */
+    val helperMaxQuestions: Int = 3,
+    /** Times the lead may send a finished helper's work back with feedback. */
+    val helperMaxRevisions: Int = 2,
+    /** Steps a revision gets; the run's spend cap stays and what it already spent counts. */
+    val helperReviseSteps: Int = 15,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),

@@ -142,6 +142,8 @@ class LeadRig(
     mcpWait: Duration = Duration.ZERO,
     /** Tests list the host on every read; false is the production path (only a refresh lists it). */
     mcpRefreshOnRead: Boolean = true,
+    /** Checks done criteria; by default the real one over the (scripted) triage model. */
+    criteriaChecker: CriteriaChecker? = null,
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -228,7 +230,7 @@ class LeadRig(
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
         toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit)
-        helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock)
+        helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime))
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
             effortOverride ?: CallEffortOverride(sessionService), mail, mcpCatalog,
@@ -240,7 +242,7 @@ class LeadRig(
         database.tx {
             exec(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
-                    "credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
+                    "helper_change, helper_question, credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
                     "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, tool_call_ledger, spend_notice, agent_trigger, job_slot_claim, browser_run_state, " +
                     "mcp_tool_policy, mcp_server_seen, mcp_suggestion, mcp_suggestion_made " +
                     "RESTART IDENTITY CASCADE",
