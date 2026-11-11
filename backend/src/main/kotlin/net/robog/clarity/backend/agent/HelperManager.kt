@@ -312,17 +312,12 @@ class HelperManager(
      */
     suspend fun message(id: String, text: String, untrusted: Boolean = false): Either<String, String> {
         val run = runs.get(id) ?: return "No helper with id $id.".left()
-        if (run.status !in RunStatus.OPEN) return finishedRefusal(run).left()
+        if (run.status !in RunStatus.OPEN) return finishedRefusal(id, run.status, closing = false).left()
         val state = states[id] ?: return deliver(id, text, untrusted, null)
         return state.lock.withLock {
-            if (state.closing) finishedRefusal(run).left() else deliver(id, text, untrusted, state)
+            if (state.closing) finishedRefusal(id, run.status, closing = true).left() else deliver(id, text, untrusted, state)
         }
     }
-
-    private fun finishedRefusal(run: HelperRun): String =
-        "Helper ${run.id} already ${if (run.status in RunStatus.OPEN) "finished its work" else run.status}. " +
-            if (run.status == RunStatus.CANCELLED || run.status == RunStatus.FAILED) "Start a new one with delegate and say why in retryReason."
-            else "To send its work back with feedback use revise_helper."
 
     private suspend fun deliver(id: String, text: String, untrusted: Boolean, state: RunState?): Either<String, String> {
         taintFrom(id, untrusted)
@@ -348,11 +343,13 @@ class HelperManager(
         return lifecycle.withLock {
             // Looked at again under the lock: a cancel or another revision may have come in meanwhile.
             revisionRefusal(runs.get(id), id, runs.costUsed(id), dollarsToMicros(config.helperMaxCostUsd), config.helperMaxRevisions)?.let { return@withLock it.left() }
+            // A job that is still closing holds the run's state; reopening now would leave it queued with nothing to run it.
+            if (states.containsKey(id)) return@withLock "Helper $id is finishing; try again shortly.".left()
             taintFrom(id, untrusted)
             runs.reopen(id, config.helperMaxRevisions, neutralizeMarkers(feedback), clock.now())
                 ?: return@withLock "Helper $id could not be reopened; it may have changed meanwhile. Check with list_helpers.".left()
             val reopened = requireNotNull(runs.get(id))
-            if (!start(reopened)) return@withLock "Helper $id could not be started again right now; try revise_helper once more.".left()
+            if (!start(reopened)) return@withLock "Helper $id could not be started right now; it is queued and starts with the next restart.".left()
             "Helper $id is working on your feedback (revision ${reopened.revisions} of ${config.helperMaxRevisions}). Its new result will arrive in your inbox.".right()
         }
     }
@@ -465,11 +462,15 @@ class HelperManager(
         val record = suspend {
             // Looked at again under the run's lock: it may have finished while this waited.
             val now = runs.get(id)
-            if (now == null || now.status !in RunStatus.OPEN || state?.closing == true) false
-            else { runs.finish(id, RunStatus.CANCELLED, null, null, "cancelled by the lead", clock.now()); true }
+            when {
+                now == null || now.status !in RunStatus.OPEN -> finishedRefusal(id, now?.status ?: RunStatus.DONE, closing = false)
+                state?.closing == true -> finishedRefusal(id, now.status, closing = true)
+                else -> { runs.finish(id, RunStatus.CANCELLED, null, null, "cancelled by the lead", clock.now()); null }
+            }
         }
-        val cancelled = if (state == null) record() else state.lock.withLock { if (record()) { state.closing = true; true } else false }
-        if (!cancelled) return@withLock "Helper $id already finished.".left()
+        val refusal = if (state == null) record() else state.lock.withLock { record().also { if (it == null) state.closing = true } }
+        if (refusal != null) return@withLock refusal.left()
+        taint.remove(id)
         jobs.remove(id)?.cancel()
         "Helper $id cancelled.".right()
     }
@@ -528,6 +529,9 @@ class HelperManager(
                 log.warn { "helper ${run.id}: started $starts times, failing it" }
                 throw TooManyResumes()
             }
+            // Open questions of calls the resume does not replay would block every later ask: close them.
+            val resumeJournal = journal.load(run.id)
+            runs.expireAll(run.id, staleQuestions(runs.questions(run.id), resumeJournal))
             runs.markRunning(run.id)
             // Bound once: the run keeps its model to the end, whatever changes in settings meanwhile.
             val bound = runtime.bindOrFail(agentRole)
@@ -664,6 +668,8 @@ class HelperManager(
                     .onFailure { log.warn { "helper ${run.id}: transcript not saved (${it::class.simpleName})" } }
                 val plan = finishPlan(current.revisions, ok, text, current.result)
                 runs.finish(run.id, plan.status, plan.result, usage, plan.error, now)
+                // Only a done run can be revised, so only it keeps its taint.
+                if (plan.status != RunStatus.DONE) taint.remove(run.id)
                 if (!checks.isNullOrEmpty()) runs.saveCheck(run.id, checks)
                 // The lead's own tasks do not follow the helper; it is told which are still open so it closes them.
                 if (run.profile == MCP_SWEEP_PROFILE) {

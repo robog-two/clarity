@@ -131,6 +131,9 @@ interface RunStore {
     /** Records the lead's [answer] to the open question of run [id]; null when none is open. */
     suspend fun answer(id: String, answer: String, at: Instant): HelperQuestion? = null
 
+    /** Closes the given open questions of run [id] without an answer (they belong to calls that no longer wait). */
+    suspend fun expireAll(id: String, seqs: Collection<Int>) = seqs.forEach { expire(id, it) }
+
     /** Closes question [seq] of run [id] without an answer (the wait ran out). False if it was answered meanwhile. */
     suspend fun expire(id: String, seq: Int): Boolean = false
 
@@ -289,7 +292,7 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
         val uuid = Uuid.parse(id)
         val open = HelperQuestions.selectAll().where {
             (HelperQuestions.runId eq uuid) and HelperQuestions.answer.isNull() and (HelperQuestions.timedOut eq false)
-        }.orderBy(HelperQuestions.seq, org.jetbrains.exposed.v1.core.SortOrder.DESC).firstOrNull() ?: return@tx null
+        }.orderBy(HelperQuestions.seq).firstOrNull() ?: return@tx null
         val seq = open[HelperQuestions.seq]
         HelperQuestions.update({ (HelperQuestions.runId eq uuid) and (HelperQuestions.seq eq seq) }) {
             it[HelperQuestions.answer] = answer

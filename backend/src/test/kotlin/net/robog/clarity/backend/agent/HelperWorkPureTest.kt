@@ -559,4 +559,36 @@ class HelperWorkPureTest : FunSpec({
             reported shouldBe 1
         }
     }
+
+    context("questions that survive a restart") {
+        fun q(seq: Int, tool: String, answered: Boolean = false) =
+            HelperQuestion(seq, tool, "Which?", NOW, answer = if (answered) "A" else null)
+
+        test("with the ask call replayed only its question stays open") {
+            val journal = listOf(Message.user("t"), call("t2", "ask_lead", "question" to "B?"))
+            staleQuestions(listOf(q(1, "t1"), q(2, "t2")), journal) shouldContainExactly listOf(1)
+            staleQuestions(listOf(q(1, "t1", answered = true), q(2, "t2")), journal).shouldBeEmpty()
+        }
+        test("without a replayed ask every open question is stale") {
+            staleQuestions(listOf(q(1, "t1"), q(2, "t2")), listOf(Message.user("t"), call("s1", "search_memory"))) shouldContainExactly listOf(1, 2)
+            staleQuestions(emptyList(), emptyList()).shouldBeEmpty()
+        }
+        test("with several replayed asks the lowest-numbered open one keeps the wait") {
+            val journal = listOf(call("t1", "ask_lead", "question" to "A?"))
+            val both = Message(Role.ASSISTANT, listOf(Block.ToolUse("t1", "ask_lead", buildJsonObject { }), Block.ToolUse("t2", "ask_lead", buildJsonObject { })))
+            staleQuestions(listOf(q(1, "t1"), q(2, "t2")), listOf(both)) shouldContainExactly listOf(2)
+            staleQuestions(listOf(q(1, "t1")), journal).shouldBeEmpty()
+        }
+    }
+
+    context("what the lead hears from a helper that no longer takes it") {
+        test("a helper that is only finishing says to try again") {
+            finishedRefusal("h", RunStatus.RUNNING, closing = true) shouldBe "Helper h is finishing; try again shortly."
+        }
+        test("done helpers point to revise_helper, failed and cancelled ones to delegate") {
+            finishedRefusal("h", RunStatus.DONE, closing = false) shouldContain "revise_helper"
+            finishedRefusal("h", RunStatus.FAILED, closing = false) shouldContain "retryReason"
+            finishedRefusal("h", RunStatus.CANCELLED, closing = false) shouldContain "delegate"
+        }
+    }
 })
