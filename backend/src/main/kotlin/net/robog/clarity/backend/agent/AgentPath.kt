@@ -89,7 +89,7 @@ fun withFinish(items: List<PathItem>, runId: String, depth: Int, ok: Boolean, re
 fun countsAsStep(item: PathItem): Boolean = item is PathItem.Said || item is PathItem.Action || item is PathItem.Browser || item is PathItem.Helper
 
 private val HELPER_STARTED = Regex("""Helper ([0-9a-fA-F-]{36}) started""")
-private val INBOX_HELPER = Regex("""^Helper (\S+) (finished|failed) its task: (.*)$""")
+private val INBOX_HELPER = Regex("""^Helper (\S+) (finished|failed) its task(?: \(after revision \d+\))?: (.*)$""")
 
 /** Pure: whether [message] opens a lead turn: the person's words, or an inbox delivery. */
 fun opensLeadTurn(message: Message): Boolean = when (message.role) {
@@ -286,6 +286,9 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "list_helpers" -> "Checked on helpers" to null
         "message_helper" -> "Messaged a helper" to null
         "cancel_helper" -> "Stopped a helper" to null
+        "inspect_helper" -> "Looked at a helper's work" to null
+        "revise_helper" -> "Sent a helper's work back" to null
+        "ask_lead" -> "Asked the lead a question" to null
         "list_messages" -> count("message", "Read", "Checked mail") to arg("participant", "folder")
         "search_messages" -> count("message", "Found", "Searched mail") to arg("query")
         "list_calendar_events" -> count("event", "Found", "Checked your calendar") to arg("date", "from")

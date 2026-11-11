@@ -106,5 +106,33 @@ object AgentRuns : Table("agent_run") {
     // V44: the MCP servers a helper was given, and a fixed helper's profile (the morning sweep)
     val mcpServers = jsonb<JsonElement>("mcp_servers", ClarityJson).nullable()
     val profile = text("profile").nullable()
+
+    // V47: done criteria, revisions used, and the automatic check of the result against the criteria
+    val doneWhen = jsonb<JsonElement>("done_when", ClarityJson).nullable()
+    val revisions = integer("revisions").default(0)
+    val criteriaCheck = jsonb<JsonElement>("criteria_check", ClarityJson).nullable()
     override val primaryKey = PrimaryKey(id)
+}
+
+/** V47: what the lead told a helper after it started (a task change, or feedback on its result). */
+object HelperChanges : Table("helper_change") {
+    val runId = uuid("run_id")
+    val seq = integer("seq")
+    val kind = text("kind")
+    val text = text("text")
+    val at = timestamp("at")
+    override val primaryKey = PrimaryKey(runId, seq)
+}
+
+/** V47: what a helper asked the lead. */
+object HelperQuestions : Table("helper_question") {
+    val runId = uuid("run_id")
+    val seq = integer("seq")
+    val toolUseId = text("tool_use_id")
+    val text = text("text")
+    val askedAt = timestamp("asked_at")
+    val answer = text("answer").nullable()
+    val answeredAt = timestamp("answered_at").nullable()
+    val timedOut = bool("timed_out").default(false)
+    override val primaryKey = PrimaryKey(runId, seq)
 }

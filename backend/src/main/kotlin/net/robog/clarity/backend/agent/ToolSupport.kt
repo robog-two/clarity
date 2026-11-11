@@ -34,14 +34,23 @@ class DefaultSettingsProvider : SettingsProvider {
  * The lead resets both at the start of every turn; a helper starts tainted if its parent was.
  */
 /** [purpose] is what the run was asked to do (a helper's task), shown to the browser triage. */
-class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = false, val purpose: String? = null) {
+class RunScope(
+    val runId: String,
+    val isLead: Boolean,
+    untrusted: Boolean = false,
+    val purpose: String? = null,
+    /** Called when the run first reads untrusted content, so the taint outlives the scope (a helper revised later starts tainted). */
+    private val onTaint: () -> Unit = {},
+) {
     private val untrustedFlag = AtomicBoolean(untrusted)
     private val requestedFlag = AtomicBoolean(false)
 
     val untrusted: Boolean get() = untrustedFlag.get()
     val requestedByUser: Boolean get() = requestedFlag.get()
 
-    fun taint() = untrustedFlag.set(true)
+    fun taint() {
+        if (!untrustedFlag.getAndSet(true)) onTaint()
+    }
     fun userAsked() = requestedFlag.set(true)
 
     /** The lead's current turn: the tasks it touched and the helpers it started (for linking them). */
@@ -57,7 +66,7 @@ class RunScope(val runId: String, val isLead: Boolean, untrusted: Boolean = fals
 }
 
 /** Tools whose output carries content from outside (mail, contacts' notes, calendar descriptions, search hits). */
-val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "read_result", "read_report")
+val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "read_result", "read_report", "inspect_helper")
 
 /** Wraps [tool] so that running it marks [scope] as having seen untrusted content. */
 fun Tool.taintingScope(scope: RunScope): Tool {

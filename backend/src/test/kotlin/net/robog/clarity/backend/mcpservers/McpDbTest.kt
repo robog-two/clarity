@@ -212,7 +212,7 @@ class McpDbTest : FunSpec({
         names shouldContain "open_collection"
         // a narrowed helper still gets the server's notes
         val narrow = r.toolbox.helperTools(scope, listOf("read_journal"), listOf("cv")).tools.tools.map { it.name }
-        narrow shouldContainExactly listOf("mcp_canvas__list_assignments", "open_collection", "read_journal", "save_note", "search_memory")
+        narrow shouldContainExactly listOf("ask_lead", "mcp_canvas__list_assignments", "open_collection", "read_journal", "save_note", "search_memory")
         val saveNote = r.toolbox.helperTools(scope, null, listOf("gh")).tools.tools.first { it.name == "save_note" }
         err(saveNote.call("collection" to "canvas", "text" to "Course ENGL 201 is id 77.")) shouldContain "only in github"
         ok(saveNote.call("collection" to "github", "text" to "The person's main repo is robog-two/clarity.")) shouldContain "in github"

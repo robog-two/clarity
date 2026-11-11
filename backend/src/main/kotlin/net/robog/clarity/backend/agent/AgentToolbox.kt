@@ -75,7 +75,7 @@ class HelperTools(
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
         val task: String,
-        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named, so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task.")
+        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named (plus ask_lead, which every helper has), so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task.")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
         @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
@@ -86,6 +86,8 @@ class HelperTools(
         val retryReason: String? = null,
         @Description("Labels of the person's MCP servers (from [mcp servers]) whose tools the helper gets, e.g. [\"GitHub\"], on top of its other tools. A helper gets no MCP server unless it is named here, so name them again when you resend or retry a brief. Not with web_search.")
         val servers: List<String>? = null,
+        @Description("A short checklist of what must be true for the job to count as done, in the person's own words where they gave them (for example [\"two options under $50\", \"in stock near Ithaca\"]). The helper answers each item in its result and the server checks the result against them. Pass it whenever the person said what they want.")
+        val doneWhen: List<String>? = null,
     )
 
     @Serializable
@@ -95,7 +97,25 @@ class HelperTools(
     class ListHelpersInput(@Description("Only helpers that are still running (default true).") val running: Boolean = true)
 
     @Serializable
-    class MessageHelperInput(val id: String, @Description("What to tell the helper; it reads this before its next step.") val message: String)
+    class MessageHelperInput(
+        val id: String,
+        @Description("A change to the helper's task, or the answer when it asked you a question. It reads this before its next step, once, even if it is queued or restarted.")
+        val message: String,
+    )
+
+    @Serializable
+    class InspectHelperInput(
+        val id: String,
+        @Description("True to read the helper's whole result (in parts) instead of the overview; use offset to continue.") val full: Boolean = false,
+        @Description("With full: character to start at.") val offset: Int = 0,
+        @Description("With full: how many characters, default 4000, at most 20000.") val length: Int = 4000,
+    )
+
+    @Serializable
+    class ReviseHelperInput(val id: String, @Description("What is wrong or missing in the helper's result, and what to do about it.") val feedback: String)
+
+    @Serializable
+    class AskLeadInput(@Description("One specific question, with what you already know and the options you see.") val question: String)
 
     @Serializable
     class CancelHelperInput(val id: String)
@@ -144,6 +164,21 @@ class HelperTools(
         if (tasks.get(task)?.status != status) tasks.upsert(task, null, null, status)
     }
 
+    /** The helper's way to ask the lead one question and wait for the answer (see [HelperManager.ask]). */
+    fun askLead(): Tool = tool<AskLeadInput>(
+        name = "ask_lead",
+        description = "Ask the lead one question you cannot go on without: a choice or a fact only the lead or the person can give. It may take hours; you wait. " +
+            "At most three per task, one at a time. If no answer comes you are told to use your best judgment; then say in your result what you assumed.",
+        json = ClarityJson,
+    ) { input ->
+        val call = kotlin.coroutines.coroutineContext[net.robog.clarity.harness.ToolCallContext]
+        when {
+            input.question.isBlank() -> ToolResult.Error("`question` must not be empty")
+            call == null -> ToolResult.Error("ask_lead only works inside a helper run.")
+            else -> helpers.value.ask(call.runId, call.toolUseId, input.question).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+        }
+    }
+
     fun all(scope: RunScope): List<Tool> = listOf(
         tool<DelegateInput>(
             name = "delegate",
@@ -159,7 +194,9 @@ class HelperTools(
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
-                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason, servers = input.servers.orEmpty()).fold({ ToolResult.Error(it) }) { started ->
+                // The done criteria are part of the brief too.
+                !input.doneWhen.isNullOrEmpty() && gate.check(GateKind.BRIEF, "delegate", input.doneWhen.joinToString("\n")) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
+                else -> helpers.value.start(input.task, input.tools, input.role, scope, input.retryReason, servers = input.servers.orEmpty(), doneWhen = input.doneWhen.orEmpty()).fold({ ToolResult.Error(it) }) { started ->
                     linkHelper(scope, started.id, input, taskId)
                     ToolResult.Ok(started.text)
                 }
@@ -167,24 +204,43 @@ class HelperTools(
         },
         tool<ListHelpersInput>(
             name = "list_helpers",
-            description = "List helpers (id, status, task).",
+            description = "List helpers (id, status, task, done criteria, and the changes you sent with whether the helper read them).",
             json = ClarityJson,
         ) { input ->
-            val runs = helpers.value.list(openOnly = input.running)
-            ToolResult.Ok(
-                if (runs.isEmpty()) "(none)"
-                else runs.joinToString("\n") { "${it.id} [${it.status}] ${it.task.take(160).replace('\n', ' ')}" },
-            )
+            val lines = helpers.value.listing(openOnly = input.running)
+            ToolResult.Ok(if (lines.isEmpty()) "(none)" else lines.joinToString("\n"))
+        },
+        tool<InspectHelperInput>(
+            name = "inspect_helper",
+            description = "A compact view of a helper's work, running or finished: status, steps and cost, the tools it called, guarded actions it proposed, reports it made, " +
+                "its note, your changes, done criteria and its last words. Look before you rely on a result. With full true it reads the helper's whole result.",
+            json = ClarityJson,
+        ) { input ->
+            val shown = if (input.full) helpers.value.fullResult(input.id, input.offset, input.length) else helpers.value.inspect(input.id)
+            shown.fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+        },
+        tool<ReviseHelperInput>(
+            name = "revise_helper",
+            description = "Send a finished helper's work back with feedback instead of starting over: it keeps its context, works again within the same spend limit and a few steps, " +
+                "and its new result arrives in your inbox. At most twice per helper. A failed or cancelled helper needs delegate.",
+            effect = ToolEffect.WRITE,
+            json = ClarityJson,
+        ) { input ->
+            if (input.feedback.isBlank()) return@tool ToolResult.Error("`feedback` must not be empty")
+            // Feedback is part of the helper's brief: the same gate keeps failure stories out.
+            gate.check(GateKind.BRIEF, "revise_helper", input.feedback)?.let { return@tool ToolResult.Error(it) }
+            helpers.value.revise(input.id, input.feedback, scope.untrusted).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
         },
         tool<MessageHelperInput>(
             name = "message_helper",
-            description = "Send a message to a running helper (new information, a changed priority).",
+            description = "Change a running or queued helper's task (new information, a changed priority): it is saved and the helper reads it once, before its next step. " +
+                "If the helper asked you a question, this is your answer. To send finished work back, use revise_helper.",
             effect = ToolEffect.WRITE,
             json = ClarityJson,
         ) { input ->
             // A message to a running helper is part of its brief: the same gate keeps failure stories out.
             gate.check(GateKind.BRIEF, "message_helper", input.message)?.let { return@tool ToolResult.Error(it) }
-            helpers.value.message(input.id, input.message).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
+            helpers.value.message(input.id, input.message, scope.untrusted).fold({ ToolResult.Error(it) }, { ToolResult.Ok(it) })
         },
         tool<CancelHelperInput>(
             name = "cancel_helper",
@@ -266,7 +322,8 @@ class AgentToolbox(
         val unknown = requested.orEmpty().filter { name -> candidates.none { it.name == name } }
         val given = if (servers.isEmpty()) emptyList() else thirdParty.byIds(servers)
         val extra = if (given.isEmpty()) emptyList() else thirdParty.serverTools(scope, given) + thirdParty.noteTools(scope, given)
-        return HelperToolSet(ToolSet((chosen + extra).distinctBy { it.name }.sortedBy { it.name }), unknown)
+        // Every helper can ask the lead; the sweep (which has its own tool set) cannot.
+        return HelperToolSet(ToolSet((chosen + extra + helperTools.askLead()).distinctBy { it.name }.sortedBy { it.name }), unknown)
     }
 
     /** The morning sweep's tools over [servers] (ids); [used] tool calls it already made (a resume). */

@@ -133,6 +133,25 @@ class FailureGateToolsTest : FunSpec({
         question shouldBe FailureGate.BRIEF_QUESTION
     }
 
+    test("delegate refuses done criteria with known issues too") {
+        val r = rig(FakeFailureJev(p = 0.88))
+        // The task alone is too short to be judged; the criteria carry the story.
+        val input = buildJsonObject { put("task", "Find two plumbers."); put("doneWhen", JsonArray(listOf(JsonPrimitive(BRIEF_WITH_ISSUES)))) }
+        r.leadTool("delegate").invoke(input)
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldBe FailureGate.BRIEF_REFUSAL
+        r.helpers.list(openOnly = false).shouldBeEmpty()
+    }
+
+    test("revise_helper refuses feedback with known issues, and a clean one passes the gate") {
+        val jev = FakeFailureJev(p = 0.88)
+        val r = rig(jev)
+        r.leadTool("revise_helper").invoke(gateArgs("id" to "nope", "feedback" to BRIEF_WITH_ISSUES))
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldBe FailureGate.BRIEF_REFUSAL
+        val clean = rig(FakeFailureJev(p = 0.1))
+        clean.leadTool("revise_helper").invoke(gateArgs("id" to "nope", "feedback" to "Add the phone numbers and put the cheaper one first."))
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldBe "No helper with id nope."
+    }
+
     test("delegate passes a clean brief at low p, and fails open") {
         for (jev in listOf(FakeFailureJev(p = 0.1), FakeFailureJev(p = 1.0, fail = true))) {
             val r = rig(jev)
