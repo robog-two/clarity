@@ -344,6 +344,15 @@ In `tofu` mode (default) the first device to enroll while none exists needs no t
   nothing secret appears in environment variables or `inspect` output. The plaintext copies live in
   `deploy/secrets/` (mode 0600, gitignored) as the source of truth for backups.
 
+## Database backups
+
+The backend writes a compressed `pg_dump` of the whole database to `/data/backups` (the `backend-data` volume) every
+night at 02:00 on the home clock and keeps the last 7, plus the last 2 copies it made just before a rollback. Settings,
+then Backups, in the app lists them and rolls back to one (signed with the fingerprint or face). The files hold
+everything in the database, so they are 0600 in a 0700 folder; copy the volume off the machine if it is the only copy
+you have. `CLARITY_BACKUPS=false` turns it off; `CLARITY_BACKUP_KEEP` changes the 7. A rollback restarts the backend
+(exit code 75), which `restart: unless-stopped` brings back.
+
 ## Rootless Podman notes
 
 - Secrets are declared `external: true` and created by `init-secrets.sh`; bind-mounting the 0600 files

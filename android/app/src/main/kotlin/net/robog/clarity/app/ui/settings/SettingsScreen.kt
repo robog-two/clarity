@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Alarm
+import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Gavel
@@ -223,6 +224,7 @@ fun SettingsTab(
         modifier = modifier,
         vault = { VaultSection(showTitle = false) },
         models = { ModelsSection(showTitle = false) },
+        backups = { BackupsSection() },
         voiceModels = { VoiceModelsSection() },
     )
 }
@@ -246,6 +248,7 @@ enum class SettingsPage(val title: String, @DrawableRes val drawing: Int? = null
     Vault("Vault"),
     Sources("Sources"),
     Models("Models"),
+    Backups("Backups"),
     Server("Server"),
 }
 
@@ -258,6 +261,8 @@ fun SettingsContent(
     vault: @Composable () -> Unit = {},
     /** The model choices, shown on their own page. */
     models: @Composable () -> Unit = {},
+    /** The database backups and rollback, shown on their own page. */
+    backups: @Composable () -> Unit = {},
     /** The on-phone speech models, shown on the Voice page. */
     voiceModels: @Composable () -> Unit = {},
     /** The page to open on; previews use it to show a sub-page. */
@@ -284,6 +289,7 @@ fun SettingsContent(
                     SettingsPage.Vault -> vault()
                     SettingsPage.Sources -> SourcesSettings(state, actions)
                     SettingsPage.Models -> models()
+                    SettingsPage.Backups -> backups()
                     SettingsPage.Server -> ServerSettings(state, actions) { confirming = true }
                 }
             }
@@ -354,21 +360,6 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
         SettingsGroup("Behavior") {
             groupRow(Icons.Outlined.Gavel, "Constitution", state.constitution?.let(::sentenceCase) ?: "Not written yet", onClick = onOpenConstitution)
             groupRow(Icons.Outlined.Memory, "Models", "Model for each job") { open(SettingsPage.Models) }
-        }
-
-        val mcpTitle = stringResource(R.string.mcp_title)
-        val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
-        SettingsGroup("Connections") {
-            val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
-            groupRow(
-                Icons.Outlined.Hub, "Sources",
-                if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
-                warning = failing > 0,
-            ) { open(SettingsPage.Sources) }
-            groupRow(
-                Icons.Outlined.Extension, mcpTitle, mcpSummary,
-                onClick = onOpenMcp,
-            )
             val batteryWarning = state.pushOn && !state.batteryUnrestricted
             groupRow(
                 Icons.Outlined.NotificationsActive, "Stay connected",
@@ -379,7 +370,23 @@ private fun SettingsHome(state: SettingsUiState, open: (SettingsPage) -> Unit, o
                 },
                 warning = batteryWarning,
             ) { open(SettingsPage.Push) }
+        }
+
+        val mcpTitle = stringResource(R.string.mcp_title)
+        val mcpSummary = stringResource(if (state.mcpRunning == false) R.string.mcp_row_not_running else R.string.mcp_row_summary)
+        SettingsGroup("Your data") {
+            val failing = state.serverSources.count { it.sync.contains("fail", ignoreCase = true) }
+            groupRow(
+                Icons.Outlined.Hub, "Sources",
+                if (failing > 0) "$failing ${if (failing == 1) "source isn’t" else "sources aren’t"} syncing" else sourcesSummary(state),
+                warning = failing > 0,
+            ) { open(SettingsPage.Sources) }
+            groupRow(
+                Icons.Outlined.Extension, mcpTitle, mcpSummary,
+                onClick = onOpenMcp,
+            )
             groupRow(Icons.Outlined.Lock, "Vault", "Logins and cards, locked on this phone") { open(SettingsPage.Vault) }
+            groupRow(Icons.Outlined.Backup, "Backups", "Every night at 2 am. Kept for 7 days.") { open(SettingsPage.Backups) }
         }
 
         SettingsGroup("This phone") {

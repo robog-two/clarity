@@ -133,6 +133,25 @@ class Scheduler(
         }
     }
 
+    /**
+     * Recomputes the next run of every job, fixed-interval ones too, and clears their failures. After a
+     * rollback the restored rows hold times from the past; this keeps them from all firing at once.
+     */
+    suspend fun resetAll() {
+        val current = settings.current()
+        val now = clock.now()
+        val zone = zoneOrUtc(current.homeZone)
+        database.tx {
+            jobs.forEach { job ->
+                ScheduledJobs.update({ ScheduledJobs.name eq job.name }) {
+                    it[nextRunAt] = job.schedule(current).nextAfter(now, zone)
+                    it[failures] = 0
+                    it[retrySlot] = null
+                }
+            }
+        }
+    }
+
     /** The row a tick claimed, kept outside its transaction so a failure can still be recorded. */
     private class Claimed(val name: String, val nextRunAt: Instant, val failures: Int, val slot: Instant)
 
