@@ -136,7 +136,8 @@ class GuardRulesTest : FunSpec({
         val wording = ProposedAction.UpdateEvent("k", "s", id, title = "x")
         hardLineViolation(wording, held, c) shouldBe null
         // what approve() checks is the edited action the person sent, not the one that was held
-        hardLineViolation(wording.copy(start = at), held, c) shouldContain "hard line"
+        hardLineViolation(wording.copy(start = at), held, c) shouldContain "\"move event\" is a hard line"
+        deterministicVerdict(wording.copy(start = at), c, trusted()).rationale shouldContain "move event"
         hardLineViolation(wording.copy(repeat = net.robog.clarity.shared.calendar.Recurrence(net.robog.clarity.shared.calendar.Frequency.DAILY)), held, c) shouldContain "hard line"
         hardLineViolation(wording.copy(allDay = true), held, c) shouldContain "hard line"
         tierOf(wording.copy(end = at), c) shouldBe AutonomyTier.NEVER

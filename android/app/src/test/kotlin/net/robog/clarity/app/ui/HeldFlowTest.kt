@@ -144,6 +144,14 @@ class HeldRulesTest {
         assertFalse(canAlwaysAllow(click))
     }
 
+    @Test fun aBlockedTimeChangeIsNotOfferedAnAlwaysAllowRule() {
+        val move = heldAction("m", action = ProposedAction.UpdateEvent("k", "move", net.robog.clarity.shared.EntityId("e"), start = T0))
+        assertTrue(canAlwaysAllow(move), "held and waiting for a yes: offered")
+        assertFalse(canAlwaysAllow(move.copy(status = HeldAction.Status.BLOCKED)), "blocked by a never on moving: a rule for changing would not lift it")
+        val rename = heldAction("r", action = ProposedAction.UpdateEvent("k", "rename", net.robog.clarity.shared.EntityId("e"), title = "x"))
+        assertTrue(canAlwaysAllow(rename.copy(status = HeldAction.Status.BLOCKED)))
+    }
+
     @Test fun theRuleEditorOpensWithTheDraftOrAPlainLine() {
         val event = heldAction("e", action = ProposedAction.CreateEvent("k2", "add lunch", title = "Lunch", start = T0, end = T0 + 30.minutes))
         assertEquals("\"create event\" is okay without asking: do it, then tell me.", startingRule(event).text)

@@ -186,6 +186,9 @@ END:VCALENDAR
         shouldThrow<IllegalArgumentException> {
             IcalEdit.updated(periods, at("2026-10-28 12:00", UTC), EventScope.SERIES, EventChange(start = at("2026-10-28 13:00", UTC)), "n")
         }.message shouldContain "periods"
+        shouldThrow<IllegalArgumentException> {
+            IcalEdit.updated(periods, at("2026-10-28 12:00", UTC), EventScope.SERIES, EventChange(end = at("2026-10-26 14:00", UTC)), "n")
+        }.message shouldContain "periods"
         IcalEdit.updated(periods, at("2026-10-26 12:00", UTC), EventScope.SERIES, EventChange(title = "New"), "n").shouldBeInstanceOf<Edited.Replace>()
     }
 

@@ -38,7 +38,7 @@ class OneLineTest {
     }
 
     @Test fun blankLookingFillersGoButEmojiSelectorsStay() {
-        for (filler in listOf("\u034F", "\u115F", "\u1160", "\u3164", "\uFFA0", "\u180E")) {
+        for (filler in listOf("\u034F", "\u115F", "\u1160", "\u3164", "\uFFA0", "\u180E", "\u2800", "\u17B4", "\u17B5")) {
             assertEquals("ab", oneLine("a" + filler + "b", 80), filler)
         }
         val heart = "\u2764\uFE0F"

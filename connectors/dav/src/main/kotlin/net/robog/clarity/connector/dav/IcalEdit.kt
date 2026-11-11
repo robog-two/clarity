@@ -283,8 +283,8 @@ object IcalEdit {
         }
         requireNotNull(scope) { "This event repeats. Say what to change: `this`, `following` or `series`." }
         val at = occurrence ?: master.seedInstant()
-        require(change.start == null || master.getProperties<RDate<Temporal>>("RDATE").none { it.getParameter<Parameter>("VALUE").orElse(null)?.value.equals("PERIOD", ignoreCase = true) }) {
-            "This repeating event lists periods, so its time cannot be moved. Cancel it and create a new one."
+        require((change.start == null && change.end == null) || master.getProperties<RDate<Temporal>>("RDATE").none { it.getParameter<Parameter>("VALUE").orElse(null)?.value.equals("PERIOD", ignoreCase = true) }) {
+            "This repeating event lists periods, so its time cannot be changed. Cancel it and create a new one."
         }
         parts.requireOccurrence(at)
         require(!master.has("RDATE") || scope == EventScope.SERIES) {

@@ -65,11 +65,17 @@ private fun kindTier(kind: ActionKind, constitution: Constitution): AutonomyTier
  * The tier [action] is judged by: its kind's, except that changing the time of an event is never
  * looser than a "never" the person set on moving events (the phone no longer shows that setting).
  */
-fun tierOf(action: ProposedAction, constitution: Constitution): AutonomyTier {
-    val tier = kindTier(effectiveKind(action), constitution)
-    val movesTime = action is ProposedAction.UpdateEvent && (action.start != null || action.end != null || action.repeat != null || action.allDay != null)
-    return if (movesTime && constitution.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER) AutonomyTier.NEVER else tier
-}
+fun tierOf(action: ProposedAction, constitution: Constitution): AutonomyTier =
+    if (movesUnderNever(action, constitution)) AutonomyTier.NEVER else kindTier(effectiveKind(action), constitution)
+
+/** True for an update that changes when an event happens while the person said "never" to moving events. */
+private fun movesUnderNever(action: ProposedAction, constitution: Constitution): Boolean =
+    action is ProposedAction.UpdateEvent && (action.start != null || action.end != null || action.repeat != null || action.allDay != null) &&
+        constitution.autonomy[ActionKind.MOVE_EVENT] == AutonomyTier.NEVER
+
+/** The kind the person's tier is named after in a message: moving events when that is what binds. */
+private fun bindingKind(action: ProposedAction, constitution: Constitution): ActionKind =
+    if (movesUnderNever(action, constitution) && kindTier(effectiveKind(action), constitution) != AutonomyTier.NEVER) ActionKind.MOVE_EVENT else effectiveKind(action)
 
 
 /** Actions that reach other people or outside systems; untrusted-content influence matters most here. */
@@ -135,7 +141,7 @@ fun deterministicVerdict(
 ): GuardVerdict {
     val findings = ArrayList<Finding>()
     val kind = effectiveKind(action)
-    val kindName = kind.label()
+    val kindName = bindingKind(action, constitution).label()
 
     when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you said I never do \"$kindName\"")
@@ -203,7 +209,7 @@ fun mcpTaintRationale(action: ProposedAction.ExternalTool): String {
  */
 fun hardLineVerdict(action: ProposedAction, constitution: Constitution): GuardVerdict {
     val kind = effectiveKind(action)
-    val name = kind.label()
+    val name = bindingKind(action, constitution).label()
     return when (tierOf(action, constitution)) {
         AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you said I never do \"$name\".")
         AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "I'm asking because you said \"$name\" is never done alone.", phoneApproval = true)
@@ -254,7 +260,7 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${effectiveKind(action).label()}\" is a hard line; change the line first"
+    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${bindingKind(action, constitution).label()}\" is a hard line; change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
         return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"
