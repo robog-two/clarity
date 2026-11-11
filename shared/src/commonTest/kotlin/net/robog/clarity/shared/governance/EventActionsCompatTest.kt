@@ -67,4 +67,14 @@ class EventActionsCompatTest {
         assertEquals(ActionKind.CANCEL_EVENT, cancel.kind)
         assertEquals("\"update_event\"", ClarityJson.encodeToString(ActionKind.serializer(), ActionKind.UPDATE_EVENT))
     }
+
+    @Test
+    fun changingAndCancellingFollowTheirOwnTierThenOnlyAStricterMoveTier() {
+        fun c(vararg tiers: Pair<ActionKind, AutonomyTier>) = Constitution(1, emptyList(), mapOf(*tiers), updatedAt = Instant.parse("2026-10-26T00:00:00Z"))
+        assertEquals(AutonomyTier.ASK_FIRST, c().autonomyOf(ActionKind.CANCEL_EVENT))
+        assertEquals(AutonomyTier.ASK_FIRST, c(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL).autonomyOf(ActionKind.UPDATE_EVENT))
+        assertEquals(AutonomyTier.NEVER, c(ActionKind.MOVE_EVENT to AutonomyTier.NEVER).autonomyOf(ActionKind.CANCEL_EVENT))
+        assertEquals(AutonomyTier.DO_THEN_TELL, c(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL).autonomyOf(ActionKind.UPDATE_EVENT))
+        assertEquals(AutonomyTier.DO_THEN_TELL, c(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL).autonomyOf(ActionKind.MOVE_EVENT))
+    }
 }

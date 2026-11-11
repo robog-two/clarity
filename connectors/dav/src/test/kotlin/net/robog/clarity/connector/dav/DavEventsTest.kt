@@ -256,6 +256,87 @@ class DavEventsTest : FunSpec({
         }
     }
 
+    context("delivered twice") {
+        test("cancelling one occurrence or the tail again is done, not a failure") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val one = cancel("c1", EventScope.THIS)
+            actions.cancelEvent(one, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            val afterFirst = dav.text(path)
+            actions.cancelEvent(one, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            dav.text(path) shouldBe afterFirst
+            val tail = cancel("c2", EventScope.FOLLOWING)
+            actions.cancelEvent(tail, occurrence(path, "2026-11-02 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            val afterTail = dav.text(path)
+            actions.cancelEvent(tail, occurrence(path, "2026-11-02 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            dav.text(path) shouldBe afterTail
+        }
+
+        test("moving one occurrence or the series again is done, and nothing is written twice") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val one = update("u1", EventScope.THIS) { it.copy(start = instant("2026-11-04 09:00"), end = instant("2026-11-04 10:00")) }
+            actions.updateEvent(one, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            actions.updateEvent(one, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            localStarts(dav.text(path)).count { it == "2026-11-04 09:00" } shouldBe 1
+
+            val whole = update("u2", EventScope.SERIES) { it.copy(start = instant("2026-11-02 08:00"), end = instant("2026-11-02 09:00")) }
+            actions.updateEvent(whole, occurrence(path, "2026-11-02 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            val afterFirst = dav.text(path)
+            actions.updateEvent(whole, occurrence(path, "2026-11-02 07:00")).shouldBeInstanceOf<ActionOutcome.Done>()
+            dav.text(path) shouldBe afterFirst
+        }
+    }
+
+    context("versions and size") {
+        test("an event too large to read is not reported as cancelled") {
+            val dav = fake()
+            val big = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:big\r\nDTSTAMP:20260301T000000Z\r\nDTSTART:20261104T150000Z\r\n" +
+                "DTEND:20261104T160000Z\r\nSUMMARY:Big\r\nX-FILL:" + "x".repeat(5_100_000) + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+            dav.put("${CAL}big.ics", "text/calendar", big)
+            val actions = actions(dav)
+            actions.cancelEvent(cancel("c1", null), SourceId("${CAL}big.ics")).shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "larger"
+            dav.files.containsKey("${CAL}big.ics") shouldBe true
+            actions.updateEvent(update("u1", null) { it.copy(title = "x") }, SourceId("${CAL}big.ics")).shouldBeInstanceOf<ActionOutcome.Failed>().message shouldContain "larger"
+        }
+
+        test("a server that sends no version gets no blind write") {
+            val dav = fake()
+            val actions = actions(dav)
+            val path = actions.createGym()
+            val before = dav.text(path)
+            dav.omitEtag = true
+            actions.updateEvent(update("u1", EventScope.SERIES) { it.copy(title = "x") }, occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
+            actions.cancelEvent(cancel("c1", EventScope.SERIES), occurrence(path, "2026-11-04 07:00")).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
+            actions.respond(ProposedAction.RespondToInvite("r1", "accept", EntityId("e"), InviteResponse.ACCEPT), SourceId(path)).shouldBeInstanceOf<ActionOutcome.Failed>().retryable shouldBe true
+            dav.text(path) shouldBe before
+            dav.requests.none { it == "DELETE $path" } shouldBe true
+        }
+    }
+
+    test("a full re-sync of a series with a link carries both and makes the same entities") {
+        val dav = fake()
+        val actions = actions(dav)
+        actions.createGym()
+        suspend fun synced(): List<net.robog.clarity.shared.ingest.IngestRecord.Upsert> {
+            val out = mutableListOf<net.robog.clarity.shared.ingest.IngestRecord>()
+            DavServer(config(), dav.engine).use { server ->
+                DavSync(server, config(), net.robog.clarity.connector.sdk.InMemoryStateStore(), object : kotlin.time.Clock { override fun now() = Instant.parse("2026-10-20T08:00:00Z") })
+                    .syncAll { out += it }
+            }
+            return out.filterIsInstance<net.robog.clarity.shared.ingest.IngestRecord.Upsert>().filter { it.payload is net.robog.clarity.shared.noun.CalendarEventPayload }
+        }
+        val first = synced()
+        val again = synced()
+        first.map { it.sourceId } shouldBe again.map { it.sourceId }
+        first.map { it.sourceId }.toSet().size shouldBe 6
+        val payload = first.first().payload as net.robog.clarity.shared.noun.CalendarEventPayload
+        payload.url shouldBe "https://example.com/gym"
+        payload.repeats shouldBe "every Mon, Wed and Fri for 6 occurrences"
+    }
+
     test("a stored MOVE_EVENT still moves a single event and still refuses an occurrence") {
         val dav = fake()
         val actions = actions(dav)

@@ -71,8 +71,9 @@ fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.AskCode -> false
     is ProposedAction.RespondToInvite -> true
     is ProposedAction.MoveEvent -> action.notifyAttendees
-    is ProposedAction.UpdateEvent -> action.notifyAttendees
-    is ProposedAction.CancelEvent -> action.notifyAttendees
+    // deleting, rewriting a whole series, or planting a link or notes is outside content's to decide, even on the person's own calendar
+    is ProposedAction.UpdateEvent -> action.notifyAttendees || action.scope == net.robog.clarity.shared.calendar.EventScope.SERIES || action.url != null || action.description != null
+    is ProposedAction.CancelEvent -> true
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
     is ProposedAction.SaveDraft, is ProposedAction.CreateReminder,
     is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> false
@@ -91,8 +92,8 @@ fun textOf(action: ProposedAction): String = buildString {
     when (action) {
         is ProposedAction.SaveDraft -> append(action.email.subject).append('\n').append(action.email.body)
         is ProposedAction.SendEmail -> append(action.email.subject).append('\n').append(action.email.body)
-        is ProposedAction.CreateEvent -> append(action.title).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty())
-        is ProposedAction.UpdateEvent -> append(action.title.orEmpty()).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty())
+        is ProposedAction.CreateEvent -> append(action.title).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
+        is ProposedAction.UpdateEvent -> append(action.title.orEmpty()).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
         is ProposedAction.CreateReminder -> append(action.text)
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())

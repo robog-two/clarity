@@ -6,6 +6,7 @@ import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atTime
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.number
 import kotlinx.datetime.plus
@@ -101,9 +102,9 @@ fun basicUtc(at: Instant): String {
 /**
  * The RRULE value (without `RRULE:`) for a series that starts on [start]. [zone] is the clock the
  * series runs on: a local [Recurrence.until] day ends at its last second there, written in UTC as
- * RFC 5545 asks of a timed series; an [allDay] series gets a date.
+ * RFC 5545 asks of a timed series; an [allDay] series gets a date and a [floating] one (no zone) a local time.
  */
-fun Recurrence.toRRule(start: LocalDate, zone: TimeZone, allDay: Boolean): String = buildList {
+fun Recurrence.toRRule(start: LocalDate, zone: TimeZone, allDay: Boolean, floating: Boolean = false): String = buildList {
     add("FREQ=${frequency.name}")
     if (interval > 1) add("INTERVAL=$interval")
     if (frequency == Frequency.WEEKLY && interval > 1) add("WKST=MO")
@@ -112,7 +113,15 @@ fun Recurrence.toRRule(start: LocalDate, zone: TimeZone, allDay: Boolean): Strin
         Frequency.MONTHLY -> add(nthWeekday?.let { "BYDAY=${it.n}${it.day.code()}" } ?: "BYMONTHDAY=${start.day}")
         Frequency.DAILY, Frequency.YEARLY -> Unit
     }
-    until?.let { add("UNTIL=" + if (allDay) basicDate(it) else basicUtc(it.atTime(23, 59, 59).toInstant(zone))) }
+    until?.let {
+        add(
+            "UNTIL=" + when {
+                allDay -> basicDate(it)
+                floating -> basicDate(it) + "T235959"
+                else -> basicUtc(it.atTime(23, 59, 59).toInstant(zone))
+            },
+        )
+    }
     count?.let { add("COUNT=$it") }
 }.joinToString(";")
 
@@ -217,17 +226,32 @@ fun Recurrence.describe(start: LocalDate? = null): String {
 }
 
 /**
- * The rule once every occurrence moves [days] days later (earlier when negative): the weekdays of a
- * weekly or "nth weekday" rule move with them. Rules that follow the start (a day of the month, a
- * yearly date) already do.
+ * The rule once the series' start moves from [from] to [to] (every occurrence moves by the same
+ * days): weekdays and the end date move with it, an "nth weekday" is recomputed for the new date.
+ * Null when that is not expressible: a "last weekday" that the new date is not in the last week
+ * of its month for, or a every-other-week rule whose days would land in different weeks.
  */
-fun Recurrence.movedByDays(days: Int): Recurrence {
-    fun DayOfWeek.moved() = DayOfWeek((((isoDayNumber - 1 + days) % 7 + 7) % 7) + 1)
-    return copy(days = this.days.map { it.moved() }, nthWeekday = nthWeekday?.let { it.copy(day = it.day.moved()) })
+fun Recurrence.movedTo(from: LocalDate, to: LocalDate): Recurrence? {
+    val delta = from.daysUntil(to)
+    fun DayOfWeek.moved() = DayOfWeek((((isoDayNumber - 1 + delta) % 7 + 7) % 7) + 1)
+    fun weekIndex(day: DayOfWeek) = (day.isoDayNumber - 1 + delta).let { (it - ((it % 7) + 7) % 7) / 7 }
+    if (frequency == Frequency.WEEKLY && interval > 1 && days.map(::weekIndex).distinct().size > 1) return null
+    val nth = nthWeekday?.let {
+        val day = it.day.moved()
+        if (day != to.dayOfWeek) return null
+        when {
+            it.n != NthWeekday.LAST -> NthWeekday((to.day - 1) / 7 + 1, day)
+            to.inLastWeek() -> NthWeekday(NthWeekday.LAST, day)
+            else -> return null
+        }
+    }
+    return copy(days = days.map { it.moved() }, nthWeekday = nth, until = until?.plus(DatePeriod(days = delta)))
 }
 
+private fun LocalDate.inLastWeek(): Boolean = plus(DatePeriod(days = 7)).month != month
+
 private fun NthWeekday.fits(date: LocalDate): Boolean =
-    date.dayOfWeek == day && if (n == NthWeekday.LAST) date.plus(DatePeriod(days = 7)).month != date.month else (date.day - 1) / 7 + 1 == n
+    date.dayOfWeek == day && if (n == NthWeekday.LAST) date.inLastWeek() else (date.day - 1) / 7 + 1 == n
 
 /**
  * Why a series starting on [start] would begin off its own pattern (calendars then list the start as

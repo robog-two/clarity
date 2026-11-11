@@ -116,13 +116,45 @@ class RecurrenceTest {
 }
 
 class RecurrenceMoveTest {
+    private val mwf = Recurrence(Frequency.WEEKLY, days = listOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))
+    private val monday = LocalDate(2026, 10, 26)
+
     @Test fun weekdaysMoveWithTheOccurrences() {
-        val mwf = Recurrence(Frequency.WEEKLY, days = listOf(DayOfWeek.MONDAY, DayOfWeek.WEDNESDAY, DayOfWeek.FRIDAY))
-        assertEquals(listOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY, DayOfWeek.SATURDAY), mwf.movedByDays(1).days)
-        assertEquals(listOf(DayOfWeek.SUNDAY, DayOfWeek.TUESDAY, DayOfWeek.THURSDAY), mwf.movedByDays(-1).days)
-        assertEquals(mwf, mwf.movedByDays(7))
-        assertEquals(DayOfWeek.WEDNESDAY, Recurrence(Frequency.MONTHLY, nthWeekday = NthWeekday(2, DayOfWeek.TUESDAY)).movedByDays(1).nthWeekday?.day)
-        assertEquals(Recurrence(Frequency.DAILY), Recurrence(Frequency.DAILY).movedByDays(3))
+        assertEquals(listOf(DayOfWeek.TUESDAY, DayOfWeek.THURSDAY, DayOfWeek.SATURDAY), mwf.movedTo(monday, LocalDate(2026, 10, 27))?.days)
+        assertEquals(listOf(DayOfWeek.SUNDAY, DayOfWeek.TUESDAY, DayOfWeek.THURSDAY), mwf.movedTo(monday, LocalDate(2026, 10, 25))?.days)
+        assertEquals(mwf, mwf.movedTo(monday, LocalDate(2026, 11, 2)))
+        assertEquals(Recurrence(Frequency.DAILY), Recurrence(Frequency.DAILY).movedTo(monday, LocalDate(2026, 10, 29)))
+    }
+
+    @Test fun theEndDateMovesToo() {
+        val until = Recurrence(Frequency.DAILY, until = LocalDate(2026, 12, 20))
+        assertEquals(LocalDate(2026, 12, 21), until.movedTo(monday, LocalDate(2026, 10, 27))?.until)
+        assertEquals(LocalDate(2026, 12, 19), until.movedTo(monday, LocalDate(2026, 10, 25))?.until)
+    }
+
+    @Test fun anNthWeekdayIsRecomputedForTheNewDate() {
+        val secondTuesday = Recurrence(Frequency.MONTHLY, nthWeekday = NthWeekday(2, DayOfWeek.TUESDAY))
+        // Wed Jan 20 is the 3rd Wednesday, not the 2nd
+        assertEquals(NthWeekday(3, DayOfWeek.WEDNESDAY), secondTuesday.movedTo(LocalDate(2026, 10, 13), LocalDate(2026, 10, 21))?.nthWeekday)
+        assertEquals(NthWeekday(2, DayOfWeek.WEDNESDAY), secondTuesday.movedTo(LocalDate(2026, 10, 13), LocalDate(2026, 10, 14))?.nthWeekday)
+    }
+
+    @Test fun aLastWeekdayStaysLastOnlyInTheLastWeek() {
+        val lastFriday = Recurrence(Frequency.MONTHLY, nthWeekday = NthWeekday(NthWeekday.LAST, DayOfWeek.FRIDAY))
+        assertEquals(NthWeekday(NthWeekday.LAST, DayOfWeek.SATURDAY), lastFriday.movedTo(LocalDate(2026, 10, 30), LocalDate(2026, 10, 31))?.nthWeekday)
+        assertNull(lastFriday.movedTo(LocalDate(2026, 10, 30), LocalDate(2026, 10, 23)))
+    }
+
+    @Test fun everyOtherWeekRulesCannotCrossTheWeekStart() {
+        val fortnightly = Recurrence(Frequency.WEEKLY, interval = 2, days = listOf(DayOfWeek.FRIDAY, DayOfWeek.SUNDAY))
+        // Fri+Sun move one day: Sat and Mon, which are in different weeks now
+        assertNull(fortnightly.movedTo(LocalDate(2026, 10, 23), LocalDate(2026, 10, 24)))
+        assertEquals(fortnightly.copy(days = listOf(DayOfWeek.THURSDAY, DayOfWeek.SATURDAY)), fortnightly.movedTo(LocalDate(2026, 10, 23), LocalDate(2026, 10, 22)))
+    }
+
+    @Test fun aFloatingSeriesEndsOnALocalTime() {
+        val r = Recurrence(Frequency.DAILY, until = LocalDate(2026, 12, 20))
+        assertEquals("FREQ=DAILY;UNTIL=20261220T235959", r.toRRule(monday, TimeZone.UTC, allDay = false, floating = true))
     }
 }
 

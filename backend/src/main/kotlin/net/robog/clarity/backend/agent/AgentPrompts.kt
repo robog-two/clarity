@@ -92,8 +92,8 @@ fun renderConstitution(c: Constitution?, home: HomeClock? = null): String {
         }
         if (c.autonomy.isNotEmpty()) {
             append("\n\nHow much you do alone, by action:")
-            ActionKind.entries.filter { it in c.autonomy }.forEach { kind ->
-                append("\n- ").append(kind.name.lowercase()).append(": ").append(tierText(c.autonomy.getValue(kind)))
+            ActionKind.entries.filter { it in c.autonomy || c.autonomyOf(it) != AutonomyTier.ASK_FIRST }.forEach { kind ->
+                append("\n- ").append(kind.name.lowercase()).append(": ").append(tierText(c.autonomyOf(kind)))
             }
         }
         if (c.getsThrough.isNotEmpty()) {

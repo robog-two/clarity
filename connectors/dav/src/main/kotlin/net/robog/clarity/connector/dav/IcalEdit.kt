@@ -1,6 +1,7 @@
 package net.robog.clarity.connector.dav
 
 import java.net.URI
+import java.time.DateTimeException
 import java.time.Duration
 import java.time.Instant as JInstant
 import java.time.LocalDate
@@ -12,6 +13,7 @@ import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import java.time.temporal.Temporal
 import kotlinx.datetime.number
+import net.fortuna.ical4j.data.ParserException
 import net.fortuna.ical4j.model.Calendar
 import net.fortuna.ical4j.model.DateList
 import net.fortuna.ical4j.model.Parameter
@@ -27,6 +29,7 @@ import net.fortuna.ical4j.model.property.DtEnd
 import net.fortuna.ical4j.model.property.DtStart
 import net.fortuna.ical4j.model.property.ExDate
 import net.fortuna.ical4j.model.property.Location
+import net.fortuna.ical4j.model.property.RDate
 import net.fortuna.ical4j.model.property.RRule
 import net.fortuna.ical4j.model.property.RecurrenceId
 import net.fortuna.ical4j.model.property.Summary
@@ -44,7 +47,7 @@ import net.robog.clarity.shared.calendar.EventScope
 import net.robog.clarity.shared.calendar.Recurrence
 import net.robog.clarity.shared.calendar.basicDate
 import net.robog.clarity.shared.calendar.basicUtc
-import net.robog.clarity.shared.calendar.movedByDays
+import net.robog.clarity.shared.calendar.movedTo
 import net.robog.clarity.shared.calendar.parseRRule
 import net.robog.clarity.shared.calendar.toRRule
 import net.robog.clarity.shared.noun.Handle
@@ -95,6 +98,9 @@ sealed interface Edited {
 
     /** The original series ended before the occurrence, and [following] is a new object that carries on from it. */
     data class Split(val original: String, val following: String) : Edited
+
+    /** The object already has this change (an earlier delivery of the same edit did it); nothing to write. */
+    data object Applied : Edited
 }
 
 /** What cancelling part of a calendar object leaves. */
@@ -152,7 +158,7 @@ internal fun ZoneId?.clock(): kotlinx.datetime.TimeZone =
 
 /** The RRULE for [rule] on a series starting at [start] on the clock of [zone]. */
 internal fun rruleOf(rule: Recurrence, start: Temporal, zone: ZoneId?): RRule<Temporal> =
-    rruleFromText(rule.toRRule(start.localDate(), zone.clock(), allDay = start is LocalDate))
+    rruleFromText(rule.toRRule(start.localDate(), zone.clock(), allDay = start is LocalDate, floating = start is LocalDateTime))
 
 internal fun rruleFromText(text: String): RRule<Temporal> = RRule(Recur<Temporal>(text))
 
@@ -220,7 +226,8 @@ internal fun withoutKnownTimeZones(ics: String): String = TIME_ZONE_BLOCK.replac
 /** Adds the VTIMEZONE of every named zone this calendar's events start in, unless it has it. */
 internal fun Calendar.withTimeZones(): Calendar {
     val known = getComponents<VTimeZone>("VTIMEZONE").mapNotNull { it.getProperty<Property>("TZID").orElse(null)?.value }.toSet()
-    getComponents<VEvent>("VEVENT").mapNotNull { it.tzid() }.toSet()
+    getComponents<VEvent>("VEVENT").flatMap { event -> event.getProperties<Property>().mapNotNull { it.getParameter<Parameter>("TZID").orElse(null)?.value } }
+        .mapNotNull(::realZone).toSet()
         .filter { it.id !in known }
         .mapNotNull(::timeZoneComponent)
         .forEach { add<Calendar>(it) }
@@ -241,7 +248,22 @@ object IcalEdit {
      * are ignored for a single event. [followingUid] names the new series a [EventScope.FOLLOWING]
      * edit starts.
      */
-    fun updated(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String): Edited {
+    fun updated(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String): Edited =
+        cleanly { edit(ics, occurrence, scope, change, followingUid) }
+
+    /** [block]'s result; a calendar library or date failure on a strange object is a message for the model, not a crash. */
+    private inline fun <T> cleanly(block: () -> T): T =
+        try {
+            block()
+        } catch (e: DateTimeException) {
+            throw IllegalArgumentException("This event could not be edited: ${e.message}")
+        } catch (e: ParserException) {
+            throw IllegalArgumentException("This event could not be read: ${e.message}")
+        } catch (e: NoSuchElementException) {
+            throw IllegalArgumentException("This event is missing a part that editing needs.")
+        }
+
+    private fun edit(ics: String, occurrence: JInstant?, scope: EventScope?, change: EventChange, followingUid: String): Edited {
         val parts = Parts.of(ics)
         val master = parts.master
         if (!master.repeats()) {
@@ -250,6 +272,8 @@ object IcalEdit {
         }
         requireNotNull(scope) { "This event repeats. Say what to change: `this`, `following` or `series`." }
         val at = occurrence ?: master.seedInstant()
+        // a re-delivered series move: the old occurrence is gone and the series is already at the new start
+        if (scope == EventScope.SERIES && change.start != null && !parts.isOccurrence(at) && parts.isOccurrence(change.start)) return Edited.Applied
         parts.requireOccurrence(at)
         require(!master.has("RDATE") || scope == EventScope.SERIES) {
             "This repeating event lists single dates, so only the whole series can be changed."
@@ -261,7 +285,7 @@ object IcalEdit {
             "A repeating event cannot switch between all-day and timed. Cancel it and create a new one."
         }
         return when {
-            scope == EventScope.FOLLOWING && at == master.seedInstant() -> updated(ics, occurrence, EventScope.SERIES, change, followingUid)
+            scope == EventScope.FOLLOWING && at == master.seedInstant() -> edit(ics, occurrence, EventScope.SERIES, change, followingUid)
             scope == EventScope.SERIES -> Edited.Replace(parts.updateSeries(at, change))
             scope == EventScope.THIS -> {
                 require(change.repeat == null) { "`repeat` cannot change for a single occurrence. Use scope `following` or `series`." }
@@ -272,7 +296,9 @@ object IcalEdit {
     }
 
     /** What is left of [ics] once [scope] of the event is cancelled; see [updated] for [occurrence]. */
-    fun cancelled(ics: String, occurrence: JInstant?, scope: EventScope?): Removal {
+    fun cancelled(ics: String, occurrence: JInstant?, scope: EventScope?): Removal = cleanly { cancel(ics, occurrence, scope) }
+
+    private fun cancel(ics: String, occurrence: JInstant?, scope: EventScope?): Removal {
         val parts = Parts.of(ics)
         val master = parts.master
         if (!master.repeats()) return Removal.Delete
@@ -286,8 +312,14 @@ object IcalEdit {
         }
     }
 
+    /** True when cancelling [scope] at [at] has nothing left to do: a repeating event whose occurrence is already excluded or cut off. */
+    fun alreadyCancelled(ics: String, at: JInstant, scope: EventScope?): Boolean = cleanly {
+        val parts = Parts.of(ics)
+        parts.master.repeats() && (scope == EventScope.THIS || scope == EventScope.FOLLOWING) && !parts.isOccurrence(at)
+    }
+
     /** True when the occurrence starting at [at] is one of the series in [ics] (a changed occurrence counts at its original time). */
-    fun hasOccurrence(ics: String, at: JInstant): Boolean = runCatching { Parts.of(ics).isOccurrence(at) }.getOrDefault(false)
+    fun hasOccurrence(ics: String, at: JInstant): Boolean = cleanly { Parts.of(ics).isOccurrence(at) }
 
     private class Parts(val calendar: Calendar, val master: VEvent, val overrides: List<VEvent>) {
         val hint: ZoneId = calendar.zoneHint()
@@ -328,32 +360,46 @@ object IcalEdit {
             master.getProperties<RRule<Temporal>>("RRULE").firstOrNull()?.value
                 ?: throw IllegalArgumentException("This repeating event lists single dates, so only the whole series can be changed.")
 
-        /** The whole series; [at] names the occurrence the new times are measured from. */
+        /**
+         * The whole series; [at] names the occurrence the new times are measured from. With a new rule
+         * the series restarts at `change.start`, so its first occurrence fits the rule.
+         */
         fun updateSeries(at: JInstant, change: EventChange): String {
+            val before = master.copy()
             val seed = master.startTemporal()!!
             val length = master.length(seed)
             val newStart = change.start ?: at
             val newLength = change.end?.let { Duration.between(newStart, it) } ?: length
             val shift = wallShift(at, newStart)
-            val movedSeed = shift(seed)
+            val movedSeed = when {
+                change.start == null -> seed
+                change.repeat != null -> startAt(newStart, seed is LocalDate, seed is LocalDateTime, zone)
+                else -> shift(seed)
+            }
             if (change.start != null || change.end != null) master.setTimes(movedSeed, newLength)
-            if (change.start != null) {
+            if (change.repeat != null) {
+                master.removeAll<VEvent>("RRULE", "RDATE", "EXDATE")
+                master.add<VEvent>(rruleOf(change.repeat, master.startTemporal()!!, zone))
+                overrides.forEach { calendar.remove<Calendar>(it) }
+            } else if (change.start != null) {
                 if (master.has("RRULE")) {
                     val rule = rule()
                     master.removeAll<VEvent>("RRULE")
                     master.add<VEvent>(rruleFromText(ruleAfterMove(rule, seed, movedSeed, zone)))
                 }
                 setExdates(master, exdates(master).map(shift), zone)
-                overrides.forEach { o -> o.replaceRecurrenceId(shift(o.recurrenceTemporal())) }
-            }
-            if (change.repeat != null) {
-                master.removeAll<VEvent>("RRULE", "RDATE", "EXDATE")
-                master.add<VEvent>(rruleOf(change.repeat, master.startTemporal()!!, zone))
-                overrides.forEach { calendar.remove<Calendar>(it) }
+                overrides.forEach { it.moveBy(shift) }
             }
             master.applyText(change)
-            if (change.repeat == null) overrides.forEach { it.applyText(change) }
+            if (change.repeat == null) overrides.forEach { it.applyText(change, base = before) }
             return finish()
+        }
+
+        /** A changed occurrence of a series that moved: it keeps its own length and follows by the same shift, so it still matches its slot. */
+        private fun VEvent.moveBy(shift: (Temporal) -> Temporal) {
+            replaceRecurrenceId(shift(recurrenceTemporal()))
+            val start = startTemporal()!!
+            setTimes(shift(start), length(start))
         }
 
         /** Only the occurrence at [at]: a changed copy of it (or the copy already there). */
@@ -377,6 +423,7 @@ object IcalEdit {
 
         /** This occurrence and the later ones: the original ends before [at] and [followingUid] starts a new series there. */
         fun splitFollowing(at: JInstant, change: EventChange, followingUid: String): Edited {
+            val oldMaster = master.copy()
             val seed = master.startTemporal()!!
             val rule = rule()
             val before = Ical.expandRule(rule, seed, seed.toInstantOrNull()!!, at, hint).count { it.toInstantOrNull()!! < at }
@@ -403,10 +450,10 @@ object IcalEdit {
             following.add<Calendar>(fresh)
             later.forEach { o ->
                 val moved = o.copy()
-                moved.removeAll<VEvent>("UID", "RECURRENCE-ID")
+                moved.moveBy(shift)
+                moved.removeAll<VEvent>("UID")
                 moved.add<VEvent>(Uid(followingUid))
-                moved.add<VEvent>(RecurrenceId(shift(o.recurrenceTemporal())))
-                moved.applyText(change)
+                moved.applyText(change, base = oldMaster)
                 following.add<Calendar>(moved)
             }
             return Edited.Split(truncateBefore(at), following.withTimeZones().toString())
@@ -417,8 +464,13 @@ object IcalEdit {
             val seed = master.startTemporal()!!
             val rule = rule()
             master.removeAll<VEvent>("RRULE")
-            master.add<VEvent>(rruleFromText(rule.endedBefore(at, seed is LocalDate)))
+            master.add<VEvent>(rruleFromText(rule.endedBefore(at, seed)))
             setExdates(master, exdates(master).filter { it.toInstantOrNull()!! < at }, zone)
+            val listed = master.getProperties<RDate<Temporal>>("RDATE").flatMap { it.dates.orEmpty() }.map { it.inZone(zone) }
+            if (listed.isNotEmpty()) {
+                master.removeAll<VEvent>("RDATE")
+                listed.filter { it.toInstantOrNull()!! < at }.takeIf { it.isNotEmpty() }?.let { master.add<VEvent>(RDate(dateParameters(it, zone), DateList(it))) }
+            }
             overrides.filter { it.recurrenceInstant()!! >= at }.forEach { calendar.remove<Calendar>(it) }
             return finish()
         }
@@ -433,9 +485,9 @@ object IcalEdit {
         /** Maps a date of this series to the date it has once the occurrence at [from] is moved to [to], on the wall clock. */
         fun wallShift(from: JInstant, to: JInstant): (Temporal) -> Temporal = { t ->
             when (t) {
-                is ZonedDateTime -> zone!!.let { z ->
+                is ZonedDateTime -> (zone ?: realZone(t.zone.id))?.let { z ->
                     t.toLocalDateTime().plus(Duration.between(from.atZone(z).toLocalDateTime(), to.atZone(z).toLocalDateTime())).atZone(z)
-                }
+                } ?: t
                 is LocalDate -> t.plusDays(ChronoUnit.DAYS.between(LocalDate.ofInstant(from, UTC_ZONE), LocalDate.ofInstant(to, UTC_ZONE)))
                 is LocalDateTime -> t.plus(Duration.between(from, to))
                 is JInstant -> t.plus(Duration.between(from, to))
@@ -463,14 +515,16 @@ object IcalEdit {
     }
 
     /** EXDATE for [dates], which ical4j writes without their TZID or VALUE=DATE unless told. */
-    private fun exDate(dates: List<Temporal>, zone: ZoneId?): ExDate<Temporal> {
-        val params = when {
-            dates.firstOrNull() is ZonedDateTime && zone != null -> listOf<Parameter>(TzId(zone.id))
-            dates.firstOrNull() is LocalDate -> listOf<Parameter>(Value.DATE)
-            else -> emptyList()
-        }
-        return ExDate(ParameterList(params), DateList(dates))
-    }
+    private fun exDate(dates: List<Temporal>, zone: ZoneId?): ExDate<Temporal> = ExDate(dateParameters(dates, zone), DateList(dates))
+
+    private fun dateParameters(dates: List<Temporal>, zone: ZoneId?): ParameterList =
+        ParameterList(
+            when {
+                dates.firstOrNull() is ZonedDateTime && zone != null -> listOf<Parameter>(TzId(zone.id))
+                dates.firstOrNull() is LocalDate -> listOf<Parameter>(Value.DATE)
+                else -> emptyList()
+            },
+        )
 
     private fun setExdates(event: VEvent, dates: List<Temporal>, zone: ZoneId?) {
         event.removeAll<VEvent>("EXDATE")
@@ -481,10 +535,13 @@ object IcalEdit {
     private fun editInPlace(event: VEvent, change: EventChange, fallbackZone: ZoneId?) {
         val current = event.startTemporal()!!
         val allDay = change.allDay ?: (current is LocalDate)
-        if (change.start != null || change.end != null || allDay != (current is LocalDate)) {
-            val start = change.start ?: current.toInstantOrNull()!!
+        // a series runs on a named clock: a UTC, floating or file-defined time gets the person's zone first
+        val toZone = change.repeat != null && !allDay && event.tzid() == null && fallbackZone != null
+        if (change.start != null || change.end != null || allDay != (current is LocalDate) || toZone) {
+            val start = change.start
+                ?: if (toZone && current is LocalDateTime) current.atZone(fallbackZone).toInstant() else current.toInstantOrNull()!!
             val length = change.end?.let { Duration.between(start, it) } ?: event.length(current)
-            event.setTimes(startAt(start, allDay, current is LocalDateTime, event.tzid() ?: fallbackZone), length)
+            event.setTimes(startAt(start, allDay, current is LocalDateTime && !toZone, event.tzid() ?: fallbackZone), length)
         }
         if (change.repeat != null) {
             event.removeAll<VEvent>("RRULE", "RDATE", "EXDATE")
@@ -493,11 +550,16 @@ object IcalEdit {
         event.applyText(change)
     }
 
-    private fun VEvent.applyText(change: EventChange) {
-        change.title?.let { replaceText("SUMMARY", it) { v -> Summary(v) } }
-        change.description?.let { replaceText("DESCRIPTION", it) { v -> Description(v) } }
-        change.location?.let { replaceText("LOCATION", it) { v -> Location(v) } }
-        change.url?.let { replaceText("URL", it) { v -> Url(URI.create(v)) } }
+    /**
+     * The text changes of [change]. With a [base] (the series' main event before the change) only fields
+     * that still equal the base's are set: a changed occurrence that was renamed on its own keeps its name.
+     */
+    private fun VEvent.applyText(change: EventChange, base: VEvent? = null) {
+        fun follows(name: String) = base == null || text(name) == base.text(name)
+        change.title?.takeIf { follows("SUMMARY") }?.let { replaceText("SUMMARY", it) { v -> Summary(v) } }
+        change.description?.takeIf { follows("DESCRIPTION") }?.let { replaceText("DESCRIPTION", it) { v -> Description(v) } }
+        change.location?.takeIf { follows("LOCATION") }?.let { replaceText("LOCATION", it) { v -> Location(v) } }
+        change.url?.takeIf { follows("URL") }?.let { replaceText("URL", it) { v -> Url(URI.create(v)) } }
     }
 
     private inline fun VEvent.replaceText(name: String, value: String, make: (String) -> Property) {
@@ -507,21 +569,34 @@ object IcalEdit {
 
     private val RULE_PARTS = Regex("(?i)^(UNTIL|COUNT)=")
 
-    /** [rule] of a series whose occurrences move from [from] to [to] (two starts); the weekdays it names move with them. */
+    /**
+     * [rule] of a series whose start moves from [from] to [to]: the weekdays, the end date and an
+     * "nth weekday" follow. An unchanged start keeps the rule as it is; a new time of day re-renders it
+     * so the end date still covers the last day.
+     */
     private fun ruleAfterMove(rule: String, from: Temporal, to: Temporal, zone: ZoneId?): String {
-        val days = ChronoUnit.DAYS.between(from.localDate().toJava(), to.localDate().toJava()).toInt()
-        if (days == 0) return rule
+        if (from.toInstantOrNull() == to.toInstantOrNull()) return rule
         val parsed = parseRRule(rule, from.localDate(), zone.clock())
-            ?: throw IllegalArgumentException("This repeating event cannot move to another day because its rule is too unusual. Change its time only, or cancel it and create a new one.")
-        return parsed.movedByDays(days).toRRule(to.localDate(), zone.clock(), allDay = to is LocalDate)
+        if (parsed == null && from.localDate() == to.localDate()) return rule
+        val moved = parsed?.movedTo(from.localDate(), to.localDate())
+            ?: throw IllegalArgumentException("This repeating event cannot move to that day because its rule would no longer fit it. Move it to another day, change its time only, or cancel it and create a new one.")
+        return moved.toRRule(to.localDate(), zone.clock(), allDay = to is LocalDate, floating = to is LocalDateTime)
     }
 
     private fun kotlinx.datetime.LocalDate.toJava(): LocalDate = LocalDate.of(year, month.number, day)
 
-    /** [this] rule ended just before [at]: an UNTIL replaces any COUNT; an all-day series ends the day before. */
-    internal fun String.endedBefore(at: JInstant, allDay: Boolean): String {
+    /**
+     * [this] rule ended just before [at]: an UNTIL replaces any COUNT. It is a date for an all-day [seed],
+     * a local time for a floating one and UTC otherwise, as RFC 5545 asks.
+     */
+    internal fun String.endedBefore(at: JInstant, seed: Temporal): String {
         val kept = split(';').filter { it.isNotBlank() && !RULE_PARTS.containsMatchIn(it) }
-        val until = if (allDay) basicJavaDate(LocalDate.ofInstant(at, UTC_ZONE).minusDays(1)) else basicUtc(kotlin.time.Instant.fromEpochSeconds(at.epochSecond - 1))
+        val last = basicUtc(kotlin.time.Instant.fromEpochSeconds(at.epochSecond - 1))
+        val until = when (seed) {
+            is LocalDate -> basicJavaDate(LocalDate.ofInstant(at, UTC_ZONE).minusDays(1))
+            is LocalDateTime -> last.removeSuffix("Z")
+            else -> last
+        }
         return (kept + "UNTIL=$until").joinToString(";")
     }
 

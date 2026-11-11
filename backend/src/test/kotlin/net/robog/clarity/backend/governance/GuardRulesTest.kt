@@ -23,7 +23,7 @@ private fun expected(kind: ActionKind, tier: AutonomyTier, untrusted: Boolean, e
 }
 
 /** Kinds whose benign [sample] reaches other people or outside systems. */
-private val externalSamples = setOf(ActionKind.SEND_EMAIL, ActionKind.RESPOND_TO_INVITE, ActionKind.EXTERNAL_TOOL, ActionKind.PAYMENT)
+private val externalSamples = setOf(ActionKind.SEND_EMAIL, ActionKind.RESPOND_TO_INVITE, ActionKind.EXTERNAL_TOOL, ActionKind.PAYMENT, ActionKind.CANCEL_EVENT)
 
 class GuardRulesTest : FunSpec({
 
@@ -113,7 +113,27 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(cancel.copy(notifyAttendees = true), c, trusted()).decision shouldBe Decision.ASK
         // outside content in the run makes a notice to other people ask even when nothing else does
         deterministicVerdict(cancel.copy(notifyAttendees = true), c, untrusted).decision shouldBe Decision.ASK
-        deterministicVerdict(cancel, c, untrusted).decision shouldBe Decision.ALLOW
+    }
+
+    test("outside content cannot cancel an event, rewrite a series, or plant a link or notes without asking") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL)
+        val id = net.robog.clarity.shared.EntityId("e1")
+        val scope = net.robog.clarity.shared.calendar.EventScope.THIS
+        deterministicVerdict(ProposedAction.CancelEvent("k", "s", id, scope), c, untrusted).decision shouldBe Decision.ASK
+        val title = ProposedAction.UpdateEvent("k", "s", id, scope, title = "x")
+        deterministicVerdict(title, c, untrusted).decision shouldBe Decision.ALLOW
+        deterministicVerdict(title.copy(scope = net.robog.clarity.shared.calendar.EventScope.SERIES), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(url = "https://example.com"), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(description = "call this number"), c, untrusted).decision shouldBe Decision.ASK
+        deterministicVerdict(title.copy(url = "https://example.com"), c, trusted()).decision shouldBe Decision.ALLOW
+    }
+
+    test("a link in an event is checked against the never-store topics") {
+        val c = constitution(tier = AutonomyTier.DO_THEN_TELL, neverStore = listOf("clinic"))
+        val id = net.robog.clarity.shared.EntityId("e1")
+        deterministicVerdict(ProposedAction.UpdateEvent("k", "s", id, url = "https://clinic.example.com/visit"), c, trusted()).decision shouldBe Decision.ASK
+        val hold = sample(ActionKind.CREATE_EVENT) as ProposedAction.CreateEvent
+        deterministicVerdict(hold.copy(url = "https://clinic.example.com/visit"), c, trusted()).decision shouldBe Decision.ASK
     }
 
     test("without a setting of its own, changing or cancelling an event asks first") {
@@ -123,16 +143,27 @@ class GuardRulesTest : FunSpec({
         deterministicVerdict(sample(ActionKind.CANCEL_EVENT), c, trusted()).decision shouldBe Decision.ASK
     }
 
-    test("what the person said about moving events limits changing and cancelling them") {
+    test("a setting of its own wins over what was said about moving; without one, moving can only tighten") {
         val own = mapOf(ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL, ActionKind.CANCEL_EVENT to AutonomyTier.DO_THEN_TELL)
         deterministicVerdict(sample(ActionKind.UPDATE_EVENT), constitution(autonomy = own), trusted()).decision shouldBe Decision.ALLOW
-        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), constitution(autonomy = own), trusted()).decision shouldBe Decision.ALLOW
         val askMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST))
-        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), askMove, trusted()).decision shouldBe Decision.ASK
-        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), askMove, trusted()).decision shouldBe Decision.ASK
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), askMove, trusted()).decision shouldBe Decision.ALLOW
         val neverMove = constitution(autonomy = own + (ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
-        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), neverMove, trusted()).decision shouldBe Decision.DENY
-        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), neverMove, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), neverMove, trusted()).decision shouldBe Decision.ALLOW
+        val onlyMove = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), onlyMove, trusted()).decision shouldBe Decision.DENY
+        deterministicVerdict(sample(ActionKind.CANCEL_EVENT), onlyMove, trusted()).decision shouldBe Decision.DENY
+        val looseMove = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.DO_THEN_TELL))
+        deterministicVerdict(sample(ActionKind.UPDATE_EVENT), looseMove, trusted()).decision shouldBe Decision.ASK
+    }
+
+    test("the prompt lists the tier changing and cancelling really get, not only the ones written down") {
+        val c = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.CREATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        val text = net.robog.clarity.backend.agent.renderConstitution(c)
+        text shouldContain "update_event"
+        text shouldContain "cancel_event"
+        val own = constitution(autonomy = mapOf(ActionKind.MOVE_EVENT to AutonomyTier.NEVER, ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL))
+        net.robog.clarity.backend.agent.renderConstitution(own).lines().single { it.contains("update_event") } shouldContain "do it, then tell me"
     }
 
     test("an edit that lands in protected time asks, an all-day event does not") {

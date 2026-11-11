@@ -8,6 +8,7 @@ import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.daysUntil
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.serialization.Serializable
@@ -37,6 +38,7 @@ import net.robog.clarity.shared.governance.Urgency
 import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
+import net.robog.clarity.shared.text.oneLine
 import net.robog.clarity.shared.time.LocalTimes
 
 /** The inputs every external tool shares: why, and what prompted it. */
@@ -44,6 +46,10 @@ private const val WHY = "One or two sentences to the person, first person: what 
 private const val CONTEXT = "What prompted this (e.g. the message being replied to), shown to the person."
 
 /** A time input on the person's clock ([zone]); a plain date is not enough here. */
+/** How much of a title or a place a card summary shows. */
+private const val TITLE_CHARS = 80
+private const val PLACE_CHARS = 60
+
 private fun instant(label: String, raw: String, zone: TimeZone): Instant =
     readToolTime(label, raw, zone).fold({ throw IllegalArgumentException(it) }, { it })
 
@@ -87,9 +93,9 @@ object ProposedActions {
             fromLabel = sender.label,
             replySubject = replied?.takeIf { inReplyTo != null }?.subject,
         )
-        val who = email.to.joinToString { it.displayName ?: it.value }
-        return if (send) ProposedAction.SendEmail(key, "Send \"${input.subject}\" to $who from ${sender.label}", email)
-        else ProposedAction.SaveDraft(key, "Draft \"${input.subject}\" to $who from ${sender.label}", email)
+        val who = oneLine(email.to.joinToString { it.displayName ?: it.value }, 120)
+        return if (send) ProposedAction.SendEmail(key, "Send \"${oneLine(input.subject, TITLE_CHARS)}\" to $who from ${oneLine(sender.label, PLACE_CHARS)}", email)
+        else ProposedAction.SaveDraft(key, "Draft \"${oneLine(input.subject, TITLE_CHARS)}\" to $who from ${oneLine(sender.label, PLACE_CHARS)}", email)
     }
 
     /** The account [raw] names: by address (also as "Name <address>"), else by its label ("Gmail"). */
@@ -110,17 +116,19 @@ object ProposedActions {
         val repeat = input.repeat?.let { recurrence(it, first) }
         val link = link(input.url)
         val lead = if (input.attendees.isEmpty()) "Hold " else "Invite to "
+        val notes = input.description?.takeIf(String::isNotBlank)
         return ProposedAction.CreateEvent(
             idempotencyKey = key,
-            summary = lead + "\"${input.title}\" ${whenText(start, end, input.allDay, zone)}" +
-                repeat?.let { " repeating ${it.describe(first)}" }.orEmpty() + place(input.location),
+            summary = lead + "\"${oneLine(input.title, TITLE_CHARS)}\" ${whenText(start, end, input.allDay, zone)}" +
+                repeat?.let { " repeating ${it.describe(first)}" }.orEmpty() + place(input.location) +
+                link?.let { " with link ${host(it)}" }.orEmpty() + if (notes != null) " with notes" else "",
             calendar = input.calendar,
             title = input.title,
             start = start,
             end = end,
             attendees = input.attendees.map(::parseHandle),
             hold = input.attendees.isEmpty() && input.hold,
-            description = input.description?.takeIf(String::isNotBlank),
+            description = notes,
             location = input.location?.takeIf(String::isNotBlank),
             url = link,
             allDay = input.allDay,
@@ -131,7 +139,9 @@ object ProposedActions {
 
     /**
      * An edit of an event. [current] is the stored event the id names, when it is known: it gives the
-     * summary a title and lets a repeating event be refused for a missing `scope` right away.
+     * summary a title, lets a repeating event be refused for a missing `scope` right away, says whether
+     * the event is all-day, and completes a half-given time (a new start keeps the length, a new end
+     * keeps the start) so the guard and the person see the whole range.
      */
     fun updateEvent(key: String, input: ExternalTools.UpdateEventInput, zone: TimeZone, current: CalendarEventPayload? = null): ProposedAction {
         require(listOf(input.start, input.end, input.title, input.description, input.location, input.url, input.allDay, input.repeat).any { it != null }) {
@@ -139,28 +149,19 @@ object ProposedActions {
         }
         input.title?.let { require(it.isNotBlank()) { "`title` can't be empty" } }
         requireScope(input.scope, current?.repeats, "change")
-        val allDay = input.allDay
-        val (start, end) = when {
-            input.start == null && input.end == null -> null to null
-            allDay != null -> eventTimes(allDay, input.start, input.end, zone)
-            else -> {
-                val s = input.start?.let { instant("start", it, zone) }
-                val e = input.end?.let { instant("end", it, zone) }
-                if (s != null && e != null) require(e > s) { "`end` must be after `start`" }
-                s to e
-            }
-        }
+        val allDay = input.allDay ?: current?.allDay
+        val (start, finish) = editedRange(input.start, input.end, allDay, zone, current)
         val repeat = input.repeat?.let {
             requireNotNull(start) { "`repeat` needs `start`: the first occurrence it applies from." }
             recurrence(it, firstDay(start, allDay == true, zone))
         }
         val link = input.url?.let { if (it.isBlank()) "" else link(it) }
         val changes = listOfNotNull(
-            start?.let { s -> if (end != null) "to ${whenText(s, end, allDay == true, zone)}" else "to start ${LocalTimes.format(s, zone)}" }
-                ?: end?.let { "to end ${LocalTimes.format(it, zone)}" },
-            input.title?.let { "rename to \"$it\"" },
-            input.location?.let { if (it.isBlank()) "clear the location" else "at ${it.take(60)}" },
-            link?.let { if (it.isEmpty()) "clear the link" else "with a link" },
+            start?.let { s -> if (finish != null) "to ${whenText(s, finish, allDay == true, zone)}" else "to start ${LocalTimes.format(s, zone)}" }
+                ?: finish?.let { "to end ${LocalTimes.format(it, zone)}" },
+            input.title?.let { "rename to \"${oneLine(it, TITLE_CHARS)}\"" },
+            input.location?.let { if (it.isBlank()) "clear the location" else place(it).trim() },
+            link?.let { if (it.isEmpty()) "clear the link" else "with link ${host(it)}" },
             input.description?.let { if (it.isBlank()) "clear the notes" else "new notes" },
             repeat?.let { "repeat ${it.describe(firstDay(start!!, allDay == true, zone))}" },
         )
@@ -170,7 +171,7 @@ object ProposedActions {
             event = EntityId(input.eventId),
             scope = input.scope,
             start = start,
-            end = end,
+            end = finish,
             title = input.title,
             description = input.description,
             location = input.location,
@@ -190,12 +191,37 @@ object ProposedActions {
         )
     }
 
+    /**
+     * The new start and end of an edit, null where nothing is given and nothing is known. A new start
+     * keeps the stored event's length, a new end keeps its start. [allDay] says how to read the inputs:
+     * as dates (an all-day event, the end being its last day) or as moments on [zone]'s clock.
+     */
+    private fun editedRange(start: String?, end: String?, allDay: Boolean?, zone: TimeZone, current: CalendarEventPayload?): Pair<Instant?, Instant?> {
+        if (start == null && end == null) return null to null
+        if (allDay == true) {
+            val stored = current?.let { LocalTimes.allDayDates(it.start, it.end) }
+            val first = day("start", start) ?: stored?.first ?: throw IllegalArgumentException("`start` is required: the first day, like 2026-10-26")
+            val last = day("end", end) ?: stored?.let { first.plus(DatePeriod(days = it.first.daysUntil(it.second))) } ?: first
+            require(last >= first) { "`end` must not be before `start`" }
+            return first.atStartOfDayIn(TimeZone.UTC) to last.plus(DatePeriod(days = 1)).atStartOfDayIn(TimeZone.UTC)
+        }
+        val from = start?.let { instant("start", it, zone) }
+        val to = end?.let { instant("end", it, zone) }
+        if (from != null && to != null) require(to > from) { "`end` must be after `start`" }
+        return when {
+            current == null -> from to to
+            from != null && to == null -> from to from + (current.end - current.start)
+            from == null && to != null -> current.start to to
+            else -> from to to
+        }
+    }
+
     /** A repeating event is only ever touched in part by saying which part. */
     private fun requireScope(scope: EventScope?, repeats: String?, verb: String) {
         require(scope != null || repeats == null) { "This event repeats ($repeats). Say what to $verb: scope `this`, `following` or `series`." }
     }
 
-    private fun eventLabel(id: String, current: CalendarEventPayload?) = current?.let { "\"${it.title}\"" } ?: "event $id"
+    private fun eventLabel(id: String, current: CalendarEventPayload?) = current?.let { "\"${oneLine(it.title, TITLE_CHARS)}\"" } ?: "event ${oneLine(id, 40)}"
 
     private fun scopeText(scope: EventScope?) = when (scope) {
         EventScope.THIS -> " (this one)"
@@ -204,7 +230,10 @@ object ProposedActions {
         null -> ""
     }
 
-    private fun place(location: String?) = location?.takeIf(String::isNotBlank)?.let { " at ${it.take(60)}" }.orEmpty()
+    private fun place(location: String?) = location?.takeIf(String::isNotBlank)?.let { " at ${oneLine(it, PLACE_CHARS)}" }.orEmpty()
+
+    /** The site of a link, for the card: what the person can judge it by. */
+    private fun host(link: String) = oneLine(runCatching { java.net.URI(link).host }.getOrNull().orEmpty(), 60)
 
     /**
      * The start and end of an event as stored. All-day: `start` is a date and `end` the last day
@@ -352,7 +381,7 @@ class ExternalTools(
         @Description("New place. An empty text clears it.") val location: String? = null,
         @Description("New web link. An empty text clears it.") val url: String? = null,
         @Description("Set to say whether it is all-day; needed to move an all-day event, whose `start` and `end` are dates. A repeating event can't switch.") val allDay: Boolean? = null,
-        @Description("A new repeat rule (needs `start`, the first occurrence it applies from). It replaces the old rule and drops one-off changes. Not with scope `this`.") val repeat: RepeatInput? = null,
+        @Description("A new repeat rule (needs `start`). It replaces the old rule, restarts the series at `start` (which must fit the rule) and drops one-off changes. Not with scope `this`.") val repeat: RepeatInput? = null,
         @Description("True if other people are on the event and should be told.") val notifyAttendees: Boolean = false,
         @Description(WHY) val reason: String,
         @Description(CONTEXT) val context: List<ContextItem> = emptyList(),

@@ -19,16 +19,16 @@ class AutonomySummaryTest {
         assertEquals(listOf("Cancel events"), summary.afterReview.filter { it.startsWith("Cancel") })
     }
 
-    @Test fun movingIsNotListedButStillLimitsChangingAndCancelling() {
-        val summary = autonomySummary(
+    @Test fun movingIsNotListedAndOnlyTightensChangingAndCancelling() {
+        val tight = autonomySummary(constitution(ActionKind.MOVE_EVENT to AutonomyTier.NEVER))
+        assertFalse("Move events" in tight.alone + tight.afterReview)
+        assertFalse("Change events" in tight.alone)
+        val own = autonomySummary(
             constitution(
                 ActionKind.MOVE_EVENT to AutonomyTier.ASK_FIRST,
                 ActionKind.UPDATE_EVENT to AutonomyTier.DO_THEN_TELL,
-                ActionKind.CANCEL_EVENT to AutonomyTier.DO_THEN_TELL,
             ),
         )
-        assertFalse("Move events" in summary.alone + summary.afterReview)
-        assertFalse("Change events" in summary.alone)
-        assertFalse("Cancel events" in summary.alone)
+        assertEquals(listOf("Change events"), own.alone.filter { it.endsWith("events") })
     }
 }

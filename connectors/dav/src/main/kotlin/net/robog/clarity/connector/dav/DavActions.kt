@@ -18,6 +18,9 @@ import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.noun.Handle
 import kotlin.time.Instant
 
+/** Largest calendar object read for an edit, a cancellation or an answer. */
+private const val EDIT_LIMIT = 5_000_000L
+
 /** Longest document text handed back to the agent. */
 const val MAX_READ_CHARS = 200_000
 
@@ -132,16 +135,27 @@ class DavActions(
     /** What an event looks like before an edit or cancellation: its place, version and text. */
     private class Loaded(val url: Url, val etag: String?, val ics: String, val path: EventPath)
 
-    private suspend fun load(server: DavServer, config: DavConfig, path: String): Loaded? {
+    private sealed interface Load {
+        class Found(val event: Loaded) : Load
+        data object Gone : Load
+        data object TooLarge : Load
+    }
+
+    private suspend fun load(server: DavServer, config: DavConfig, path: String): Load {
         val event = EventPath(path)
         val url = server.resolve(Url(config.caldavUrl!!), event.resource)
         val (etag, bytes) = try {
-            server.get(url, 1_000_000) ?: return null
+            server.get(url, EDIT_LIMIT) ?: return Load.TooLarge
         } catch (_: NotFoundException) {
-            return null
+            return Load.Gone
         }
-        return Loaded(url, etag, bytes.toString(Charsets.UTF_8), event)
+        return Load.Found(Loaded(url, etag, bytes.toString(Charsets.UTF_8), event))
     }
+
+    private fun tooLarge() = failed("The event is larger than ${EDIT_LIMIT / 1_000_000} MB, so it can't be changed here.")
+
+    /** Without a version to match, a write could overwrite someone else's change: try again later instead. */
+    private fun noVersion() = failed("The server gave no version of the event, so it can't be changed safely right now.", retryable = true)
 
     /** A stored `MOVE_EVENT`: the single-event part of [updateEvent]. */
     suspend fun moveEvent(a: ProposedAction.MoveEvent, target: SourceId?): ActionOutcome {
@@ -152,49 +166,70 @@ class DavActions(
     }
 
     suspend fun updateEvent(a: ProposedAction.UpdateEvent, target: SourceId?): ActionOutcome = onTarget("event", target) { server, config, path ->
+        val done = ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
         val discovery = server.discover()
-        val event = load(server, config, path) ?: return@onTarget failed("The event could not be read.")
+        val event = when (val loaded = load(server, config, path)) {
+            is Load.Found -> loaded.event
+            Load.Gone -> return@onTarget failed("The event no longer exists on the server.")
+            Load.TooLarge -> return@onTarget tooLarge()
+        }
+        val etag = event.etag ?: return@onTarget noVersion()
         attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "change")?.let { return@onTarget it }
         val following = uidFor(a.idempotencyKey)
         val followingUrl = server.resolve(event.url, event.path.resource.substringBeforeLast('/') + "/" + following + ".ics")
-        if (a.scope == EventScope.FOLLOWING && server.exists(followingUrl) && event.path.occurrence?.let { IcalEdit.hasOccurrence(event.ics, it) } == false) {
-            return@onTarget ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
-        }
         val change = EventChange(
             a.start?.toJava(), a.end?.toJava(), a.title, a.description, a.location, a.url, a.allDay, a.repeat, zoneOf(a.zone),
         )
         val edited = try {
+            // a re-delivered split: the original already ends before the occurrence and the new series is there
+            val delivered = a.scope == EventScope.FOLLOWING && server.exists(followingUrl) &&
+                event.path.occurrence?.let { !IcalEdit.hasOccurrence(event.ics, it) } == true
+            if (delivered) return@onTarget done
             IcalEdit.updated(event.ics, event.path.occurrence, a.scope, change, following)
         } catch (e: IllegalArgumentException) {
             return@onTarget failed(e.message ?: "This event can't be edited.")
         }
         try {
-            if (edited is Edited.Split) putNew(server, followingUrl, edited.following)
-            server.putCalendar(event.url, if (edited is Edited.Split) edited.original else (edited as Edited.Replace).ics, ifMatch = event.etag)
+            when (edited) {
+                Edited.Applied -> return@onTarget done
+                is Edited.Replace -> server.putCalendar(event.url, edited.ics, ifMatch = etag)
+                is Edited.Split -> {
+                    putNew(server, followingUrl, edited.following)
+                    server.putCalendar(event.url, edited.original, ifMatch = etag)
+                }
+            }
         } catch (_: PreconditionFailedException) {
             return@onTarget failed("The event changed on the server while it was being edited; trying again with the new version.", retryable = true)
         }
-        ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+        done
     }
 
     suspend fun cancelEvent(a: ProposedAction.CancelEvent, target: SourceId?): ActionOutcome = onTarget("event", target) { server, config, path ->
+        val done = ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
         val discovery = server.discover()
-        val event = load(server, config, path) ?: return@onTarget ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+        val event = when (val loaded = load(server, config, path)) {
+            is Load.Found -> loaded.event
+            Load.Gone -> return@onTarget done
+            Load.TooLarge -> return@onTarget tooLarge()
+        }
+        val etag = event.etag ?: return@onTarget noVersion()
         attendeeRefusal(server, discovery, config, event.url, event.ics, a.notifyAttendees, "cancel")?.let { return@onTarget it }
         val removal = try {
+            // a re-delivery: the occurrence is already excluded or cut off
+            if (event.path.occurrence?.let { IcalEdit.alreadyCancelled(event.ics, it, a.scope) } == true) return@onTarget done
             IcalEdit.cancelled(event.ics, event.path.occurrence, a.scope)
         } catch (e: IllegalArgumentException) {
             return@onTarget failed(e.message ?: "This event can't be cancelled.")
         }
         try {
             when (removal) {
-                Removal.Delete -> server.deleteCalendar(event.url, ifMatch = event.etag)
-                is Removal.Replace -> server.putCalendar(event.url, removal.ics, ifMatch = event.etag)
+                Removal.Delete -> server.deleteCalendar(event.url, ifMatch = etag)
+                is Removal.Replace -> server.putCalendar(event.url, removal.ics, ifMatch = etag)
             }
         } catch (_: PreconditionFailedException) {
             return@onTarget failed("The event changed on the server while it was being cancelled; trying again with the new version.", retryable = true)
         }
-        ActionOutcome.Done(SourceId(sourceIdOf(config.id, path)))
+        done
     }
 
     /** Answers for the whole event: a repeating one is answered as a series, whichever occurrence is named. */
@@ -204,7 +239,8 @@ class DavActions(
         if (AUTO_SCHEDULE !in server.capabilities(url)) {
             return@onTarget failed("This calendar server does not send replies to organizers itself (no CalDAV scheduling), so I can't answer the invitation.")
         }
-        val (etag, bytes) = server.get(url, 1_000_000) ?: return@onTarget failed("The invitation could not be read.")
+        val (etag, bytes) = server.get(url, EDIT_LIMIT) ?: return@onTarget failed("The invitation is too large to answer here.")
+        if (etag == null) return@onTarget noVersion()
         val ics = bytes.toString(Charsets.UTF_8)
         val updated = try {
             myAddresses(discovery, config).firstNotNullOfOrNull { Ical.responded(ics, it, a.response) }

@@ -34,11 +34,13 @@ data class Constitution(
 ) {
     /**
      * The tier the person set for [kind]; a kind they said nothing about asks first. Changing or
-     * cancelling an event is never looser than what they said about moving one.
+     * cancelling an event with no setting of its own follows what they said about moving one when
+     * that is stricter (the phone no longer shows moving); a setting of its own always wins.
      */
     fun autonomyOf(kind: ActionKind): AutonomyTier {
-        val own = autonomy[kind] ?: AutonomyTier.ASK_FIRST
-        return if (kind == ActionKind.UPDATE_EVENT || kind == ActionKind.CANCEL_EVENT) maxOf(own, autonomy[ActionKind.MOVE_EVENT] ?: own) else own
+        autonomy[kind]?.let { return it }
+        val inherits = kind == ActionKind.UPDATE_EVENT || kind == ActionKind.CANCEL_EVENT
+        return if (inherits) maxOf(AutonomyTier.ASK_FIRST, autonomy[ActionKind.MOVE_EVENT] ?: AutonomyTier.ASK_FIRST) else AutonomyTier.ASK_FIRST
     }
 
     companion object {

@@ -40,6 +40,9 @@ class FakeDav(private val autoSchedule: Boolean = true) {
     /** Called before a PUT or DELETE is judged, to let a test change the resource the way a concurrent writer would. */
     var beforeWrite: ((String) -> Unit)? = null
 
+    /** A server that does not send ETags on GET. */
+    var omitEtag = false
+
     val deletedPaths = mutableListOf<String>()
 
     fun delete(path: String) { files.remove(path); deletedPaths += path; tokenCounter++ }
@@ -90,7 +93,8 @@ class FakeDav(private val autoSchedule: Boolean = true) {
                 else -> respond("", HttpStatusCode.NotImplemented)
             }
             "GET" -> files[path]?.takeIf { !it.collection }?.let { f ->
-                respond(f.bytes, HttpStatusCode.OK, headersOf(HttpHeaders.ContentType to listOf(f.contentType), HttpHeaders.ETag to listOf(f.etag)))
+                val headers = if (omitEtag) headersOf(HttpHeaders.ContentType, f.contentType) else headersOf(HttpHeaders.ContentType to listOf(f.contentType), HttpHeaders.ETag to listOf(f.etag))
+                respond(f.bytes, HttpStatusCode.OK, headers)
             } ?: respond("", HttpStatusCode.NotFound)
             "PUT" -> {
                 beforeWrite?.invoke(path)
