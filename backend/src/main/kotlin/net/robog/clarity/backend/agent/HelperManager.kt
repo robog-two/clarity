@@ -476,7 +476,8 @@ class HelperManager(
     }
 
     /** Waits for every running helper to finish (tests). */
-    internal suspend fun joinAll() = jobs.values.toList().forEach { it.join() }
+    // toTypedArray, not toList: a helper that finishes meanwhile shrinks the map, which toList does not survive.
+    internal suspend fun joinAll() = jobs.values.toTypedArray().forEach { it.join() }
 
     /** Starts the run's job; false when one is already active for it. */
     private suspend fun start(run: HelperRun): Boolean {

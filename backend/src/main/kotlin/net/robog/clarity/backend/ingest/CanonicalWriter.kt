@@ -103,6 +103,8 @@ private fun <T : CanonicalTable> JdbcTransaction.upsert(
     }
     return when (val identity = identityFor(linked, linkedShared, owner)) {
         is Identity.Existing -> { merge(identity.id, rekey = false); Upserted(identity.id, created = false, orphaned = identity.orphaned) }
+        // Two batches taking the same new key at once fail one of them on the unique key; the
+        // connector retries that batch, which then merges (rare: two sources becoming one record).
         is Identity.Rekey -> { merge(identity.id, rekey = true); Upserted(identity.id, created = false) }
         Identity.Insert -> {
             val proposed = Uuid.random()

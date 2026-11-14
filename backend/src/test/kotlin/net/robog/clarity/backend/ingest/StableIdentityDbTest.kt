@@ -32,6 +32,7 @@ class StableIdentityDbTest : FunSpec({
     val postgres = PostgreSQLContainer("postgres:18-alpine")
     lateinit var service: IngestService
     lateinit var database: Database
+    val published = mutableListOf<Ingested>()
     val t0 = Instant.parse("2026-11-14T15:05:00Z")
 
     beforeSpec {
@@ -47,7 +48,7 @@ class StableIdentityDbTest : FunSpec({
         }
         val bus = object : IngestEventBus {
             override val events = MutableSharedFlow<Ingested>()
-            override suspend fun publish(event: Ingested) = Unit
+            override suspend fun publish(event: Ingested) { published += event }
         }
         service = IngestService(database, Clock.System, bus)
     }
@@ -73,6 +74,8 @@ class StableIdentityDbTest : FunSpec({
         val created = push("dav", "cal/a.ics", "1", event(t0)).shouldBeInstanceOf<RecordOutcome.Created>()
         val moved = push("dav", "cal/a.ics", "2", event(t0 + kotlin.time.Duration.parse("2d"))).shouldBeInstanceOf<RecordOutcome.Merged>()
         moved.entityId shouldBe created.entityId
+        // a moved event is not a new one: nothing that waits for new events wakes again
+        published.last().created shouldBe false
         live() shouldBe before + 1
         transaction(database) {
             CalendarEvents.selectAll().where { CalendarEvents.id eq kotlin.uuid.Uuid.parse(created.entityId.value) }.single()[CalendarEvents.startAt]
@@ -95,5 +98,19 @@ class StableIdentityDbTest : FunSpec({
         transaction(database) {
             CalendarEvents.selectAll().where { CalendarEvents.id eq kotlin.uuid.Uuid.parse(shared.value) }.single()[CalendarEvents.startAt]
         } shouldBe t0
+        // the first source still has the shared record; the second has its own at the new time
+        push("dav", "cal/d.ics", "1", event(t0, uid = "d@example.com")).shouldBeInstanceOf<RecordOutcome.Unchanged>().entityId shouldBe shared
+        transaction(database) {
+            CalendarEvents.selectAll().where { CalendarEvents.id eq kotlin.uuid.Uuid.parse(split.value) }.single()[CalendarEvents.startAt]
+        } shouldBe t0 + kotlin.time.Duration.parse("1h")
+    }
+
+    test("a deleted event that comes back, moved, revives its own record") {
+        val before = live()
+        val id = push("dav", "cal/e.ics", "1", event(t0, title = "Dentist")).id()
+        service.ingest(ConnectorId("dav"), IngestBatch(listOf(IngestRecord.Tombstone(SourceId("cal/e.ics"), "2", t0, net.robog.clarity.shared.noun.Noun.CALENDAR_EVENT))))
+        live() shouldBe before
+        push("dav", "cal/e.ics", "3", event(t0 + kotlin.time.Duration.parse("1d"), title = "Dentist")).id() shouldBe id
+        live() shouldBe before + 1
     }
 })
