@@ -24,6 +24,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
@@ -37,6 +38,9 @@ import net.robog.clarity.app.testutil.FakeDeviceKey
 import net.robog.clarity.app.testutil.FakeSessionStore
 import net.robog.clarity.app.testutil.signedIn
 import net.robog.clarity.app.ui.sources.FileState
+import net.robog.clarity.app.ui.sources.HandOver
+import net.robog.clarity.app.ui.sources.canView
+import net.robog.clarity.app.ui.sources.handOverNote
 import net.robog.clarity.app.ui.sources.SourceViewModel
 import net.robog.clarity.app.ui.sources.attachmentLine
 import net.robog.clarity.app.ui.sources.fileError
@@ -134,9 +138,19 @@ class SourcePresentationTest {
         assertEquals("evil.txt", safeFileName("..\\..\\evil.txt", "2"))
         assertEquals("hidden", safeFileName(".hidden", "2"))
         assertEquals("a b.pdf", safeFileName("a\u0000 b?.pdf", "2"))
+        assertEquals("a b.pdf", safeFileName("a\u0000 b?.pdf", "2"))
         assertEquals("attachment-13", safeFileName(null, "1.3"))
         assertEquals("attachment-2", safeFileName("   ", "2"))
-        assertTrue(safeFileName("x".repeat(500), "1").length <= 120)
+        assertTrue(safeFileName("x".repeat(500), "1").length <= 80)
+        // The extension survives a long name, and the bytes stay under the file system's limit.
+        val long = safeFileName("é".repeat(300) + ".pdf", "1")
+        assertTrue(long.endsWith(".pdf"))
+        assertTrue(long.toByteArray().size <= 200)
+        assertEquals(80, safeFileName("a".repeat(300) + ".pdf", "1").length)
+        // Bidi overrides and other format characters are gone.
+        assertEquals("fdp.exe", safeFileName("\u202Efdp.exe", "1"))
+        assertEquals("ab.txt", safeFileName("a\u200Bb\u2066.txt", "1"))
+        assertEquals("pdf", safeFileName("\u202E.pdf", "2"))
     }
 
     @Test fun onlyWebAddressesGoToTheBrowser() {
@@ -150,12 +164,41 @@ class SourcePresentationTest {
 
     @Test fun theCardsRowsAndHeading() {
         val entity = SourceItem.Entity("m1", SourceKind.MESSAGE, "Lunch", "Sam Example · 2026-10-25 (Sun)", attachments = 2)
-        assertEquals("Sam Example · 2026-10-25 (Sun), 2 files", sourceItemLine(entity))
-        assertEquals("1 file", sourceItemLine(entity.copy(sub = "", attachments = 1)))
-        assertEquals("", sourceItemLine(entity.copy(sub = "", attachments = 0)))
+        assertEquals("Sam Example · 2026-10-25 (Sun), 2 files", sourceItemLine(entity, newYork))
+        // With the raw time the phone shows it on its own clock.
+        val timed = entity.copy(by = "Sam Example", at = Instant.parse("2026-10-26T01:00:00Z"))
+        assertEquals("Sam Example · Sun Oct 25, 9:00 pm, 2 files", sourceItemLine(timed, newYork))
+        assertEquals("Mon Oct 26, 1:00 am, 2 files", sourceItemLine(timed.copy(by = ""), TimeZone.UTC))
+        // An all-day event is its date, whatever the zone.
+        val allDay = SourceItem.Entity("e1", SourceKind.EVENT, "Holiday", "Tue Oct 27", day = LocalDate(2026, 10, 27))
+        assertEquals("Tue Oct 27", sourceItemLine(allDay, newYork))
+        assertEquals("Tue Oct 27", sourceItemLine(allDay, TimeZone.of("Pacific/Auckland")))
+        assertEquals("", sourceItemLine(SourceItem.Unknown, newYork))
+        assertEquals("1 file", sourceItemLine(entity.copy(sub = "", attachments = 1), newYork))
+        assertEquals("", sourceItemLine(entity.copy(sub = "", attachments = 0), newYork))
         assertEquals("example.com", sourceItemLine(SourceItem.Web("https://example.com/x", "T", "example.com")))
         assertEquals("1 source", sourcesHeading(Card.Sources(listOf(entity))))
         assertEquals("2 sources", sourcesHeading(Card.Sources(listOf(entity, entity))))
+        assertEquals("1 source", sourcesHeading(Card.Sources(listOf(entity, SourceItem.Unknown))))
+    }
+
+    @Test fun onlySafeTypesAreOpenedDirectly() {
+        for (ok in listOf("application/pdf", "image/png", "image/jpeg", "text/plain; charset=utf-8", "audio/mpeg", "video/mp4", "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.oasis.opendocument.text")) assertTrue(canView(ok), ok)
+        for (no in listOf("application/vnd.android.package-archive", "application/octet-stream", null, "", "text/html", "image/svg+xml", "application/zip",
+            "application/x-sh", "application/java-archive", "text/x-shellscript")) assertFalse(canView(no), no.toString())
+    }
+
+    @Test fun aLongTextSaysShortened() {
+        assertTrue(sourceText(message.copy(truncated = true))!!.truncated)
+        assertFalse(sourceText(message)!!.truncated)
+        assertTrue(sourceText(event.copy(truncated = true))!!.truncated)
+    }
+
+    @Test fun handOverNotes() {
+        assertNull(handOverNote(HandOver.Opened))
+        assertEquals("No app can open this file", handOverNote(HandOver.NoApp))
+        assertEquals("Couldn’t save this file. Try again.", handOverNote(HandOver.Failed))
     }
 
     @Test fun momentsAreSpelledOutInFull() {
@@ -237,7 +280,7 @@ class SourceViewModelTest {
         assertEquals("2", open?.part)
         assertContentEquals(byteArrayOf(1, 2, 3), open?.file?.bytes)
         assertTrue(vm.state.value.files.isEmpty())
-        vm.opened(ok = true)
+        vm.opened(HandOver.Opened)
         assertNull(vm.state.value.open)
         assertNull(vm.state.value.note)
     }
@@ -285,10 +328,14 @@ class SourceViewModelTest {
         advanceUntilIdle()
         vm.download("2")
         advanceUntilIdle()
-        vm.opened(ok = false)
+        vm.opened(HandOver.NoApp)
         assertEquals("No app can open this file", vm.state.value.note)
         vm.noteShown()
         assertNull(vm.state.value.note)
+        vm.download("2")
+        advanceUntilIdle()
+        vm.opened(HandOver.Failed)
+        assertEquals("Couldn’t save this file. Try again.", vm.state.value.note)
     }
 }
 

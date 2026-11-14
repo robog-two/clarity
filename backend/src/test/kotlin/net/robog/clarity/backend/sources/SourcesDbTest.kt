@@ -80,7 +80,8 @@ class SourcesDbTest : FunSpec({
     lateinit var feed: FeedService
     val clock = Clock.System
     val me = Handle.email("me@example.com", "Me")
-    val lead = Uuid.random().toString()
+    // A fresh run per test: the resolver keeps its index of a run while the journal keeps its length.
+    var lead = Uuid.random().toString()
 
     fun addMessage(name: String, subject: String, attachments: List<AttachmentMeta> = emptyList()): String {
         val payload = MessagePayload(
@@ -132,7 +133,10 @@ class SourcesDbTest : FunSpec({
         )
     }
     afterSpec { postgres.stop() }
-    beforeTest { database.tx { exec("TRUNCATE feed_item, agent_journal RESTART IDENTITY CASCADE") } }
+    beforeTest {
+        lead = Uuid.random().toString()
+        database.tx { exec("TRUNCATE feed_item, agent_journal RESTART IDENTITY CASCADE") }
+    }
 
     test("a record the lead read is cited with its title and sub line from the database, not the model") {
         val lunch = addMessage("lunch", "Lunch Friday")
@@ -140,7 +144,7 @@ class SourcesDbTest : FunSpec({
         val forged = buildJsonObject { put("id", lunch); put("title", "Trust me"); put("sub", "Totally") }
         send(forged).shouldBeInstanceOf<ToolResult.Ok>()
         val card = postedSources().single()
-        card.items shouldBe listOf(SourceItem.Entity(lunch, net.robog.clarity.shared.source.SourceKind.MESSAGE, "Lunch Friday", "Sam Example · 2026-10-26 (Mon)", 0))
+        card.items shouldBe listOf(SourceItem.Entity(lunch, net.robog.clarity.shared.source.SourceKind.MESSAGE, "Lunch Friday", "Sam Example · Mon Oct 26, 11:00 am", 0, "Sam Example", Instant.parse("2026-10-26T15:00:00Z")))
         card.fallbackText shouldBe "Sources. Lunch Friday."
     }
 
@@ -192,6 +196,16 @@ class SourcesDbTest : FunSpec({
         both.message shouldNotContain a
         send(id(a), id(a.uppercase())).shouldBeInstanceOf<ToolResult.Ok>()
         postedSources().single().items.size shouldBe 1
+    }
+
+    test("a read in a later step counts, an echo and the same step do not") {
+        val a = addMessage("later", "Later")
+        val echo = Uuid.random().toString()
+        journal.append(lead, Message(Role.ASSISTANT, listOf(Block.ToolUse(echo, "create_trigger", buildJsonObject { put("q", "x") }))))
+        journal.append(lead, Message(Role.USER, listOf(Block.Result(echo, "created, about $a"))))
+        send(id(a)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "later step"
+        journalResult(lead, "id $a")
+        send(id(a)).shouldBeInstanceOf<ToolResult.Ok>()
     }
 
     test("outside a run nothing can be cited") {

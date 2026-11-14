@@ -24,6 +24,16 @@ sealed interface FileState {
     data class Failed(val message: String) : FileState
 }
 
+/** What came of handing a downloaded file to the phone. */
+enum class HandOver { Opened, NoApp, Failed }
+
+/** Pure: the short message for a hand-over that did not open; null when it did. */
+fun handOverNote(result: HandOver): String? = when (result) {
+    HandOver.Opened -> null
+    HandOver.NoApp -> "No app can open this file"
+    HandOver.Failed -> "Couldn’t save this file. Try again."
+}
+
 /** A downloaded attachment for the screen to hand to the phone (it opens or shares it, then calls [SourceViewModel.opened]). */
 class FileRequest(val part: String, val file: SourceFile, val name: String)
 
@@ -104,8 +114,8 @@ class SourceViewModel(private val repository: SourcesRepository) : ViewModel() {
         }
     }
 
-    /** The screen handed [SourceUiState.open] over; [ok] false when nothing on the phone could take it. */
-    fun opened(ok: Boolean = true) = _state.update { it.copy(open = null, note = if (ok) it.note else "No app can open this file") }
+    /** The screen handed [SourceUiState.open] over; [result] says whether it opened. */
+    fun opened(result: HandOver = HandOver.Opened) = _state.update { it.copy(open = null, note = handOverNote(result) ?: it.note) }
 
     fun noteShown() = _state.update { it.copy(note = null) }
 }

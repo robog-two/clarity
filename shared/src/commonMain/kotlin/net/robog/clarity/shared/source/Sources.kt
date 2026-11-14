@@ -1,6 +1,9 @@
 package net.robog.clarity.shared.source
 
 import kotlin.time.Instant
+import kotlinx.datetime.LocalDate
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -15,12 +18,22 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
 /** What a cited record is. Wire names are the `kind` of a [SourceItem.Entity]. */
-@Serializable
-enum class SourceKind {
-    @SerialName("message") MESSAGE,
-    @SerialName("event") EVENT,
-    @SerialName("document") DOCUMENT,
-    @SerialName("contact") CONTACT,
+@Serializable(with = SourceKindSerializer::class)
+enum class SourceKind(val wire: String) {
+    MESSAGE("message"),
+    EVENT("event"),
+    DOCUMENT("document"),
+    CONTACT("contact"),
+
+    /** A kind a newer server sent; drawn with a plain icon. */
+    UNKNOWN("unknown"),
+}
+
+/** Reads a kind by its wire name; a name this build does not know is [SourceKind.UNKNOWN], never an error. */
+object SourceKindSerializer : KSerializer<SourceKind> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("SourceKind", PrimitiveKind.STRING)
+    override fun deserialize(decoder: Decoder): SourceKind = decoder.decodeString().let { name -> SourceKind.entries.firstOrNull { it.wire == name } ?: SourceKind.UNKNOWN }
+    override fun serialize(encoder: Encoder, value: SourceKind) = encoder.encodeString(value.wire)
 }
 
 /**
@@ -43,7 +56,16 @@ sealed interface SourceItem {
         val sub: String = "",
         /** Files attached to a message; 0 for anything else. */
         val attachments: Int = 0,
+        /** The sender of a message, for the device to put in front of the time. */
+        val by: String = "",
+        /** When a message was sent or a timed event starts: the device shows it on its own clock. */
+        val at: Instant? = null,
+        /** The day of an all-day event, which has no clock time and never shifts with a time zone. */
+        val day: LocalDate? = null,
     ) : SourceItem
+
+    /** An item this build cannot read (a newer server's, or the model's own malformed one): not drawn. */
+    data object Unknown : SourceItem { override val title: String get() = "" }
 
     /** A page on the web; [host] is what the person judges it by (punycode, so look-alike letters show). */
     @Serializable
@@ -54,7 +76,10 @@ sealed interface SourceItem {
     ) : SourceItem
 }
 
-/** Decodes an item by its keys and encodes it as the plain object of its class (no `type`). */
+/**
+ * Decodes an item by its keys and encodes it as the plain object of its class (no `type`). An item with
+ * neither key is [SourceItem.Unknown] so one odd item never breaks the feed; `send_to_user` refuses it.
+ */
 object SourceItemSerializer : KSerializer<SourceItem> {
     override val descriptor: SerialDescriptor = JsonObject.serializer().descriptor
 
@@ -64,7 +89,7 @@ object SourceItemSerializer : KSerializer<SourceItem> {
         return when {
             obj["url"] is JsonPrimitive -> input.json.decodeFromJsonElement(SourceItem.Web.serializer(), obj)
             obj["id"] is JsonPrimitive -> input.json.decodeFromJsonElement(SourceItem.Entity.serializer(), obj)
-            else -> throw SerializationException("A source is {\"id\": ...} or {\"url\": ...}")
+            else -> SourceItem.Unknown
         }
     }
 
@@ -74,6 +99,7 @@ object SourceItemSerializer : KSerializer<SourceItem> {
             when (value) {
                 is SourceItem.Entity -> output.json.encodeToJsonElement(SourceItem.Entity.serializer(), value)
                 is SourceItem.Web -> output.json.encodeToJsonElement(SourceItem.Web.serializer(), value)
+                SourceItem.Unknown -> JsonObject(emptyMap())
             },
         )
     }
@@ -97,6 +123,9 @@ sealed interface SourceView {
     val id: String
     val title: String
 
+    /** The long text was cut to keep the answer small; the app says "Shortened". */
+    val truncated: Boolean
+
     @Serializable @SerialName("message")
     data class Message(
         override val id: String,
@@ -110,6 +139,7 @@ sealed interface SourceView {
         val account: String,
         val body: String,
         val attachments: List<SourceAttachment> = emptyList(),
+        override val truncated: Boolean = false,
     ) : SourceView
 
     @Serializable @SerialName("event")
@@ -125,6 +155,7 @@ sealed interface SourceView {
         val link: String? = null,
         val repeats: String? = null,
         val attendees: List<String> = emptyList(),
+        override val truncated: Boolean = false,
     ) : SourceView
 
     @Serializable @SerialName("document")
@@ -136,6 +167,7 @@ sealed interface SourceView {
         val size: Long? = null,
         val modifiedAt: Instant? = null,
         val excerpt: String = "",
+        override val truncated: Boolean = false,
     ) : SourceView
 
     @Serializable @SerialName("contact")
@@ -145,5 +177,6 @@ sealed interface SourceView {
         val organization: String? = null,
         val handles: List<String> = emptyList(),
         val notes: String? = null,
+        override val truncated: Boolean = false,
     ) : SourceView
 }

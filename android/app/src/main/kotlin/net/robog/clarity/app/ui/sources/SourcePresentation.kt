@@ -9,12 +9,14 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.source.SourceAttachment
 import net.robog.clarity.shared.source.SourceItem
 import net.robog.clarity.shared.source.SourceView
+import net.robog.clarity.shared.source.dayLine
+import net.robog.clarity.shared.source.momentLine
 
 /** A labelled line in the viewer, such as "From" and who. */
 data class Fact(val label: String, val value: String)
 
 /** The viewer's long text: a message's body, an event's details, a file's excerpt, a contact's notes. */
-data class SourceText(val label: String, val text: String)
+data class SourceText(val label: String, val text: String, val truncated: Boolean = false)
 
 /** Pure: what the viewer's top line says the record is. */
 fun sourceKind(view: SourceView): String = when (view) {
@@ -70,11 +72,41 @@ fun typeLabel(mimeType: String?): String {
 fun attachmentLine(attachment: SourceAttachment): String =
     listOfNotNull(typeLabel(attachment.mimeType), attachment.size?.let(::fileSize)).joinToString(", ")
 
-/** Pure: a name for a file in the cache that cannot climb out of it or hide: no path, no control characters, never empty. */
+/** Longest file name kept, in characters; with the extension and in UTF-8 it stays far under a file system's 255 bytes. */
+private const val MAX_NAME_CHARS = 80
+private const val MAX_NAME_BYTES = 200
+
+/**
+ * Pure: a name for a file in the cache that cannot climb out of it, hide, or be too long for the file
+ * system: no path, no control or format characters (such as a right-to-left override), no leading dots,
+ * at most [MAX_NAME_CHARS] characters and [MAX_NAME_BYTES] bytes in UTF-8, the extension kept; never empty.
+ */
 fun safeFileName(name: String?, part: String): String {
     val cleaned = name.orEmpty().substringAfterLast('/').substringAfterLast('\\')
-        .filter { !it.isISOControl() && it !in "<>:\"|?*" }.trim().trimStart('.').take(120)
-    return cleaned.ifEmpty { "attachment-" + part.filter { it.isLetterOrDigit() }.ifEmpty { "file" } }
+        .filter { !it.isISOControl() && Character.getType(it) != Character.FORMAT.toInt() && it !in "<>:\"|?*" }.trim().trimStart('.')
+    val dot = cleaned.lastIndexOf('.')
+    val extension = if (dot > 0 && cleaned.length - dot <= 12) cleaned.substring(dot) else ""
+    var base = cleaned.removeSuffix(extension).take((MAX_NAME_CHARS - extension.length).coerceAtLeast(1))
+    while (base.isNotEmpty() && (base + extension).toByteArray(Charsets.UTF_8).size > MAX_NAME_BYTES) base = base.dropLast(1)
+    base = base.trimEnd()
+    return if (base.isEmpty()) "attachment-" + part.filter { it.isLetterOrDigit() }.ifEmpty { "file" } + extension else base + extension
+}
+
+/**
+ * Pure: whether a file of [mimeType] may be handed to another app to open: documents, pictures, plain
+ * text, office files, audio and video. Anything else (an installer, a script, an unknown type) goes to
+ * the share sheet and is never opened directly.
+ */
+fun canView(mimeType: String?): Boolean {
+    val type = mimeType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
+    return when {
+        type == "application/pdf" || type == "text/plain" -> true
+        type.startsWith("image/") -> type != "image/svg+xml"
+        type.startsWith("audio/") || type.startsWith("video/") -> true
+        type == "application/msword" || type == "application/vnd.ms-excel" || type == "application/vnd.ms-powerpoint" -> true
+        type.startsWith("application/vnd.openxmlformats-officedocument.") || type.startsWith("application/vnd.oasis.opendocument.") -> true
+        else -> false
+    }
 }
 
 /** Pure: the lines under the viewer's title. */
@@ -107,10 +139,10 @@ fun sourceFacts(view: SourceView, zone: TimeZone): List<Fact> = when (view) {
 
 /** Pure: the viewer's long text, or null when the record has none. */
 fun sourceText(view: SourceView): SourceText? = when (view) {
-    is SourceView.Message -> SourceText("Message", view.body)
-    is SourceView.Event -> view.description?.let { SourceText("Details", it) }
-    is SourceView.Document -> view.excerpt.takeIf(String::isNotBlank)?.let { SourceText("Excerpt", it) }
-    is SourceView.Contact -> view.notes?.let { SourceText("Notes", it) }
+    is SourceView.Message -> SourceText("Message", view.body, view.truncated)
+    is SourceView.Event -> view.description?.let { SourceText("Details", it, view.truncated) }
+    is SourceView.Document -> view.excerpt.takeIf(String::isNotBlank)?.let { SourceText("Excerpt", it, view.truncated) }
+    is SourceView.Contact -> view.notes?.let { SourceText("Notes", it, view.truncated) }
 }
 
 /** Pure: the files of a message, as the viewer lists them. */
@@ -120,14 +152,26 @@ fun sourceAttachments(view: SourceView): List<SourceAttachment> = (view as? Sour
 fun isWebAddress(url: String): Boolean =
     (url.startsWith("https://", ignoreCase = true) || url.startsWith("http://", ignoreCase = true)) && url.none { it.isWhitespace() || it.isISOControl() }
 
-/** Pure: the line under an item's title on the card: sender and date, or the site. */
-fun sourceItemLine(item: SourceItem): String = when (item) {
-    is SourceItem.Entity -> listOfNotNull(
-        item.sub.takeIf(String::isNotBlank),
-        item.attachments.takeIf { it > 0 }?.let { if (it == 1) "1 file" else "$it files" },
-    ).joinToString(", ")
+/**
+ * Pure: the line under an item's title: sender and when (on the phone's clock [zone]; an all-day event as
+ * its date, never shifted), the path or company, or the site. An item from a server that sends no raw
+ * time shows the server's own words.
+ */
+fun sourceItemLine(item: SourceItem, zone: TimeZone = TimeZone.currentSystemDefault()): String = when (item) {
+    is SourceItem.Entity -> {
+        val when_ = item.at?.let { momentLine(it, zone) } ?: item.day?.let(::dayLine)
+        val main = if (when_ != null) listOf(item.by, when_).filter(String::isNotBlank).joinToString(" · ") else item.sub
+        listOfNotNull(
+            main.takeIf(String::isNotBlank),
+            item.attachments.takeIf { it > 0 }?.let { if (it == 1) "1 file" else "$it files" },
+        ).joinToString(", ")
+    }
     is SourceItem.Web -> item.host
+    SourceItem.Unknown -> ""
 }
 
+/** Pure: the items of a card this build can draw. */
+fun drawable(card: Card.Sources): List<SourceItem> = card.items.filter { it != SourceItem.Unknown }
+
 /** Pure: the card's heading: "1 source", "3 sources". */
-fun sourcesHeading(card: Card.Sources): String = if (card.items.size == 1) "1 source" else "${card.items.size} sources"
+fun sourcesHeading(card: Card.Sources): String = drawable(card).size.let { if (it == 1) "1 source" else "$it sources" }

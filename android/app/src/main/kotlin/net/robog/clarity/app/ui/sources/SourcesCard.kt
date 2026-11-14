@@ -49,10 +49,11 @@ fun SourcesCardView(card: Card.Sources, onOpenRecord: ((String) -> Unit)?, modif
     val uri = LocalUriHandler.current
     Column(modifier.widthIn(max = MaxCard).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
         Kicker(sourcesHeading(card), heading = true)
-        CardGroup(card.items) { item, shape, _ ->
+        CardGroup(drawable(card)) { item, shape, _ ->
             val open: (() -> Unit)? = when (item) {
                 is SourceItem.Entity -> onOpenRecord?.let { { it(item.id) } }
                 is SourceItem.Web -> if (isWebAddress(item.url)) ({ runCatching { uri.openUri(item.url) }; Unit }) else null
+                SourceItem.Unknown -> null
             }
             SourceRow(item, shape, open)
         }
@@ -83,10 +84,12 @@ private fun SourceRow(item: SourceItem, shape: Shape, onClick: (() -> Unit)?) {
 
 private fun itemIcon(item: SourceItem): ImageVector = when (item) {
     is SourceItem.Web -> Icons.Outlined.Language
+    SourceItem.Unknown -> Icons.Outlined.Description
     is SourceItem.Entity -> when (item.kind) {
         SourceKind.MESSAGE -> Icons.Outlined.Email
         SourceKind.EVENT -> Icons.Outlined.CalendarMonth
         SourceKind.DOCUMENT -> Icons.Outlined.Description
         SourceKind.CONTACT -> Icons.Outlined.Person
+        SourceKind.UNKNOWN -> Icons.Outlined.Description
     }
 }

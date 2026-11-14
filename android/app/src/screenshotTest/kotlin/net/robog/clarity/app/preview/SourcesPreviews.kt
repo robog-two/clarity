@@ -33,8 +33,8 @@ private fun Sources(dark: Boolean, content: @Composable () -> Unit) {
 
 private val card = Card.Sources(
     listOf(
-        SourceItem.Entity("m1", SourceKind.MESSAGE, "Lunch on Friday", "Sam Example · 2026-10-25 (Sun)", attachments = 2),
-        SourceItem.Entity("e1", SourceKind.EVENT, "Dentist", "2026-10-27T10:00-04:00 (Tue)"),
+        SourceItem.Entity("m1", SourceKind.MESSAGE, "Lunch on Friday", "Sam Example · Sun Oct 25, 9:00 pm", attachments = 2, by = "Sam Example", at = Instant.parse("2026-10-26T01:00:00Z")),
+        SourceItem.Entity("e1", SourceKind.EVENT, "Dentist", "Tue Oct 27, 10:00 am", at = Instant.parse("2026-10-27T14:00:00Z")),
         SourceItem.Entity("d1", SourceKind.DOCUMENT, "Taxes 2025", "/Taxes/2025.pdf"),
         SourceItem.Web("https://example.com/guide", "Garden guide for spring planting", "example.com"),
     ),
@@ -96,3 +96,5 @@ private val event = SourceView.Event(
 @PreviewTest @ShortPreview @Composable fun SourceLoading() = Viewer(false, SourceUiState())
 @PreviewTest @ShortPreview @Composable fun SourceErrorLight() = Viewer(false, SourceUiState(loading = false, error = "Can’t find this. It may have been removed."))
 @PreviewTest @ShortPreview @Composable fun SourceErrorDark() = Viewer(true, SourceUiState(loading = false, error = "Can’t find this. It may have been removed."))
+
+@PreviewTest @LongPreview @Composable fun SourceMessageShortenedLight() = Viewer(false, SourceUiState(loading = false, view = message.copy(truncated = true, attachments = emptyList())))

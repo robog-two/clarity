@@ -7,6 +7,7 @@ import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlin.time.Instant
+import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -31,6 +32,7 @@ import net.robog.clarity.shared.source.SourceView
 private const val ID_A = "8f0c1d2e-0000-4000-8000-00000000000a"
 private const val ID_B = "8f0c1d2e-0000-4000-8000-00000000000b"
 private val newYork = TimeZone.of("America/New_York")
+private val me = Handle.email("me@example.com")
 
 private fun call(id: String, name: String) = Message(Role.ASSISTANT, listOf(Block.ToolUse(id, name, buildJsonObject { put("q", "x") })))
 private fun result(id: String, content: String, error: Boolean = false) = Message(Role.USER, listOf(Block.Result(id, content, error)))
@@ -57,21 +59,34 @@ class SourceRulesTest : FunSpec({
         }
 
         test("an id inside a longer id or word does not count") {
-            containsId("x${ID_A}0", ID_A) shouldBe false
-            containsId("${ID_A}-2", ID_A) shouldBe false
-            containsId("a$ID_A", ID_A) shouldBe false
-            containsId("""{"id":"$ID_A"}""", ID_A) shouldBe true
-            containsId("see $ID_A.", ID_A) shouldBe true
-            containsId(ID_A.uppercase(), ID_A) shouldBe true
+            idRead(ID_A, readsOf(listOf(call("t1", "list_messages"), result("t1", "x${ID_A}0 ${ID_A}-2 a$ID_A")))) shouldBe false
+            val reads = readsOf(listOf(call("t1", "list_messages"), result("t1", """[{"id":"${ID_A.uppercase()}"}] and see $ID_B.""")))
+            idRead(ID_A, reads) shouldBe true
+            idRead(ID_B, reads) shouldBe true
         }
 
         test("a short token never matches") {
-            containsId("id 12 and 123", "12") shouldBe false
+            idRead("12", readsOf(listOf(call("t1", "list_messages"), result("t1", "id 12 and 123")))) shouldBe false
+            idTokens("id 12 and $ID_A") shouldBe setOf(ID_A)
+        }
+
+        test("only a record tool's result counts, not an echo or a helper's prose") {
+            val messages = listOf(
+                call("t1", "create_trigger"), result("t1", """{"created":true,"note":"about $ID_A"}"""),
+                call("t2", "delegate"), result("t2", "The helper found $ID_B in the mail."),
+                call("t3", "check_helper"), result("t3", "done, see $ID_B"),
+            )
+            val reads = readsOf(messages)
+            idRead(ID_A, reads) shouldBe false
+            idRead(ID_B, reads) shouldBe false
+            for (tool in listOf("list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_documents", "read_document")) {
+                idRead(ID_A, readsOf(listOf(call("t", tool), result("t", "id $ID_A")))) shouldBe true
+            }
         }
 
         test("reads of several runs add up") {
-            val lead = readsOf(listOf(result("t1", "id $ID_A")))
-            val helper = readsOf(listOf(result("t2", "id $ID_B")))
+            val lead = readsOf(listOf(call("t1", "list_messages"), result("t1", "id $ID_A")))
+            val helper = readsOf(listOf(call("t2", "search_messages"), result("t2", "id $ID_B")))
             val both = lead + helper
             idRead(ID_A, both) shouldBe true
             idRead(ID_B, both) shouldBe true
@@ -134,11 +149,12 @@ class SourceRulesTest : FunSpec({
         }
 
         test("the unread ones are named in one error") {
-            val reads = readsOf(listOf(result("t1", "id $ID_A")))
+            val reads = readsOf(listOf(call("t1", "list_messages"), result("t1", "id $ID_A")))
             val unread = unreadSources(listOf(SourceItem.Entity(ID_A), SourceItem.Entity(ID_B), SourceItem.Web("https://example.com/x")), reads)
             unread.map { it.label() } shouldContainExactly listOf(ID_B, "https://example.com/x")
             val text = refusal(unread)
             text shouldContain ID_B
+            text shouldContain "later step"
             text shouldContain "https://example.com/x"
             text shouldNotContain ID_A
         }
@@ -161,20 +177,23 @@ class SourceRulesTest : FunSpec({
             val item = entityItem(ID_A, message, newYork)!!
             item.kind shouldBe SourceKind.MESSAGE
             item.title shouldBe "Lunch on Friday"
-            item.sub shouldBe "Sam Example · 2026-10-25 (Sun)"
+            item.sub shouldBe "Sam Example · Sun Oct 25, 9:00 pm"
+            item.by shouldBe "Sam Example"
+            item.at shouldBe message.sentAt
             item.attachments shouldBe 1
         }
 
-        test("a message without a subject is titled by its start") {
-            entityItem(ID_A, message.copy(subject = null), newYork)!!.title shouldBe "Noon at the cafe."
-            entityItem(ID_A, message.copy(subject = " ", body = ""), newYork)!!.title shouldBe "(no subject)"
+        test("a message without a subject has one title, on the card and in the viewer") {
+            entityItem(ID_A, message.copy(subject = null), newYork)!!.title shouldBe "(no subject)"
+            entityItem(ID_A, message.copy(subject = " "), newYork)!!.title shouldBe "(no subject)"
+            sourceView(ID_A, message.copy(subject = null)).title shouldBe "(no subject)"
         }
 
         test("an event, a document and a contact") {
             val event = CalendarEventPayload(calendar = "Home", title = "Dentist", start = Instant.parse("2026-10-27T14:00:00Z"), end = Instant.parse("2026-10-27T15:00:00Z"))
-            entityItem(ID_A, event, newYork)!!.apply { kind shouldBe SourceKind.EVENT; sub shouldBe "2026-10-27T10:00-04:00 (Tue)" }
+            entityItem(ID_A, event, newYork)!!.apply { kind shouldBe SourceKind.EVENT; sub shouldBe "Tue Oct 27, 10:00 am"; at shouldBe event.start; day shouldBe null }
             val allDay = event.copy(allDay = true, start = Instant.parse("2026-10-27T00:00:00Z"), end = Instant.parse("2026-10-28T00:00:00Z"))
-            entityItem(ID_A, allDay, newYork)!!.sub shouldBe "2026-10-27 (Tue)"
+            entityItem(ID_A, allDay, newYork)!!.apply { sub shouldBe "Tue Oct 27"; at shouldBe null; day shouldBe LocalDate(2026, 10, 27) }
             entityItem(ID_A, DocumentPayload("webdav:x", "/Taxes/2025.pdf", "Taxes 2025"), newYork)!!.apply { kind shouldBe SourceKind.DOCUMENT; title shouldBe "Taxes 2025"; sub shouldBe "/Taxes/2025.pdf" }
             entityItem(ID_A, ContactPayload("Sam Example", listOf(Handle.email("sam@example.com")), "Example Co"), newYork)!!.apply { kind shouldBe SourceKind.CONTACT; sub shouldBe "Example Co" }
         }
@@ -193,6 +212,8 @@ class SourceRulesTest : FunSpec({
         test("the card's plain text lists the titles") {
             val card = sourcesCard(listOf(SourceItem.Entity(ID_A, title = "Lunch"), SourceItem.Web("https://example.com", "Guide", "example.com")))
             card.fallbackText shouldBe "Sources. Lunch. Guide."
+            sourcesCard(listOf(SourceItem.Entity(ID_A, title = ""), SourceItem.Web("https://example.com", "Guide", "example.com"))).fallbackText shouldBe "Sources. Guide."
+            sourcesCard(listOf(SourceItem.Entity(ID_A))).fallbackText shouldBe "Sources."
         }
     }
 
@@ -224,6 +245,18 @@ class SourceRulesTest : FunSpec({
             sourceView(ID_A, ContactPayload("Sam Example", listOf(Handle.phone("+15550100")), notes = "Met at lunch")).shouldBeInstanceOf<SourceView.Contact>().apply { handles shouldBe listOf("+15550100"); notes shouldBe "Met at lunch" }
         }
 
+        test("long text is cut with a flag and reordering characters are stripped") {
+            val long = MessagePayload(MessagePayload.Channel.EMAIL, me, me, listOf(me), "S", "a\u202Eb".repeat(40_000), Instant.parse("2026-10-26T01:00:00Z"))
+            val view = sourceView(ID_A, long).shouldBeInstanceOf<SourceView.Message>()
+            view.truncated shouldBe true
+            view.body.length shouldBe MAX_VIEW_TEXT
+            view.body shouldNotContain "\u202E"
+            sourceView(ID_A, long.copy(body = "short\u202Etext")).shouldBeInstanceOf<SourceView.Message>().apply { body shouldBe "shorttext"; truncated shouldBe false }
+            cappedText("x".repeat(9) + "\uD83D\uDE00", 10).first.length shouldBe 9
+            val doc = sourceView(ID_A, DocumentPayload("s", "/p", "T", excerpt = "e".repeat(60_000))).shouldBeInstanceOf<SourceView.Document>()
+            doc.truncated shouldBe true
+        }
+
         test("it round-trips on the wire") {
             val view: SourceView = SourceView.Document(ID_A, "T", "/p", "text/plain", 3, null, "x")
             val text = ClarityJson.encodeToString(SourceView.serializer(), view)
@@ -245,8 +278,25 @@ class SourceRulesTest : FunSpec({
             ClarityJson.decodeFromString(Card.serializer(), text.replace("\"type\":\"sources\"", "\"type\":\"sources_v2\"")) shouldBe Card.Unknown("Sources. Dentist. Guide.")
         }
 
-        test("an item with neither key is an error") {
-            runCatching { ClarityStrictJson.decodeFromString(Card.serializer(), """{"type":"sources","items":[{"title":"x"}]}""") }.isFailure shouldBe true
+        test("an item with neither key decodes as unknown, so a feed never breaks, and the tool refuses it") {
+            val card = ClarityStrictJson.decodeFromString(Card.serializer(), """{"type":"sources","items":[{"title":"x"},{"id":"$ID_A"}]}""") as Card.Sources
+            card.items shouldBe listOf(SourceItem.Unknown, SourceItem.Entity(ID_A))
+            requestedSources(card.items).leftOrNull() shouldContain "\"id\""
+        }
+
+        test("a feed with an unknown kind and an odd item still decodes") {
+            val json = """{"id":"f1","seq":3,"at":"2026-10-28T10:00:00Z","author":"agent","cards":[""" +
+                """{"type":"text","text":"Here."},""" +
+                """{"type":"sources","items":[{"id":"$ID_A","kind":"voicemail","title":"Call"},{"nonsense":true},{"url":"https://example.com/x","title":"T","host":"example.com"}],"fallbackText":"Sources. Call."}]}"""
+            val item = ClarityJson.decodeFromString(net.robog.clarity.shared.feed.FeedItem.serializer(), json)
+            val sources = item.cards[1] as Card.Sources
+            sources.items shouldBe listOf(SourceItem.Entity(ID_A, SourceKind.UNKNOWN, "Call"), SourceItem.Unknown, SourceItem.Web("https://example.com/x", "T", "example.com"))
+        }
+
+        test("a new field on an item is read, an old one without it too") {
+            val item = ClarityJson.decodeFromString(SourceItem.serializer(), """{"id":"$ID_A","kind":"event","title":"D","day":"2026-10-27","at":"2026-10-27T14:00:00Z"}""") as SourceItem.Entity
+            item.day shouldBe LocalDate(2026, 10, 27)
+            item.at shouldBe Instant.parse("2026-10-27T14:00:00Z")
         }
     }
 })

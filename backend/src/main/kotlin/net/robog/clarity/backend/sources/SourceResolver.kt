@@ -7,6 +7,7 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.ktor.http.HttpStatusCode
+import java.util.concurrent.ConcurrentHashMap
 import io.ktor.server.application.Application
 import io.ktor.server.auth.authenticate
 import io.ktor.server.response.respond
@@ -33,8 +34,8 @@ import net.robog.clarity.shared.source.SourceItem
 import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.jdbc.Database
 
-/** Helper runs of the lead whose reads count when it cites a source. */
-private const val MAX_HELPER_RUNS = 50
+/** Helper runs of one lead thread whose reads count (a far larger number than a thread ever starts). */
+private const val MAX_HELPER_RUNS = 5_000
 
 /**
  * Turns the items the agent named in a sources card into the card the person sees: refuses what no run
@@ -49,11 +50,20 @@ class SourceResolver(
     private val journal: RunJournal,
     private val runs: RunStore,
 ) {
-    /** What [runId] and the helpers it started read. */
+    /** The id and page index of each run, kept while its journal has the same length (a journal only grows). */
+    private val indexed = ConcurrentHashMap<String, Pair<Int, RunReads>>()
+
+    private suspend fun readsOfRun(runId: String): RunReads {
+        val messages = journal.load(runId)
+        indexed[runId]?.takeIf { it.first == messages.size }?.let { return it.second }
+        return readsOf(messages).also { indexed[runId] = messages.size to it }
+    }
+
+    /** What [runId] and every helper it started read. */
     suspend fun reads(runId: String?): RunReads {
         if (runId == null) return RunReads.NONE
         val helpers = runs.childrenOf(runId, MAX_HELPER_RUNS).map { it.id }
-        return (listOf(runId) + helpers).fold(RunReads.NONE) { all, id -> all + readsOf(journal.load(id)) }
+        return (listOf(runId) + helpers).fold(RunReads.NONE) { all, id -> all + readsOfRun(id) }
     }
 
     /** The card for [items], or the one error to hand the model. */
@@ -68,6 +78,7 @@ class SourceResolver(
             when (item) {
                 is SourceItem.Entity -> reader.entity(EntityId(item.id))?.let { entityItem(item.id, it.payload, zone) }.also { if (it == null) missing += item }
                 is SourceItem.Web -> webItem(item.url, pageRead(item.url, reads)?.title)
+                SourceItem.Unknown -> null
             }
         }
         return if (missing.isEmpty()) sourcesCard(resolved).right() else refusal(emptyList(), missing).left()

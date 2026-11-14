@@ -33,6 +33,7 @@ import kotlinx.datetime.TimeZone
 import net.robog.clarity.app.ui.components.CardGroup
 import net.robog.clarity.app.ui.components.ClarityListScreen
 import net.robog.clarity.app.ui.components.ErrorBox
+import net.robog.clarity.app.ui.components.Hint
 import net.robog.clarity.app.ui.components.Kicker
 import net.robog.clarity.app.ui.components.LoadingSpinner
 import net.robog.clarity.app.ui.components.SegmentCard
@@ -44,6 +45,9 @@ import net.robog.clarity.shared.source.SourceAttachment
 @Composable
 fun SourceScreen(entityId: String, onBack: () -> Unit, backLabel: String = "Ask", viewModel: SourceViewModel = metroViewModel()) {
     LaunchedEffect(entityId) { viewModel.open(entityId) }
+    // Files from an earlier viewer are cleared once, as this one opens, never while a download is on its way.
+    val appContext = LocalContext.current
+    LaunchedEffect(Unit) { clearDownloads(appContext) }
     val state by viewModel.state.collectAsStateWithLifecycle()
     BackHandler { onBack() }
     val context = LocalContext.current
@@ -112,6 +116,7 @@ fun SourceContent(
                         Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
                             Kicker(body.label, heading = true)
                             SelectionContainer { Text(body.text, style = MaterialTheme.clarityText.reading) }
+                            if (body.truncated) Hint("Shortened")
                         }
                     }
                 }
