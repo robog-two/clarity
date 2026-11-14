@@ -131,7 +131,7 @@ class DavSync(
                 continue
             }
             failures += expansion.failures
-            Ical.withoutUid(ics)?.let { names -> log.warn { "$path has an event without a UID (its properties: ${names.joinToString()}); it is identified by its file instead" } }
+            if (expansion.occurrences.any { it.payload.icalUid.lacksUid() }) Ical.withoutUid(ics)?.let { names -> log.warn { "$path has an event without a UID (its properties: ${names.joinToString()}); it is identified by its file instead" } }
             if (expansion.recurring) recurring += path else recurring -= path
             val ids = expansion.occurrences.associateBy { it.key.orEmpty() }
             val before = old.occurrences[path].orEmpty()
@@ -258,10 +258,6 @@ class DavSync(
 }
 
 /**
- * Source id of a resource of account [accountId]: `<accountId>:<path>` for a calendar object,
- * contact or file, and `<accountId>:<path>#<epoch seconds>` for one occurrence of a recurring event.
- */
-/**
  * The version a calendar record is pushed with: the object's ETag plus [CAL_STATE_VERSION]. The
  * backend skips a version it has seen, so without the mapping's version a fix to how events are
  * read (a lost UID, a new field) would never reach events whose file did not change.
@@ -274,11 +270,18 @@ fun recordVersion(etag: String): String = "$etag#m$CAL_STATE_VERSION"
  * title and times).
  */
 fun CalendarEventPayload.identifiedBy(source: String): CalendarEventPayload =
-    if (icalUid != null) this else copy(icalUid = "$NO_UID_PREFIX$source")
+    if (!icalUid.lacksUid()) this else copy(icalUid = "$NO_UID_PREFIX$source")
+
+/** No UID: none at all, or an occurrence of a series without one (`#<epoch>`). */
+private fun String?.lacksUid(): Boolean = this == null || startsWith("#")
 
 /** Marks a stand-in UID made from the event's file, never a real UID. */
 const val NO_UID_PREFIX = "clarity-source:"
 
+/**
+ * Source id of a resource of account [accountId]: `<accountId>:<path>` for a calendar object,
+ * contact or file, and `<accountId>:<path>#<epoch seconds>` for one occurrence of a recurring event.
+ */
 fun sourceIdOf(accountId: String, path: String, occurrenceKey: String = ""): String =
     "$accountId:" + if (occurrenceKey.isEmpty()) path else "$path#$occurrenceKey"
 

@@ -76,4 +76,12 @@ class RecordPlanningTest : FunSpec({
         identityFor(linked = linked, linkedShared = true, keyOwner = null) shouldBe Identity.Insert
         identityFor(linked = linked, linkedShared = true, keyOwner = owner) shouldBe Identity.Existing(owner, orphaned = null)
     }
+
+    test("a record differs from what is stored only when some field does") {
+        val event = CalendarEventPayload(calendar = "Home", title = "Yoga", start = t0, end = t0)
+        contentDiffers(event, event.copy()) shouldBe false
+        contentDiffers(event, event.copy(title = "Hot yoga")) shouldBe true
+        contentDiffers(event, event.copy(location = "Gym")) shouldBe true
+        contentDiffers(event.copy(location = "Gym"), event) shouldBe true
+    }
 })

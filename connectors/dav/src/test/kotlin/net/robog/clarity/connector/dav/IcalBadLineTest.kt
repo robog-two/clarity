@@ -99,4 +99,11 @@ class IcalBadLineTest : FunSpec({
             Ical.withoutUid(ics) shouldBe null
         }
     }
+
+    test("line ends of any kind become CRLF; folds (space or tab) survive") {
+        Ical.crlf("A:1\nB:2\r\nC:3\rD:4\n E\n\tF") shouldBe "A:1\r\nB:2\r\nC:3\r\nD:4\r\n E\r\n\tF"
+        val tabFolded = listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "BEGIN:VEVENT",
+            "DTSTART:20261114T150500Z", "DTEND:20261114T152000Z", "SUMMARY:Long", "\ttitle", "UID:tab-1", "END:VEVENT", "END:VCALENDAR").joinToString("\n")
+        Ical.events(tabFolded, "Calendar", window).single().payload.apply { icalUid shouldBe "tab-1"; title shouldBe "Longtitle" }
+    }
 })

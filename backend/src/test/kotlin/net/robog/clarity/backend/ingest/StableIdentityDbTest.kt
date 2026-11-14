@@ -113,4 +113,18 @@ class StableIdentityDbTest : FunSpec({
         push("dav", "cal/e.ics", "3", event(t0 + kotlin.time.Duration.parse("1d"), title = "Dentist")).id() shouldBe id
         live() shouldBe before + 1
     }
+
+    test("re-reading an unchanged record under a new version does not mark it changed; a real change does") {
+        fun updatedAt(id: EntityId) = transaction(database) {
+            CalendarEvents.selectAll().where { CalendarEvents.id eq kotlin.uuid.Uuid.parse(id.value) }.single()[CalendarEvents.updatedAt]
+        }
+        val id = push("dav", "cal/f.ics", "1", event(t0, uid = "f@example.com", title = "Yoga")).id()
+        val first = updatedAt(id)
+        Thread.sleep(20)
+        push("dav", "cal/f.ics", "1#m5", event(t0, uid = "f@example.com", title = "Yoga")).id() shouldBe id
+        updatedAt(id) shouldBe first
+        Thread.sleep(20)
+        push("dav", "cal/f.ics", "2#m5", event(t0, uid = "f@example.com", title = "Hot yoga")).id() shouldBe id
+        (updatedAt(id) > first) shouldBe true
+    }
 })
