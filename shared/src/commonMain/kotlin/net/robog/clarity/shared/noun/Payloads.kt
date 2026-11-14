@@ -23,6 +23,10 @@ data class MessagePayload(
     val sentAt: Instant,
     /** Connector-native thread/conversation reference, if any. */
     val threadRef: String? = null,
+    /** The message's own id (an email's `Message-ID`, angle brackets kept), if the source has one. */
+    val messageId: String? = null,
+    /** Files attached to the message: names and sizes only; the bytes stay at the source and are fetched on demand. */
+    val attachments: List<AttachmentMeta> = emptyList(),
 ) : Payload {
     override val noun: Noun get() = Noun.MESSAGE
 
@@ -87,3 +91,18 @@ data class DocumentPayload(
 
     companion object { const val MAX_EXCERPT_BYTES = 8 * 1024 }
 }
+
+/**
+ * One attachment of a message. [part] is the connector's own address of it inside the message
+ * (for email the MIME part path, e.g. `2` or `1.3`), which it uses to fetch the bytes later.
+ */
+@Serializable
+data class AttachmentMeta(
+    val part: String,
+    val filename: String? = null,
+    val mimeType: String = "application/octet-stream",
+    /** Size in bytes as the source reports it (an encoded size may be a little larger than the file), if known. */
+    val size: Long? = null,
+    /** Shown inside the body (an inline image) rather than offered as a file. */
+    val inline: Boolean = false,
+)
