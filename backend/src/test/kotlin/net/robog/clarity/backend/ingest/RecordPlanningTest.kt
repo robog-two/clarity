@@ -61,4 +61,19 @@ class RecordPlanningTest : FunSpec({
         etagMatches("\"2\"", "\"3\"") shouldBe false
         etagMatches(null, "\"3\"") shouldBe false
     }
+
+    test("a row only its source uses follows the source to a new identity; a shared row is left to the others") {
+        val linked = kotlin.uuid.Uuid.random()
+        val owner = kotlin.uuid.Uuid.random()
+        identityFor(linked = null, linkedShared = false, keyOwner = null) shouldBe Identity.Insert
+        identityFor(linked = null, linkedShared = false, keyOwner = owner) shouldBe Identity.Existing(owner, orphaned = null)
+        // a moved event without a UID: same row, new key, id unchanged
+        identityFor(linked = linked, linkedShared = false, keyOwner = null) shouldBe Identity.Rekey(linked)
+        identityFor(linked = linked, linkedShared = false, keyOwner = linked) shouldBe Identity.Existing(linked, orphaned = null)
+        // the source now matches another row: merge there, and its old row has no source left
+        identityFor(linked = linked, linkedShared = false, keyOwner = owner) shouldBe Identity.Existing(owner, orphaned = linked)
+        // another source still uses the old row: never move or delete it
+        identityFor(linked = linked, linkedShared = true, keyOwner = null) shouldBe Identity.Insert
+        identityFor(linked = linked, linkedShared = true, keyOwner = owner) shouldBe Identity.Existing(owner, orphaned = null)
+    }
 })
