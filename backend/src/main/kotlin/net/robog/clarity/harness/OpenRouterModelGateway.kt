@@ -570,8 +570,8 @@ class OpenRouterModelGateway(
 
         // Only wording about the model's abilities: format, size or type complaints are about one picture.
         private val NO_IMAGE_INPUT = Regex(
-            "input_modalit|(does not|doesn't|do not|don't) support (any )?images?\\b|no endpoints\\b[^.\\n]{0,80}\\bimage" +
-                "|\\b(multimodal|image|vision) inputs? (is |are )?(not supported|unsupported)",
+            "input_modalit|(does not|doesn't|do not|don't) (support|accept) (any )?(images?|vision|multimodal|visual)\\b|no endpoints\\b[^.\\n]{0,80}\\bimage" +
+                "|\\b(multimodal|image|vision) inputs? (is |are )?(not supported|unsupported)|\\bvision is not supported",
             RegexOption.IGNORE_CASE,
         )
         private val ABOUT_IMAGES = Regex("image|picture|base64|media type|mime", RegexOption.IGNORE_CASE)

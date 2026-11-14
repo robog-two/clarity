@@ -261,6 +261,17 @@ class AttachmentFetchDbTest : FunSpec({
         runBlocking { store.sweep(t0 + 4.hours + 20.minutes, 24.hours, 10_000) } shouldBe 1
     }
 
+    test("the sweep never evicts a file completed in the last minute either") {
+        runBlocking { store.sweep(t0 + 10_000.hours, 24.hours, 0) }
+        val key = FetchKey(mail, Uuid.random(), "acct/INBOX/1/51", "2", "2")
+        val ticket = runBlocking { store.request(key, t0, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(mail, t0, 1_000_000) }
+        runBlocking { store.complete(mail, ticket.id, ByteArray(1_000), "f", "text/plain", t0, 1_000_000) } shouldBe null
+        runBlocking { store.sweep(t0 + 5.seconds, 24.hours, 0) } shouldBe 0
+        runBlocking { store.cachedBytes() } shouldBe 1_000
+        runBlocking { store.sweep(t0 + 2.minutes, 24.hours, 0) } shouldBe 1
+    }
+
     test("completing a file never evicts one completed in the last minute, even over the cap") {
         runBlocking { store.sweep(t0 + 10_000.hours, 24.hours, 0) }
         val keys = (1..3).map { FetchKey(mail, Uuid.random(), "acct/INBOX/1/4$it", "2", "2") }

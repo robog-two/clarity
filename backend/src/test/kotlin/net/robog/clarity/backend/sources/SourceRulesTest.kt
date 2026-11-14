@@ -201,6 +201,9 @@ class SourceRulesTest : FunSpec({
         test("a multi-day all-day event shows its span, ending on the last day (the stored end is exclusive)") {
             val span = CalendarEventPayload(calendar = "Home", title = "Trip", allDay = true, start = Instant.parse("2026-10-26T00:00:00Z"), end = Instant.parse("2026-10-29T00:00:00Z"))
             entityItem(ID_A, span, newYork)!!.apply { sub shouldBe "Mon Oct 26 to Wed Oct 28"; day shouldBe LocalDate(2026, 10, 26); endDay shouldBe LocalDate(2026, 10, 28) }
+            // an end inside a day belongs to that day, as everywhere else all-day dates are read
+            val odd = span.copy(end = Instant.parse("2026-10-27T12:00:00Z"))
+            entityItem(ID_A, odd, newYork)!!.apply { sub shouldBe "Mon Oct 26 to Tue Oct 27"; endDay shouldBe LocalDate(2026, 10, 27) }
         }
 
         test("cited ids become the canonical lower case uuid, and spellings of one record collapse") {

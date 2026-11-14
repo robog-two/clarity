@@ -106,6 +106,10 @@ class ToolImagesTest : FunSpec({
         r(415, "Unsupported image type") shouldBe ImageRefusal.REJECTED
         r(400, "multimodal input is not supported") shouldBe ImageRefusal.UNSUPPORTED
         r(400, "Image input not supported for this model") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "This model does not support vision") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "model does not accept images") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "does not support multimodal input") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "vision is not supported") shouldBe ImageRefusal.UNSUPPORTED
         r(400, "Invalid image: the file could not be decoded") shouldBe ImageRefusal.REJECTED
         r(413, "image too large") shouldBe ImageRefusal.REJECTED
         r(400, "invalid tool schema") shouldBe null

@@ -252,7 +252,7 @@ class AttachmentFetchStore(private val database: Database) {
             val entries = AttachmentFetches.select(AttachmentFetches.id, AttachmentFetches.size, AttachmentFetches.doneAt)
                 .where { AttachmentFetches.status eq FetchStatus.DONE.wire }
                 .map { CacheEntry(it[AttachmentFetches.id].toString(), it[AttachmentFetches.size] ?: 0L, it[AttachmentFetches.doneAt]!!) }
-            val drop = evictionsFor(entries, maxBytes).map { Uuid.parse(it) }
+            val drop = evictionsOnComplete(entries, 0, maxBytes, now).map { Uuid.parse(it) }
             if (drop.isNotEmpty()) removed += AttachmentFetches.deleteWhere { id inList drop }
         }
         removed

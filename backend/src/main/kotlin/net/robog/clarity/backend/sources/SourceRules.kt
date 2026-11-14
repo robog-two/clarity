@@ -3,9 +3,7 @@ package net.robog.clarity.backend.sources
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
-import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.backend.reports.fetchedPagesIn
 import net.robog.clarity.harness.Block
@@ -24,6 +22,7 @@ import net.robog.clarity.shared.source.SourceItem
 import net.robog.clarity.shared.source.SourceKind
 import net.robog.clarity.shared.source.SourceView
 import net.robog.clarity.shared.text.oneLine
+import net.robog.clarity.shared.time.LocalTimes
 import net.robog.clarity.shared.source.daySpanLine
 import net.robog.clarity.shared.source.momentLine
 import net.robog.clarity.shared.text.stripInvisible
@@ -195,9 +194,9 @@ fun entityItem(id: String, payload: Payload, zone: TimeZone): SourceItem.Entity?
         )
     }
     is CalendarEventPayload -> {
-        val day = if (payload.allDay) payload.start.toLocalDateTime(TimeZone.UTC).date else null
-        // An all-day end is exclusive: the last day is the one before it.
-        val endDay = if (day != null) payload.end.toLocalDateTime(TimeZone.UTC).date.minus(1, DateTimeUnit.DAY).takeIf { it > day } else null
+        val days = if (payload.allDay) LocalTimes.allDayDates(payload.start, payload.end) else null
+        val day = days?.first
+        val endDay = days?.let { (first, last) -> last.takeIf { it > first } }
         SourceItem.Entity(
             id, SourceKind.EVENT,
             title = oneLine(payload.title.ifBlank { "(untitled)" }, TITLE_CHARS),
