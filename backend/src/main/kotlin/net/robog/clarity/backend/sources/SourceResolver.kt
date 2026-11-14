@@ -4,6 +4,7 @@ import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
 import dev.zacsweers.metro.AppScope
+import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.ktor.http.HttpStatusCode
@@ -85,6 +86,27 @@ class SourceResolver(
     }
 }
 
+/** Whether some Sources card in the feed cites a record: the device routes serve only those. */
+fun interface CitedRecords {
+    suspend fun cited(id: String): Boolean
+}
+
+/** [CitedRecords] over `feed_item.cards` (a jsonb containment query, served by `feed_item_cards_idx`). */
+@Inject
+@SingleIn(AppScope::class)
+@ContributesBinding(AppScope::class)
+class FeedCitedRecords(private val database: Database) : CitedRecords {
+    override suspend fun cited(id: String): Boolean {
+        val probe = JsonArray(listOf(JsonObject(mapOf(
+            "type" to JsonPrimitive("sources"),
+            "items" to JsonArray(listOf(JsonObject(mapOf("id" to JsonPrimitive(id))))),
+        )))).toString()
+        return database.tx {
+            exec("SELECT 1 FROM feed_item WHERE cards @> ?::jsonb LIMIT 1", listOf(TextColumnType() to probe)) { it.next() } == true
+        }
+    }
+}
+
 /**
  * `GET /api/v1/sources/{entityId}`: a record as stored, for the person to check what the agent said.
  * Only a record some Sources card in the feed cites is served (404 otherwise, the same as for an unknown
@@ -93,27 +115,16 @@ class SourceResolver(
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class SourceRoutes(private val reader: NounReader, private val database: Database) : HttpModule {
+class SourceRoutes(private val reader: NounReader, private val citations: CitedRecords) : HttpModule {
     override fun install(application: Application) {
         application.routing {
             authenticate(AuthProviders.DEVICE) {
                 get("${ApiPaths.SOURCES}/{id}") {
                     val id = call.parameters["id"].orEmpty()
-                    val view = if (id.isNotEmpty() && cited(id)) reader.entity(EntityId(id))?.let { sourceView(id, it.payload) } else null
+                    val view = if (id.isNotEmpty() && citations.cited(id)) reader.entity(EntityId(id))?.let { sourceView(id, it.payload) } else null
                     if (view == null) call.respondProblem(EdgeProblem.NotFound("No such source.")) else call.respond(HttpStatusCode.OK, view)
                 }
             }
-        }
-    }
-
-    /** Whether a feed item has a sources card with this record. */
-    private suspend fun cited(id: String): Boolean {
-        val probe = JsonArray(listOf(JsonObject(mapOf(
-            "type" to JsonPrimitive("sources"),
-            "items" to JsonArray(listOf(JsonObject(mapOf("id" to JsonPrimitive(id))))),
-        )))).toString()
-        return database.tx {
-            exec("SELECT 1 FROM feed_item WHERE cards @> ?::jsonb LIMIT 1", listOf(TextColumnType() to probe)) { it.next() } == true
         }
     }
 }

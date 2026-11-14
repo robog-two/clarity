@@ -91,7 +91,7 @@ class AttachmentRoutesDbTest : FunSpec({
         return id.toString()
     }
 
-    fun withApp(wait: kotlin.time.Duration = 5_000.milliseconds, block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
+    fun withApp(wait: kotlin.time.Duration = 5_000.milliseconds, cited: Boolean = true, block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
         val config = reportsAppConfig(Files.createTempDirectory("att")).copy(attachments = AttachmentsConfig(maxBytes = limit, waitTimeout = wait))
         val store = AttachmentFetchStore(database)
         val signals = OutboxSignals()
@@ -102,7 +102,7 @@ class AttachmentRoutesDbTest : FunSpec({
                 bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } }
                 bearer(AuthProviders.CONNECTOR) { authenticate { token -> ConnectorPrincipal(ConnectorId(token.token)) } }
             }
-            AttachmentRoutes(fetcher, store, signals, config, Clock.System).install(this)
+            AttachmentRoutes(fetcher, store, signals, config, Clock.System) { cited }.install(this)
         }
         block(createClient { })
     }
@@ -132,6 +132,14 @@ class AttachmentRoutesDbTest : FunSpec({
             }
             // the second download needs no connector
             http.get("/api/v1/messages/$id/attachments/2") { header(HttpHeaders.Authorization, "Bearer device") }.status shouldBe HttpStatusCode.OK
+        }
+    }
+
+    test("a message no sources card cites is 404 and the connector is never asked") {
+        val id = message("uncited", listOf(AttachmentMeta("2", "a.pdf", "application/pdf", 100)))
+        withApp(cited = false) { http ->
+            http.get("/api/v1/messages/$id/attachments/2") { header(HttpHeaders.Authorization, "Bearer device") }.status shouldBe HttpStatusCode.NotFound
+            transaction(database) { exec("SELECT count(*) FROM attachment_fetch") { rs -> rs.next(); rs.getInt(1) } } shouldBe 0
         }
     }
 

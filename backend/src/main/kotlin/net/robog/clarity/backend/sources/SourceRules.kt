@@ -36,7 +36,7 @@ private const val LINE_CHARS = 300
 /** The tools whose results are the person's own records: only an id one of these returned can be cited. */
 val RECORD_TOOLS: Set<String> = setOf(
     "list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_documents", "read_document",
-    "read_result", "read_attachment", "read_source",
+    "read_result",
 )
 
 /**

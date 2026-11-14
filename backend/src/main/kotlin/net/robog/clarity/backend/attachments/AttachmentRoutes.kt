@@ -39,6 +39,7 @@ import net.robog.clarity.backend.http.HttpModule
 import net.robog.clarity.backend.http.ProblemException
 import net.robog.clarity.backend.http.respondProblem
 import net.robog.clarity.backend.reports.contentDisposition
+import net.robog.clarity.backend.sources.CitedRecords
 import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.api.ApiPaths
@@ -51,7 +52,8 @@ private val RECHECK: Duration = 2.seconds
 
 /**
  * Attachments of messages:
- *  - `GET /api/v1/messages/{entityId}/attachments/{part}` (device): the file as a download. 200 with `Content-Type` and
+ *  - `GET /api/v1/messages/{entityId}/attachments/{part}` (device): the file as a download, only for a message a
+ *    Sources card cites. 200 with `Content-Type` and
  *    `Content-Disposition: attachment; filename=...`; 404 for an unknown message or part; 413 over the size limit;
  *    502 when the source could not provide it; 504 when the connector did not answer in time.
  *  - The fetch channel (connector, read-only): `GET /ingest/v1/fetches?wait=` (long poll for requests addressed to
@@ -65,6 +67,7 @@ class AttachmentRoutes(
     private val signals: OutboxSignals,
     private val config: AppConfig,
     private val clock: Clock,
+    private val citations: CitedRecords,
 ) : HttpModule {
     /** Uploads read into memory at once; each is up to the size limit. */
     private val uploads = Semaphore(3)
@@ -73,7 +76,10 @@ class AttachmentRoutes(
         application.routing {
             authenticate(AuthProviders.DEVICE) {
                 get("${ApiPaths.MESSAGES}/{entityId}/attachments/{part}") {
-                    fetcher.fetch(EntityId(call.parameters["entityId"].orEmpty()), call.parameters["part"].orEmpty()).fold(
+                    val entityId = call.parameters["entityId"].orEmpty()
+                    // Like the sources route: only a message some Sources card cites, so this is not a way to browse mail.
+                    if (entityId.isEmpty() || !citations.cited(entityId)) return@get call.respondProblem(EdgeProblem.NotFound("No such attachment."))
+                    fetcher.fetch(EntityId(entityId), call.parameters["part"].orEmpty()).fold(
                         { call.respondProblem(it) },
                         { file ->
                             call.response.header(HttpHeaders.ContentDisposition, contentDisposition(file.filename))

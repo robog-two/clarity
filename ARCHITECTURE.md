@@ -152,7 +152,7 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/sources/{entityId}` | device | a record a Sources card cites, as stored (a `SourceView`: message, event, document or contact); 404 when unknown, deleted or never cited |
 | `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
 | `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
-| `GET /api/v1/messages/{entityId}/attachments/{part}` | device | one email attachment as a download (`Content-Type`, `Content-Disposition: attachment; filename=`); fetched from the mail server through the connector on first use, cached 24 h; 404 unknown message or part, 413 over 25 MB, 502 the source failed, 504 the connector did not answer in 30 s |
+| `GET /api/v1/messages/{entityId}/attachments/{part}` | device | one attachment of an email a Sources card cites, as a download (`Content-Type`, `Content-Disposition: attachment; filename=`); fetched from the mail server through the connector on first use, cached 24 h; 404 unknown or uncited message or unknown part, 413 over 25 MB, 502 the source failed, 504 the connector did not answer in 30 s |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |

@@ -223,7 +223,7 @@ class SourcesDbTest : FunSpec({
             application {
                 install(io.ktor.server.plugins.contentnegotiation.ContentNegotiation) { json(ClarityJson) }
                 install(Authentication) { bearer(AuthProviders.DEVICE) { authenticate { DevicePrincipal(DeviceId("d1"), null) } } }
-                SourceRoutes(reader, database).install(this)
+                SourceRoutes(reader, FeedCitedRecords(database)).install(this)
             }
             val client = createClient { install(ContentNegotiation) { json(ClarityJson) } }
             client.get("/api/v1/sources/$cited").status shouldBe HttpStatusCode.Unauthorized
