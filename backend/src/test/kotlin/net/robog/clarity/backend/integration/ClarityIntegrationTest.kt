@@ -119,7 +119,7 @@ private fun upsert(id: String, version: String, payload: net.robog.clarity.share
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ClarityIntegrationTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var dir: Path
 
     beforeSpec {

@@ -70,7 +70,7 @@ private fun userText(m: Message) = m.content.filterIsInstance<Block.Text>().join
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class MemoryRecallTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

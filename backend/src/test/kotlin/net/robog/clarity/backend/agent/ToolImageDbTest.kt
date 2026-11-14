@@ -21,7 +21,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** The pictures tools showed, kept for a day in Postgres (V49) and read back when a request is built. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ToolImageDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     var now = Instant.parse("2026-11-13T12:00:00Z")
     val clock = object : kotlin.time.Clock { override fun now() = now }

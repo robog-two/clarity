@@ -86,7 +86,7 @@ private fun isNudge(request: ModelRequest) =
 /** `react` against real Postgres: validation, its default target, replacing, how it reaches a phone, and the lead's turn. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ReactDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

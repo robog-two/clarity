@@ -65,7 +65,7 @@ private fun <A> Either<*, A>.ok(): A = (this as? Either.Right)?.value ?: error("
 /** Schedules that follow the settings, the prep and recall jobs, and the key that wakes the lead without a restart. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SessionJobsAndKeyTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

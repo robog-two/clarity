@@ -148,4 +148,18 @@ class DavSyncCalendarTest : FunSpec({
             ((state.get(key) as JsonObject)["version"] as JsonPrimitive).content.toInt() shouldBe CAL_STATE_VERSION
         }
     }
+
+    test("records carry the mapping version, so a re-read after a mapping fix is applied even when the file is unchanged") {
+        recordVersion("\"abc\"") shouldBe "\"abc\"#m$CAL_STATE_VERSION"
+        val dav = calendarOnly()
+        dav.put("/dav/cal/me/work/plan.ics", "text/calendar", cal("UID:plan", "DTSTART:20260312T090000Z", "DTEND:20260312T100000Z", "SUMMARY:Planning"))
+        val state = InMemoryStateStore()
+        DavServer(calConfig(), dav.engine).use { server ->
+            val pushed = mutableListOf<IngestRecord>()
+            DavSync(server, calConfig(), state, MovableClock(Instant.parse("2026-03-10T08:00:00Z"))).syncAll { pushed += it }
+            val versions = pushed.events.map { it.sourceVersion }
+            versions.shouldHaveSize(1)
+            versions.single().endsWith("#m$CAL_STATE_VERSION") shouldBe true
+        }
+    }
 })

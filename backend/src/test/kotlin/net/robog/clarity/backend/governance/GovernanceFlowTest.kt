@@ -96,7 +96,7 @@ private const val DEVICE_ID = "11111111-1111-1111-1111-111111111111"
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class GovernanceFlowTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val clock = TestClock()
     var modelVerdict = GuardVerdict(Decision.ALLOW, emptyList(), "looks fine")

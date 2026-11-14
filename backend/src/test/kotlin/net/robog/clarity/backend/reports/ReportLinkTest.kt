@@ -74,7 +74,7 @@ class ReportLinkPureTest : FunSpec({
 /** The secret link against real Postgres: one live link, revocation, and what the public routes reach. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ReportLinkTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

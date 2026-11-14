@@ -12,6 +12,7 @@ import net.robog.clarity.connector.sdk.getAs
 import net.robog.clarity.connector.sdk.putAs
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.ingest.IngestRecord
+import net.robog.clarity.shared.noun.CalendarEventPayload
 import net.robog.clarity.shared.noun.DocumentPayload
 import net.robog.clarity.shared.noun.Noun
 
@@ -34,7 +35,9 @@ private val REEXPAND_AFTER: Duration = Duration.ofDays(7)
  */
 // 3: refetch once so objects that failed to parse before the bad-line fix are read again.
 // 4: refetch once so events carry their link and how they repeat.
-const val CAL_STATE_VERSION = 4
+// 5: refetch once with LF line ends read as CRLF (UIDs after folded lines were lost); from 5 on the
+//    record version carries this number, so the backend applies a re-read even when the ETag is the same.
+const val CAL_STATE_VERSION = 5
 
 private const val CHUNK = 100
 private const val MAX_FILES = 5000
@@ -116,7 +119,7 @@ class DavSync(
         var failures = 0
         for ((path, pair) in objects) {
             val (etag, ics) = pair
-            val version = etag ?: hash(ics)
+            val version = recordVersion(etag ?: hash(ics))
             val expansion = try { Ical.expand(ics, cal.name, window, plainWindow = null, source = path) } catch (e: Exception) {
                 log.warn(e) { "skipping unreadable calendar object $path" }
                 failures++
@@ -128,6 +131,7 @@ class DavSync(
                 continue
             }
             failures += expansion.failures
+            Ical.withoutUid(ics)?.let { names -> log.warn { "$path has an event without a UID (its properties: ${names.joinToString()}); it is identified by its file instead" } }
             if (expansion.recurring) recurring += path else recurring -= path
             val ids = expansion.occurrences.associateBy { it.key.orEmpty() }
             val before = old.occurrences[path].orEmpty()
@@ -136,7 +140,10 @@ class DavSync(
             val (vanished, behind) = (before - ids.keys).partition { k -> k.isEmpty() || (k.toLongOrNull() ?: Long.MAX_VALUE) >= window.from.epochSecond }
             if (vanished.isNotEmpty() && path !in changedAtSource) log.info { "$path: ${vanished.size} occurrence(s) inside the window are no longer produced" }
             vanished.forEach { records += tombstone(sourceIdOf(config.id, path, it), now, Noun.CALENDAR_EVENT) }
-            for ((k, occ) in ids) records += IngestRecord.Upsert(SourceId(sourceIdOf(config.id, path, k)), version, now, occ.payload)
+            for ((k, occ) in ids) {
+                val source = sourceIdOf(config.id, path, k)
+                records += IngestRecord.Upsert(SourceId(source), version, now, occ.payload.identifiedBy(source))
+            }
             occurrences[path] = (behind + ids.keys).distinct()
             counts.events += ids.size
         }
@@ -254,6 +261,24 @@ class DavSync(
  * Source id of a resource of account [accountId]: `<accountId>:<path>` for a calendar object,
  * contact or file, and `<accountId>:<path>#<epoch seconds>` for one occurrence of a recurring event.
  */
+/**
+ * The version a calendar record is pushed with: the object's ETag plus [CAL_STATE_VERSION]. The
+ * backend skips a version it has seen, so without the mapping's version a fix to how events are
+ * read (a lost UID, a new field) would never reach events whose file did not change.
+ */
+fun recordVersion(etag: String): String = "$etag#m$CAL_STATE_VERSION"
+
+/**
+ * An event without a UID is identified by its file on the server ([source]), so moving or renaming
+ * it does not make it look like a different event (without one the backend would key it on its
+ * title and times).
+ */
+fun CalendarEventPayload.identifiedBy(source: String): CalendarEventPayload =
+    if (icalUid != null) this else copy(icalUid = "$NO_UID_PREFIX$source")
+
+/** Marks a stand-in UID made from the event's file, never a real UID. */
+const val NO_UID_PREFIX = "clarity-source:"
+
 fun sourceIdOf(accountId: String, path: String, occurrenceKey: String = ""): String =
     "$accountId:" + if (occurrenceKey.isEmpty()) path else "$path#$occurrenceKey"
 

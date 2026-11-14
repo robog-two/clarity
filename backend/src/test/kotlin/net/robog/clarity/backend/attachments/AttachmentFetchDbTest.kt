@@ -41,7 +41,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** The fetch queue, its authorization and its cache over Postgres (V49), and the fetcher on top of it. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class AttachmentFetchDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var store: AttachmentFetchStore
     lateinit var reader: ExposedNounReader

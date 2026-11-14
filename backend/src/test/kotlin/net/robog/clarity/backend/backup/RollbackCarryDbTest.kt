@@ -35,7 +35,7 @@ class DatabaseForBackupTests : io.kotest.core.annotation.Condition {
 @EnabledIf(DatabaseForBackupTests::class)
 class RollbackCarryDbTest : FunSpec({
     val external = ExternalTestDatabase.fromEnv()
-    val postgres = if (external == null) PostgreSQLContainer("postgres:18-alpine") else null
+    val postgres = if (external == null) PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3) else null
     lateinit var database: Database
     lateinit var sql: ExposedRollbackSql
 

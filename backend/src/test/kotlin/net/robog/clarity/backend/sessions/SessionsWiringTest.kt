@@ -74,7 +74,7 @@ private const val ENROLL_TOKEN = "enroll-token-for-tests"
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SessionsWiringTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var dataDir: java.nio.file.Path
 
     fun config(apiKey: String? = null) = AppConfig(

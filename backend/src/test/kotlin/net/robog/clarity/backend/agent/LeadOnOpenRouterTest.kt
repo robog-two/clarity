@@ -50,7 +50,7 @@ private fun orEffort(request: ModelRequest) = OpenRouterModelGateway.buildBody(r
 /** The lead on OpenRouter against real Postgres: client-side compaction, stored Anthropic history, model switches, effort. The model is always a fake. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class LeadOnOpenRouterTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

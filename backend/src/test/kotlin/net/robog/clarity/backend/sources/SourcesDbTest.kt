@@ -71,7 +71,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** `send_to_user` with a sources card, and the route that serves a cited record, over Postgres. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SourcesDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var journal: PgRunJournal
     lateinit var runs: ExposedRunStore

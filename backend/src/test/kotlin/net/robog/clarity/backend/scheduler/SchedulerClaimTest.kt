@@ -70,7 +70,7 @@ private class FlakyJob(override val name: String, private val schedule: Schedule
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SchedulerClaimTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

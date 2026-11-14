@@ -116,7 +116,7 @@ class WebSearchPureTest : FunSpec({
 /** The lead delegating research with and without web search, against real Postgres; the model is scripted. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class WebSearchHelperTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

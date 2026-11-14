@@ -77,7 +77,7 @@ private fun answer(id: String, content: String) = Message(Role.USER, listOf(Bloc
 /** Tasks as threads: helpers linked to tasks, and the Agent's Path of a task and of a run (V21), read-only and redacted. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class TaskPathTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

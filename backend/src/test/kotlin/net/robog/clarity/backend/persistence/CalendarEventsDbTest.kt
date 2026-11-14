@@ -20,7 +20,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** An event keeps its link and how it repeats, and a second write of the same occurrence updates it instead of adding another. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class CalendarEventsDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val start = Instant.parse("2026-10-26T11:00:00Z")
 

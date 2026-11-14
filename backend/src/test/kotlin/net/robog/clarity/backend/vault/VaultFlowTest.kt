@@ -114,7 +114,7 @@ private suspend fun HttpClient.getAs(device: String, path: String): HttpResponse
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class VaultFlowTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var rig: LeadRig
     lateinit var heldService: HeldActionService

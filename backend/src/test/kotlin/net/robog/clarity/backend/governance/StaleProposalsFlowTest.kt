@@ -63,7 +63,7 @@ private val LOGIN_FIELDS = listOf(FieldSpec("email", "Email", FieldType.EMAIL), 
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class StaleProposalsFlowTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var clock: MovableClock
     lateinit var constitutions: ConstitutionStore

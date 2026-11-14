@@ -20,7 +20,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** The lease tables (V22) in Postgres, and the lead's tool set. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class BrowserLeaseDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val idle = 10.minutes
     val stale = 2.minutes

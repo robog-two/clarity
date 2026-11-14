@@ -60,7 +60,7 @@ private fun lastResultFor(request: net.robog.clarity.harness.ModelRequest, id: S
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class LeadScenarioTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

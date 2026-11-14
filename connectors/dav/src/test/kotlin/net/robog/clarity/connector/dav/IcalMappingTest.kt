@@ -169,4 +169,22 @@ class IcalMappingTest : FunSpec({
         Ical.responded(invite, "me@example.com", InviteResponse.DECLINE)!! shouldContain "PARTSTAT=DECLINED"
         Ical.responded(invite, "me@example.com", InviteResponse.TENTATIVE)!! shouldContain "PARTSTAT=TENTATIVE"
     }
+
+    test("an event without a UID is reported by its property names only, and is identified by its file") {
+        val noUid = ics("BEGIN:VEVENT", "DTSTAMP:20260301T000000Z", "DTSTART:20260310T090000Z", "DTEND:20260310T100000Z", "SUMMARY:Secret plans", "END:VEVENT")
+        val names = Ical.withoutUid(noUid)!!
+        names shouldBe listOf("DTSTAMP", "DTSTART", "DTEND", "SUMMARY")
+        names.joinToString() shouldNotContain "Secret"
+        Ical.withoutUid(ics("BEGIN:VEVENT", "UID:u-1", "DTSTART:20260310T090000Z", "SUMMARY:x", "END:VEVENT")) shouldBe null
+        Ical.withoutUid("not a calendar") shouldBe null
+
+        val payload = Ical.events(noUid, "c", window).single().payload
+        payload.icalUid shouldBe null
+        val source = sourceIdOf("acct", "/cal/a.ics")
+        payload.identifiedBy(source).icalUid shouldBe "clarity-source:acct:/cal/a.ics"
+        // moving it keeps the stand-in, so the backend sees the same event
+        payload.copy(start = payload.start + kotlin.time.Duration.parse("1d")).identifiedBy(source).icalUid shouldBe payload.identifiedBy(source).icalUid
+        // a real UID is never replaced
+        payload.copy(icalUid = "u-1").identifiedBy(source).icalUid shouldBe "u-1"
+    }
 })

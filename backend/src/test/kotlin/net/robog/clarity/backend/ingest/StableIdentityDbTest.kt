@@ -29,7 +29,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** A record whose identity changes (an event without a UID that moves) keeps its entity id. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class StableIdentityDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var service: IngestService
     lateinit var database: Database
     val published = mutableListOf<Ingested>()

@@ -59,7 +59,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** The device route for an attachment and the connector's fetch channel, over HTTP and Postgres. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class AttachmentRoutesDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val t0 = Instant.parse("2026-11-13T12:00:00Z")
     val me = Handle.email("me@example.com", "Me")

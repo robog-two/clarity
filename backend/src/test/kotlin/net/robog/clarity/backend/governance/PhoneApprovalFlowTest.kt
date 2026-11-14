@@ -82,7 +82,7 @@ private fun sign(key: KeyPair, payload: String): String =
 /** Phone approvals against Postgres: a "never alone" kind needs a signed yes; everything about the signature is checked. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class PhoneApprovalFlowTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var heldStore: HeldActionStore
     lateinit var constitutions: ConstitutionStore

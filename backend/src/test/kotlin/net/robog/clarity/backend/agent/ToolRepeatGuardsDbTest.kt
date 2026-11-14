@@ -78,7 +78,7 @@ private class AheadClock(private val ahead: kotlin.time.Duration) : Clock {
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ToolRepeatGuardsDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var rig: LeadRig
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

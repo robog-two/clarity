@@ -26,7 +26,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** Model settings changed at runtime, against real Postgres; the model is always a fake. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class LeadModelSwitchTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

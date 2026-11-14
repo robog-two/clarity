@@ -149,7 +149,7 @@ private suspend fun Tool.call(vararg pairs: Pair<String, String>): ToolResult = 
 /** Third-party MCP servers against real Postgres, a fake host and a scripted model. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class McpDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val background = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

@@ -78,7 +78,9 @@ object Ical {
      * UID, DTSTART, DTEND, RRULE, RECURRENCE-ID) are never dropped; then the error stands.
      */
     fun parse(ics: String): Calendar {
-        var text = ics
+        // iCalendar lines end in CRLF, but calendar-data read from a multiget's XML has bare LFs
+        // (XML turns CRLF into LF), and ical4j then loses the line after a folded one: often the UID.
+        var text = crlf(ics)
         repeat(MAX_DROPPED_LINES) {
             try {
                 return CalendarBuilder().build(StringReader(text))
@@ -92,6 +94,11 @@ object Ical {
     }
 
     private const val MAX_DROPPED_LINES = 8
+
+    private val LINE_END = Regex("\r\n|\r|\n")
+
+    /** Pure: [ics] with every line ending as CRLF, as RFC 5545 requires. */
+    internal fun crlf(ics: String): String = ics.replace(LINE_END, "\r\n")
 
     private val KEEP = setOf("BEGIN", "END", "UID", "DTSTART", "DTEND", "RRULE", "RECURRENCE-ID", "DURATION")
 
@@ -159,6 +166,14 @@ object Ical {
         }
         return Expansion(out, anyRecurring, failures)
     }
+
+    /**
+     * The property names of the first event in [ics] that has no UID, or null when every event has
+     * one: names only, never values, so a log can show what the server sent without its contents.
+     */
+    fun withoutUid(ics: String): List<String>? = runCatching {
+        parse(ics).getComponents<VEvent>("VEVENT").firstOrNull { it.text("UID") == null }?.propertyList?.all?.map { p -> p.name }?.distinct()
+    }.getOrNull()
 
     // ---- writing -------------------------------------------------------------------------------
 

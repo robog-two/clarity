@@ -28,7 +28,7 @@ private class SandboxStub(override val name: String) : Tool {
 /** Who gets the attachment tools: helpers that may read messages and have the sandbox; never the lead; and using them taints the run. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class AttachmentToolboxDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

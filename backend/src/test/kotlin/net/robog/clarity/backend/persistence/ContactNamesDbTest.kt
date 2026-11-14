@@ -51,7 +51,7 @@ private class NoTriggers : TriggerStore {
 /** Agents see saved contact names on messages that carry only a bare number or address. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ContactNamesDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var reader: ExposedNounReader
     lateinit var tools: Map<String, Tool>
