@@ -33,7 +33,7 @@ class McpServerTest : FunSpec({
 
             val tools = client.listTools().tools
             tools.map { it.name }.shouldContainExactlyInAnyOrder(
-                "shell", "read_file", "write_file", "edit_file", "search_files", "list_files", "fetch_page",
+                "shell", "read_file", "write_file", "read_file_base64", "edit_file", "search_files", "list_files", "fetch_page",
             )
             tools.first { it.name == "read_file" }.annotations?.readOnlyHint shouldBe true
             tools.first { it.name == "fetch_page" }.inputSchema.required shouldBe listOf("url")

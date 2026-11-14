@@ -8,6 +8,7 @@ import jakarta.mail.internet.MimeMessage
 import jakarta.mail.internet.MimeUtility
 import java.security.MessageDigest
 import kotlin.time.Instant
+import net.robog.clarity.shared.noun.AttachmentMeta
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.MessagePayload
 import org.jsoup.Jsoup
@@ -35,6 +36,8 @@ fun MimeMessage.toPayload(account: String, fallbackTime: Instant): MessagePayloa
         body = bodyText().take(MAX_BODY_CHARS),
         sentAt = sent,
         threadRef = threadRef(),
+        messageId = messageID?.trim()?.takeIf(String::isNotEmpty),
+        attachments = attachments(),
     )
 }
 
@@ -159,4 +162,98 @@ class UidSet private constructor(private val uids: java.util.TreeSet<Long>) {
             return UidSet(set)
         }
     }
+}
+
+/** Attachments listed per message at most; a message with more is unusual enough to be cut. */
+const val MAX_ATTACHMENTS = 100
+
+/** Signature parts carry no content a person or helper reads. */
+private val SIGNATURE_TYPES = setOf("application/pkcs7-signature", "application/x-pkcs7-signature", "application/pgp-signature")
+
+/**
+ * The files attached to this message, with the part path the connector fetches each one by
+ * ([PartPath]). Body text, signatures and calendar bodies are not attachments; a forwarded message
+ * (`message/rfc822`) is one (an `.eml`) and is not opened further. Pure apart from reading the message.
+ */
+fun Part.attachments(): List<AttachmentMeta> {
+    val out = mutableListOf<AttachmentMeta>()
+    collectAttachments(this, emptyList(), out)
+    return out.take(MAX_ATTACHMENTS)
+}
+
+private fun collectAttachments(part: Part, path: List<Int>, out: MutableList<AttachmentMeta>) {
+    if (out.size >= MAX_ATTACHMENTS) return
+    if (part.isMimeType("multipart/*")) {
+        val multipart = part.content as? jakarta.mail.Multipart ?: return
+        for (i in 0 until multipart.count) collectAttachments(multipart.getBodyPart(i), path + (i + 1), out)
+        return
+    }
+    // A message whose whole body is one file has the part path "1".
+    val at = path.ifEmpty { listOf(1) }
+    attachmentMeta(part, at)?.let { out += it }
+}
+
+/** The attachment [part] is at path [at], or null when it is body text, a signature or nothing a person would open. */
+internal fun attachmentMeta(part: Part, at: List<Int>): AttachmentMeta? {
+    val type = baseType(part)
+    if (type in SIGNATURE_TYPES) return null
+    val disposition = part.disposition?.lowercase()
+    val name = fileNameOf(part)
+    val contentId = (part as? jakarta.mail.internet.MimePart)?.contentID?.trim()?.takeIf(String::isNotEmpty)
+    val isText = type == "text/plain" || type == "text/html" || type == "text/calendar"
+    // Body text is not an attachment, unless it was sent as a file.
+    if (isText && disposition != Part.ATTACHMENT && name == null) return null
+    val forwarded = type == "message/rfc822"
+    val filename = name ?: if (forwarded) forwardedName(part) else null
+    val inline = !forwarded && (
+        (disposition == Part.INLINE && (name != null || contentId != null)) ||
+            (disposition == null && contentId != null && type.startsWith("image/"))
+        )
+    return AttachmentMeta(
+        part = PartPath.format(at),
+        filename = filename,
+        mimeType = type,
+        size = part.size.takeIf { it >= 0 }?.toLong(),
+        inline = inline,
+    )
+}
+
+private fun baseType(part: Part): String = try {
+    jakarta.mail.internet.ContentType(part.contentType).baseType.lowercase()
+} catch (_: Exception) {
+    part.contentType.substringBefore(';').trim().lowercase().ifEmpty { "application/octet-stream" }
+}
+
+private fun fileNameOf(part: Part): String? =
+    (try { part.fileName } catch (_: Exception) { null })?.let { decodeHeader(it) }?.trim()?.takeIf(String::isNotEmpty)
+
+/** `<subject>.eml` for a forwarded message, else `message.eml`. */
+private fun forwardedName(part: Part): String {
+    val subject = (try { (part.content as? MimeMessage)?.subject } catch (_: Exception) { null })
+        ?.let { decodeHeader(it) }?.trim()?.takeIf(String::isNotEmpty)
+    return (subject ?: "message") + ".eml"
+}
+
+/** A MIME part path as the IMAP section it names: 1-based indexes joined by dots (`2`, `1.3`). */
+object PartPath {
+    private val PATTERN = Regex("[1-9][0-9]{0,3}(\\.[1-9][0-9]{0,3}){0,7}")
+
+    fun format(indexes: List<Int>): String = indexes.joinToString(".")
+
+    /** The indexes of [path], or null when it is not a part path. */
+    fun parse(path: String): List<Int>? = if (PATTERN.matches(path)) path.split('.').map(String::toInt) else null
+}
+
+/** The part at [path] of this message (see [PartPath]), or null when there is none. A message of one body is part `1`. */
+fun Part.partAt(path: List<Int>): Part? {
+    if (path.isEmpty()) return null
+    if (!isMimeType("multipart/*")) return if (path == listOf(1)) this else null
+    var current: Part = this
+    for (index in path) {
+        if (!current.isMimeType("multipart/*")) return null
+        val multipart = current.content as? jakarta.mail.Multipart ?: return null
+        if (index < 1 || index > multipart.count) return null
+        current = multipart.getBodyPart(index - 1)
+    }
+    return current
 }

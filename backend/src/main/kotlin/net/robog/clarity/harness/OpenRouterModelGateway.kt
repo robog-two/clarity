@@ -144,8 +144,22 @@ class OpenRouterModelGateway(
         return response
     }
 
-    private suspend fun generate(request: ModelRequest, sticky: Stickiness, onTextDelta: (String) -> Unit): ModelResponse {
-        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing, sticky))
+    /**
+     * One call. A model that does not take images answers a request that has them with a 4xx that names
+     * images; the call is then made again with each image replaced by a note, so a run that looked at a
+     * picture goes on instead of failing.
+     */
+    private suspend fun generate(request: ModelRequest, sticky: Stickiness, onTextDelta: (String) -> Unit): ModelResponse =
+        try {
+            generate(request, sticky, showImages = true, onTextDelta)
+        } catch (e: OpenRouterException) {
+            if (!hasImages(request.messages) || !refusesImages(e.status, e.message.orEmpty())) throw e
+            log.warn { "${request.model} does not take images (${e.message}); sending the request without them" }
+            generate(request, sticky, showImages = false, onTextDelta)
+        }
+
+    private suspend fun generate(request: ModelRequest, sticky: Stickiness, showImages: Boolean, onTextDelta: (String) -> Unit): ModelResponse {
+        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing, sticky, showImages))
         val call = HttpRequest.newBuilder(endpoint)
             .timeout(RESPONSE_TIMEOUT.toJavaDuration())
             .header("Authorization", "Bearer $apiKey")
@@ -261,13 +275,13 @@ class OpenRouterModelGateway(
         }
 
         /** The request body exactly as it goes over the wire; for tests and debugging. */
-        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting(), sticky: Stickiness = Stickiness()): JsonObject {
+        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting(), sticky: Stickiness = Stickiness(), showImages: Boolean = true): JsonObject {
             val cache = request.cache?.takeIf { usesCacheBreakpoints(request.model) }
             val order = providerOrder(routing, sticky.preferred)
             return buildJsonObject {
                 put("model", request.model)
                 sticky.session?.let { put("session_id", it) }
-                put("messages", wireMessages(request, cache))
+                put("messages", wireMessages(request, cache, showImages))
                 if (cache?.automatic == true) put("cache_control", cacheControl(cache))
                 put("max_tokens", request.maxTokens)
                 put("stream", true)
@@ -347,7 +361,7 @@ class OpenRouterModelGateway(
             }
         }
 
-        private fun wireMessages(request: ModelRequest, cache: CachePolicy?): JsonArray = buildJsonArray {
+        private fun wireMessages(request: ModelRequest, cache: CachePolicy?, showImages: Boolean = true): JsonArray = buildJsonArray {
             if (request.system.isNotEmpty()) {
                 if (cache != null && request.system.any { it.cacheBreakpoint }) {
                     // One text part per block, so a breakpoint ends exactly where its block does.
@@ -366,18 +380,22 @@ class OpenRouterModelGateway(
             // The text parts of the user message being built, kept back so operator notices can join it,
             // and whether its last part carries the message breakpoint.
             val userParts = mutableListOf<String>()
+            // Pictures that tools showed (after their results), sent in the user message that follows them.
+            val userImages = mutableListOf<JsonObject>()
             var userMarked = false
+            val kept = keptImages(context)
             // The web search results of the last assistant step, read back to the model after it.
             var searchNote: String? = null
             fun flushUser() {
-                if (userParts.isNotEmpty()) {
-                    val content = if (userParts.size == 1 && !userMarked) {
+                if (userParts.isNotEmpty() || userImages.isNotEmpty()) {
+                    val content = if (userParts.size == 1 && !userMarked && userImages.isEmpty()) {
                         JsonPrimitive(userParts.single())
                     } else {
-                        JsonArray(userParts.mapIndexed { i, text -> textPart(text, cache.takeIf { userMarked && i == userParts.lastIndex }) })
+                        JsonArray(userImages + userParts.mapIndexed { i, text -> textPart(text, cache.takeIf { userMarked && i == userParts.lastIndex }) })
                     }
                     add(chat("user", content))
                     userParts.clear()
+                    userImages.clear()
                 }
                 userMarked = false
             }
@@ -415,6 +433,10 @@ class OpenRouterModelGateway(
                                 put("tool_call_id", result.toolUseId)
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
+                        }
+                        val shift = original.content.size - message.content.size
+                        message.content.forEachIndexed { b, block ->
+                            if (block is Block.Image) userImages += imageParts(block, supported = showImages, shown = (index to b + shift) in kept)
                         }
                         searchNote?.let { userParts += it }
                         searchNote = null
@@ -476,6 +498,31 @@ class OpenRouterModelGateway(
          * so notices never go as mid-conversation `system` messages on this wire.
          */
         internal fun operatorUpdate(text: String): String = "$OPERATOR_UPDATE_HEADING\n$text"
+
+        /**
+         * Pure: the content parts for one picture a tool showed: a label naming the call, then the image
+         * (a data URL, as OpenRouter takes images). A picture that is no longer [shown], or that the model
+         * does not [supported]ly take, is a short note instead. Tool messages are text-only in this format,
+         * which is why pictures come in the user message that follows the results.
+         */
+        internal fun imageParts(image: Block.Image, supported: Boolean, shown: Boolean): List<JsonObject> = when {
+            !supported -> listOf(textPart(IMAGE_UNSUPPORTED, null))
+            !shown -> listOf(textPart(IMAGE_OMITTED, null))
+            else -> listOf(
+                textPart("[Image returned by tool call ${image.toolUseId}]", null),
+                buildJsonObject {
+                    put("type", "image_url")
+                    putJsonObject("image_url") { put("url", "data:${image.mimeType};base64,${image.base64}") }
+                },
+            )
+        }
+
+        internal fun hasImages(messages: List<Message>): Boolean = messages.any { m -> m.content.any { it is Block.Image } }
+
+        /** Pure: whether an error from OpenRouter says the model cannot take the images it was sent. */
+        internal fun refusesImages(status: Int?, message: String): Boolean =
+            (status == 400 || status == 404 || status == 415 || status == 422) &&
+                Regex("image|modalit|multimodal|vision", RegexOption.IGNORE_CASE).containsMatchIn(message)
 
         private fun chat(role: String, content: JsonElement) = buildJsonObject {
             put("role", role)

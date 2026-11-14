@@ -151,12 +151,24 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link and its download count (made on first use, the same one while live); turn it off |
 | `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
 | `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
+| `GET /api/v1/messages/{entityId}/attachments/{part}` | device | one email attachment as a download (`Content-Type`, `Content-Disposition: attachment; filename=`); fetched from the mail server through the connector on first use, cached 24 h; 404 unknown message or part, 413 over 25 MB, 502 the source failed, 504 the connector did not answer in 30 s |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
 | `GET /ingest/v1/config` | connector | connector polls its config (`ETag` = version) |
 | `POST /ingest/v1/batches` | connector | push `IngestBatch`, get per-record `RecordOutcome` |
 | `GET /ingest/v1/actions?wait=30` | connector | long-poll actions addressed to this connector |
 | `POST /ingest/v1/actions/{id}/result` | connector | report an action's outcome (idempotent) |
+| `GET /ingest/v1/fetches?wait=30` | connector | long-poll read-only fetch requests (bytes of one part of a record, `*` lists the parts) addressed to this connector; not actions, no guard; only while it is granted the noun |
+| `PUT /ingest/v1/fetches/{id}?filename=&type=` · `POST …/{id}/error` | connector | the bytes (at most `CLARITY_ATTACHMENT_MAX_MB`, 25) or a failure (`not_found`, `too_large`, `failed`); only the connector the request was addressed to |
 | `/mcp` | device | MCP (streamable HTTP) exposing the same domain tools the agent uses |
+
+Attachments (V49): the `message` row keeps `message_id` and the `attachments` list (names, sizes, MIME part
+paths); bytes stay on the mail server. `attachment_fetch` is both the queue the connector polls and the
+byte cache (bytea, keyed by message, part and source version; swept after `CLARITY_ATTACHMENT_CACHE_TTL`
+24 h and above `CLARITY_ATTACHMENT_CACHE_MAX_MB` 500). Mail records are version "2"; messages ingested
+as "1" have no list, and the connector lists their parts from the server on demand (`save_attachment`
+without a part). Helpers with the sandbox get `save_attachment` and `view_image`; a picture reaches the
+model as a `Block.Image` journaled after the tool results and sent in the user message that follows them
+(newest 4 only). `view_image` is offered when OpenRouter's model list does not say the model refuses images.
 
 The path constants live in `shared/api/Api.kt` (`ApiPaths`). The only routes that answer without a
 device, connector or enrollment credential are `/healthz`, `/readyz` and the Goods links under `/g/`

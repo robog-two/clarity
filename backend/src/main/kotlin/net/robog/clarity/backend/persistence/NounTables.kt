@@ -1,6 +1,7 @@
 package net.robog.clarity.backend.persistence
 
 import net.robog.clarity.shared.ClarityJson
+import net.robog.clarity.shared.noun.AttachmentMeta
 import net.robog.clarity.shared.noun.Handle
 import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.datetime.timestamp
@@ -26,6 +27,9 @@ object Messages : CanonicalTable("message") {
     val body = text("body")
     val sentAt = timestamp("sent_at")
     val threadRef = text("thread_ref").nullable()
+    /** V49: the message's own id (an email's Message-ID) and its attachment list. */
+    val messageId = text("message_id").nullable()
+    val attachments = jsonb<List<AttachmentMeta>>("attachments", ClarityJson)
 }
 
 object Contacts : CanonicalTable("contact") {

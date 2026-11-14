@@ -65,3 +65,6 @@ Rules for records:
 - **Actions**: `actionHandlers { onTargeted<ProposedAction.X> { action, target -> ... } }`; `target` is
   the source id the connector itself reported for the record the action refers to.
 - Real examples: `connectors/mail` (IMAP/SMTP) and `connectors/dav` (CalDAV/CardDAV/WebDAV).
+- **Fetches**: `fetchHandlers { onFetch { request -> FetchOutcome.Found(bytes, name, type) } }` passed as
+  `fetches =` to `runConnector` answers read-only requests for one part of a record (an email attachment).
+  Stop reading at `request.maxBytes` (`readCapped`). See `connectors/mail` (`MailFetch.kt`).

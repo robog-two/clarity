@@ -41,6 +41,14 @@ sealed interface Block {
     data class Result(val toolUseId: String, val content: String, val isError: Boolean = false) : Block
 
     /**
+     * A picture a tool put in front of the model (`view_image`), kept in the journal as base64. It sits in the
+     * same user turn as the tool's [Result], after all results, and goes out as an image part right after
+     * the results ([IMAGES_KEPT] newest only; older ones are replaced by a short note).
+     */
+    @Serializable @SerialName("image")
+    data class Image(val toolUseId: String, val mimeType: String, val base64: String) : Block
+
+    /**
      * A provider-specific block, kept verbatim in the provider's own JSON shape. Never inspected
      * beyond [type], so replay is byte-exact.
      */
@@ -226,9 +234,30 @@ fun messageCacheBreakpoint(messages: List<Message>): Pair<Int, Int>? {
     val index = (lastAssistant - 1 downTo 0).firstOrNull { messages[it].role != Role.SYSTEM } ?: return null
     val message = messages[index]
     if (index <= lastCompaction || message.role != Role.USER || message.content.isEmpty()) return null
-    val block = message.content.last()
-    return if (block is Block.Text || block is Block.Result) index to message.content.lastIndex else null
+    // Images follow the results in the same turn and carry no breakpoint: it goes on the block before them.
+    val at = message.content.indexOfLast { it !is Block.Image }
+    if (at < 0) return null
+    val block = message.content[at]
+    return if (block is Block.Text || block is Block.Result) index to at else null
 }
+
+/** The newest images of a conversation that are still sent; older ones become [IMAGE_OMITTED]. */
+const val IMAGES_KEPT = 4
+
+/** Said in place of an image that is no longer sent. */
+const val IMAGE_OMITTED = "[image no longer shown: it was seen earlier in this conversation; look at the file again with view_image if needed]"
+
+/** Said in place of images when the model turned out not to accept them. */
+const val IMAGE_UNSUPPORTED = "[image not shown: the model of this run does not accept images]"
+
+/**
+ * Pure: where the images that are still sent are in [messages]: (message index, block index) of the
+ * newest [keep] of them. The rest are sent as [IMAGE_OMITTED], which bounds how much a long run of
+ * pictures weighs on every later call. An image older than the newest [keep] stays so from then on.
+ */
+fun keptImages(messages: List<Message>, keep: Int = IMAGES_KEPT): Set<Pair<Int, Int>> =
+    messages.flatMapIndexed { m, message -> message.content.mapIndexedNotNull { b, block -> if (block is Block.Image) m to b else null } }
+        .takeLast(keep).toSet()
 
 /** Token accounting, summed across the turns of a run. */
 @Serializable

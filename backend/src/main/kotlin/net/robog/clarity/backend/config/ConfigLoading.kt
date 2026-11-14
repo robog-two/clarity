@@ -264,6 +264,19 @@ private class Lookup(
         )
     }
 
+    /** Attachment fetches: see [AttachmentsConfig]. */
+    context(_: Raise<ConfigError>)
+    fun attachments(): AttachmentsConfig {
+        val defaults = AttachmentsConfig()
+        return AttachmentsConfig(
+            maxBytes = int("CLARITY_ATTACHMENT_MAX_MB", "attachments.maxMb", (defaults.maxBytes / MB).toInt()).toLong() * MB,
+            ttl = duration("CLARITY_ATTACHMENT_CACHE_TTL", "attachments.cacheTtl", defaults.ttl),
+            cacheMaxBytes = int("CLARITY_ATTACHMENT_CACHE_MAX_MB", "attachments.cacheMaxMb", (defaults.cacheMaxBytes / MB).toInt()).toLong() * MB,
+            sweepInterval = duration("CLARITY_ATTACHMENT_SWEEP_INTERVAL", "attachments.sweepInterval", defaults.sweepInterval),
+            waitTimeout = duration("CLARITY_ATTACHMENT_WAIT", "attachments.wait", defaults.waitTimeout),
+        )
+    }
+
     /** `CLARITY_BACKUPS` (default true), `CLARITY_BACKUP_KEEP` (7 nightly), `CLARITY_PG_DUMP` / `CLARITY_PG_RESTORE` (program names), `CLARITY_BACKUP_TIMEOUT`. */
     context(_: Raise<ConfigError>)
     fun backups(): BackupsConfig {
@@ -367,6 +380,7 @@ private class Lookup(
                 webSearch = webSearch(),
             ),
             reports = reports(),
+            attachments = attachments(),
             backups = backups(),
         )
     }

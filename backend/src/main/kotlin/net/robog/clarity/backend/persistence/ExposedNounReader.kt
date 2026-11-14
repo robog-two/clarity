@@ -236,6 +236,8 @@ class ExposedNounReader(private val database: Database) : NounReader {
             body = this[Messages.body],
             sentAt = this[Messages.sentAt],
             threadRef = this[Messages.threadRef],
+            messageId = this[Messages.messageId],
+            attachments = this[Messages.attachments],
         ),
         firstSeenAt = this[Messages.firstSeenAt],
         updatedAt = this[Messages.updatedAt],

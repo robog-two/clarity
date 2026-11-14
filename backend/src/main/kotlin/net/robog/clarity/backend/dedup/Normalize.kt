@@ -58,6 +58,7 @@ fun MessagePayload.normalized(): MessagePayload = copy(
     subject = subject.collapsedOrNull(),
     body = body.collapseWhitespace(),
     threadRef = threadRef?.trim()?.takeIf(String::isNotEmpty),
+    messageId = messageId?.trim()?.takeIf(String::isNotEmpty),
 )
 
 fun ContactPayload.normalized(): ContactPayload = copy(

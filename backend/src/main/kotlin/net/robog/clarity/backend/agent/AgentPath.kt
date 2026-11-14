@@ -195,6 +195,7 @@ fun runItems(
                     emit(use.order, actionItem(runId, depth, use.name, use.input, use.at, block.content, block.isError, redact))
                 }
                 is Block.Raw -> Unit // reasoning and provider blocks are never shown
+                is Block.Image -> Unit // pictures a tool showed the model are not repeated here
             }
         }
     }
@@ -299,6 +300,8 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "read_journal" -> "Read the journal" to null
         "read_profile" -> "Read your profile" to null
         "read_result" -> "Read a saved result" to null
+        SAVE_ATTACHMENT -> "Saved an email attachment" to null
+        VIEW_IMAGE -> "Looked at a picture" to arg("path")
         "search_documents" -> count("document", "Found", "Searched documents") to arg("query")
         "read_document" -> "Read a document" to arg("path", "title")
         "save_draft" -> "Drafted an email" to arg("subject")

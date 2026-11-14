@@ -116,7 +116,7 @@ private fun renderForArchive(message: Message, toolNames: MutableMap<String, Str
                     lines += "  $tool returned: " + quoteUntrusted(UntrustedPart(tool, truncateQuoted(content, 400)))
                 }
             }
-            is Block.Raw -> Unit
+            is Block.Raw, is Block.Image -> Unit
         }
     }
     return Rendered(lines, untrusted)

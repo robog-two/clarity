@@ -9,6 +9,7 @@ import kotlin.time.Instant
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
 import net.robog.clarity.backend.persistence.MessageHits
 import net.robog.clarity.backend.persistence.MessageSearch
@@ -40,6 +41,7 @@ private class FakeReader : NounReader {
     var lastLimit: Int? = null
     var lastFolder: String? = "unset"
     var noMessages = false
+    var attachments: List<net.robog.clarity.shared.noun.AttachmentMeta> = emptyList()
     override suspend fun emailFolders() = listOf("INBOX", "[Gmail]/Sent Mail", "[Gmail]/Spam")
 
     override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?): List<Stored<MessagePayload>> {
@@ -50,7 +52,7 @@ private class FakeReader : NounReader {
                 EntityId("m1"),
                 MessagePayload(
                     MessagePayload.Channel.EMAIL, Handle.email("me@x.org"), Handle.email("bob@x.org", "Bob"),
-                    listOf(Handle.email("me@x.org")), "Hello", "x".repeat(5_000), t0,
+                    listOf(Handle.email("me@x.org")), "Hello", "x".repeat(5_000), t0, attachments = attachments,
                 ),
                 t0, t0,
             ),
@@ -106,6 +108,25 @@ class DomainToolsTest : FunSpec({
     val home = net.robog.clarity.shared.session.Settings(homeZone = "America/New_York")
     val tools = DomainTools(reader, triggers, DocumentTools(reader) { DocumentFetch.Unavailable("none") }, SettingsProvider { home })
         .all.associateBy { it.name }
+
+    test("a message lists its attachments as part, name, type and size; inline files only when they are pictures") {
+        reader.attachments = listOf(
+            net.robog.clarity.shared.noun.AttachmentMeta("2", "invoice.pdf", "application/pdf", 12_000),
+            net.robog.clarity.shared.noun.AttachmentMeta("1.2.2", "logo.png", "image/png", 800, inline = true),
+            net.robog.clarity.shared.noun.AttachmentMeta("3", "sig.vcf", "text/vcard", 90, inline = true),
+        )
+        try {
+            val out = tools.getValue("list_messages").invoke(obj("""{"from":"2026-10-24","until":"2026-10-25"}""")) as ToolResult.Ok
+            val message = Json.parseToJsonElement(out.content).jsonArray.single().jsonObject
+            message["attachments"]!!.jsonArray.map { it.jsonObject["part"]!!.jsonPrimitive.content } shouldBe listOf("2", "1.2.2")
+            message["attachments"]!!.jsonArray[0].jsonObject["name"]!!.jsonPrimitive.content shouldBe "invoice.pdf"
+            reader.attachments = emptyList()
+            val plain = tools.getValue("list_messages").invoke(obj("""{"from":"2026-10-24","until":"2026-10-25"}""")) as ToolResult.Ok
+            Json.parseToJsonElement(plain.content).jsonArray.single().jsonObject.containsKey("attachments") shouldBe false
+        } finally {
+            reader.attachments = emptyList()
+        }
+    }
 
     test("exposes the nine tools, sorted, with the right effects") {
         tools.keys.toList() shouldContainExactly

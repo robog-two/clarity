@@ -401,15 +401,20 @@ class Harness(
         plan: ToolPlan,
         request: RunRequest,
     ): List<Block> = coroutineScope {
-        calls.map { call -> async { execute(runId, route(call, plan.byName, request.policy), plan, request.resultSink) } }.awaitAll()
+        val done = calls.map { call -> async { execute(runId, route(call, plan.byName, request.policy), plan, request.resultSink) } }.awaitAll()
+        // All results first (they must follow the calls directly), then the pictures some of them brought.
+        done.map { it.result } + done.flatMap { it.images }
     }
+
+    /** A tool call's result block, and the pictures it showed. */
+    private class Executed(val result: Block.Result, val images: List<Block.Image> = emptyList())
 
     private suspend fun ProducerScope<HarnessEvent>.execute(
         runId: String,
         dispatch: Dispatch,
         plan: ToolPlan,
         sink: ToolResultSink?,
-    ): Block.Result {
+    ): Executed {
         val call = when (dispatch) {
             is Dispatch.Run -> dispatch.call
             is Dispatch.Unknown -> dispatch.call
@@ -425,7 +430,7 @@ class Harness(
             }
             found?.let { kept ->
                 send(HarnessEvent.ToolCompleted(call.id, call.name, kept.content, kept.isError))
-                return Block.Result(call.id, kept.content, kept.isError)
+                return Executed(Block.Result(call.id, kept.content, kept.isError))
             }
         }
         val result: ToolResult = when (dispatch) {
@@ -456,6 +461,7 @@ class Harness(
             }
         }
         send(HarnessEvent.ToolCompleted(call.id, call.name, content, isError))
-        return Block.Result(call.id, content, isError)
+        val shown = (result as? ToolResult.Ok)?.show.orEmpty().map { Block.Image(call.id, it.mimeType, it.base64) }
+        return Executed(Block.Result(call.id, content, isError), shown)
     }
 }

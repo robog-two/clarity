@@ -51,6 +51,8 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[Messages.body] = payload.body
         it[Messages.sentAt] = payload.sentAt
         it[Messages.threadRef] = payload.threadRef
+        it[Messages.messageId] = payload.messageId
+        it[Messages.attachments] = payload.attachments
     }
     is ContactPayload -> upsert(Contacts, key, now) {
         it[Contacts.displayName] = payload.displayName

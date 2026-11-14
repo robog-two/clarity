@@ -16,12 +16,15 @@ fun interface ToolPolicy {
         /** Names whose tools run arbitrary code in the page or the browser; never visible, whichever server exposes them. */
         private val RAW_SCRIPT_SUFFIXES = listOf("evaluate_script", "evaluate_privileged_script", "send_bidi_command")
 
+        /** Tools of a tool server that only our own code calls (`view_image` reads files with it); the model never sees them. */
+        private val SERVER_ONLY_SUFFIXES = listOf("read_file_base64")
+
         /**
          * The policy of the lead and the helpers: every tool is gated where it is defined (action gate,
          * browser wrapper, sandbox without network), and raw-script tools stay hidden as a second lock
          * should a wrapper ever miss one.
          */
-        val Gated = ToolPolicy { tool -> if (RAW_SCRIPT_SUFFIXES.any { tool.name.endsWith(it) }) Access.HIDDEN else Access.ALLOW }
+        val Gated = ToolPolicy { tool -> if ((RAW_SCRIPT_SUFFIXES + SERVER_ONLY_SUFFIXES).any { tool.name.endsWith(it) }) Access.HIDDEN else Access.ALLOW }
 
         /** The default for a run: same as [Gated]. */
         val Default: ToolPolicy = Gated

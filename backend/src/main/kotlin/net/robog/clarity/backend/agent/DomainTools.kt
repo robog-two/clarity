@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.put
 import net.robog.clarity.backend.persistence.ContactNameIndex
 import net.robog.clarity.backend.persistence.MessageSearch
@@ -298,6 +299,7 @@ private fun Stored<MessagePayload>.messageJson(folders: List<String>, zone: Time
     payload.subject?.let { put("subject", it) }
     put("sentAt", agentTime(payload.sentAt, zone))
     payload.threadRef?.let { put("thread", it) }
+    attachmentsJson(payload.attachments).takeIf { it.jsonArray.isNotEmpty() }?.let { put("attachments", it) }
     if (snippetOf == null) put("body", payload.body.truncated()) else snippet(payload.body, snippetOf).takeIf { it.isNotEmpty() }?.let { put("snippet", it) }
 }
 

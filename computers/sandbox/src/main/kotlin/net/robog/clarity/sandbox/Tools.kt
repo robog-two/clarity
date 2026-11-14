@@ -174,21 +174,43 @@ class ReadFileTool(private val workspace: Workspace, private val tracker: ReadTr
     }
 }
 
+/** The most a binary file written with `content_base64` (or read with `read_file_base64`) may be. */
+const val MAX_BINARY_BYTES = 25L * 1024 * 1024
+
+/** Pure: the bytes of [encoded] base64 (whitespace and line breaks allowed), or a [SandboxException] saying what is wrong. */
+internal fun decodeBase64(encoded: String): ByteArray {
+    // Check the size before decoding: 4 characters are 3 bytes.
+    val estimate = encoded.length.toLong() / 4 * 3
+    if (estimate > MAX_BINARY_BYTES + 3) {
+        throw SandboxException("content_base64 is larger than ${MAX_BINARY_BYTES / 1024 / 1024} MB.")
+    }
+    return try {
+        java.util.Base64.getMimeDecoder().decode(encoded)
+    } catch (e: IllegalArgumentException) {
+        throw SandboxException("content_base64 is not valid base64: ${e.message}")
+    }
+}
+
 class WriteFileTool(private val workspace: Workspace, private val tracker: ReadTracker) : SandboxTool {
     override val name = "write_file"
     override val description = """
-        Create or completely overwrite a text file under /workspace (parent directories are created).
+        Create or completely overwrite a file under /workspace (parent directories are created).
+        Give `content` for a text file, or `content_base64` for a binary one (an image, a PDF); exactly one of them.
         For changing part of an existing file use edit_file instead. Returns the number of bytes written.
     """.trimIndent()
-    override val inputSchema = schema(listOf("path", "content")) {
+    override val inputSchema = schema(listOf("path")) {
         prop("path", "string", "File path, relative to /workspace.")
-        prop("content", "string", "Entire new contents of the file.")
+        prop("content", "string", "Entire new contents of a text file.")
+        prop("content_base64", "string", "Entire new contents of the file, base64 encoded (for binary files, up to ${MAX_BINARY_BYTES / 1024 / 1024} MB).")
     }
 
     override suspend fun invoke(args: JsonObject): String = withContext(Dispatchers.IO) {
         val original = args.requireString("path")
-        val content = args.requireString("content").toByteArray(StandardCharsets.UTF_8)
-        if (content.size > MAX_FILE_BYTES) throw SandboxException("Content is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB; write it in pieces or generate it with the shell.")
+        val text = args.string("content")
+        val encoded = args.string("content_base64")
+        if ((text == null) == (encoded == null)) throw SandboxException("Give exactly one of \"content\" (text) and \"content_base64\" (binary).")
+        val content = if (encoded != null) decodeBase64(encoded) else text!!.toByteArray(StandardCharsets.UTF_8)
+        if (encoded == null && content.size > MAX_FILE_BYTES) throw SandboxException("Content is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB; write it in pieces or generate it with the shell.")
         val path = workspace.resolve(original)
         if (path == workspace.root || path.isDirectory()) throw SandboxException("\"$original\" is a directory.")
         try {
@@ -199,6 +221,29 @@ class WriteFileTool(private val workspace: Workspace, private val tracker: ReadT
         }
         tracker.record(path, content)
         "Wrote ${content.size} bytes to ${workspace.display(path)}"
+    }
+}
+
+/** The file's bytes as base64, for a caller that is not the model (the server's `view_image`); the model reads files with read_file or the shell. */
+class ReadFileBase64Tool(private val workspace: Workspace, private val maxBytes: Long = MAX_BINARY_BYTES) : SandboxTool {
+    override val name = "read_file_base64"
+    override val readOnly = true
+    override val description = """
+        For the server's image viewer only; do not call this yourself (use view_image to look at an image).
+        Returns the whole file under /workspace as base64, up to ${MAX_BINARY_BYTES / 1024 / 1024} MB.
+    """.trimIndent()
+    override val inputSchema = schema(listOf("path")) {
+        prop("path", "string", "File path, relative to /workspace.")
+    }
+
+    override suspend fun invoke(args: JsonObject): String = withContext(Dispatchers.IO) {
+        val original = args.requireString("path")
+        val path = workspace.resolve(original)
+        if (!path.exists()) throw SandboxException("\"$original\" does not exist. Use list_files to find the right path.")
+        if (path.isDirectory() || !path.isRegularFile()) throw SandboxException("\"$original\" is not a regular file.")
+        val size = Files.size(path)
+        if (size > maxBytes) throw SandboxException("\"$original\" is ${size / 1024 / 1024} MB, over the limit of ${maxBytes / 1024 / 1024} MB.")
+        java.util.Base64.getEncoder().encodeToString(Files.readAllBytes(path))
     }
 }
 
@@ -361,6 +406,7 @@ fun sandboxTools(
         ShellTool(workspace, runner),
         ReadFileTool(workspace, tracker),
         WriteFileTool(workspace, tracker),
+        ReadFileBase64Tool(workspace),
         EditFileTool(workspace, tracker),
         SearchFilesTool(workspace),
         ListFilesTool(workspace),
