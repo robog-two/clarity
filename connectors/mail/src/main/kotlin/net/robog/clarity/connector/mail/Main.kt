@@ -41,6 +41,7 @@ fun mailManifest(runtime: ConnectorRuntime) = ConnectorManifest(
     handles = setOf(ActionKind.SAVE_DRAFT, ActionKind.SEND_EMAIL),
     configSchema = mailConfigSchema,
     sealingKey = runtime.sealingKey,
+    fetches = true,
 )
 
 /**

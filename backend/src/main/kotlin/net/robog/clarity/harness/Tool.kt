@@ -41,6 +41,9 @@ interface Tool {
     val inputSchema: JsonObject
     val effect: ToolEffect
 
+    /** Whether results carry pictures for the model ([ToolResult.Ok.show]): such a call is run again on resume, never answered from the ledger. */
+    val returnsImages: Boolean get() = false
+
     /** Must not throw for bad input; the harness additionally converts stray exceptions to [ToolResult.Error]. */
     suspend fun invoke(input: JsonObject): ToolResult
 }
@@ -57,8 +60,9 @@ inline fun <reified I : Any> tool(
     description: String,
     effect: ToolEffect = ToolEffect.READ,
     json: Json = HarnessJson,
+    returnsImages: Boolean = false,
     noinline block: suspend (I) -> ToolResult,
-): Tool = typedTool(name, description, effect, json, json.serializersModule.serializer<I>(), block)
+): Tool = typedTool(name, description, effect, json, json.serializersModule.serializer<I>(), block, returnsImages)
 
 fun <I : Any> typedTool(
     name: String,
@@ -67,7 +71,9 @@ fun <I : Any> typedTool(
     json: Json,
     serializer: KSerializer<I>,
     block: suspend (I) -> ToolResult,
+    returnsImages: Boolean = false,
 ): Tool = object : Tool {
+    override val returnsImages = returnsImages
     override val name = name
     override val description = description
     override val effect = effect

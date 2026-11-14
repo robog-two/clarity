@@ -28,3 +28,14 @@ CREATE TABLE attachment_fetch (
 CREATE UNIQUE INDEX attachment_fetch_key ON attachment_fetch (entity_id, part, source_version);
 CREATE INDEX attachment_fetch_queue ON attachment_fetch (connector_id, status);
 CREATE INDEX attachment_fetch_done ON attachment_fetch (done_at) WHERE status = 'done';
+
+-- The pictures `view_image` showed the model: bytes live here for a day, the journal keeps only a reference.
+CREATE TABLE tool_image (
+    run_id      text        NOT NULL,
+    tool_use_id text        NOT NULL,
+    mime_type   text        NOT NULL,
+    bytes       bytea       NOT NULL,
+    created_at  timestamptz NOT NULL,
+    PRIMARY KEY (run_id, tool_use_id)
+);
+CREATE INDEX tool_image_created ON tool_image (created_at);

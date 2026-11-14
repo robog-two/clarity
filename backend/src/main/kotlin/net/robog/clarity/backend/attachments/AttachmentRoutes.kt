@@ -26,6 +26,8 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.ConnectorPrincipal
@@ -64,6 +66,9 @@ class AttachmentRoutes(
     private val config: AppConfig,
     private val clock: Clock,
 ) : HttpModule {
+    /** Uploads read into memory at once; each is up to the size limit. */
+    private val uploads = Semaphore(3)
+
     override fun install(application: Application) {
         application.routing {
             authenticate(AuthProviders.DEVICE) {
@@ -88,13 +93,13 @@ class AttachmentRoutes(
                         val id = call.requestId() ?: return@put call.respondProblem(EdgeProblem.NotFound("No such request."))
                         val max = config.attachments.maxBytes
                         val declared = call.request.contentLength()
-                        val bytes = if (sizeVerdict(declared, max) == SizeVerdict.TOO_LARGE) null else readCapped(call, max)
+                        val bytes = if (sizeVerdict(declared, max) == SizeVerdict.TOO_LARGE) null else uploads.withPermit { readCapped(call, max) }
                         if (bytes == null) {
                             store.fail(call.connector(), id, FetchFailure(FetchFailure.Code.TOO_LARGE, "the file is larger than the limit"), clock.now())
                             return@put call.respond(HttpStatusCode.PayloadTooLarge)
                         }
                         val type = call.request.queryParameters["type"]?.takeIf { it.isNotBlank() } ?: "application/octet-stream"
-                        val refused = store.complete(call.connector(), id, bytes, call.request.queryParameters["filename"], type, clock.now(), max)
+                        val refused = store.complete(call.connector(), id, bytes, call.request.queryParameters["filename"], type, clock.now(), max, config.attachments.cacheMaxBytes)
                         call.respond(if (refused == null) HttpStatusCode.NoContent else HttpStatusCode.NotFound)
                     }
                     post("{id}/error") {

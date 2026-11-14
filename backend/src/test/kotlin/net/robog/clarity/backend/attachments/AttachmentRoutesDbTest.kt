@@ -16,6 +16,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.utils.io.writeFully
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.install
 import io.ktor.server.auth.Authentication
@@ -71,8 +72,8 @@ class AttachmentRoutesDbTest : FunSpec({
         DatabaseFactory.migrate(dataSource)
         database = Database.connect(dataSource)
         transaction(database) {
-            exec("INSERT INTO connector (id) VALUES ('mail'), ('other')")
-            exec("INSERT INTO connector_grant (connector_id, noun, state, updated_at) VALUES ('mail', 'message', 'granted', now()), ('other', 'message', 'granted', now())")
+            exec("INSERT INTO connector (id, manifest) VALUES ('mail', '{\"kind\":\"mail\",\"displayName\":\"Mail\",\"version\":\"1\",\"produces\":[\"message\"],\"fetches\":true}'), ('other', '{\"kind\":\"mail\",\"displayName\":\"Mail\",\"version\":\"1\",\"produces\":[\"message\"],\"fetches\":true}'), ('plain', '{\"kind\":\"plain\",\"displayName\":\"Plain\",\"version\":\"1\",\"produces\":[\"message\"]}')")
+            exec("INSERT INTO connector_grant (connector_id, noun, state, updated_at) VALUES ('mail', 'message', 'granted', now()), ('other', 'message', 'granted', now()), ('plain', 'message', 'granted', now())")
         }
     }
     afterSpec { postgres.stop() }
@@ -135,7 +136,7 @@ class AttachmentRoutesDbTest : FunSpec({
     }
 
     test("unknown message, unknown part and a part over the limit are 404, 404 and 413 without asking the connector") {
-        val id = message("refused", listOf(AttachmentMeta("2", "a.pdf", "application/pdf", 100), AttachmentMeta("3", "big.zip", "application/zip", limit + 1)))
+        val id = message("refused", listOf(AttachmentMeta("2", "a.pdf", "application/pdf", 100), AttachmentMeta("3", "big.zip", "application/zip", limit * 2)))
         withApp { http ->
             fun get(path: String) = kotlinx.coroutines.runBlocking { http.get(path) { header(HttpHeaders.Authorization, "Bearer device") }.status }
             get("/api/v1/messages/${java.util.UUID.randomUUID()}/attachments/2") shouldBe HttpStatusCode.NotFound
@@ -200,6 +201,44 @@ class AttachmentRoutesDbTest : FunSpec({
                 http.put("/ingest/v1/fetches/not-a-uuid") { header(HttpHeaders.Authorization, "Bearer mail"); setBody(content) }.status shouldBe HttpStatusCode.NotFound
                 http.put("/ingest/v1/fetches/${request.id}") { header(HttpHeaders.Authorization, "Bearer mail"); setBody(content) }.status shouldBe HttpStatusCode.NoContent
                 download.await() shouldBe HttpStatusCode.OK
+            }
+        }
+    }
+
+    test("an upload with no Content-Length that goes over the limit is refused after the limit, and fails the download") {
+        val id = message("chunked", listOf(AttachmentMeta("2", "a.pdf", "application/pdf", 100)))
+        withApp { http ->
+            coroutineScope {
+                val download = async { http.get("/api/v1/messages/$id/attachments/2") { header(HttpHeaders.Authorization, "Bearer device") }.status }
+                val request = http.poll("mail").fetches.single()
+                http.put("/ingest/v1/fetches/${request.id}") {
+                    header(HttpHeaders.Authorization, "Bearer mail")
+                    setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                        override val contentType = ContentType.Application.OctetStream
+                        override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) {
+                            repeat(3) { channel.writeFully(ByteArray((limit / 2).toInt() + 1)) }
+                        }
+                    })
+                }.status shouldBe HttpStatusCode.PayloadTooLarge
+                download.await() shouldBe HttpStatusCode.PayloadTooLarge
+            }
+        }
+    }
+
+    test("an upload that fits is stored even when it is sent in chunks") {
+        val id = message("chunked-ok", listOf(AttachmentMeta("2", "a.pdf", "application/pdf", 100)))
+        withApp { http ->
+            coroutineScope {
+                val download = async { http.get("/api/v1/messages/$id/attachments/2") { header(HttpHeaders.Authorization, "Bearer device") } }
+                val request = http.poll("mail").fetches.single()
+                http.put("/ingest/v1/fetches/${request.id}?type=application/pdf") {
+                    header(HttpHeaders.Authorization, "Bearer mail")
+                    setBody(object : io.ktor.http.content.OutgoingContent.WriteChannelContent() {
+                        override val contentType = ContentType.Application.OctetStream
+                        override suspend fun writeTo(channel: io.ktor.utils.io.ByteWriteChannel) { channel.writeFully(content) }
+                    })
+                }.status shouldBe HttpStatusCode.NoContent
+                download.await().bodyAsBytes().toList() shouldBe content.toList()
             }
         }
     }

@@ -23,6 +23,7 @@ private val log = KotlinLogging.logger {}
 class AttachmentSweepJob(
     private val config: AppConfig,
     private val store: AttachmentFetchStore,
+    private val pictures: net.robog.clarity.backend.agent.PgToolImageStore,
     private val clock: Clock,
 ) : ScheduledJob {
     override val name = "attachment-cache-sweep"
@@ -31,6 +32,7 @@ class AttachmentSweepJob(
 
     override suspend fun fire(context: FireContext) {
         val dropped = store.sweep(clock.now(), config.attachments.ttl, config.attachments.cacheMaxBytes)
-        if (dropped > 0) log.info { "attachment cache: dropped $dropped rows" }
+        val seen = pictures.sweep(clock.now(), config.attachments.ttl)
+        if (dropped + seen > 0) log.info { "attachment cache: dropped $dropped rows and $seen pictures" }
     }
 }

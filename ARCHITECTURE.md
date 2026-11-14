@@ -167,8 +167,9 @@ byte cache (bytea, keyed by message, part and source version; swept after `CLARI
 24 h and above `CLARITY_ATTACHMENT_CACHE_MAX_MB` 500). Mail records are version "2"; messages ingested
 as "1" have no list, and the connector lists their parts from the server on demand (`save_attachment`
 without a part). Helpers with the sandbox get `save_attachment` and `view_image`; a picture reaches the
-model as a `Block.Image` journaled after the tool results and sent in the user message that follows them
-(newest 4 only). `view_image` is offered when OpenRouter's model list does not say the model refuses images.
+model as a `Block.Image` (a reference only: the bytes live 24 h in `tool_image`, never in the journal or a
+transcript) journaled after the tool results and sent in the user message that follows them (newest 2 only;
+older or expired ones are a fixed note). A connector must declare `fetches` in its manifest to be asked. `view_image` is offered when OpenRouter's model list does not say the model refuses images.
 
 The path constants live in `shared/api/Api.kt` (`ApiPaths`). The only routes that answer without a
 device, connector or enrollment credential are `/healthz`, `/readyz` and the Goods links under `/g/`

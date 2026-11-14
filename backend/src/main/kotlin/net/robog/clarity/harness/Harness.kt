@@ -171,6 +171,8 @@ class Harness(
     private val journal: RunJournal = InMemoryRunJournal(),
     /** Results of tool calls already made, so a resume never runs one twice ([ToolLedger]). */
     private val ledger: ToolLedger = ToolLedger.NONE,
+    /** Where the pictures tools show are kept (the journal holds only a reference). */
+    private val images: ToolImageStore = ToolImageStore.NONE,
 ) {
 
     fun run(request: RunRequest, interrupts: Flow<List<Message>> = emptyFlow()): Flow<HarnessEvent> =
@@ -420,7 +422,8 @@ class Harness(
             is Dispatch.Unknown -> dispatch.call
         }
         // Already run before a crash: the kept result, never a second run.
-        if (dispatch is Dispatch.Run) {
+        // A call that shows a picture runs again: its result alone would leave the model without the picture.
+        if (dispatch is Dispatch.Run && !dispatch.tool.returnsImages) {
             val found = try {
                 ledger.find(runId, call.id)
             } catch (e: CancellationException) {
@@ -461,7 +464,11 @@ class Harness(
             }
         }
         send(HarnessEvent.ToolCompleted(call.id, call.name, content, isError))
-        val shown = (result as? ToolResult.Ok)?.show.orEmpty().map { Block.Image(call.id, it.mimeType, it.base64) }
+        val picture = (result as? ToolResult.Ok)?.show?.firstOrNull()
+        val shown = if (picture == null) emptyList() else {
+            images.save(runId, call.id, picture)
+            listOf(Block.Image(call.id, picture.mimeType, picture.base64.length.toLong() / 4 * 3))
+        }
         return Executed(Block.Result(call.id, content, isError), shown)
     }
 }

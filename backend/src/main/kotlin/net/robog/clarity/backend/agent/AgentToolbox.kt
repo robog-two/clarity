@@ -317,10 +317,10 @@ class AgentToolbox(
      * tools not switched off, with `open_collection`, `search_memory` and `save_note` limited to their
      * collections.
      */
-    suspend fun helperTools(scope: RunScope, requested: List<String>?, servers: List<String> = emptyList()): HelperToolSet {
+    suspend fun helperTools(scope: RunScope, requested: List<String>?, servers: List<String> = emptyList(), role: AgentRole = AgentRole.HELPER): HelperToolSet {
         val mcpAll = mcpTools(scope)
         // Attachments and pictures need the sandbox: they exist only where its tools do.
-        val attachmentAll = guarded(scope, attachmentTools.all(mcpAll))
+        val attachmentAll = guarded(scope, attachmentTools.all(mcpAll, role))
         val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS || it.name == CITE_SOURCES } + gcOnly(scope) + mcpAll + attachmentAll)
             .distinctBy { it.name }
         val picked = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }

@@ -56,7 +56,7 @@ class AttachmentFetchDbTest : FunSpec({
     }
 
     /** A message with attachments 2 (report.pdf) and 3 (huge.bin), held by `mail` as [source] at version "2". */
-    fun message(name: String, source: String, attachments: List<AttachmentMeta>, connector: String = "mail"): EntityId {
+    fun message(name: String, source: String, attachments: List<AttachmentMeta>, connector: String = "mail", version: String = "2"): EntityId {
         val payload = MessagePayload(
             MessagePayload.Channel.EMAIL, me, Handle.email("sam@example.com", "Sam Example"), listOf(me), "Report", "see attached",
             t0, messageId = "<$name@example.com>", attachments = attachments,
@@ -65,7 +65,7 @@ class AttachmentFetchDbTest : FunSpec({
             upsertCanonical(payload, DedupKey(MessageDigest.getInstance("SHA-256").digest(name.toByteArray())), t0).id
         }
         transaction(database) {
-            exec("INSERT INTO source_link (connector_id, noun, source_id, entity_id, latest_version) VALUES ('$connector', 'message', '$source', '$id', '2')")
+            exec("INSERT INTO source_link (connector_id, noun, source_id, entity_id, latest_version) VALUES ('$connector', 'message', '$source', '$id', '$version')")
         }
         return EntityId(id.toString())
     }
@@ -92,11 +92,12 @@ class AttachmentFetchDbTest : FunSpec({
         store = AttachmentFetchStore(database)
         reader = ExposedNounReader(database)
         transaction(database) {
-            exec("INSERT INTO connector (id) VALUES ('mail'), ('other')")
-            exec("INSERT INTO connector_grant (connector_id, noun, state, updated_at) VALUES ('mail', 'message', 'granted', now()), ('other', 'message', 'granted', now())")
+            exec("INSERT INTO connector (id, manifest) VALUES ('mail', '{\"kind\":\"mail\",\"displayName\":\"Mail\",\"version\":\"1\",\"produces\":[\"message\"],\"fetches\":true}'), ('other', '{\"kind\":\"mail\",\"displayName\":\"Mail\",\"version\":\"1\",\"produces\":[\"message\"],\"fetches\":true}'), ('plain', '{\"kind\":\"plain\",\"displayName\":\"Plain\",\"version\":\"1\",\"produces\":[\"message\"]}')")
+            exec("INSERT INTO connector_grant (connector_id, noun, state, updated_at) VALUES ('mail', 'message', 'granted', now()), ('other', 'message', 'granted', now()), ('plain', 'message', 'granted', now())")
         }
     }
     afterSpec { postgres.stop() }
+    beforeTest { transaction(database) { exec("TRUNCATE attachment_fetch") } }
 
     test("the message keeps its id and attachment list") {
         val id = message("keeps", "acct/INBOX/1/1", standard)
@@ -223,7 +224,8 @@ class AttachmentFetchDbTest : FunSpec({
         }
         runBlocking { store.lease(mail, t0 + 30.minutes, 1_000) } shouldBe emptyList()
         runBlocking { store.answer(ticket.id) }.shouldBeInstanceOf<Answer.Failed>()
-        id.toString().isNotEmpty() shouldBe true
+        runBlocking { store.answer(ticket.id) } shouldBe Answer.Failed(FetchFailure.Code.FAILED, "the connector never answered")
+        id.toString().length shouldBe 36
     }
 
     test("cached bytes expire: an old row is asked again, and the sweep drops it") {
@@ -267,5 +269,133 @@ class AttachmentFetchDbTest : FunSpec({
         val second = runBlocking { store.request(key, t0 + 1.minutes, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
         second.id shouldBe first.id
         runBlocking { store.answer(second.id) } shouldBe Answer.Pending
+    }
+
+    test("a message ingested before lists existed is asked for its parts, and a part that is not there is not found") {
+        val id = message("legacy", "acct/INBOX/1/40", emptyList(), version = "1")
+        val fetcher = fetcher()
+        val error = coroutineScope {
+            val pending = async { fetcher.fetch(id, "9") }
+            serve(mail) { store.fail(mail, Uuid.parse(it.id), FetchFailure(FetchFailure.Code.NOT_FOUND, "the message has no part 9"), Clock.System.now()) }
+            pending.await().leftOrNull()
+        }
+        error.shouldBeInstanceOf<FetchError.NotFound>()
+    }
+
+    test("a record that lists its attachments and lists none has none: answered without asking the connector") {
+        val id = message("none", "acct/INBOX/1/41", emptyList(), version = "2")
+        fetcher().fetch(id, "2").leftOrNull().shouldBeInstanceOf<FetchError.NotFound>()
+        fetcher().list(id).getOrNull() shouldBe emptyList()
+        store.lease(mail, Clock.System.now(), 1_000_000) shouldBe emptyList()
+    }
+
+    test("a connector that does not declare fetch support is not asked") {
+        val id = message("plainly", "acct/INBOX/1/42", standard, connector = "plain")
+        fetcher().fetch(id, "2").leftOrNull().shouldBeInstanceOf<FetchError.NotFound>()
+        store.lease(ConnectorId("plain"), Clock.System.now(), 1_000_000) shouldBe emptyList()
+    }
+
+    test("the newest version of a source is asked first") {
+        val id = message("versions", "acct/INBOX/1/43", standard, version = "2")
+        transaction(database) {
+            exec("INSERT INTO source_link (connector_id, noun, source_id, entity_id, latest_version) VALUES ('mail', 'message', 'acct/Archive/9/1', '${id.value}', '3')")
+        }
+        val asked = coroutineScope {
+            val pending = async { fetcher().fetch(id, "2") }
+            var first: FetchRequest? = null
+            serve(mail) { first = it; store.complete(mail, Uuid.parse(it.id), content, "report.pdf", "application/pdf", Clock.System.now(), 1_000_000) }
+            pending.await()
+            first
+        }
+        asked!!.sourceId.value shouldBe "acct/Archive/9/1"
+    }
+
+    test("two attachments with the same name are saved under different names") {
+        val id = message("twins", "acct/INBOX/1/44", listOf(AttachmentMeta("2", "scan.pdf", "application/pdf", 10), AttachmentMeta("3", "scan.pdf", "application/pdf", 10)))
+        val fetcher = fetcher()
+        val names = (listOf("2", "3")).map { part ->
+            coroutineScope {
+                val pending = async { fetcher.fetch(id, part) }
+                serve(mail) { store.complete(mail, Uuid.parse(it.id), content, "scan.pdf", "application/pdf", Clock.System.now(), 1_000_000) }
+                pending.await().getOrNull()!!.filename
+            }
+        }
+        names shouldBe listOf("scan-p2.pdf", "scan-p3.pdf")
+    }
+
+    test("an answer that comes after the lease lapsed is still taken") {
+        val key = FetchKey(mail, Uuid.random(), "acct/INBOX/1/45", "2", "2")
+        val ticket = runBlocking { store.request(key, t0, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(mail, t0, 1_000_000) }.single()
+        // 20 minutes later nothing has re-leased it: the slow upload arrives
+        runBlocking { store.complete(mail, ticket.id, content, "late.pdf", "application/pdf", t0 + 20.minutes, 1_000_000) } shouldBe null
+        runBlocking { store.answer(ticket.id) }.shouldBeInstanceOf<Answer.Done>().file.filename shouldBe "late.pdf"
+    }
+
+    test("a connector whose grant was revoked cannot answer what it was asked before") {
+        val key = FetchKey(other, Uuid.random(), "acct/INBOX/1/46", "2", "2")
+        val ticket = runBlocking { store.request(key, t0, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(other, t0, 1_000_000) }.single()
+        transaction(database) { exec("UPDATE connector_grant SET state = 'revoked' WHERE connector_id = 'other'") }
+        try {
+            runBlocking { store.complete(other, ticket.id, content, "x", "text/plain", t0, 1_000_000) } shouldBe AnswerRefused.UNKNOWN_REQUEST
+            runBlocking { store.fail(other, ticket.id, FetchFailure(FetchFailure.Code.FAILED, "x"), t0) } shouldBe AnswerRefused.UNKNOWN_REQUEST
+        } finally {
+            transaction(database) { exec("UPDATE connector_grant SET state = 'granted' WHERE connector_id = 'other'") }
+        }
+        runBlocking { store.answer(ticket.id) } shouldBe Answer.Pending
+    }
+
+    test("storing a file makes room first: the cache never goes over its cap") {
+        runBlocking { store.sweep(t0 + 10_000.hours, 24.hours, 0) }
+        val keys = (1..4).map { FetchKey(mail, Uuid.random(), "acct/INBOX/1/5$it", "2", "2") }
+        keys.forEachIndexed { i, key ->
+            val ticket = runBlocking { store.request(key, t0 + i.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+            runBlocking { store.lease(mail, t0 + i.hours, 1_000_000) }
+            runBlocking { store.complete(mail, ticket.id, ByteArray(1_000), "f$i", "text/plain", t0 + i.hours, 1_000_000, cacheMaxBytes = 2_500) } shouldBe null
+            (runBlocking { store.cachedBytes() } <= 2_500) shouldBe true
+        }
+        runBlocking { store.cachedBytes() } shouldBe 2_000
+        runBlocking { store.request(keys[0], t0 + 5.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>() // the oldest went
+        runBlocking { store.request(keys[3], t0 + 5.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Cached>()
+    }
+
+    test("the sweep leaves a request that is still waiting for its upload") {
+        runBlocking { store.sweep(t0 + 10_000.hours, 24.hours, 0) }
+        val waiting = FetchKey(mail, Uuid.random(), "acct/INBOX/1/60", "2", "2")
+        val leased = FetchKey(mail, Uuid.random(), "acct/INBOX/1/61", "2", "2")
+        val stale = FetchKey(other, Uuid.random(), "acct/INBOX/1/62", "2", "2")
+        val c = runBlocking { store.request(stale, t0 - 3.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        val b = runBlocking { store.request(leased, t0 - 30.minutes, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(other, t0, 1_000_000, limit = 1) }.single().id shouldBe c.id.toString()
+        val a = runBlocking { store.request(waiting, t0 + 15.minutes, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        // b was requested long ago but handed to the connector only now: its upload may be on the way
+        runBlocking { store.lease(mail, t0 + 15.minutes, 1_000_000, limit = 1) }.single().id shouldBe b.id.toString()
+        runBlocking { store.sweep(t0 + 20.minutes, 24.hours, Long.MAX_VALUE) } shouldBe 1 // only c, whose lease ended long ago
+        runBlocking { store.answer(b.id) } shouldBe Answer.Pending
+        runBlocking { store.answer(a.id) } shouldBe Answer.Pending
+        runBlocking { store.answer(c.id) }.shouldBeInstanceOf<Answer.Failed>() // gone
+    }
+
+    test("asking again after a lost delivery keeps the count of deliveries") {
+        val key = FetchKey(mail, Uuid.random(), "acct/INBOX/1/70", "2", "2")
+        val first = runBlocking { store.request(key, t0, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        repeat(FETCH_MAX_ATTEMPTS) { n -> runBlocking { store.lease(mail, t0 + (n * 5).minutes, 1_000) }.single() }
+        runBlocking { store.lease(mail, t0 + 30.minutes, 1_000) } shouldBe emptyList() // failed for good
+        val again = runBlocking { store.request(key, t0 + 31.minutes, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        again.id shouldBe first.id
+        runBlocking { store.lease(mail, t0 + 31.minutes, 1_000) }.single().id shouldBe first.id.toString()
+        transaction(database) {
+            exec("SELECT attempts FROM attachment_fetch WHERE id = '${first.id}'") { rs -> rs.next(); rs.getInt(1) } shouldBe FETCH_MAX_ATTEMPTS + 1
+        }
+        // an expired download starts over
+        val done = FetchKey(mail, Uuid.random(), "acct/INBOX/1/71", "2", "2")
+        val ticket = runBlocking { store.request(done, t0, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(mail, t0, 1_000) }
+        runBlocking { store.complete(mail, ticket.id, content, "a", "text/plain", t0, 1_000_000) } shouldBe null
+        runBlocking { store.request(done, t0 + 25.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        transaction(database) {
+            exec("SELECT attempts FROM attachment_fetch WHERE id = '${ticket.id}'") { rs -> rs.next(); rs.getInt(1) } shouldBe 0
+        }
     }
 })

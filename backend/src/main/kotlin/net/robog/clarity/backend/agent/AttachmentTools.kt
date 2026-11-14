@@ -4,6 +4,8 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.util.Base64
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -32,6 +34,8 @@ const val VIEW_IMAGE = "view_image"
 private const val SANDBOX_WRITE = "sandbox__write_file"
 private const val SANDBOX_READ_BASE64 = "sandbox__read_file_base64"
 
+private val saving = Semaphore(3)
+
 /** The tools a helper with the sandbox uses on email attachments and pictures. Both exist only where the sandbox does. */
 @Inject
 @SingleIn(AppScope::class)
@@ -44,12 +48,12 @@ class AttachmentTools(
      * The tools for a run whose tools include [sandbox] (the sandbox's MCP tools): `save_attachment` when it can
      * write files, `view_image` when it can read them and the helper's model takes images (not known to refuse them).
      */
-    suspend fun all(sandbox: List<Tool>): List<Tool> {
+    suspend fun all(sandbox: List<Tool>, role: AgentRole = AgentRole.HELPER): List<Tool> {
         val write = sandbox.firstOrNull { it.name == SANDBOX_WRITE }
         val read = sandbox.firstOrNull { it.name == SANDBOX_READ_BASE64 }
         return listOfNotNull(
             write?.let { saveAttachment(it) },
-            read?.takeIf { capabilities.acceptsImages(models[AgentRole.HELPER].model) != false }?.let { viewImage(it) },
+            read?.takeIf { capabilities.acceptsImages(models[role].model) != false }?.let { viewImage(it) },
         )
     }
 
@@ -74,18 +78,22 @@ class AttachmentTools(
             return@tool attachments.list(id).fold({ ToolResult.Error(it.detail ?: it.title) }) { list -> ToolResult.Ok(listJson(list)) }
         }
         if (!validPart(part) || part == "*") return@tool ToolResult.Error("`part` is the attachment's part like \"2\" or \"1.3\" from the message's attachments.")
-        val file = attachments.fetch(id, part).fold({ return@tool ToolResult.Error(it.detail ?: it.title) }, { it })
-        val path = sandboxAttachmentPath(id.value, file.filename)
-        val written = write.invokeSafely(buildJsonObject {
-            put("path", path)
-            put("content_base64", Base64.getEncoder().encodeToString(file.bytes))
-        })
-        if (written is ToolResult.Error) return@tool ToolResult.Error("Could not write the file into the sandbox: ${written.message}")
-        ToolResult.Ok(buildJsonObject {
-            put("path", "/workspace/$path")
-            put("type", file.mimeType)
-            put("size", file.bytes.size)
-        }.toString())
+        // A file is in memory three times over while it is written (bytes, base64, the request): a few at a time.
+        saving.withPermit {
+            val file = attachments.fetch(id, part).fold({ return@tool ToolResult.Error(it.detail ?: it.title) }, { it })
+            val path = sandboxAttachmentPath(id.value, file.filename)
+            val size = file.bytes.size
+            val written = write.invokeSafely(buildJsonObject {
+                put("path", path)
+                put("content_base64", Base64.getEncoder().encodeToString(file.bytes))
+            })
+            if (written is ToolResult.Error) return@tool ToolResult.Error("Could not write the file into the sandbox: ${written.message}")
+            ToolResult.Ok(buildJsonObject {
+                put("path", "/workspace/$path")
+                put("type", file.mimeType)
+                put("size", size)
+            }.toString())
+        }
     }
 
     @Serializable
@@ -100,6 +108,7 @@ class AttachmentTools(
             "Only the last few pictures stay in view, so note what matters.",
         effect = ToolEffect.READ,
         json = ClarityJson,
+        returnsImages = true,
     ) { input ->
         val answer = read.invokeSafely(buildJsonObject { put("path", input.path.trim().removePrefix("/workspace/")) })
         val encoded = when (answer) {
@@ -107,7 +116,7 @@ class AttachmentTools(
             is ToolResult.Ok -> answer.content
         }
         val bytes = try {
-            Base64.getMimeDecoder().decode(encoded.trim())
+            Base64.getDecoder().decode(encoded.trim())
         } catch (e: IllegalArgumentException) {
             return@tool ToolResult.Error("The sandbox sent something that is not a file.")
         }

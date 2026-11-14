@@ -43,9 +43,10 @@ class ToolsTest : FunSpec({
         t.getValue("write_file").invoke(args("path" to "attachments/ab12/pic.png", "content_base64" to encoded)) shouldContain "300 bytes"
         Files.readAllBytes(ws.root.resolve("attachments/ab12/pic.png")).toList() shouldBe bytes.toList()
         java.util.Base64.getDecoder().decode(t.getValue("read_file_base64").invoke(args("path" to "attachments/ab12/pic.png"))).toList() shouldBe bytes.toList()
-        // line breaks in the base64 are fine
-        t.getValue("write_file").invoke(args("path" to "b.bin", "content_base64" to encoded.chunked(76).joinToString("\n"))) shouldContain "300 bytes"
-        Files.readAllBytes(ws.root.resolve("b.bin")).toList() shouldBe bytes.toList()
+        // strict: line breaks and stray characters are errors, not skipped
+        shouldThrow<SandboxException> { t.getValue("write_file").invoke(args("path" to "b.bin", "content_base64" to encoded.chunked(76).joinToString("\n"))) }.message shouldContain "not valid base64"
+        shouldThrow<SandboxException> { t.getValue("write_file").invoke(args("path" to "c.bin", "content_base64" to "$encoded*")) }.message shouldContain "not valid base64"
+        Files.exists(ws.root.resolve("b.bin")) shouldBe false
     }
 
     test("write_file wants exactly one of content and content_base64, valid base64, and stays inside the workspace") {

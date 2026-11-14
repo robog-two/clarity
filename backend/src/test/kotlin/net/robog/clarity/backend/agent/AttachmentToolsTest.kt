@@ -16,7 +16,15 @@ import javax.imageio.ImageIO
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import net.robog.clarity.backend.config.AgentRole
+import net.robog.clarity.harness.Block
+import net.robog.clarity.harness.Message
+import net.robog.clarity.harness.Role
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -127,6 +135,19 @@ class ModelCapabilitiesTest : FunSpec({
         imageSupportOf(known, "vendor/text-only:free") shouldBe false
         imageSupportOf(known, "vendor/m:free") shouldBe true
         imageSupportOf(known, "somebody/else") shouldBe null
+    }
+
+    test("a run that starts while the list is downloading does not wait for it") {
+        runBlocking {
+            val release = kotlinx.coroutines.CompletableDeferred<String?>()
+            val capabilities = OpenRouterModelCapabilities({ release.await() })
+            val first = async { capabilities.acceptsImages("openai/gpt-5") }
+            delay(100) // the first is inside the download now
+            withTimeout(2_000) { capabilities.acceptsImages("openai/gpt-5") } shouldBe null // unknown for now, and not blocked
+            release.complete(listing)
+            first.await() shouldBe true
+            capabilities.acceptsImages("vendor/text-only") shouldBe false
+        }
     }
 
     test("the list is fetched once and kept; a failed fetch is tried again later") {
@@ -252,6 +273,38 @@ class AttachmentToolsTest : FunSpec({
             toolsFor(source, true).all(listOf(missing)).single().invoke(buildJsonObject { put("path", "x.png") })
                 .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "does not exist"
         }
+    }
+
+    test("the vision check is for the model the run uses: its role's") {
+        runTest {
+            val config = AgentConfig(reviewInterval = 2.hours)
+            val settings = ModelSettings(config, InMemoryRoleOverrideStore(kotlin.time.Clock.System))
+            val blind = settings[AgentRole.TRIAGE].model
+            val asked = mutableListOf<String>()
+            val tools = AttachmentTools(source, settings, ModelCapabilities { asked += it; it != blind })
+            val read = FakeSandboxTool("sandbox__read_file_base64")
+            tools.all(listOf(read), AgentRole.TRIAGE) shouldBe emptyList()
+            asked.last() shouldBe blind
+            if (settings[AgentRole.HELPER].model != blind) tools.all(listOf(read), AgentRole.HELPER).map { it.name } shouldContainExactly listOf(VIEW_IMAGE)
+            asked.last() shouldBe settings[AgentRole.HELPER].model
+        }
+    }
+
+    test("a call that shows a picture is not answered from the ledger on resume") {
+        runTest {
+            val read = FakeSandboxTool("sandbox__read_file_base64")
+            toolsFor(source, true).all(listOf(read)).single().returnsImages shouldBe true
+            toolsFor(source, true).all(listOf(FakeSandboxTool("sandbox__write_file"))).single().returnsImages shouldBe false
+        }
+    }
+
+    test("a picture counts about 1,600 tokens however its reference looks") {
+        val picture = Message(Role.USER, listOf(Block.Image("c1", "image/png", 5_000_000)))
+        val text = estimateTokens(listOf(Message(Role.USER, listOf(Block.Text("hi")))))
+        (estimateTokens(listOf(picture)) in 1_600L..1_700L) shouldBe true
+        (estimateTokens(listOf(picture, picture)) in 3_200L..3_400L) shouldBe true
+        val both = Message(Role.USER, listOf(Block.Text("hi"), Block.Image("c1", "image/png", 5_000_000)))
+        (estimateTokens(listOf(both)) - text) shouldBe (estimateTokens(listOf(both)) - text).coerceIn(1_600L, 1_700L)
     }
 
     test("the message's attachment list hides inline parts unless they are pictures") {

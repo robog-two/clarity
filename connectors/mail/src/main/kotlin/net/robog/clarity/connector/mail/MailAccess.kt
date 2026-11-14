@@ -17,7 +17,7 @@ private const val IMAP_READ_TIMEOUT_MS = "180000"
 /** Opens connections for one [MailConfig]. Connections are short-lived; callers close them. */
 class MailAccess(val config: MailConfig) {
 
-    private fun imapSession(): Session {
+    private fun imapSession(fetchSize: Int? = null): Session {
         val protocol = if (config.imapSecurity == Security.SSL) "imaps" else "imap"
         val p = Properties().apply {
             put("mail.store.protocol", protocol)
@@ -27,6 +27,7 @@ class MailAccess(val config: MailConfig) {
             put("mail.$protocol.timeout", IMAP_READ_TIMEOUT_MS)
             put("mail.$protocol.writetimeout", TIMEOUT_MS)
             put("mail.$protocol.peek", "true") // reading must not set \Seen
+            fetchSize?.let { put("mail.$protocol.fetchsize", it.toString()) }
             put("mail.$protocol.ssl.checkserveridentity", "true")
             if (config.imapSecurity == Security.STARTTLS) {
                 put("mail.imap.starttls.enable", "true")
@@ -37,9 +38,9 @@ class MailAccess(val config: MailConfig) {
         return Session.getInstance(p)
     }
 
-    /** A connected IMAP store. */
-    fun imap(): IMAPStore {
-        val session = imapSession()
+    /** A connected IMAP store. [fetchSize] is the bytes asked for in one round trip when a body is read (the default is 16 KB). */
+    fun imap(fetchSize: Int? = null): IMAPStore {
+        val session = imapSession(fetchSize)
         val store = session.getStore(session.getProperty("mail.store.protocol")) as IMAPStore
         store.connect(config.imapHost, config.imapPort, config.username, config.password)
         return store

@@ -26,6 +26,9 @@ private val log = KotlinLogging.logger {}
  */
 fun tooLargeToFetch(encodedSize: Long, maxBytes: Long): Boolean = encodedSize / 10 * 7 > maxBytes
 
+/** Bytes per IMAP round trip when an attachment is read: 1 MB, not the 16 KB default (25 MB would be 1,600 trips). */
+const val FETCH_SIZE = 1024 * 1024
+
 /** Default and env name of the largest attachment served, in megabytes (the backend has the same setting). */
 const val ATTACHMENT_LIMIT_ENV = "CLARITY_ATTACHMENT_MAX_MB"
 private const val DEFAULT_LIMIT_MB = 25L
@@ -55,7 +58,7 @@ class MailFetches(
         val access = all.firstOrNull { it.config.id == ref.accountId }
             ?: return@withContext FetchOutcome.notFound("no mail account '${ref.accountId}' is set up")
         try {
-            access.imap().use { store ->
+            access.imap(fetchSize = FETCH_SIZE).use { store ->
                 val folder = store.folder(ref.folder)
                 if (!folder.exists()) return@use FetchOutcome.notFound("the folder '${ref.folder}' no longer exists")
                 folder.openedUse(READ_ONLY) { f ->

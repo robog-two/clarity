@@ -162,7 +162,91 @@ $PNG
 --R--
 """.trimStart()
 
+private val nested = """
+$HEAD
+Content-Type: multipart/mixed; boundary="OUT"
+
+--OUT
+Content-Type: multipart/alternative; boundary="ALT"
+
+--ALT
+Content-Type: text/plain; charset=UTF-8
+
+Hello
+--ALT
+Content-Type: multipart/related; boundary="REL"
+
+--REL
+Content-Type: text/html; charset=UTF-8
+
+<p>Hello <img src="cid:logo@example.com"></p>
+--REL
+Content-Type: image/png; name="logo.png"
+Content-Disposition: inline; filename="logo.png"
+Content-ID: <logo@example.com>
+Content-Transfer-Encoding: base64
+
+$PNG
+--REL--
+--ALT--
+--OUT
+Content-Type: multipart/mixed; boundary="IN1"
+
+--IN1
+Content-Type: application/pdf; name="a.pdf"
+Content-Disposition: attachment; filename="a.pdf"
+Content-Transfer-Encoding: base64
+
+$PDF
+--IN1
+Content-Type: multipart/mixed; boundary="IN2"
+
+--IN2
+Content-Type: text/plain; charset=UTF-8
+Content-Disposition: attachment; filename="notes.txt"
+
+deep notes
+--IN2
+Content-Type: message/rfc822
+Content-Disposition: attachment
+
+From: Dana Example <dana@example.com>
+To: sam@example.com
+Subject: Forwarded plan
+Content-Type: text/plain
+
+Inner body
+--IN2--
+--IN1--
+--OUT
+Content-Type: application/zip; name="z.zip"
+Content-Disposition: attachment; filename="z.zip"
+Content-Transfer-Encoding: base64
+
+$PDF
+--OUT--
+""".trimStart()
+
 class AttachmentMappingTest : FunSpec({
+    test("parts of a deeply nested message are numbered the way IMAP numbers them, by the listing and by partAt") {
+        val message = parse(nested)
+        val list = message.attachments()
+        list.map { it.part } shouldBe listOf("1.2.2", "2.1", "2.2.1", "2.2.2", "3")
+        list.map { it.filename } shouldBe listOf("logo.png", "a.pdf", "notes.txt", "Forwarded plan.eml", "z.zip")
+        list.map { it.mimeType } shouldBe listOf("image/png", "application/pdf", "text/plain", "message/rfc822", "application/zip")
+        list.map { it.inline } shouldBe listOf(true, false, false, false, false)
+        // every listed part is found at its path, and nothing else is
+        for (a in list) message.partAt(PartPath.parse(a.part)!!)!!.contentType.substringBefore(';').lowercase() shouldBe a.mimeType
+        message.partAt(listOf(1, 1))!!.contentType.substringBefore(';') shouldBe "text/plain"
+        message.partAt(listOf(1, 2, 1))!!.contentType.substringBefore(';') shouldBe "text/html"
+        message.partAt(listOf(2, 2))!!.contentType.substringBefore(';') shouldBe "multipart/mixed"
+        message.partAt(listOf(2, 3)).shouldBeNull()
+        message.partAt(listOf(4)).shouldBeNull()
+        message.partAt(listOf(1, 2, 2, 1)).shouldBeNull()
+        message.partAt(listOf(2, 2, 1))!!.inputStream.readBytes().decodeToString().trim() shouldBe "deep notes"
+        message.partAt(listOf(3))!!.inputStream.readBytes().decodeToString() shouldBe "%PDF-1.4\n"
+    }
+
     test("the message id keeps its angle brackets") {
         parse(withPdf).toPayload("me@example.com", fallback)!!.messageId shouldBe "<abc.1@example.com>"
         parse("From: a@x.org\nTo: b@x.org\n\nhi").toPayload("b@x.org", fallback)!!.messageId.shouldBeNull()

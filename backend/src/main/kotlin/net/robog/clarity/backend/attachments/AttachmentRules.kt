@@ -3,6 +3,7 @@ package net.robog.clarity.backend.attachments
 import kotlin.time.Duration
 import kotlin.time.Instant
 import net.robog.clarity.shared.fetch.FetchRequest
+import net.robog.clarity.shared.noun.AttachmentMeta
 
 /** Pure decisions of the attachment fetch: what is a valid part, what a name may be, what the cache keeps. */
 
@@ -21,23 +22,84 @@ enum class SizeVerdict { OK, TOO_LARGE }
 fun sizeVerdict(size: Long?, maxBytes: Long): SizeVerdict =
     if (size != null && size > maxBytes) SizeVerdict.TOO_LARGE else SizeVerdict.OK
 
-private const val MAX_NAME_CHARS = 120
+/** The longest file name, in UTF-8 bytes (file systems cut at 255; the part suffix and the sandbox's own paths need room). */
+const val MAX_NAME_BYTES = 200
+
+private fun utf8Size(codePoint: Int): Int = when {
+    codePoint < 0x80 -> 1
+    codePoint < 0x800 -> 2
+    codePoint < 0x10000 -> 3
+    else -> 4
+}
+
+private fun String.utf8Bytes(): Int = codePoints().toArray().sumOf(::utf8Size)
+
+/** [this] cut to [maxBytes] of UTF-8 on a character boundary. */
+private fun String.takeBytes(maxBytes: Int): String {
+    var used = 0
+    val out = StringBuilder()
+    for (cp in codePoints().toArray()) {
+        used += utf8Size(cp)
+        if (used > maxBytes) break
+        out.appendCodePoint(cp)
+    }
+    return out.toString()
+}
+
+/** [name] cut to [MAX_NAME_BYTES] with its extension (when short) kept. */
+internal fun capName(name: String): String {
+    if (name.utf8Bytes() <= MAX_NAME_BYTES) return name
+    val dot = name.lastIndexOf('.')
+    val extension = if (dot > 0 && name.substring(dot).utf8Bytes() <= 24) name.substring(dot) else ""
+    return name.substring(0, name.length - extension.length).takeBytes(MAX_NAME_BYTES - extension.utf8Bytes()) + extension
+}
 
 /**
- * A file name that is safe to write into the sandbox and to offer as a download: no path parts, no
- * control characters, no leading dots, at most [MAX_NAME_CHARS] characters with the extension kept.
+ * A file name that is safe to write into the sandbox and to offer as a download: no path parts, no control or
+ * invisible formatting characters (bidirectional overrides and the like, Unicode category Cf), no leading dots or
+ * hyphens (an option to a shell command), at most [MAX_NAME_BYTES] bytes of UTF-8 with the extension kept.
  * A missing or empty name becomes `attachment-<part>` plus an extension from [mimeType].
  */
 fun sanitizeFilename(name: String?, part: String, mimeType: String): String {
-    val base = name.orEmpty().substringAfterLast('/').substringAfterLast('\\')
-        .map { c -> if (c.isISOControl() || c in "<>:\"|?*") '_' else c }.joinToString("")
-        .replace(Regex("\\s+"), " ")
-        .trim().trimStart('.').trim()
+    val visible = name.orEmpty().substringAfterLast('/').substringAfterLast('\\')
+        .codePoints().toArray()
+        .filter { Character.getType(it) != Character.FORMAT.toInt() }
+        .joinToString("") { cp -> if (Character.isISOControl(cp) || cp.toChar() in "<>:\"|?*" && cp < 0x80) "_" else String(Character.toChars(cp)) }
+    val base = visible.replace(Regex("\\s+"), " ").trim().trimStart('.', '-').trim()
     if (base.isEmpty() || base.all { it == '_' || it == '.' }) return "attachment-${part.replace('.', '-')}${extensionFor(mimeType)}"
-    if (base.length <= MAX_NAME_CHARS) return base
-    val dot = base.lastIndexOf('.')
-    val extension = if (dot > 0 && base.length - dot <= 12) base.substring(dot) else ""
-    return base.take(MAX_NAME_CHARS - extension.length) + extension
+    return capName(base)
+}
+
+/**
+ * [name] made different from the names of [others] (the message's other attachments, by their own sanitized
+ * names, ignoring case): two files called `scan.pdf` become `scan-p2.pdf` and `scan-p3.pdf`, so saving one
+ * never overwrites the other. A name already unique is returned as it is.
+ */
+fun distinctFilename(name: String, part: String, others: List<AttachmentMeta>): String {
+    val clash = others.any { it.part != part && sanitizeFilename(it.filename, it.part, it.mimeType).equals(name, ignoreCase = true) }
+    if (!clash) return name
+    val dot = name.lastIndexOf('.')
+    val (stem, extension) = if (dot > 0 && name.length - dot <= 24) name.substring(0, dot) to name.substring(dot) else name to ""
+    return capName("$stem-p${part.replace('.', '-')}$extension")
+}
+
+/**
+ * Whether a message's source record of [sourceVersion] lists its attachments: mail records from version 2 on do, so
+ * an empty list means none. Older ones (and sources with their own version scheme) may not, and are asked.
+ */
+fun attachmentsKnown(sourceVersion: String): Boolean = (sourceVersion.toLongOrNull() ?: 0L) >= 2L
+
+/**
+ * Whether a part the source says is [declared] bytes as stored (base64, the usual encoding of a file, is a third
+ * bigger than the file) cannot fit [maxBytes] once decoded. The same estimate as the connector's, so a 20 MB
+ * file of about 27 MB encoded passes under a 25 MB limit; the real size is checked when the bytes arrive.
+ */
+fun declaredTooLarge(declared: Long?, maxBytes: Long): Boolean = declared != null && declared / 10 * 7 > maxBytes
+
+/** How long a fetch of [declared] bytes waits for the connector: [base], plus 3 s per MB, at most 120 s (never less than [base]). */
+fun fetchWait(base: Duration, declared: Long?): Duration {
+    val extra = ((declared ?: 0L) / (1024 * 1024)).coerceAtLeast(0) * 3
+    return maxOf(base, minOf(base + Duration.parse("${extra}s"), Duration.parse("120s")))
 }
 
 /** The extension (with its dot) usually used for [mimeType], or none. */

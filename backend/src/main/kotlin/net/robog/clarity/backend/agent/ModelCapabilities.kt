@@ -19,8 +19,6 @@ import kotlin.time.toJavaDuration
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runInterruptible
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -74,21 +72,26 @@ class OpenRouterModelCapabilities(
     @Inject
     constructor(config: AgentConfig) : this({ download(config.openRouterBaseUrl) })
 
-    private val lock = Mutex()
-    private var known: Map<String, Boolean> = emptyMap()
-    private var validUntil: Instant? = null
+    @Volatile private var known: Map<String, Boolean> = emptyMap()
+    @Volatile private var validUntil: Instant? = null
 
     override suspend fun acceptsImages(model: String): Boolean? {
         refreshIfDue()
         return imageSupportOf(known, model)
     }
 
-    private suspend fun refreshIfDue() = lock.withLock {
+    /**
+     * Asks for the list when it is due. Nothing is held while the download runs: a run that starts meanwhile uses
+     * what is known (nothing, at first, which means unknown) instead of waiting behind it.
+     */
+    private suspend fun refreshIfDue() {
         val now = clock.now()
-        if (validUntil?.let { now < it } == true) return@withLock
+        if (validUntil?.let { now < it } == true) return
+        validUntil = now + IN_PROGRESS
         val body = try {
             load()
         } catch (e: CancellationException) {
+            validUntil = null
             throw e
         } catch (e: Exception) {
             log.warn { "could not read OpenRouter's model list: ${e.message}" }
@@ -105,6 +108,7 @@ class OpenRouterModelCapabilities(
 
     companion object {
         private val timeout: Duration = 10.seconds
+        private val IN_PROGRESS: Duration = 30.seconds
 
         internal suspend fun download(baseUrl: String): String? {
             val proxy = httpsProxyFromEnv(System.getenv())

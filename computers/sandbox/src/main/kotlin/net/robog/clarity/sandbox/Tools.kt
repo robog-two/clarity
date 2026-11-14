@@ -177,7 +177,7 @@ class ReadFileTool(private val workspace: Workspace, private val tracker: ReadTr
 /** The most a binary file written with `content_base64` (or read with `read_file_base64`) may be. */
 const val MAX_BINARY_BYTES = 25L * 1024 * 1024
 
-/** Pure: the bytes of [encoded] base64 (whitespace and line breaks allowed), or a [SandboxException] saying what is wrong. */
+/** Pure: the bytes of [encoded] base64 (strict: no line breaks or stray characters), or a [SandboxException] saying what is wrong. */
 internal fun decodeBase64(encoded: String): ByteArray {
     // Check the size before decoding: 4 characters are 3 bytes.
     val estimate = encoded.length.toLong() / 4 * 3
@@ -185,7 +185,7 @@ internal fun decodeBase64(encoded: String): ByteArray {
         throw SandboxException("content_base64 is larger than ${MAX_BINARY_BYTES / 1024 / 1024} MB.")
     }
     return try {
-        java.util.Base64.getMimeDecoder().decode(encoded)
+        java.util.Base64.getDecoder().decode(encoded)
     } catch (e: IllegalArgumentException) {
         throw SandboxException("content_base64 is not valid base64: ${e.message}")
     }

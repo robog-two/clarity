@@ -1,11 +1,18 @@
 package net.robog.clarity.harness
 
+import com.sun.net.httpserver.HttpExchange
+import com.sun.net.httpserver.HttpServer
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
+import java.net.InetSocketAddress
+import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -16,78 +23,89 @@ private val schema = buildJsonObject {}
 
 private fun toolCall(id: String) = Message(Role.ASSISTANT, listOf(Block.ToolUse(id, "view_image", buildJsonObject {})))
 
-private fun shown(id: String) = Message(Role.USER, listOf(Block.Result(id, "ok"), Block.Image(id, "image/png", "QUJD")))
+private fun shown(id: String) = Message(Role.USER, listOf(Block.Result(id, "ok"), Block.Image(id, "image/png", 3)))
 
-private fun body(vararg messages: Message, model: String = "openai/gpt-5", showImages: Boolean = true) = OpenRouterModelGateway.buildBody(
+private val PICTURE = ToolImage("image/png", "QUJD")
+
+private fun allPictures(messages: List<Message>) =
+    messages.flatMap { it.content }.filterIsInstance<Block.Image>().associate { it.toolUseId to PICTURE }
+
+private fun body(
+    vararg messages: Message,
+    model: String = "openai/gpt-5",
+    note: String? = null,
+    pictures: Map<String, ToolImage> = allPictures(messages.toList()),
+) = OpenRouterModelGateway.buildBody(
     ModelRequest(model, "sys", messages.toList(), listOf(ToolDefinition("view_image", "d", schema)), 1_000, null),
-    showImages = showImages,
+    imageNote = note,
+    pictures = pictures,
 ).getValue("messages").jsonArray
 
-/** The wire messages after the system one, as (role, part types or "string"). */
+/** The wire messages after the system one, as (role, part types or null for a plain string). */
 private fun shape(messages: JsonArray) = messages.drop(1).map { m ->
     val o = m.jsonObject
     o["role"]!!.jsonPrimitive.content to (o["content"] as? JsonArray)?.map { it.jsonObject["type"]!!.jsonPrimitive.content }
 }
 
+private fun texts(message: kotlinx.serialization.json.JsonElement) =
+    message.jsonObject["content"]!!.jsonArray.mapNotNull { it.jsonObject["text"]?.jsonPrimitive?.content }
+
 class ToolImagesTest : FunSpec({
     test("the tool message stays text; the picture follows in a user message with image_url parts") {
         val wire = body(Message.user("go"), toolCall("c1"), shown("c1"))
-        shape(wire) shouldContainExactly listOf(
-            "user" to null,
-            "assistant" to null,
-            "tool" to null,
-            "user" to listOf("text", "image_url"),
-        )
-        val tool = wire[3].jsonObject
-        tool["content"]!!.jsonPrimitive.content shouldBe "ok"
+        shape(wire) shouldContainExactly listOf("user" to null, "assistant" to null, "tool" to null, "user" to listOf("text", "image_url"))
+        wire[3].jsonObject["content"]!!.jsonPrimitive.content shouldBe "ok"
         val parts = wire[4].jsonObject["content"]!!.jsonArray
         parts[0].jsonObject["text"]!!.jsonPrimitive.content shouldContain "c1"
         parts[1].jsonObject["image_url"]!!.jsonObject["url"]!!.jsonPrimitive.content shouldBe "data:image/png;base64,QUJD"
     }
 
     test("a text that follows joins the picture's user message, pictures first") {
-        val withText = Message(Role.USER, listOf(Block.Result("c1", "ok"), Block.Image("c1", "image/png", "QUJD"), Block.Text("note")))
-        val wire = body(Message.user("go"), toolCall("c1"), withText)
-        shape(wire).last() shouldBe ("user" to listOf("text", "image_url", "text"))
+        val withText = Message(Role.USER, listOf(Block.Result("c1", "ok"), Block.Image("c1", "image/png", 3), Block.Text("note")))
+        shape(body(Message.user("go"), toolCall("c1"), withText)).last() shouldBe ("user" to listOf("text", "image_url", "text"))
     }
 
     test("two pictures of parallel calls come after both tool messages") {
-        val both = Message(
-            Role.USER,
-            listOf(Block.Result("a", "1"), Block.Result("b", "2"), Block.Image("a", "image/png", "QQ=="), Block.Image("b", "image/jpeg", "Qg==")),
-        )
+        val both = Message(Role.USER, listOf(Block.Result("a", "1"), Block.Result("b", "2"), Block.Image("a", "image/png", 3), Block.Image("b", "image/jpeg", 3)))
         val assistant = Message(Role.ASSISTANT, listOf(Block.ToolUse("a", "view_image", buildJsonObject {}), Block.ToolUse("b", "view_image", buildJsonObject {})))
         val wire = body(Message.user("go"), assistant, both)
         shape(wire).map { it.first } shouldContainExactly listOf("user", "assistant", "tool", "tool", "user")
         shape(wire).last().second shouldBe listOf("text", "image_url", "text", "image_url")
     }
 
-    test("only the newest few pictures are sent; older ones are a note, and the choice is stable as the thread grows") {
+    test("only the newest two pictures are sent; older ones are a fixed note, by position, so a replay is the same") {
         val messages = mutableListOf(Message.user("go"))
         for (i in 1..6) messages += listOf(toolCall("c$i"), shown("c$i"))
         val wire = body(*messages.toTypedArray())
-        val notes = wire.filter { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }.drop(1).map { m ->
-            m.jsonObject["content"]!!.jsonArray.map { it.jsonObject["type"]!!.jsonPrimitive.content }
-        }
-        notes.map { it.contains("image_url") } shouldContainExactly listOf(false, false, true, true, true, true)
-        val omitted = wire.filter { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }[1].jsonObject["content"]!!.jsonArray
-        omitted.single().jsonObject["text"]!!.jsonPrimitive.content shouldBe IMAGE_OMITTED
-        keptImages(messages) shouldBe setOf(6 to 1, 8 to 1, 10 to 1, 12 to 1)
+        val users = wire.filter { it.jsonObject["role"]!!.jsonPrimitive.content == "user" }.drop(1)
+        users.map { u -> u.jsonObject["content"]!!.jsonArray.any { it.jsonObject["type"]!!.jsonPrimitive.content == "image_url" } } shouldContainExactly
+            listOf(false, false, false, false, true, true)
+        texts(users[0]) shouldBe listOf(IMAGE_OMITTED)
+        keptImages(messages) shouldBe setOf(10 to 1, 12 to 1)
+        body(*messages.toTypedArray()).toString() shouldBe wire.toString()
     }
 
-    test("a model that does not take images gets a note instead") {
-        val wire = body(Message.user("go"), toolCall("c1"), shown("c1"), showImages = false)
-        wire.last().jsonObject["content"]!!.jsonArray.single().jsonObject["text"]!!.jsonPrimitive.content shouldBe IMAGE_UNSUPPORTED
+    test("a picture whose bytes are gone is a fixed note") {
+        val wire = body(Message.user("go"), toolCall("c1"), shown("c1"), pictures = emptyMap())
+        texts(wire.last()) shouldBe listOf(IMAGE_EXPIRED)
     }
 
-    test("a refusal that names images is told apart from other errors") {
-        OpenRouterModelGateway.refusesImages(400, "No endpoints found that support image input") shouldBe true
-        OpenRouterModelGateway.refusesImages(404, "model does not support multimodal") shouldBe true
-        OpenRouterModelGateway.refusesImages(400, "invalid tool schema") shouldBe false
-        OpenRouterModelGateway.refusesImages(500, "image decoding failed") shouldBe false
-        OpenRouterModelGateway.refusesImages(null, "image") shouldBe false
-        OpenRouterModelGateway.hasImages(listOf(Message.user("x"))) shouldBe false
-        OpenRouterModelGateway.hasImages(listOf(shown("c"))) shouldBe true
+    test("a note given for the whole request replaces every picture") {
+        val wire = body(Message.user("go"), toolCall("c1"), shown("c1"), note = IMAGE_UNSUPPORTED)
+        texts(wire.last()) shouldBe listOf(IMAGE_UNSUPPORTED)
+    }
+
+    test("what a provider says about pictures: no image input, or one bad picture, or something else") {
+        fun r(status: Int?, message: String) = OpenRouterModelGateway.imageRefusal(status, message)
+        r(400, "No endpoints found that support image input") shouldBe ImageRefusal.UNSUPPORTED
+        r(404, "This model does not support image input") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "input_modalities of the model do not include image") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "multimodal input is not supported") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "Invalid image: the file could not be decoded") shouldBe ImageRefusal.REJECTED
+        r(413, "image too large") shouldBe ImageRefusal.REJECTED
+        r(400, "invalid tool schema") shouldBe null
+        r(500, "image decoding failed") shouldBe null
+        r(null, "image") shouldBe null
     }
 
     test("the cache breakpoint ignores trailing pictures") {
@@ -95,14 +113,15 @@ class ToolImagesTest : FunSpec({
         messageCacheBreakpoint(messages) shouldBe (2 to 0)
     }
 
-    test("pictures survive the journal as written and read back") {
-        val message = shown("c1")
+    test("the journal keeps a reference to a picture, never its bytes") {
+        val message = Message(Role.USER, listOf(Block.Result("c1", "ok"), Block.Image("c1", "image/png", 3)))
         val json = HarnessJson.encodeToString(Message.serializer(), message)
+        json shouldNotContain "QUJD"
         HarnessJson.decodeFromString(Message.serializer(), json) shouldBe message
     }
 
-    test("the harness journals a tool's shown pictures after its results and offers them to the next call") {
-        val viewer = fakeTool("view_image") { ToolResult.Ok("looked", show = listOf(ToolImage("image/png", "QUJD"))) }
+    test("the harness keeps the picture in the store, journals only the reference after the results, and the next call can read it") {
+        val viewer = viewerTool(runs = null)
         val other = fakeTool("other")
         val gateway = ScriptedGateway(
             listOf(
@@ -110,10 +129,108 @@ class ToolImagesTest : FunSpec({
                 response(StopReason.END_TURN, Block.Text("done")),
             ),
         )
+        val store = InMemoryToolImageStore()
         val journal = InMemoryRunJournal()
-        val events = Harness(gateway, journal = journal).run(RunRequest("m", "system", listOf(Message.user("go")), listOf(viewer, other), ToolPolicy.Default, 5)).toList()
+        val request = RunRequest("m", listOf(SystemBlock("system")), listOf(Message.user("go")), listOf(viewer, other), ToolPolicy.Default, 5, runId = "run-1")
+        val events = Harness(gateway, journal = journal, images = store).run(request).toList()
         events.last().shouldBeInstanceOf<HarnessEvent.Finished>()
-        val results = gateway.requests[1].messages.last()
-        results.content shouldContainExactly listOf(Block.Result("1", "looked"), Block.Result("2", "other ok"), Block.Image("1", "image/png", "QUJD"))
+        gateway.requests[1].messages.last().content shouldContainExactly
+            listOf(Block.Result("1", "looked"), Block.Result("2", "other ok"), Block.Image("1", "image/png", 3))
+        store.load("run-1", "1") shouldBe PICTURE
+        HarnessJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(Message.serializer()), journal.load("run-1")) shouldNotContain "QUJD"
+    }
+
+    test("a call that shows a picture runs again on resume instead of being answered from the ledger") {
+        val runs = mutableListOf<Int>()
+        val viewer = viewerTool(runs)
+        val plain = fakeTool("plain") { runs += 99; ToolResult.Ok("plain ok") }
+        val ledger = InMemoryToolLedger()
+        ledger.record("run-1", "1", LedgerEntry("view_image", "looked", false))
+        ledger.record("run-1", "2", LedgerEntry("plain", "plain from ledger", false))
+        val journal = InMemoryRunJournal()
+        journal.append("run-1", Message.user("go"))
+        journal.append("run-1", Message(Role.ASSISTANT, listOf(toolUse("1", "view_image"), toolUse("2", "plain"))))
+        val gateway = ScriptedGateway(listOf(response(StopReason.END_TURN, Block.Text("done"))))
+        val store = InMemoryToolImageStore()
+        val request = RunRequest("m", listOf(SystemBlock("system")), listOf(Message.user("go")), listOf(viewer, plain), ToolPolicy.Default, 5, runId = "run-1")
+        Harness(gateway, journal = journal, ledger = ledger, images = store).resume("run-1", request).toList().last().shouldBeInstanceOf<HarnessEvent.Finished>()
+        runs shouldBe listOf(1) // the viewer ran again, the plain tool did not
+        gateway.requests.single().messages.last().content shouldContainExactly
+            listOf(Block.Result("1", "looked"), Block.Result("2", "plain from ledger"), Block.Image("1", "image/png", 3))
+        store.load("run-1", "1") shouldBe PICTURE
+    }
+
+    test("a model that refuses pictures is remembered; one bad picture gets a note once; other errors stay errors") {
+        val seen = CopyOnWriteArrayList<String>()
+        val reply = java.util.concurrent.atomic.AtomicReference("no-input")
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0).apply {
+            createContext("/") { ex ->
+                val body = ex.requestBody.readAllBytes().decodeToString()
+                seen += body
+                try {
+                    when {
+                        "image_url" in body && reply.get() == "no-input" -> ex.answer(400, """{"error":{"message":"No endpoints found that support image input"}}""")
+                        "image_url" in body && reply.get() == "bad" -> ex.answer(400, """{"error":{"message":"Invalid image: could not decode"}}""")
+                        "image_url" in body && reply.get() == "other" -> ex.answer(400, """{"error":{"message":"invalid tool schema"}}""")
+                        else -> ex.sse()
+                    }
+                } finally { ex.close() }
+            }
+            start()
+        }
+        try {
+            val store = InMemoryToolImageStore().also { kotlinx.coroutines.runBlocking { it.save("run-9", "c1", PICTURE) } }
+            val gateway = OpenRouterModelGateway("k", "http://127.0.0.1:${server.address.port}/api/v1", retryDelays = listOf(10.milliseconds), images = store)
+            val request = ModelRequest("vendor/blind", "sys", listOf(Message.user("go"), toolCall("c1"), shown("c1")), emptyList(), 1_000, null)
+            withContext(CurrentRun("run-9")) { gateway.generate(request) {} }
+            seen.size shouldBe 2
+            seen[1] shouldContain IMAGE_UNSUPPORTED.take(30)
+            seen[1] shouldNotContain "image_url"
+            withContext(CurrentRun("run-9")) { gateway.generate(request) {} }
+            seen.size shouldBe 3 // remembered: no failed call first
+            seen[2] shouldNotContain "image_url"
+
+            reply.set("bad")
+            seen.clear()
+            withContext(CurrentRun("run-9")) { gateway.generate(request.copy(model = "vendor/other")) {} }
+            seen.size shouldBe 2
+            seen[1] shouldContain "provider refused it"
+            reply.set("other")
+            seen.clear()
+            val failure = runCatching { withContext(CurrentRun("run-9")) { gateway.generate(request.copy(model = "vendor/third")) {} } }.exceptionOrNull()
+            failure.shouldBeInstanceOf<OpenRouterException>()
+            seen.size shouldBe 1
+        } finally {
+            server.stop(0)
+        }
     }
 })
+
+private fun HttpExchange.answer(status: Int, text: String) {
+    val bytes = text.toByteArray()
+    responseHeaders.add("content-type", "application/json")
+    sendResponseHeaders(status, bytes.size.toLong())
+    responseBody.use { it.write(bytes) }
+}
+
+private fun HttpExchange.sse() {
+    responseHeaders.add("content-type", "text/event-stream")
+    sendResponseHeaders(200, 0)
+    responseBody.use {
+        it.write("""data: {"id":"g","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}""".toByteArray())
+        it.write("\n\ndata: [DONE]\n\n".toByteArray())
+    }
+}
+
+/** A `view_image` that shows [PICTURE]; records each run in [runs] when given. */
+private fun viewerTool(runs: MutableList<Int>?): Tool = object : Tool {
+    override val name = "view_image"
+    override val description = "fake"
+    override val inputSchema = buildJsonObject {}
+    override val effect = ToolEffect.READ
+    override val returnsImages = true
+    override suspend fun invoke(input: kotlinx.serialization.json.JsonObject): ToolResult {
+        runs?.add(1)
+        return ToolResult.Ok("looked", show = listOf(PICTURE))
+    }
+}

@@ -22,6 +22,7 @@ import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
 import org.jetbrains.exposed.v1.core.inList
 import org.jetbrains.exposed.v1.core.less
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.lessEq
 import org.jetbrains.exposed.v1.core.or
 import org.jetbrains.exposed.v1.core.sum
@@ -78,7 +79,7 @@ sealed interface Answer {
 enum class AnswerRefused { UNKNOWN_REQUEST }
 
 /** How long a connector holds a request before it counts as lost. */
-val FETCH_LEASE: Duration = 90.seconds
+val FETCH_LEASE: Duration = 150.seconds
 
 /** Deliveries tried before a request fails for good. */
 const val FETCH_MAX_ATTEMPTS = 3
@@ -109,7 +110,8 @@ class AttachmentFetchStore(private val database: Database) {
                     it[status] = FetchStatus.PENDING.wire
                     it[requestedAt] = now
                     it[leaseUntil] = null
-                    it[attempts] = 0
+                    // A spent download starts over; a lost or failed one keeps its count of deliveries.
+                    if (existing[AttachmentFetches.status] == FetchStatus.DONE.wire) it[attempts] = 0
                     it[doneAt] = null
                     it[errorCode] = null
                     it[errorMessage] = null
@@ -185,7 +187,16 @@ class AttachmentFetchStore(private val database: Database) {
      * Takes [bytes] for request [id] from [connector]; refused for a request addressed to another connector (or none).
      * More than [maxBytes] makes the request fail as too large instead. A second answer for a finished request is ignored.
      */
-    suspend fun complete(connector: ConnectorId, id: Uuid, bytes: ByteArray, filename: String?, mimeType: String, now: Instant, maxBytes: Long): AnswerRefused? = database.tx {
+    suspend fun complete(
+        connector: ConnectorId,
+        id: Uuid,
+        bytes: ByteArray,
+        filename: String?,
+        mimeType: String,
+        now: Instant,
+        maxBytes: Long,
+        cacheMaxBytes: Long = Long.MAX_VALUE,
+    ): AnswerRefused? = database.tx {
         val row = ownRow(connector, id) ?: return@tx AnswerRefused.UNKNOWN_REQUEST
         if (isFinished(row)) return@tx null
         if (sizeVerdict(bytes.size.toLong(), maxBytes) == SizeVerdict.TOO_LARGE) {
@@ -200,6 +211,12 @@ class AttachmentFetchStore(private val database: Database) {
                 it[size] = bytes.size.toLong()
                 it[AttachmentFetches.bytes] = bytes
             }
+            // Make room now: the cache never goes over its cap, even between sweeps.
+            val others = AttachmentFetches.select(AttachmentFetches.id, AttachmentFetches.size, AttachmentFetches.doneAt)
+                .where { (AttachmentFetches.status eq FetchStatus.DONE.wire) and (AttachmentFetches.id neq id) }
+                .map { CacheEntry(it[AttachmentFetches.id].toString(), it[AttachmentFetches.size] ?: 0L, it[AttachmentFetches.doneAt] ?: now) }
+            val drop = evictionsFor(others, cacheMaxBytes - bytes.size).map { Uuid.parse(it) }
+            if (drop.isNotEmpty()) AttachmentFetches.deleteWhere { AttachmentFetches.id inList drop }
         }
         null
     }
@@ -223,7 +240,11 @@ class AttachmentFetchStore(private val database: Database) {
             (status eq FetchStatus.FAILED.wire) and (doneAt less (now - STALE_REQUEST))
         }
         removed += AttachmentFetches.deleteWhere {
-            (status inList listOf(FetchStatus.PENDING.wire, FetchStatus.LEASED.wire)) and (requestedAt less (now - STALE_REQUEST))
+            (status eq FetchStatus.PENDING.wire) and (requestedAt less (now - STALE_REQUEST))
+        }
+        // A leased request is still waiting for its upload until its lease has been over for a while.
+        removed += AttachmentFetches.deleteWhere {
+            (status eq FetchStatus.LEASED.wire) and (leaseUntil less (now - STALE_REQUEST))
         }
         val total = AttachmentFetches.select(AttachmentFetches.size.sum()).where { AttachmentFetches.status eq FetchStatus.DONE.wire }
             .singleOrNull()?.get(AttachmentFetches.size.sum()) ?: 0L
@@ -247,8 +268,11 @@ class AttachmentFetchStore(private val database: Database) {
         (AttachmentFetches.entityId eq key.entityId) and (AttachmentFetches.part eq key.part) and (AttachmentFetches.sourceVersion eq key.sourceVersion)
     }.forUpdate().singleOrNull()
 
-    private fun JdbcTransaction.ownRow(connector: ConnectorId, id: Uuid) = AttachmentFetches.selectAll()
-        .where { (AttachmentFetches.id eq id) and (AttachmentFetches.connectorId eq connector.value) }.forUpdate().singleOrNull()
+    /** The request [id] if it is addressed to [connector], which must still be granted messages (a revoked grant stops answers too). */
+    private fun JdbcTransaction.ownRow(connector: ConnectorId, id: Uuid) =
+        if (Noun.MESSAGE !in grantedNouns(connector)) null
+        else AttachmentFetches.selectAll()
+            .where { (AttachmentFetches.id eq id) and (AttachmentFetches.connectorId eq connector.value) }.forUpdate().singleOrNull()
 
     private fun isFinished(row: org.jetbrains.exposed.v1.core.ResultRow): Boolean =
         FetchStatus.fromWire(row[AttachmentFetches.status]).let { it == FetchStatus.DONE || it == FetchStatus.FAILED }
