@@ -71,4 +71,39 @@ class IcalBadLineTest : FunSpec({
         rest shouldNotContain "message"
         Ical.withoutLine("UID:x\r\nB:2", 1) shouldBe null
     }
+
+    test("text from a calendar multiget has bare LF line ends: a folded title before the UID keeps the UID") {
+        // As iCloud's calendar-data arrives through XML: CRLF became LF, and long lines are folded.
+        val lf = listOf(
+            "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "BEGIN:VEVENT",
+            "DTSTAMP:20261105T162243Z",
+            "SUMMARY:Call the salon to book \u2014 (555) 010-0000\\, open Sat 10",
+            " \u2013ish",
+            "UID:clarity-abc@clarity",
+            "DTSTART:20261114T150500Z",
+            "DTEND:20261114T152000Z",
+            "END:VEVENT", "END:VCALENDAR",
+        ).joinToString("\n") + "\n"
+        val folded = listOf(
+            "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "BEGIN:VEVENT",
+            "DTSTART:20261114T150500Z",
+            "DTEND:20261114T152000Z",
+            "SUMMARY:* Dinner at Sam's: bring the cake and the\\",
+            " , and the candles for the party & the cards",
+            "UID:5962B8B2-0000-4000-8000-000000000000",
+            "END:VEVENT", "END:VCALENDAR",
+        ).joinToString("\n") + "\n"
+        for ((ics, uid) in listOf(lf to "clarity-abc@clarity", folded to "5962B8B2-0000-4000-8000-000000000000")) {
+            val payload = Ical.events(ics, "Calendar", window).single().payload
+            payload.icalUid shouldBe uid
+            Ical.withoutUid(ics) shouldBe null
+        }
+    }
+
+    test("line ends of any kind become CRLF; folds (space or tab) survive") {
+        Ical.crlf("A:1\nB:2\r\nC:3\rD:4\n E\n\tF") shouldBe "A:1\r\nB:2\r\nC:3\r\nD:4\r\n E\r\n\tF"
+        val tabFolded = listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN", "BEGIN:VEVENT",
+            "DTSTART:20261114T150500Z", "DTEND:20261114T152000Z", "SUMMARY:Long", "\ttitle", "UID:tab-1", "END:VEVENT", "END:VCALENDAR").joinToString("\n")
+        Ical.events(tabFolded, "Calendar", window).single().payload.apply { icalUid shouldBe "tab-1"; title shouldBe "Longtitle" }
+    }
 })

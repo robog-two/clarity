@@ -3,6 +3,7 @@ package net.robog.clarity.backend.ingest
 import arrow.core.raise.context.ensure
 import arrow.core.raise.context.raise
 import arrow.core.raise.Raise
+import kotlin.uuid.Uuid
 import net.robog.clarity.backend.dedup.DedupKey
 import net.robog.clarity.backend.dedup.dedupKey
 import net.robog.clarity.backend.dedup.normalized
@@ -76,4 +77,28 @@ private fun validate(payload: Payload) {
             if (payload.path == "/") invalid("document path is empty")
         }
     }
+}
+
+/** Which canonical row a record version is written to. Decided purely by [identityFor]. */
+sealed interface Identity {
+    /** Another row already has this identity: merge into it; [orphaned] is the source's old row, now unused. */
+    data class Existing(val id: Uuid, val orphaned: Uuid?) : Identity
+
+    /** The source's own row takes the new identity, so its id stays the same when, say, an event moves. */
+    data class Rekey(val id: Uuid) : Identity
+
+    /** A new row. */
+    data object Insert : Identity
+}
+
+/**
+ * Where a record goes: [linked] is the row this source pointed at so far (null for a new source),
+ * [linkedShared] whether another live source points at it too, [keyOwner] the row that already has
+ * the record's dedup key. A row only this source uses follows the source when its identity changes
+ * (a moved event without a UID keys on its time); a row others share is left to them.
+ */
+fun identityFor(linked: Uuid?, linkedShared: Boolean, keyOwner: Uuid?): Identity = when {
+    keyOwner != null -> Identity.Existing(keyOwner, orphaned = linked?.takeIf { it != keyOwner && !linkedShared })
+    linked != null && !linkedShared -> Identity.Rekey(linked)
+    else -> Identity.Insert
 }

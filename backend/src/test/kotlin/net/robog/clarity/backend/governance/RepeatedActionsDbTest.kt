@@ -56,7 +56,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class RepeatedActionsDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var rig: LeadRig
     lateinit var decisions: HeldActionService

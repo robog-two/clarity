@@ -44,6 +44,10 @@ object ApiPaths {
      * Markdown; `GET {id}/download/{format}?rev=` the rendered file (pdf, docx, odt, txt, md).
      */
     const val REPORTS = "$APP/reports"
+    /** `GET {entityId}/attachments/{part}`: one attachment of an email as a download (404 unknown, 413 too large, 504 the connector did not answer). */
+    const val MESSAGES = "$APP/messages"
+    /** `GET {entityId}`: a record a Sources card cites, as stored (a `SourceView`); 404 when unknown, deleted or never cited. */
+    const val SOURCES = "$APP/sources"
 
     /** A Good's public download page (`/g/{token}`, its files `/g/{token}/{format}`): the only unauthenticated report routes. */
     const val GOODS_PUBLIC = "/g"
@@ -63,6 +67,8 @@ object ApiPaths {
 
     // Connector API (under INGEST)
     const val ACTIONS = "$INGEST/actions"
+    /** `GET ?wait=`: the connector's pending fetch requests (`FetchRequest`). `PUT {id}`: the bytes. `POST {id}/error`: why not. */
+    const val FETCHES = "$INGEST/fetches"
     /** `GET`: the connector's pending connection test (204 when none). `POST`: its report. */
     const val TEST = "$INGEST/test"
     const val READY = "/readyz"

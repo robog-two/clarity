@@ -27,7 +27,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** Today keeps the tasks that finished since the start of the person's local day two days ago, so they stay openable. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class TodayFinishedTasksTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

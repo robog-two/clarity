@@ -46,7 +46,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ReviewGateDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val now = Clock.System.now()
     val since = now - 2.hours

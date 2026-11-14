@@ -88,7 +88,7 @@ private fun runawayStep(n: Int, searched: Boolean) = ModelResponse(
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class RunawayHelperTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

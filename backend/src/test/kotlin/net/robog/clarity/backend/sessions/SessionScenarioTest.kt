@@ -71,7 +71,7 @@ private fun results(request: net.robog.clarity.harness.ModelRequest) =
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class SessionScenarioTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

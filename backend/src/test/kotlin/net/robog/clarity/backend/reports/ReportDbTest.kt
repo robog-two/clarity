@@ -100,7 +100,7 @@ private val REPORT_ID = Regex("Report ([0-9a-f-]{36}) created")
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ReportDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val dataDir = Files.createTempDirectory("clarity-reports").resolve("data")
 

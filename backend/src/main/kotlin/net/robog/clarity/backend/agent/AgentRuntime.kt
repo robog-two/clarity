@@ -51,6 +51,8 @@ class AgentRuntime(
     private val spendGuard: SpendGuard = SpendGuard.OFF,
     /** Tool results kept so a resumed run never runs a call twice. */
     private val ledger: ToolLedger = ToolLedger.NONE,
+    /** The pictures tools show; the journal keeps only a reference. */
+    private val pictures: net.robog.clarity.harness.ToolImageStore = net.robog.clarity.harness.ToolImageStore.NONE,
 ) {
     private val gateway: ModelGateway? = config.openRouterApiKey?.takeIf(String::isNotBlank)?.let(factory::create)
 
@@ -80,7 +82,7 @@ class AgentRuntime(
     fun harness(journal: RunJournal, role: AgentRole = AgentRole.LEAD): Harness = harness(journal, bindOrFail(role))
 
     /** A harness on [bound]'s gateway; the run keeps it to the end. */
-    fun harness(journal: RunJournal, bound: BoundRole): Harness = Harness(bound.gateway, journal, ledger)
+    fun harness(journal: RunJournal, bound: BoundRole): Harness = Harness(bound.gateway, journal, ledger, pictures)
 
     /** [bind], or fails without a key. */
     fun bindOrFail(role: AgentRole): BoundRole =
@@ -236,7 +238,11 @@ fun sideEffectRecord(history: List<Message>, effects: Set<String>, max: Int = 40
 
 /** Pure: a rough token count for a journal (4 characters per token). */
 fun estimateTokens(messages: List<Message>): Long =
-    messages.sumOf { net.robog.clarity.harness.HarnessJson.encodeToString(Message.serializer(), it).length.toLong() } / 4
+    messages.sumOf { net.robog.clarity.harness.HarnessJson.encodeToString(Message.serializer(), it).length.toLong() } / 4 +
+        IMAGE_TOKENS * messages.sumOf { m -> m.content.count { it is net.robog.clarity.harness.Block.Image } }
+
+/** About what a picture of the size `view_image` sends costs a model in tokens. */
+const val IMAGE_TOKENS = 1_600L
 
 /** Which role config a role name from `delegate` maps to; only the cheap roles may be delegated to. */
 fun delegableRole(name: String?): AgentRole? = when (name?.lowercase()) {

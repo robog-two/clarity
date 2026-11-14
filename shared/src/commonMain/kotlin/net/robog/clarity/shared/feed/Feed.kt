@@ -154,6 +154,18 @@ sealed interface Card {
     ) : Card
 
     /**
+     * The records and pages the agent's words rest on (`send_to_user` with `sources`). The server
+     * fills each item's title and sub line from its own data; the app opens an entity with
+     * `GET /api/v1/sources/{id}` and a web page in the browser. [fallbackText] is for apps that
+     * do not know this card.
+     */
+    @Serializable @SerialName("sources")
+    data class Sources(
+        val items: List<net.robog.clarity.shared.source.SourceItem>,
+        val fallbackText: String = "",
+    ) : Card
+
+    /**
      * A card of a type this build does not know (a newer server's): [ClarityJson] decodes any
      * unknown `type` to this instead of failing the whole feed. Card types added from now on carry
      * a `fallbackText` string on the wire for it; without one the card is not shown. (Apps built

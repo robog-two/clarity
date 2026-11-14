@@ -41,6 +41,7 @@ fun mailManifest(runtime: ConnectorRuntime) = ConnectorManifest(
     handles = setOf(ActionKind.SAVE_DRAFT, ActionKind.SEND_EMAIL),
     configSchema = mailConfigSchema,
     sealingKey = runtime.sealingKey,
+    fetches = true,
 )
 
 /**
@@ -88,6 +89,7 @@ suspend fun main() {
         runtime = runtime,
         test = { config -> testMailAccounts(runtime, config) },
         accounts = ::mailAccountList,
+        fetches = MailFetches(runtime).handlers(),
     ) { config ->
         val entries = parseMailAccounts(config, runtime)
         if (entries.isEmpty()) {

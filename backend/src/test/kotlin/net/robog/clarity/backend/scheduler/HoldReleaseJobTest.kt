@@ -112,7 +112,7 @@ class HoldOutcomeTest : FunSpec({
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class HoldReleaseJobTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {
@@ -136,7 +136,7 @@ class HoldReleaseJobTest : FunSpec({
         val constitutions = ConstitutionStore(database, clock, HeldActionStore(database, clock), events)
         val job = HoldReleaseJob(store, feed, constitutions)
         var settings = Settings()
-        val own = OwnStateTools(feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, net.robog.clarity.backend.agent.FailureGate(null))
+        val own = OwnStateTools(feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, net.robog.clarity.backend.agent.FailureGate(null), net.robog.clarity.backend.sources.SourceResolver(net.robog.clarity.backend.persistence.ExposedNounReader(database), { settings }, net.robog.clarity.backend.agent.PgRunJournal(database, clock), net.robog.clarity.backend.agent.ExposedRunStore(database, clock)))
         val published = CopyOnWriteArrayList<FeedEvent>()
 
         suspend fun held(text: String = "Dana called twice", notify: String): FeedItem =

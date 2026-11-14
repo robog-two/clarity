@@ -19,7 +19,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** Today's "I'm doing" reads [TaskStore.list]: newest first, so stale tasks sink instead of leading. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class TaskStoreOrderTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

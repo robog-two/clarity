@@ -45,3 +45,23 @@ fun oneLine(text: String, max: Int): String {
     if (end > 0 && out[end - 1].isHighSurrogate()) end--
     return out.substring(0, end).trimEnd() + "\u2026"
 }
+
+/**
+ * [text] without invisible and reordering characters (see [oneLine]), keeping its line breaks and
+ * spacing: for long text shown as written, such as a message body.
+ */
+fun stripInvisible(text: String): String {
+    val out = StringBuilder(text.length)
+    var i = 0
+    while (i < text.length) {
+        val c = text[i]
+        val pair = c.isHighSurrogate() && i + 1 < text.length && text[i + 1].isLowSurrogate()
+        val cp = if (pair) 0x10000 + ((c.code - 0xD800) shl 10) + (text[i + 1].code - 0xDC00) else c.code
+        if (!invisible(cp)) {
+            out.append(c)
+            if (pair) out.append(text[i + 1])
+        }
+        i += if (pair) 2 else 1
+    }
+    return out.toString()
+}

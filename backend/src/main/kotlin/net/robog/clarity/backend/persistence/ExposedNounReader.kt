@@ -207,6 +207,13 @@ class ExposedNounReader(private val database: Database) : NounReader {
         }
     }
 
+    override suspend fun contact(id: EntityId): Stored<ContactPayload>? {
+        val uuid = Uuid.parseOrNull(id.value) ?: return null
+        return database.tx {
+            Contacts.selectAll().where { (Contacts.id eq uuid) and Contacts.deletedAt.isNull() }.singleOrNull()?.toContact()
+        }
+    }
+
     override suspend fun changedSince(since: Instant, limit: Int): List<Stored<Payload>> =
         database.tx {
             val cap = limit.coerceIn(1, MAX_LIMIT)
@@ -224,68 +231,6 @@ class ExposedNounReader(private val database: Database) : NounReader {
                 .orderBy(Documents.updatedAt, SortOrder.DESC).limit(cap).map { it.toDocument() }
             (messages + contacts + events + documents).sortedByDescending { it.updatedAt }.take(cap)
         }
-
-    private fun ResultRow.toMessage() = Stored(
-        id = EntityId(this[Messages.id].toString()),
-        payload = MessagePayload(
-            channel = parseWire<MessagePayload.Channel>(this[Messages.channel]) ?: MessagePayload.Channel.CHAT,
-            account = this[Messages.account],
-            sender = this[Messages.sender],
-            recipients = this[Messages.recipients],
-            subject = this[Messages.subject],
-            body = this[Messages.body],
-            sentAt = this[Messages.sentAt],
-            threadRef = this[Messages.threadRef],
-        ),
-        firstSeenAt = this[Messages.firstSeenAt],
-        updatedAt = this[Messages.updatedAt],
-    )
-
-    private fun ResultRow.toContact() = Stored(
-        id = EntityId(this[Contacts.id].toString()),
-        payload = ContactPayload(
-            displayName = this[Contacts.displayName],
-            handles = this[Contacts.handles],
-            organization = this[Contacts.organization],
-            notes = this[Contacts.notes],
-        ),
-        firstSeenAt = this[Contacts.firstSeenAt],
-        updatedAt = this[Contacts.updatedAt],
-    )
-
-    private fun ResultRow.toEvent() = Stored(
-        id = EntityId(this[CalendarEvents.id].toString()),
-        payload = CalendarEventPayload(
-            icalUid = this[CalendarEvents.icalUid],
-            calendar = this[CalendarEvents.calendar],
-            title = this[CalendarEvents.title],
-            start = this[CalendarEvents.startAt],
-            end = this[CalendarEvents.endAt],
-            allDay = this[CalendarEvents.allDay],
-            location = this[CalendarEvents.location],
-            description = this[CalendarEvents.description],
-            attendees = this[CalendarEvents.attendees],
-            url = this[CalendarEvents.url],
-            repeats = this[CalendarEvents.repeats],
-        ),
-        firstSeenAt = this[CalendarEvents.firstSeenAt],
-        updatedAt = this[CalendarEvents.updatedAt],
-    )
-
-    private fun ResultRow.toDocument() = Stored(
-        id = EntityId(this[Documents.id].toString()),
-        payload = DocumentPayload(
-            store = this[Documents.store],
-            path = this[Documents.path],
-            title = this[Documents.title],
-            mimeType = this[Documents.mimeType],
-            size = this[Documents.size],
-            modifiedAt = this[Documents.modifiedAt],
-            excerpt = this[Documents.excerpt],
-        ),
-        firstSeenAt = this[Documents.firstSeenAt],
-        updatedAt = this[Documents.updatedAt],
-    )
 
     private companion object { const val MAX_LIMIT = 500 }
 }
@@ -339,4 +284,77 @@ private class InEmailFolder(private val pattern: String) : Op<Boolean>() {
         registerArgument(TextColumnType(), pattern)
         append(")")
     }
+}
+
+/** Row mappers, shared with the ingest writer (which compares a record with what is stored). */
+internal fun ResultRow.toMessage() = Stored(
+    id = EntityId(this[Messages.id].toString()),
+    payload = MessagePayload(
+        channel = parseWire<MessagePayload.Channel>(this[Messages.channel]) ?: MessagePayload.Channel.CHAT,
+        account = this[Messages.account],
+        sender = this[Messages.sender],
+        recipients = this[Messages.recipients],
+        subject = this[Messages.subject],
+        body = this[Messages.body],
+        sentAt = this[Messages.sentAt],
+        threadRef = this[Messages.threadRef],
+        messageId = this[Messages.messageId],
+        attachments = this[Messages.attachments],
+    ),
+    firstSeenAt = this[Messages.firstSeenAt],
+    updatedAt = this[Messages.updatedAt],
+)
+
+internal fun ResultRow.toContact() = Stored(
+    id = EntityId(this[Contacts.id].toString()),
+    payload = ContactPayload(
+        displayName = this[Contacts.displayName],
+        handles = this[Contacts.handles],
+        organization = this[Contacts.organization],
+        notes = this[Contacts.notes],
+    ),
+    firstSeenAt = this[Contacts.firstSeenAt],
+    updatedAt = this[Contacts.updatedAt],
+)
+
+internal fun ResultRow.toEvent() = Stored(
+    id = EntityId(this[CalendarEvents.id].toString()),
+    payload = CalendarEventPayload(
+        icalUid = this[CalendarEvents.icalUid],
+        calendar = this[CalendarEvents.calendar],
+        title = this[CalendarEvents.title],
+        start = this[CalendarEvents.startAt],
+        end = this[CalendarEvents.endAt],
+        allDay = this[CalendarEvents.allDay],
+        location = this[CalendarEvents.location],
+        description = this[CalendarEvents.description],
+        attendees = this[CalendarEvents.attendees],
+        url = this[CalendarEvents.url],
+        repeats = this[CalendarEvents.repeats],
+    ),
+    firstSeenAt = this[CalendarEvents.firstSeenAt],
+    updatedAt = this[CalendarEvents.updatedAt],
+)
+
+internal fun ResultRow.toDocument() = Stored(
+    id = EntityId(this[Documents.id].toString()),
+    payload = DocumentPayload(
+        store = this[Documents.store],
+        path = this[Documents.path],
+        title = this[Documents.title],
+        mimeType = this[Documents.mimeType],
+        size = this[Documents.size],
+        modifiedAt = this[Documents.modifiedAt],
+        excerpt = this[Documents.excerpt],
+    ),
+    firstSeenAt = this[Documents.firstSeenAt],
+    updatedAt = this[Documents.updatedAt],
+)
+
+/** The stored record of [noun] in [row] (a row of [noun]'s table). */
+internal fun storedOf(noun: net.robog.clarity.shared.noun.Noun, row: ResultRow): Stored<*> = when (noun) {
+    net.robog.clarity.shared.noun.Noun.MESSAGE -> row.toMessage()
+    net.robog.clarity.shared.noun.Noun.CONTACT -> row.toContact()
+    net.robog.clarity.shared.noun.Noun.CALENDAR_EVENT -> row.toEvent()
+    net.robog.clarity.shared.noun.Noun.DOCUMENT -> row.toDocument()
 }

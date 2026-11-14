@@ -29,6 +29,14 @@ internal object SourceLedger {
         if (!seen) null else PriorSighting(linkedEntity(connector, noun, source)?.let { EntityId(it.toString()) })
     }
 
+    /** The entity [source] points at, and whether another live source points at it too. */
+    fun linkOf(tx: JdbcTransaction, connector: ConnectorId, noun: Noun, source: SourceId): Pair<Uuid, Boolean>? = with(tx) {
+        val entity = linkedEntity(connector, noun, source) ?: return null
+        val shared = SourceLinks.selectAll().where { (SourceLinks.entityId eq entity) and SourceLinks.deletedAt.isNull() }
+            .any { it[SourceLinks.connectorId] != connector.value || it[SourceLinks.noun] != noun.wireName || it[SourceLinks.sourceId] != source.value }
+        entity to shared
+    }
+
     private fun JdbcTransaction.linkedEntity(connector: ConnectorId, noun: Noun, source: SourceId): Uuid? =
         SourceLinks.selectAll().where {
             (SourceLinks.connectorId eq connector.value) and (SourceLinks.noun eq noun.wireName) and (SourceLinks.sourceId eq source.value)

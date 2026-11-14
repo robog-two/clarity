@@ -49,6 +49,8 @@ data class AppConfig(
     val agent: AgentConfig,
     /** Reports: the render service and the rendition cache. */
     val reports: ReportsConfig = ReportsConfig(),
+    /** Email attachments fetched on demand: size cap, cache. */
+    val attachments: AttachmentsConfig = AttachmentsConfig(),
     /** Nightly database backups and rollback. */
     val backups: BackupsConfig = BackupsConfig(),
 ) {
@@ -67,6 +69,20 @@ data class ReportsConfig(
     val renderTimeout: kotlin.time.Duration = kotlin.time.Duration.parse("60s"),
     val cacheMaxBytes: Long = 500L * 1024 * 1024,
     val sweepInterval: kotlin.time.Duration = kotlin.time.Duration.parse("1h"),
+)
+
+/**
+ * Attachments of messages, fetched from the source on demand (`CLARITY_ATTACHMENT_MAX_MB`, default 25: a
+ * bigger one is refused on both sides). Fetched bytes are cached in the database for [ttl]
+ * (`CLARITY_ATTACHMENT_CACHE_TTL`, 24h) and at most [cacheMaxBytes] (`CLARITY_ATTACHMENT_CACHE_MAX_MB`, 500) in
+ * all; [sweepInterval] is how often the cache is trimmed. A fetch waits up to [waitTimeout] for the connector.
+ */
+data class AttachmentsConfig(
+    val maxBytes: Long = 25L * 1024 * 1024,
+    val ttl: kotlin.time.Duration = kotlin.time.Duration.parse("24h"),
+    val cacheMaxBytes: Long = 500L * 1024 * 1024,
+    val sweepInterval: kotlin.time.Duration = kotlin.time.Duration.parse("15m"),
+    val waitTimeout: kotlin.time.Duration = kotlin.time.Duration.parse("30s"),
 )
 
 /**

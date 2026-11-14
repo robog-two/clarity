@@ -19,6 +19,12 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
+private val log = io.github.oshai.kotlinlogging.KotlinLogging.logger {}
+
+/** Added to a tool result whose picture could not be stored. */
+internal const val IMAGE_NOT_KEPT = "\n(The picture could not be kept, so it will not be shown.)"
+
+
 /** Everything one agent run needs; immutable so a run is reproducible from its request. */
 data class RunRequest(
     val model: String,
@@ -171,6 +177,8 @@ class Harness(
     private val journal: RunJournal = InMemoryRunJournal(),
     /** Results of tool calls already made, so a resume never runs one twice ([ToolLedger]). */
     private val ledger: ToolLedger = ToolLedger.NONE,
+    /** Where the pictures tools show are kept (the journal holds only a reference). */
+    private val images: ToolImageStore = ToolImageStore.NONE,
 ) {
 
     fun run(request: RunRequest, interrupts: Flow<List<Message>> = emptyFlow()): Flow<HarnessEvent> =
@@ -401,21 +409,27 @@ class Harness(
         plan: ToolPlan,
         request: RunRequest,
     ): List<Block> = coroutineScope {
-        calls.map { call -> async { execute(runId, route(call, plan.byName, request.policy), plan, request.resultSink) } }.awaitAll()
+        val done = calls.map { call -> async { execute(runId, route(call, plan.byName, request.policy), plan, request.resultSink) } }.awaitAll()
+        // All results first (they must follow the calls directly), then the pictures some of them brought.
+        done.map { it.result } + done.flatMap { it.images }
     }
+
+    /** A tool call's result block, and the pictures it showed. */
+    private class Executed(val result: Block.Result, val images: List<Block.Image> = emptyList())
 
     private suspend fun ProducerScope<HarnessEvent>.execute(
         runId: String,
         dispatch: Dispatch,
         plan: ToolPlan,
         sink: ToolResultSink?,
-    ): Block.Result {
+    ): Executed {
         val call = when (dispatch) {
             is Dispatch.Run -> dispatch.call
             is Dispatch.Unknown -> dispatch.call
         }
         // Already run before a crash: the kept result, never a second run.
-        if (dispatch is Dispatch.Run) {
+        // A call that shows a picture runs again: its result alone would leave the model without the picture.
+        if (dispatch is Dispatch.Run && !dispatch.tool.returnsImages) {
             val found = try {
                 ledger.find(runId, call.id)
             } catch (e: CancellationException) {
@@ -425,7 +439,7 @@ class Harness(
             }
             found?.let { kept ->
                 send(HarnessEvent.ToolCompleted(call.id, call.name, kept.content, kept.isError))
-                return Block.Result(call.id, kept.content, kept.isError)
+                return Executed(Block.Result(call.id, kept.content, kept.isError))
             }
         }
         val result: ToolResult = when (dispatch) {
@@ -456,6 +470,20 @@ class Harness(
             }
         }
         send(HarnessEvent.ToolCompleted(call.id, call.name, content, isError))
-        return Block.Result(call.id, content, isError)
+        val picture = (result as? ToolResult.Ok)?.show?.firstOrNull()
+        var journaled = content
+        val shown = if (picture == null) emptyList() else {
+            // A store that fails must not end the run: the block stays, with no bytes, and renders as expired.
+            try {
+                images.save(runId, call.id, picture)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn(e) { "Could not keep the picture of ${call.name} for run $runId" }
+                journaled = content + IMAGE_NOT_KEPT
+            }
+            listOf(Block.Image(call.id, picture.mimeType, picture.base64.length.toLong() / 4 * 3))
+        }
+        return Executed(Block.Result(call.id, journaled, isError), shown)
     }
 }

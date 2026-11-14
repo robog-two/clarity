@@ -17,13 +17,15 @@ import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.noun.Payload
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.statements.UpdateBuilder
+import net.robog.clarity.backend.persistence.storedOf
 import org.jetbrains.exposed.v1.jdbc.JdbcTransaction
 import org.jetbrains.exposed.v1.jdbc.insertIgnore
 import org.jetbrains.exposed.v1.jdbc.select
+import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
 /** Result of writing a canonical entity: its id and whether this call created it. */
-data class Upserted(val id: Uuid, val created: Boolean)
+data class Upserted(val id: Uuid, val created: Boolean, val orphaned: Uuid? = null)
 
 val Noun.table: CanonicalTable
     get() = when (this) {
@@ -40,8 +42,8 @@ val Noun.table: CanonicalTable
  * concurrent insert of the same key either wins, and we merge, or loses to ours) and tells us
  * created-vs-merged by comparing the id we proposed with the id that is stored.
  */
-fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instant): Upserted = when (payload) {
-    is MessagePayload -> upsert(Messages, key, now) {
+fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instant, linked: Uuid? = null, linkedShared: Boolean = false): Upserted = when (payload) {
+    is MessagePayload -> upsert(Messages, payload, key, now, linked, linkedShared) {
         it[Messages.channel] = payload.channel.wire()
         it[Messages.account] = payload.account
         it[Messages.sender] = payload.sender
@@ -51,8 +53,10 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[Messages.body] = payload.body
         it[Messages.sentAt] = payload.sentAt
         it[Messages.threadRef] = payload.threadRef
+        it[Messages.messageId] = payload.messageId
+        it[Messages.attachments] = payload.attachments
     }
-    is ContactPayload -> upsert(Contacts, key, now) {
+    is ContactPayload -> upsert(Contacts, payload, key, now, linked, linkedShared) {
         it[Contacts.displayName] = payload.displayName
         it[Contacts.handles] = payload.handles
         it[Contacts.organization] = payload.organization
@@ -60,7 +64,7 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[Contacts.searchText] = (listOf(payload.displayName, payload.organization.orEmpty()) + payload.handles.map { h -> h.value })
             .joinToString(" ").lowercase()
     }
-    is CalendarEventPayload -> upsert(CalendarEvents, key, now) {
+    is CalendarEventPayload -> upsert(CalendarEvents, payload, key, now, linked, linkedShared) {
         it[CalendarEvents.icalUid] = payload.icalUid
         it[CalendarEvents.calendar] = payload.calendar
         it[CalendarEvents.title] = payload.title
@@ -73,7 +77,7 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
         it[CalendarEvents.url] = payload.url
         it[CalendarEvents.repeats] = payload.repeats
     }
-    is DocumentPayload -> upsert(Documents, key, now) {
+    is DocumentPayload -> upsert(Documents, payload, key, now, linked, linkedShared) {
         it[Documents.store] = payload.store
         it[Documents.path] = payload.path
         it[Documents.title] = payload.title
@@ -86,27 +90,51 @@ fun JdbcTransaction.upsertCanonical(payload: Payload, key: DedupKey, now: Instan
 
 private fun <T : CanonicalTable> JdbcTransaction.upsert(
     table: T,
+    payload: Payload,
     key: DedupKey,
     now: Instant,
+    linked: Uuid?,
+    linkedShared: Boolean,
     columns: (UpdateBuilder<*>) -> Unit,
 ): Upserted {
-    val proposed = Uuid.random()
-    table.insertIgnore {
-        it[table.id] = proposed
-        it[table.dedupKey] = key.bytes()
-        it[table.firstSeenAt] = now
-        it[table.updatedAt] = now
-        columns(it)
+    val owner = table.select(table.id).where { table.dedupKey eq key.bytes() }.singleOrNull()?.get(table.id)
+    fun merge(id: Uuid, rekey: Boolean) {
+        val row = table.selectAll().where { table.id eq id }.single()
+        // A re-read of an unchanged record (a connector re-reading every file once) is not a change:
+        // `updated_at` is what "what changed lately" reads.
+        val changed = row[table.deletedAt] != null || contentDiffers(storedOf(payload.noun, row).payload, payload)
+        if (!changed && !rekey) return
+        table.update({ table.id eq id }) {
+            if (rekey) it[table.dedupKey] = key.bytes()
+            columns(it)
+            if (changed) it[table.updatedAt] = now
+            it[table.deletedAt] = null // a re-observed record is alive again
+        }
     }
-    val stored = table.select(table.id).where { table.dedupKey eq key.bytes() }.single()[table.id]
-    if (stored == proposed) return Upserted(stored, created = true)
-    table.update({ table.id eq stored }) {
-        columns(it)
-        it[table.updatedAt] = now
-        it[table.deletedAt] = null // a re-observed record is alive again
+    return when (val identity = identityFor(linked, linkedShared, owner)) {
+        is Identity.Existing -> { merge(identity.id, rekey = false); Upserted(identity.id, created = false, orphaned = identity.orphaned) }
+        // Two batches taking the same new key at once fail one of them on the unique key; the
+        // connector retries that batch, which then merges (rare: two sources becoming one record).
+        is Identity.Rekey -> { merge(identity.id, rekey = true); Upserted(identity.id, created = false) }
+        Identity.Insert -> {
+            val proposed = Uuid.random()
+            table.insertIgnore {
+                it[table.id] = proposed
+                it[table.dedupKey] = key.bytes()
+                it[table.firstSeenAt] = now
+                it[table.updatedAt] = now
+                columns(it)
+            }
+            // A concurrent insert of the same key may have won: merge into it.
+            val stored = table.select(table.id).where { table.dedupKey eq key.bytes() }.single()[table.id]
+            if (stored != proposed) merge(stored, rekey = false)
+            Upserted(stored, created = stored == proposed)
+        }
     }
-    return Upserted(stored, created = false)
 }
+
+/** Pure: whether [incoming] says anything [stored] does not (both normalized payloads of one noun). */
+internal fun contentDiffers(stored: Payload, incoming: Payload): Boolean = stored != incoming
 
 /** Soft-deletes entity [id] of [noun]. */
 fun JdbcTransaction.softDelete(noun: Noun, id: Uuid, now: Instant) {

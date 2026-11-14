@@ -28,9 +28,10 @@ data class ToolImage(val mimeType: String, val base64: String)
 sealed interface ToolResult {
     /**
      * [images] are base64 images the tool returned (an MCP screenshot), for code that wraps the tool;
-     * the model only ever reads [content].
+     * the model never sees them. [show] are pictures put in front of the model with the result
+     * (`view_image`): they are journaled as [Block.Image] and sent after the results.
      */
-    data class Ok(val content: String, val images: List<ToolImage> = emptyList()) : ToolResult
+    data class Ok(val content: String, val images: List<ToolImage> = emptyList(), val show: List<ToolImage> = emptyList()) : ToolResult
     data class Error(val message: String) : ToolResult
 }
 
@@ -39,6 +40,9 @@ interface Tool {
     val description: String
     val inputSchema: JsonObject
     val effect: ToolEffect
+
+    /** Whether results carry pictures for the model ([ToolResult.Ok.show]): such a call is run again on resume, never answered from the ledger. */
+    val returnsImages: Boolean get() = false
 
     /** Must not throw for bad input; the harness additionally converts stray exceptions to [ToolResult.Error]. */
     suspend fun invoke(input: JsonObject): ToolResult
@@ -56,8 +60,9 @@ inline fun <reified I : Any> tool(
     description: String,
     effect: ToolEffect = ToolEffect.READ,
     json: Json = HarnessJson,
+    returnsImages: Boolean = false,
     noinline block: suspend (I) -> ToolResult,
-): Tool = typedTool(name, description, effect, json, json.serializersModule.serializer<I>(), block)
+): Tool = typedTool(name, description, effect, json, json.serializersModule.serializer<I>(), block, returnsImages)
 
 fun <I : Any> typedTool(
     name: String,
@@ -66,7 +71,9 @@ fun <I : Any> typedTool(
     json: Json,
     serializer: KSerializer<I>,
     block: suspend (I) -> ToolResult,
+    returnsImages: Boolean = false,
 ): Tool = object : Tool {
+    override val returnsImages = returnsImages
     override val name = name
     override val description = description
     override val effect = effect

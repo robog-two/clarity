@@ -20,6 +20,7 @@ import io.ktor.client.request.setBody
 import io.ktor.client.request.url
 import io.ktor.client.statement.HttpResponse
 import io.ktor.http.encodeURLPathPart
+import net.robog.clarity.app.data.dispositionFilename
 import net.robog.clarity.shared.mcp.McpPaths
 import net.robog.clarity.shared.mcp.McpServerList
 import net.robog.clarity.shared.mcp.McpSuggestionList
@@ -28,7 +29,9 @@ import net.robog.clarity.shared.report.ReportDetail
 import net.robog.clarity.shared.report.ReportLink
 import net.robog.clarity.shared.report.ReportList
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.contentType
+import net.robog.clarity.shared.source.SourceView
 import io.ktor.http.isSuccess
 import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
@@ -219,6 +222,15 @@ interface ReportsApi {
     suspend fun revokeReportLink(id: String): ApiResult<Unit>
 }
 
+/** A file the server sent: its bytes, type and the name it gave. */
+class SourceFile(val bytes: ByteArray, val mimeType: String?, val filename: String?)
+
+/** The records the agent cites (`/api/v1/sources/{id}`) and their attachments (`/api/v1/messages/{id}/attachments/{part}`). */
+interface SourcesApi {
+    suspend fun source(id: String): ApiResult<SourceView>
+    suspend fun attachment(entityId: String, part: String): ApiResult<SourceFile>
+}
+
 /** Third-party MCP servers run by the `mcp-host` connector ([McpPaths]). Adding and editing servers goes through its connector config. */
 interface McpApi {
     suspend fun mcpServers(refresh: Boolean = false): ApiResult<McpServerList>
@@ -282,7 +294,7 @@ class KtorClarityApi(
      * and decodes JSON; Ktor runs both in the caller's context, which is the main thread from a ViewModel.
      */
     private val io: CoroutineDispatcher = Dispatchers.IO,
-) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi, McpApi, BackupsApi {
+) : ClarityApi, IngestApi, VaultApi, ModelsApi, PathApi, ReportsApi, SourcesApi, McpApi, BackupsApi {
 
     override suspend fun enroll(baseUrl: String, request: EnrollmentRequest): ApiResult<EnrollmentResponse> =
         call {
@@ -514,6 +526,33 @@ class KtorClarityApi(
 
     override suspend fun revokeReportLink(id: String): ApiResult<Unit> =
         authedUnit { base -> client.delete { url(base + "${ApiPaths.REPORTS}/${id.encodeURLPathPart()}/link") } }
+
+    // --- sources ---
+
+    override suspend fun source(id: String): ApiResult<SourceView> = get("${ApiPaths.SOURCES}/${id.encodeURLPathPart()}")
+
+    override suspend fun attachment(entityId: String, part: String): ApiResult<SourceFile> {
+        val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
+        val path = "${ApiPaths.APP}/messages/${entityId.encodeURLPathPart()}/attachments/${part.encodeURLPathPart()}"
+        return withContext(io) {
+            try {
+                // The server fetches it from the mail account, which can take a while.
+                val response = client.get {
+                    url(session.instanceUrl + path)
+                    timeout { requestTimeoutMillis = 90_000 }
+                }
+                if (response.status.isSuccess()) {
+                    ApiResult.Success(SourceFile(response.body<ByteArray>(), response.contentType()?.withoutParameters()?.toString(), response.headers[HttpHeaders.ContentDisposition]?.let(::dispositionFilename)))
+                } else {
+                    ApiResult.Failure(response.toError())
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                ApiResult.Failure(ApiError.Unreachable(e.message))
+            }
+        }
+    }
 
     // --- MCP servers ---
 

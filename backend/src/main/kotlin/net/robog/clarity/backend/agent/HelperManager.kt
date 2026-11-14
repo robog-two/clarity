@@ -221,10 +221,10 @@ class HelperManager(
             else -> tools to emptyList()
         }
         val chosen = if (requested == null) null else {
-            val defaults = toolbox.value.helperTools(probe, null).tools
+            val defaults = toolbox.value.helperTools(probe, null, role = agentRole).tools
             if (search) requested else completeHelperTools(requested, defaults.tools.map { it.name }.toSet()).fold({ return it.left() }, { it })
         }
-        val granted = toolbox.value.helperTools(probe, chosen, ids)
+        val granted = toolbox.value.helperTools(probe, chosen, ids, agentRole)
         // Pages are read only from our side: research without the sandbox's fetch_page does not start.
         if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
@@ -476,7 +476,8 @@ class HelperManager(
     }
 
     /** Waits for every running helper to finish (tests). */
-    internal suspend fun joinAll() = jobs.values.toList().forEach { it.join() }
+    // toTypedArray, not toList: a helper that finishes meanwhile shrinks the map, which toList does not survive.
+    internal suspend fun joinAll() = jobs.values.toTypedArray().forEach { it.join() }
 
     /** Starts the run's job; false when one is already active for it. */
     private suspend fun start(run: HelperRun): Boolean {
@@ -547,7 +548,7 @@ class HelperManager(
                 val used = journal.load(run.id).flatMap { it.content }.count { it is Block.ToolUse && it.name != "set_scratch" }
                 toolbox.value.sweepTools(runScope, run.servers, used)
             } else {
-                toolbox.value.helperTools(runScope, plan.tools, run.servers).tools
+                toolbox.value.helperTools(runScope, plan.tools, run.servers, delegableRole(run.role) ?: net.robog.clarity.backend.config.AgentRole.HELPER).tools
             }
             // A queued helper reads what the lead sent while it waited with its task, in one message.
             val firstChanges = if (sweep || deliveryPath(journal.load(run.id)) != DeliveryPath.FIRST_MESSAGE) emptyList() else

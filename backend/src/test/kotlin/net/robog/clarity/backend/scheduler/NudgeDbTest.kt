@@ -69,7 +69,7 @@ private fun answer(p: Double) = DecisionResult(mapOf(ALREADY_UPDATED to Decision
 
 @EnabledIf(ContainerRuntimeAvailable::class)
 class NudgeDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

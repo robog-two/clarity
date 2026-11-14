@@ -29,8 +29,11 @@ data class ToolSet(val tools: List<Tool>)
 val HELPER_BASE = setOf(
     "list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "open_collection", "read_journal",
     "read_profile", "read_result", "list_triggers", "save_draft", "send_email", "create_event", "update_event", "cancel_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
-    "request_credential", "list_credentials", "ask_code",
+    "request_credential", "list_credentials", "ask_code", SAVE_ATTACHMENT, VIEW_IMAGE,
 ) + REPORT_TOOLS
+
+/** The tools that read messages; a run needs one of them to save an attachment. */
+val MESSAGE_READERS = setOf("list_messages", "search_messages")
 
 /**
  * The name the lead puts in `delegate`'s tools to give a helper OpenRouter's web search. It is not a
@@ -272,6 +275,7 @@ class AgentToolbox(
     private val nudges: NudgeTools,
     private val reports: ReportTools,
     private val thirdParty: McpToolKit,
+    private val attachmentTools: AttachmentTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -313,13 +317,18 @@ class AgentToolbox(
      * tools not switched off, with `open_collection`, `search_memory` and `save_note` limited to their
      * collections.
      */
-    suspend fun helperTools(scope: RunScope, requested: List<String>?, servers: List<String> = emptyList()): HelperToolSet {
+    suspend fun helperTools(scope: RunScope, requested: List<String>?, servers: List<String> = emptyList(), role: AgentRole = AgentRole.HELPER): HelperToolSet {
         val mcpAll = mcpTools(scope)
-        val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS || it.name == CITE_SOURCES } + gcOnly(scope) + mcpAll)
+        // Attachments and pictures need the sandbox: they exist only where its tools do.
+        val attachmentAll = guarded(scope, attachmentTools.all(mcpAll, role))
+        val candidates = (everything(scope, forLead = false).filter { it.name in HELPER_BASE || it.name in MEMORY_GC_TOOLS || it.name == CITE_SOURCES } + gcOnly(scope) + mcpAll + attachmentAll)
             .distinctBy { it.name }
-        val chosen = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }
+        val picked = if (requested == null) candidates.filter { it.name in HELPER_BASE || it in mcpAll }
         else candidates.filter { it.name in requested }
-        val unknown = requested.orEmpty().filter { name -> candidates.none { it.name == name } }
+        // An attachment is part of a message: only a run that may read messages may save one.
+        val noMail = picked.none { it.name in MESSAGE_READERS }
+        val chosen = if (noMail) picked.filter { it.name != SAVE_ATTACHMENT } else picked
+        val unknown = requested.orEmpty().filter { name -> candidates.none { it.name == name } || (noMail && name == SAVE_ATTACHMENT) }
         val given = if (servers.isEmpty()) emptyList() else thirdParty.byIds(servers)
         val extra = if (given.isEmpty()) emptyList() else thirdParty.serverTools(scope, given) + thirdParty.noteTools(scope, given)
         // Every helper can ask the lead; the sweep (which has its own tool set) cannot.

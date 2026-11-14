@@ -43,6 +43,9 @@ import net.robog.clarity.shared.governance.HeldActionId
 /** One Good (a report the agent made), opened from the Goods tab or a card in the thread. */
 @Serializable data class ReportView(val reportId: String, val backLabel: String = "Goods") : NavKey
 
+/** One record a sources card cites (mail, event, file, contact), read-only, opened from the thread. */
+@Serializable data class SourceDetail(val entityId: String, val backLabel: String = "Ask") : NavKey
+
 /** The bottom tabs. */
 enum class MainTab(val label: String) {
     Today("today"),

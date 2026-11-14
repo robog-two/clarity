@@ -15,10 +15,15 @@ fun interface ModelGatewayFactory {
 
 @Inject
 @ContributesBinding(AppScope::class)
-class OpenRouterGatewayFactory(private val config: AgentConfig) : ModelGatewayFactory {
-    override fun create(apiKey: String): ModelGateway = openRouterGateway(apiKey, config)
+class OpenRouterGatewayFactory(private val config: AgentConfig, private val pictures: net.robog.clarity.harness.ToolImageStore) : ModelGatewayFactory {
+    override fun create(apiKey: String): ModelGateway = openRouterGateway(apiKey, config, images = pictures)
 }
 
 /** The OpenRouter gateway with the configured routing, through the egress proxy (`CLARITY_HTTPS_PROXY`). */
-fun openRouterGateway(apiKey: String, config: AgentConfig, env: Map<String, String> = System.getenv()): OpenRouterModelGateway =
-    OpenRouterModelGateway(apiKey, config.openRouterBaseUrl, httpsProxyFromEnv(env), routing = config.openRouterRouting)
+fun openRouterGateway(
+    apiKey: String,
+    config: AgentConfig,
+    env: Map<String, String> = System.getenv(),
+    images: net.robog.clarity.harness.ToolImageStore = net.robog.clarity.harness.ToolImageStore.NONE,
+): OpenRouterModelGateway =
+    OpenRouterModelGateway(apiKey, config.openRouterBaseUrl, httpsProxyFromEnv(env), routing = config.openRouterRouting, images = images)

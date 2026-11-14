@@ -1,5 +1,7 @@
 package net.robog.clarity.backend.agent
 
+import arrow.core.Either
+import arrow.core.raise.either
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -20,6 +22,7 @@ import net.robog.clarity.backend.governance.NotifyDecision
 import net.robog.clarity.backend.governance.emptyConstitution
 import net.robog.clarity.backend.governance.notifyDecision
 import net.robog.clarity.backend.governance.zoneOrUtc
+import net.robog.clarity.backend.sources.SourceResolver
 import net.robog.clarity.harness.Description
 import net.robog.clarity.harness.Tool
 import net.robog.clarity.harness.ToolCallContext
@@ -72,10 +75,11 @@ class OwnStateTools(
     private val settings: SettingsProvider,
     private val clock: Clock,
     private val gate: FailureGate,
+    private val sources: SourceResolver,
 ) {
     @Serializable
     class SendToUserInput(
-        @Description("What to show, in order. Each card names its `type`, e.g. {\"type\": \"text\", \"text\": \"...\"}. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}. Held items and credential forms are not in the chat until you post their card; post each once.")
+        @Description("What to show, in order. Each card names its `type`, e.g. {\"type\": \"text\", \"text\": \"...\"}. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}, sources {items:[{id:\"<record id>\"} or {url:\"https://...\"}]} (up to 8; the records and pages your facts came from, so the person can open and check them; only ones a tool returned this conversation or a helper fetched). Held items and credential forms are not in the chat until you post their card; post each once.")
         val cards: List<Card>,
         @Description("urgent = interrupt now (respects protected time), normal = shows in the app, batch = evening summary. Default normal.")
         val urgency: Urgency = Urgency.NORMAL,
@@ -94,11 +98,17 @@ class OwnStateTools(
     ) { input ->
         when {
             input.cards.isEmpty() -> ToolResult.Error("`cards` must not be empty")
-            input.cards.any { it is Card.Unknown } -> ToolResult.Error("`unknown` is not a card type; use text, chips, plan, note, context, proposal, tasks or credential_request")
-            input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal or tasks")
+            input.cards.any { it is Card.Unknown } -> ToolResult.Error("`unknown` is not a card type; use text, chips, plan, note, context, proposal, tasks, credential_request or sources")
+            input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal, tasks or sources")
             input.cards.any { it is Card.Report } -> ToolResult.Error("Show a report with present_report, which checks it exists and lists its formats.")
-            else -> post(input.cards, input.urgency, input.sessionId, input.about)
+            else -> resolveSources(input.cards).fold({ ToolResult.Error(it) }) { cards -> post(cards, input.urgency, input.sessionId, input.about) }
         }
+    }
+
+    /** The cards with each sources card replaced by the server's own resolution of it; Left is the error for the model. */
+    private suspend fun resolveSources(cards: List<Card>): Either<String, List<Card>> {
+        val runId = coroutineContext[ToolCallContext]?.runId
+        return either { cards.map { if (it is Card.Sources) sources.resolve(it.items, runId).bind() else it } }
     }
 
     /**

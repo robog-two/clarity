@@ -34,7 +34,7 @@ object EvalDb {
     const val MAIL = "eval-mail"
 
     private val postgres by lazy {
-        PostgreSQLContainer("postgres:18-alpine").also { container ->
+        PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3).also { container ->
             container.start()
             Runtime.getRuntime().addShutdownHook(Thread { runCatching { container.stop() } })
         }

@@ -44,6 +44,8 @@ import net.robog.clarity.shared.connector.ConnectorConfig
 import net.robog.clarity.shared.connector.ConnectorManifest
 import net.robog.clarity.shared.connector.ConnectorTestReport
 import net.robog.clarity.shared.connector.ConnectorTestRequest
+import net.robog.clarity.shared.fetch.FetchFailure
+import net.robog.clarity.shared.fetch.FetchPoll
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.ingest.IngestResponse
 
@@ -133,6 +135,29 @@ class ClarityClient(
     /** `POST /ingest/v1/actions/{id}/result`. Idempotent on the backend: reporting twice is harmless. */
     suspend fun postResult(id: ActionId, result: ActionResult): Either<ClientError, Unit> =
         execute("post action result", { http.post("${ApiPaths.ACTIONS}/${id.value}/result") { contentType(ContentType.Application.Json); setBody(result) } }) {
+            Unit.right()
+        }
+
+    /** `GET /ingest/v1/fetches?wait=`: long-polls (cancellable, like [pollActions]) for requests for the bytes of a record's part. */
+    suspend fun pollFetches(wait: Duration): Either<ClientError, FetchPoll> =
+        execute("poll fetches", { http.get(ApiPaths.FETCHES) { parameter("wait", wait.inWholeSeconds) } }, shielded = false) {
+            decode<FetchPoll>(it)
+        }
+
+    /** `PUT /ingest/v1/fetches/{id}`: the part's [bytes] as the body, its name and media type as parameters. */
+    suspend fun putFetched(id: String, bytes: ByteArray, filename: String?, mimeType: String): Either<ClientError, Unit> =
+        execute("put fetched part", {
+            http.put("${ApiPaths.FETCHES}/$id") {
+                filename?.let { parameter("filename", it) }
+                parameter("type", mimeType)
+                contentType(ContentType.Application.OctetStream)
+                setBody(bytes)
+            }
+        }) { Unit.right() }
+
+    /** `POST /ingest/v1/fetches/{id}/error`. */
+    suspend fun postFetchError(id: String, failure: FetchFailure): Either<ClientError, Unit> =
+        execute("post fetch error", { http.post("${ApiPaths.FETCHES}/$id/error") { contentType(ContentType.Application.Json); setBody(failure) } }) {
             Unit.right()
         }
 

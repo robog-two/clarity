@@ -80,6 +80,8 @@ data class CardEnv(
     val resetKey: Any? = null,
     /** Opens a Good's viewer; null where there is nowhere to go (the call). */
     val onOpenReport: ((String) -> Unit)? = null,
+    /** Opens a cited record's viewer (by entity id); null where there is nowhere to go (the call). */
+    val onOpenSource: ((String) -> Unit)? = null,
 )
 
 /** The block drawn after a reply that is still being written. Screen readers never hear it. */
@@ -115,6 +117,7 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.Tasks -> TaskList(card, env.tasks, modifier)
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
         is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport, modifier)
+        is Card.Sources -> net.robog.clarity.app.ui.sources.SourcesCardView(card, env.onOpenSource, modifier)
         // A newer server's card: its own words when it sent some, else nothing.
         is Card.Unknown -> card.fallbackText?.let { NoteBox(it, modifier) }
     }

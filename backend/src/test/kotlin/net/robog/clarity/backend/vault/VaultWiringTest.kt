@@ -44,7 +44,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** The real application graph with V7 on top of V1-V5: the vault routes are wired and sit behind device authentication. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class VaultWiringTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var config: AppConfig
 
     beforeSpec {

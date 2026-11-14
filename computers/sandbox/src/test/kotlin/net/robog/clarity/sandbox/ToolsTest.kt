@@ -35,6 +35,41 @@ class ToolsTest : FunSpec({
         shouldThrow<SandboxException> { t.getValue("read_file").invoke(args("path" to "missing.txt")) }.message shouldContain "list_files"
     }
 
+    test("write_file takes binary content as base64 and read_file_base64 gives it back") {
+        val ws = newWorkspace()
+        val t = tools(ws)
+        val bytes = ByteArray(300) { (it * 7).toByte() }
+        val encoded = java.util.Base64.getEncoder().encodeToString(bytes)
+        t.getValue("write_file").invoke(args("path" to "attachments/ab12/pic.png", "content_base64" to encoded)) shouldContain "300 bytes"
+        Files.readAllBytes(ws.root.resolve("attachments/ab12/pic.png")).toList() shouldBe bytes.toList()
+        java.util.Base64.getDecoder().decode(t.getValue("read_file_base64").invoke(args("path" to "attachments/ab12/pic.png"))).toList() shouldBe bytes.toList()
+        // strict: line breaks and stray characters are errors, not skipped
+        shouldThrow<SandboxException> { t.getValue("write_file").invoke(args("path" to "b.bin", "content_base64" to encoded.chunked(76).joinToString("\n"))) }.message shouldContain "not valid base64"
+        shouldThrow<SandboxException> { t.getValue("write_file").invoke(args("path" to "c.bin", "content_base64" to "$encoded*")) }.message shouldContain "not valid base64"
+        Files.exists(ws.root.resolve("b.bin")) shouldBe false
+    }
+
+    test("write_file wants exactly one of content and content_base64, valid base64, and stays inside the workspace") {
+        val ws = newWorkspace()
+        val write = tools(ws).getValue("write_file")
+        shouldThrow<SandboxException> { write.invoke(args("path" to "a")) }.message shouldContain "exactly one"
+        shouldThrow<SandboxException> { write.invoke(args("path" to "a", "content" to "x", "content_base64" to "eA==")) }.message shouldContain "exactly one"
+        shouldThrow<SandboxException> { write.invoke(args("path" to "a", "content_base64" to "!!not base64!!")) }.message shouldContain "not valid base64"
+        shouldThrow<SandboxException> { write.invoke(args("path" to "../a", "content_base64" to "eA==")) }.message shouldContain "outside /workspace"
+        shouldThrow<SandboxException> { write.invoke(args("path" to "a", "content_base64" to "A".repeat(40_000_000))) }.message shouldContain "larger than"
+    }
+
+    test("read_file_base64 refuses what is missing, a directory and a file over its limit") {
+        val ws = newWorkspace()
+        Files.createDirectories(ws.root.resolve("d"))
+        Files.write(ws.root.resolve("big.bin"), ByteArray(100))
+        val read = ReadFileBase64Tool(ws, maxBytes = 50)
+        shouldThrow<SandboxException> { read.invoke(args("path" to "nope.png")) }.message shouldContain "does not exist"
+        shouldThrow<SandboxException> { read.invoke(args("path" to "d")) }.message shouldContain "not a regular file"
+        shouldThrow<SandboxException> { read.invoke(args("path" to "big.bin")) }.message shouldContain "over the limit"
+        shouldThrow<SandboxException> { read.invoke(args("path" to "../x")) }.message shouldContain "outside /workspace"
+    }
+
     test("edit requires a prior read, a unique match and an unchanged file") {
         val ws = newWorkspace()
         val t = tools(ws)

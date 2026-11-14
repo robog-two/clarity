@@ -28,6 +28,7 @@ import net.robog.clarity.app.ui.onboarding.OnboardingFlow
 import net.robog.clarity.app.ui.path.RunPathScreen
 import net.robog.clarity.app.ui.path.TaskThreadScreen
 import net.robog.clarity.app.ui.goods.ReportScreen
+import net.robog.clarity.app.ui.sources.SourceScreen
 import net.robog.clarity.shared.feed.TaskId
 import androidx.navigation3.scene.Scene
 import net.robog.clarity.app.ui.components.springSwap
@@ -108,10 +109,14 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                     onOpenConnector = { push(ConnectorView(it)) },
                     onOpenMcp = { push(McpServersView) },
                     onOpenReport = { id, back -> push(ReportView(id, back)) },
+                    onOpenSource = { id, back -> push(SourceDetail(id, back)) },
                 )
             }
             entry<ReportView> { key ->
                 ReportScreen(key.reportId, onBack = { backStack.removeLastOrNull() }, backLabel = key.backLabel)
+            }
+            entry<SourceDetail> { key ->
+                SourceScreen(key.entityId, onBack = { backStack.removeLastOrNull() }, backLabel = key.backLabel)
             }
             entry<DraftReview> { key ->
                 DraftReviewScreen(

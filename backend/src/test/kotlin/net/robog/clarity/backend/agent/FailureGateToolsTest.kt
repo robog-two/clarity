@@ -35,7 +35,7 @@ private const val BRIEF_WITH_ISSUES = "Look up Ulta salon availability in Ithaca
 /** Every tool that writes durable memory, and delegate, go through the failure gate (fake Jev, real database). */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class FailureGateToolsTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

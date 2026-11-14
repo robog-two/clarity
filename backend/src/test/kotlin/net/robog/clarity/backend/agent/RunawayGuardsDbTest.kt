@@ -76,7 +76,7 @@ private fun reply(id: String, text: String) = Block.ToolUse(id, "send_to_user", 
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class RunawayGuardsDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 

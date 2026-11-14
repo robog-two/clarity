@@ -56,7 +56,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
  */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class GovernanceWiringTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     val key = "gov-key-" + java.util.UUID.randomUUID()
     lateinit var config: AppConfig
 

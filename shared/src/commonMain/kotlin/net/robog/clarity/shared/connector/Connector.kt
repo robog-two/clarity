@@ -31,6 +31,8 @@ data class ConnectorManifest(
      * current config. Label and address only, never credentials.
      */
     val accounts: List<ConnectorAccount> = emptyList(),
+    /** Whether the connector answers fetch requests (the bytes of a record's part, such as an email attachment). Not asked otherwise. */
+    val fetches: Boolean = false,
 )
 
 /** One of the person's accounts at a connector: what they call it ("Gmail") and its address. */

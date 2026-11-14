@@ -144,6 +144,8 @@ class LeadRig(
     mcpRefreshOnRead: Boolean = true,
     /** Checks done criteria; by default the real one over the (scripted) triage model. */
     criteriaChecker: CriteriaChecker? = null,
+    /** Which models take images; by default unknown. */
+    capabilities: ModelCapabilities = ModelCapabilities { null },
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -177,7 +179,7 @@ class LeadRig(
 
     val mcp = McpToolSources(config, null, sandboxTools)
     val large = LargeResults(database, mcp, clock)
-    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate)
+    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate, net.robog.clarity.backend.sources.SourceResolver(ExposedNounReader(database), settingsProvider, journal, runs))
     val collections = ExposedCollectionStore(database, clock)
     val embeddings = Embeddings(config, { embeddingClient }, database, clock)
     val vectors = VectorIndex(database, embeddings)
@@ -221,6 +223,7 @@ class LeadRig(
     val mcpStore = net.robog.clarity.backend.mcpservers.ExposedMcpStore(database)
     val mcpCatalog = net.robog.clarity.backend.mcpservers.McpCatalog(mcpHost, mcpStore, collections, clock, refreshOnRead = mcpRefreshOnRead)
     val mcpCalls = net.robog.clarity.backend.mcpservers.McpCalls(mcpCatalog, gate, heldStore, events, heldWaiters, clock, mcpWait)
+    val attachmentTools = AttachmentTools(NoAttachments, modelSettings, capabilities)
     val mcpKit = net.robog.clarity.backend.mcpservers.McpToolKit(mcpCatalog, mcpCalls, memoryTools, memory, mcpStore, failureGate, clock)
 
     lateinit var helpers: HelperManager
@@ -229,7 +232,7 @@ class LeadRig(
 
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit, attachmentTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime))
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
@@ -249,4 +252,12 @@ class LeadRig(
             )
         }
     }
+}
+
+/** Attachments for tests that do not use them: every message has none. */
+object NoAttachments : net.robog.clarity.backend.attachments.AttachmentSource {
+    override suspend fun fetch(entityId: net.robog.clarity.shared.EntityId, part: String) =
+        arrow.core.Either.Left(net.robog.clarity.backend.attachments.FetchError.NotFound("no attachments in this test"))
+
+    override suspend fun list(entityId: net.robog.clarity.shared.EntityId) = arrow.core.Either.Right(emptyList<net.robog.clarity.shared.noun.AttachmentMeta>())
 }

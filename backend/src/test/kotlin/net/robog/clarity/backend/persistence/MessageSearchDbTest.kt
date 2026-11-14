@@ -26,7 +26,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer
 /** search_messages over Postgres (V28): name/address fragments, stemmed words, filters and ranking. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class MessageSearchDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
     lateinit var reader: ExposedNounReader
     val t0 = Instant.parse("2026-09-01T12:00:00Z")

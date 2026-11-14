@@ -90,6 +90,15 @@
             android:windowSoftInputMode="adjustResize">
         </activity>
 
+        <!-- Attachments the person opens from a cited email: a file in the cache, handed to another app for reading only. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".app.push.FeedService"
             android:exported="false"

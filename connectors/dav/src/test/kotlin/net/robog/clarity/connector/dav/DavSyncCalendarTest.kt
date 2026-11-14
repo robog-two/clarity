@@ -148,4 +148,34 @@ class DavSyncCalendarTest : FunSpec({
             ((state.get(key) as JsonObject)["version"] as JsonPrimitive).content.toInt() shouldBe CAL_STATE_VERSION
         }
     }
+
+    test("records carry the mapping version, so a re-read after a mapping fix is applied even when the file is unchanged") {
+        recordVersion("\"abc\"") shouldBe "\"abc\"#m$CAL_STATE_VERSION"
+        val dav = calendarOnly()
+        dav.put("/dav/cal/me/work/plan.ics", "text/calendar", cal("UID:plan", "DTSTART:20260312T090000Z", "DTEND:20260312T100000Z", "SUMMARY:Planning"))
+        val state = InMemoryStateStore()
+        DavServer(calConfig(), dav.engine).use { server ->
+            val pushed = mutableListOf<IngestRecord>()
+            DavSync(server, calConfig(), state, MovableClock(Instant.parse("2026-03-10T08:00:00Z"))).syncAll { pushed += it }
+            val versions = pushed.events.map { it.sourceVersion }
+            versions.shouldHaveSize(1)
+            versions.single().endsWith("#m$CAL_STATE_VERSION") shouldBe true
+        }
+    }
+
+    test("events without a UID are pushed identified by their file, a series' occurrences each by theirs") {
+        val dav = calendarOnly()
+        fun noUid(vararg lines: String) = (listOf("BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//t//EN", "BEGIN:VEVENT", "DTSTAMP:20260301T000000Z") + lines + listOf("END:VEVENT", "END:VCALENDAR")).joinToString("\n") + "\n"
+        dav.put("/dav/cal/me/work/a.ics", "text/calendar", noUid("DTSTART:20260312T090000Z", "DTEND:20260312T100000Z", "SUMMARY:One off"))
+        dav.put("/dav/cal/me/work/b.ics", "text/calendar", noUid("DTSTART:20260312T090000Z", "DTEND:20260312T100000Z", "RRULE:FREQ=DAILY;COUNT=2", "SUMMARY:Series"))
+        DavServer(calConfig(), dav.engine).use { server ->
+            val pushed = mutableListOf<IngestRecord>()
+            DavSync(server, calConfig(), InMemoryStateStore(), MovableClock(Instant.parse("2026-03-10T08:00:00Z"))).syncAll { pushed += it }
+            val uids = pushed.events.associate { it.sourceId.value to (it.payload as CalendarEventPayload).icalUid }
+            uids.size shouldBe 3
+            uids.forEach { (source, uid) -> uid shouldBe "$NO_UID_PREFIX$source" }
+            // two occurrences at different times never share an identity
+            uids.values.toSet().size shouldBe 3
+        }
+    }
 })

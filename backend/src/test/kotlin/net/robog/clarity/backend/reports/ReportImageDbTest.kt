@@ -55,7 +55,7 @@ private val SOURCE = "# Salon\n\n![The hare]($HARE)\n\n![Gone]($GONE)\n"
 /** Report images against real Postgres: fetching and storing, the route, and what a render is given. */
 @EnabledIf(ContainerRuntimeAvailable::class)
 class ReportImageDbTest : FunSpec({
-    val postgres = PostgreSQLContainer("postgres:18-alpine")
+    val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
 
     beforeSpec {

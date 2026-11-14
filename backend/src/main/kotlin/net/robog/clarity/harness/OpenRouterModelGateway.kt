@@ -7,11 +7,15 @@ import java.net.Proxy
 import java.net.ProxySelector
 import java.net.SocketAddress
 import java.net.URI
+import java.util.concurrent.ConcurrentHashMap
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlin.math.roundToLong
+import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Instant
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -32,6 +36,26 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 private val log = KotlinLogging.logger {}
+
+/** What a provider said about the pictures of a request. */
+enum class ImageRefusal { UNSUPPORTED, REJECTED }
+
+/** How long a model's "no image input" answer is believed. */
+private val NO_IMAGE_MEMORY = 1.hours
+
+/** Names remembered for [ttl] on [clock]; an entry older than that is forgotten. */
+internal class TimedMemory(private val clock: Clock, private val ttl: Duration) {
+    private val seen = ConcurrentHashMap<String, Instant>()
+
+    fun remember(name: String) { seen[name] = clock.now() }
+
+    fun knows(name: String): Boolean {
+        val at = seen[name] ?: return false
+        if (clock.now() - at < ttl) return true
+        seen.remove(name, at)
+        return false
+    }
+}
 
 /** OpenRouter refused or failed a request. [status] is the HTTP status, or null for an error sent mid-stream. */
 class OpenRouterException(val status: Int?, message: String) : RuntimeException(message)
@@ -120,7 +144,13 @@ class OpenRouterModelGateway(
     private val onServed: (provider: String) -> Unit = {},
     /** The longest wait between two lines of the stream; then the call fails, so a stalled stream frees its slot. */
     private val idleTimeout: Duration = STREAM_IDLE_TIMEOUT,
+    /** Where the pictures tools showed are kept; read when a request is built. */
+    private val images: ToolImageStore = ToolImageStore.NONE,
+    clock: Clock = Clock.System,
 ) : ModelGateway {
+    /** Models that answered "no image input" in this process (for an hour): later requests leave pictures out from the start. */
+    private val noImageInput = TimedMemory(clock, NO_IMAGE_MEMORY)
+
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
     private val http: HttpClient = HttpClient.newBuilder()
@@ -144,8 +174,39 @@ class OpenRouterModelGateway(
         return response
     }
 
+    /**
+     * One call. A model that does not take images answers a request that has them with a 4xx that says so;
+     * the call is then made again with each picture replaced by a note, and the model is remembered, so later
+     * requests do not pay a failed call first. A picture the provider refuses as an image (too large,
+     * damaged) is replaced by a note the same way, once, without remembering anything about the model.
+     */
     private suspend fun generate(request: ModelRequest, sticky: Stickiness, onTextDelta: (String) -> Unit): ModelResponse {
-        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing, sticky))
+        val pictures = hasImages(request.messages)
+        val first = if (pictures && noImageInput.knows(request.model)) IMAGE_UNSUPPORTED else null
+        return try {
+            generate(request, sticky, first, onTextDelta)
+        } catch (e: OpenRouterException) {
+            val refusal = if (pictures && first == null) imageRefusal(e.status, e.message.orEmpty()) else null
+            if (refusal == null) throw e
+            log.warn { "${request.model} refused the pictures (${refusal.name.lowercase()}: ${e.message}); sending the request without them" }
+            if (refusal == ImageRefusal.UNSUPPORTED) noImageInput.remember(request.model)
+            generate(request, sticky, if (refusal == ImageRefusal.UNSUPPORTED) IMAGE_UNSUPPORTED else IMAGE_REJECTED, onTextDelta)
+        }
+    }
+
+    /** The bytes of the pictures that will be sent (the newest [IMAGES_KEPT]); a missing one is told apart by its absence. */
+    private suspend fun loadPictures(request: ModelRequest): Map<String, ToolImage> {
+        val context = contextSince(request.messages)
+        val run = currentRunId().orEmpty()
+        return keptImages(context).mapNotNull { (m, b) ->
+            val block = context[m].content[b] as Block.Image
+            images.load(run, block.toolUseId)?.let { block.toolUseId to it }
+        }.toMap()
+    }
+
+    private suspend fun generate(request: ModelRequest, sticky: Stickiness, imageNote: String?, onTextDelta: (String) -> Unit): ModelResponse {
+        val pictures = if (imageNote == null && hasImages(request.messages)) loadPictures(request) else emptyMap()
+        val body = HarnessJson.encodeToString(JsonObject.serializer(), buildBody(request, routing, sticky, imageNote, pictures))
         val call = HttpRequest.newBuilder(endpoint)
             .timeout(RESPONSE_TIMEOUT.toJavaDuration())
             .header("Authorization", "Bearer $apiKey")
@@ -261,13 +322,13 @@ class OpenRouterModelGateway(
         }
 
         /** The request body exactly as it goes over the wire; for tests and debugging. */
-        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting(), sticky: Stickiness = Stickiness()): JsonObject {
+        internal fun buildBody(request: ModelRequest, routing: OpenRouterRouting = OpenRouterRouting(), sticky: Stickiness = Stickiness(), imageNote: String? = null, pictures: Map<String, ToolImage> = emptyMap()): JsonObject {
             val cache = request.cache?.takeIf { usesCacheBreakpoints(request.model) }
             val order = providerOrder(routing, sticky.preferred)
             return buildJsonObject {
                 put("model", request.model)
                 sticky.session?.let { put("session_id", it) }
-                put("messages", wireMessages(request, cache))
+                put("messages", wireMessages(request, cache, imageNote, pictures))
                 if (cache?.automatic == true) put("cache_control", cacheControl(cache))
                 put("max_tokens", request.maxTokens)
                 put("stream", true)
@@ -347,7 +408,7 @@ class OpenRouterModelGateway(
             }
         }
 
-        private fun wireMessages(request: ModelRequest, cache: CachePolicy?): JsonArray = buildJsonArray {
+        private fun wireMessages(request: ModelRequest, cache: CachePolicy?, imageNote: String? = null, pictures: Map<String, ToolImage> = emptyMap()): JsonArray = buildJsonArray {
             if (request.system.isNotEmpty()) {
                 if (cache != null && request.system.any { it.cacheBreakpoint }) {
                     // One text part per block, so a breakpoint ends exactly where its block does.
@@ -366,18 +427,22 @@ class OpenRouterModelGateway(
             // The text parts of the user message being built, kept back so operator notices can join it,
             // and whether its last part carries the message breakpoint.
             val userParts = mutableListOf<String>()
+            // Pictures that tools showed (after their results), sent in the user message that follows them.
+            val userImages = mutableListOf<JsonObject>()
             var userMarked = false
+            val kept = keptImages(context)
             // The web search results of the last assistant step, read back to the model after it.
             var searchNote: String? = null
             fun flushUser() {
-                if (userParts.isNotEmpty()) {
-                    val content = if (userParts.size == 1 && !userMarked) {
+                if (userParts.isNotEmpty() || userImages.isNotEmpty()) {
+                    val content = if (userParts.size == 1 && !userMarked && userImages.isEmpty()) {
                         JsonPrimitive(userParts.single())
                     } else {
-                        JsonArray(userParts.mapIndexed { i, text -> textPart(text, cache.takeIf { userMarked && i == userParts.lastIndex }) })
+                        JsonArray(userImages + userParts.mapIndexed { i, text -> textPart(text, cache.takeIf { userMarked && i == userParts.lastIndex }) })
                     }
                     add(chat("user", content))
                     userParts.clear()
+                    userImages.clear()
                 }
                 userMarked = false
             }
@@ -415,6 +480,10 @@ class OpenRouterModelGateway(
                                 put("tool_call_id", result.toolUseId)
                                 put("content", if (result.isError) ERROR_PREFIX + result.content else result.content)
                             })
+                        }
+                        val shift = original.content.size - message.content.size
+                        message.content.forEachIndexed { b, block ->
+                            if (block is Block.Image) userImages += imageParts(block, imageNote, if ((index to b + shift) in kept) pictures[block.toolUseId] else null, shown = (index to b + shift) in kept)
                         }
                         searchNote?.let { userParts += it }
                         searchNote = null
@@ -476,6 +545,48 @@ class OpenRouterModelGateway(
          * so notices never go as mid-conversation `system` messages on this wire.
          */
         internal fun operatorUpdate(text: String): String = "$OPERATOR_UPDATE_HEADING\n$text"
+
+        /**
+         * Pure: the content parts for one picture a tool showed: a label naming the call, then the image
+         * (a data URL, as OpenRouter takes images). It is a short note instead when [imageNote] says the model
+         * or provider will not take pictures, when it is no longer [shown] (older than the newest few), or when its
+         * bytes ([picture]) are gone. Tool messages are text-only in this format, which is why pictures come in the
+         * user message that follows the results.
+         */
+        internal fun imageParts(image: Block.Image, imageNote: String?, picture: ToolImage?, shown: Boolean): List<JsonObject> = when {
+            imageNote != null -> listOf(textPart(imageNote, null))
+            !shown -> listOf(textPart(IMAGE_OMITTED, null))
+            picture == null -> listOf(textPart(IMAGE_EXPIRED, null))
+            else -> listOf(
+                textPart("[Image returned by tool call ${image.toolUseId}]", null),
+                buildJsonObject {
+                    put("type", "image_url")
+                    putJsonObject("image_url") { put("url", "data:${picture.mimeType};base64,${picture.base64}") }
+                },
+            )
+        }
+
+        internal fun hasImages(messages: List<Message>): Boolean = messages.any { m -> m.content.any { it is Block.Image } }
+
+        // Only wording about the model's abilities: format, size or type complaints are about one picture.
+        private val NO_IMAGE_INPUT = Regex(
+            "input_modalit|(does not|doesn't|do not|don't) (support|accept) (any )?(images?|vision|multimodal|visual)\\b|no endpoints\\b[^.\\n]{0,80}\\bimage" +
+                "|\\b(multimodal|image|vision) inputs? (is |are )?(not supported|unsupported)|\\bvision is not supported",
+            RegexOption.IGNORE_CASE,
+        )
+        private val ABOUT_IMAGES = Regex("image|picture|base64|media type|mime", RegexOption.IGNORE_CASE)
+
+        /**
+         * Pure: what a 4xx from OpenRouter says about the pictures sent: that the model takes no image input
+         * ([ImageRefusal.UNSUPPORTED], by the wording of the message: "support", "input_modalities"), or that
+         * one picture is no good ([ImageRefusal.REJECTED]: too large, invalid). Anything else is not about pictures.
+         */
+        internal fun imageRefusal(status: Int?, message: String): ImageRefusal? = when {
+            status != 400 && status != 404 && status != 413 && status != 415 && status != 422 -> null
+            NO_IMAGE_INPUT.containsMatchIn(message) -> ImageRefusal.UNSUPPORTED
+            ABOUT_IMAGES.containsMatchIn(message) -> ImageRefusal.REJECTED
+            else -> null
+        }
 
         private fun chat(role: String, content: JsonElement) = buildJsonObject {
             put("role", role)

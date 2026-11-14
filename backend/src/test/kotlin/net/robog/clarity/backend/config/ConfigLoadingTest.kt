@@ -46,6 +46,11 @@ class ConfigLoadingTest : FunSpec({
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
     }
 
+    test("the attachment cache must hold the largest attachment") {
+        load(mapOf("CLARITY_ATTACHMENT_MAX_MB" to "25", "CLARITY_ATTACHMENT_CACHE_MAX_MB" to "25")).getOrNull()!!.attachments.cacheMaxBytes shouldBe 25L * 1024 * 1024
+        load(mapOf("CLARITY_ATTACHMENT_MAX_MB" to "25", "CLARITY_ATTACHMENT_CACHE_MAX_MB" to "10")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
+    }
+
     test("hard spend stops, the lead's turn cap, and the helper limits: defaults and overrides") {
         val c = load().getOrNull()!!.agent
         c.spend shouldBe SpendLimits()

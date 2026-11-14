@@ -49,6 +49,13 @@ data class FolderCursor(
 /** [FolderCursor.historyFrom] of a folder imported in full. */
 const val ALL_TIME = Long.MIN_VALUE
 
+/**
+ * The version of what a mail record holds. "2" added the message id and the attachment list. Mail
+ * already ingested as "1" keeps its old record (the sync never re-reads a message it has reported);
+ * the attachment fetch works for it anyway, since the connector lists a message's parts from the server on demand.
+ */
+const val SOURCE_VERSION = "2"
+
 /** Messages fetched per IMAP round trip and pushed per batch. */
 private const val CHUNK = 50
 
@@ -198,7 +205,7 @@ class MailSync(
                         log.warn { "skipping ${ref.sourceId}: no usable sender" }
                         null
                     } else {
-                        IngestRecord.Upsert(SourceId(ref.sourceId), "1", now, payload, history = history)
+                        IngestRecord.Upsert(SourceId(ref.sourceId), SOURCE_VERSION, now, payload, history = history)
                     }
                 } catch (e: Exception) {
                     log.warn(e) { "skipping ${ref.sourceId}: could not be read" }

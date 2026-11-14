@@ -70,9 +70,12 @@ class IngestService(
         return when (plan) {
             is RecordPlan.Replay -> RecordOutcome.Unchanged(plan.entityId)
             is RecordPlan.Apply -> {
-                val upserted = upsertCanonical(plan.payload, plan.key, now)
+                val (linked, shared) = SourceLedger.linkOf(this, connector, plan.payload.noun, record.sourceId) ?: (null to false)
+                val upserted = upsertCanonical(plan.payload, plan.key, now, linked, shared)
                 SourceLedger.recordSighting(this, connector, plan.payload.noun, record.sourceId, record.sourceVersion, now)
                 SourceLedger.link(this, connector, plan.payload.noun, record.sourceId, upserted.id, record.sourceVersion)
+                // The source moved onto a row that already existed: its old row has no source left.
+                upserted.orphaned?.let { softDelete(plan.payload.noun, it, now) }
                 val entityId = EntityId(upserted.id.toString())
                 val history = (record as? IngestRecord.Upsert)?.history == true
                 events += Ingested(connector, entityId, plan.payload, upserted.created, history)

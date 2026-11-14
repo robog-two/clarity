@@ -60,6 +60,9 @@ interface SyncScope {
  * for actions addressed to this connector (see `ConnectorManifest.handles`), executes them and
  * reports results. Executed idempotency keys are remembered in the connector's state.
  *
+ * If [fetches] has a handler, a fetch loop runs too: it long-polls for requests for the bytes of one
+ * part of a record the connector keeps (an email attachment) and uploads them ([FetchHandlers]).
+ *
  * Pass the same [runtime] that the handlers and manifest were built with: it receives every new
  * config (so action handlers see credentials saved after start) and answers [test], the "test this
  * connection" requests from the app.
@@ -79,6 +82,7 @@ suspend fun runConnector(
     runtime: ConnectorRuntime? = null,
     test: (suspend (config: ConnectorConfig) -> ConnectorTestResult)? = null,
     accounts: ((config: ConnectorConfig) -> List<ConnectorAccount>)? = null,
+    fetches: FetchHandlers = FetchHandlers.None,
     sync: suspend SyncScope.(config: ConnectorConfig) -> Unit,
 ) {
     log.info { "starting connector ${manifest.kind} ${manifest.version} against ${settings.baseUrl}" }
@@ -97,17 +101,20 @@ suspend fun runConnector(
                 // a child of this scope: it ends with the sync loop when the scope is cancelled
                 launch { runActionLoop(client, state, actions, runtime = runtime, test = test) }
             }
+            val fetchLoop = if (fetches.isEmpty) null else launch { runFetchLoop(client, fetches) }
             // The JVM runs shutdown hooks on SIGTERM and then halts; block the hook until the loop has wound down.
             val hook = Thread({
                 log.info { "shutdown requested" }
                 loop.cancel()
                 actionLoop?.cancel()
-                runBlocking { loop.join(); actionLoop?.join() }
+                fetchLoop?.cancel()
+                runBlocking { loop.join(); actionLoop?.join(); fetchLoop?.join() }
             }, "connector-shutdown")
             Runtime.getRuntime().addShutdownHook(hook)
             try {
                 loop.join()
                 actionLoop?.cancelAndJoin()
+                fetchLoop?.cancelAndJoin()
             } finally {
                 try { Runtime.getRuntime().removeShutdownHook(hook) } catch (_: IllegalStateException) { /* already shutting down */ }
             }

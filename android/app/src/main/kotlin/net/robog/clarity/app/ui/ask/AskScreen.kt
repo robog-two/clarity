@@ -53,6 +53,7 @@ fun AskScreen(
     modifier: Modifier = Modifier,
     onReview: (HeldActionId) -> Unit = {},
     onOpenReport: ((String) -> Unit)? = null,
+    onOpenSource: ((String) -> Unit)? = null,
     viewModel: AskViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -69,6 +70,7 @@ fun AskScreen(
         onAlways = viewModel::approveAlways,
         modifier = modifier,
         onOpenReport = onOpenReport,
+        onOpenSource = onOpenSource,
     )
 }
 
@@ -86,8 +88,9 @@ fun AskContent(
     onReview: (HeldActionId) -> Unit = {},
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
     onOpenReport: ((String) -> Unit)? = null,
+    onOpenSource: ((String) -> Unit)? = null,
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport)
+    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     ChatLayout(
         modifier = modifier,

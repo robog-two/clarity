@@ -17,6 +17,9 @@ interface RunJournal {
     suspend fun append(runId: String, message: Message)
 
     suspend fun load(runId: String): List<Message>
+
+    /** How many messages [runId] has: a cheap change check (a journal only grows). */
+    suspend fun size(runId: String): Int = load(runId).size
 }
 
 class InMemoryRunJournal : RunJournal {
@@ -27,6 +30,8 @@ class InMemoryRunJournal : RunJournal {
     }
 
     override suspend fun load(runId: String): List<Message> = runs[runId]?.toList().orEmpty()
+
+    override suspend fun size(runId: String): Int = runs[runId]?.size ?: 0
 }
 
 /**
