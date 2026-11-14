@@ -198,6 +198,19 @@ class SourceRulesTest : FunSpec({
             entityItem(ID_A, ContactPayload("Sam Example", listOf(Handle.email("sam@example.com")), "Example Co"), newYork)!!.apply { kind shouldBe SourceKind.CONTACT; sub shouldBe "Example Co" }
         }
 
+        test("a multi-day all-day event shows its span, ending on the last day (the stored end is exclusive)") {
+            val span = CalendarEventPayload(calendar = "Home", title = "Trip", allDay = true, start = Instant.parse("2026-10-26T00:00:00Z"), end = Instant.parse("2026-10-29T00:00:00Z"))
+            entityItem(ID_A, span, newYork)!!.apply { sub shouldBe "Mon Oct 26 to Wed Oct 28"; day shouldBe LocalDate(2026, 10, 26); endDay shouldBe LocalDate(2026, 10, 28) }
+        }
+
+        test("cited ids become the canonical lower case uuid, and spellings of one record collapse") {
+            canonicalEntityId(" " + ID_A.uppercase() + " ") shouldBe ID_A
+            canonicalEntityId(ID_A.replace("-", "")) shouldBe ID_A
+            canonicalEntityId("Not-A-Uuid") shouldBe "not-a-uuid"
+            canonicalSources(listOf(SourceItem.Entity(ID_A.uppercase()), SourceItem.Entity(ID_A.replace("-", "")), SourceItem.Web("https://example.com/a"))) shouldBe
+                listOf(SourceItem.Entity(ID_A), SourceItem.Web("https://example.com/a"))
+        }
+
         test("a long title is cut to one line") {
             entityItem(ID_A, message.copy(subject = "word ".repeat(100)), newYork)!!.title.length shouldBe 120
         }

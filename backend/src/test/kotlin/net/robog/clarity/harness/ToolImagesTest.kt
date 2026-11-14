@@ -100,12 +100,28 @@ class ToolImagesTest : FunSpec({
         r(400, "No endpoints found that support image input") shouldBe ImageRefusal.UNSUPPORTED
         r(404, "This model does not support image input") shouldBe ImageRefusal.UNSUPPORTED
         r(400, "input_modalities of the model do not include image") shouldBe ImageRefusal.UNSUPPORTED
-        r(400, "multimodal input is not supported") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "No endpoints found for this model that support image input") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "This model doesn't support images") shouldBe ImageRefusal.UNSUPPORTED
+        r(400, "image format not supported") shouldBe ImageRefusal.REJECTED
+        r(415, "Unsupported image type") shouldBe ImageRefusal.REJECTED
+        r(400, "multimodal input is not supported") shouldBe null
         r(400, "Invalid image: the file could not be decoded") shouldBe ImageRefusal.REJECTED
         r(413, "image too large") shouldBe ImageRefusal.REJECTED
         r(400, "invalid tool schema") shouldBe null
         r(500, "image decoding failed") shouldBe null
         r(null, "image") shouldBe null
+    }
+
+    test("a model's no-image answer is believed for an hour, by the injected clock") {
+        var now = kotlin.time.Instant.parse("2026-10-26T12:00:00Z")
+        val clock = object : kotlin.time.Clock { override fun now() = now }
+        val memory = TimedMemory(clock, kotlin.time.Duration.parse("1h"))
+        memory.knows("m") shouldBe false
+        memory.remember("m")
+        now += kotlin.time.Duration.parse("59m")
+        memory.knows("m") shouldBe true
+        now += kotlin.time.Duration.parse("2m")
+        memory.knows("m") shouldBe false
     }
 
     test("the cache breakpoint ignores trailing pictures") {
@@ -138,6 +154,18 @@ class ToolImagesTest : FunSpec({
             listOf(Block.Result("1", "looked"), Block.Result("2", "other ok"), Block.Image("1", "image/png", 3))
         store.load("run-1", "1") shouldBe PICTURE
         HarnessJson.encodeToString(kotlinx.serialization.builtins.ListSerializer(Message.serializer()), journal.load("run-1")) shouldNotContain "QUJD"
+    }
+
+    test("a store that fails does not end the run: the result carries a note and the block shows as expired") {
+        val broken = object : ToolImageStore {
+            override suspend fun save(runId: String, toolUseId: String, image: ToolImage) = throw java.io.IOException("disk full")
+            override suspend fun load(runId: String, toolUseId: String): ToolImage? = null
+        }
+        val gateway = ScriptedGateway(listOf(response(StopReason.TOOL_USE, toolUse("1", "view_image")), response(StopReason.END_TURN, Block.Text("done"))))
+        val request = RunRequest("m", listOf(SystemBlock("system")), listOf(Message.user("go")), listOf(viewerTool(runs = null)), ToolPolicy.Default, 5, runId = "run-1")
+        Harness(gateway, journal = InMemoryRunJournal(), images = broken).run(request).toList().last().shouldBeInstanceOf<HarnessEvent.Finished>()
+        gateway.requests[1].messages.last().content shouldContainExactly
+            listOf(Block.Result("1", "looked" + IMAGE_NOT_KEPT), Block.Image("1", "image/png", 3))
     }
 
     test("a call that shows a picture runs again on resume instead of being answered from the ledger") {

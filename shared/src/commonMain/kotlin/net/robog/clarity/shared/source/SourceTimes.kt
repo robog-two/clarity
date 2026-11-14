@@ -18,3 +18,7 @@ fun momentLine(at: Instant, zone: TimeZone): String {
     val clock = "${if (hour == 0) 12 else hour}:${local.minute.toString().padStart(2, '0')} ${if (local.hour < 12) "am" else "pm"}"
     return "${dayLine(local.date)}, $clock"
 }
+
+/** `Mon Oct 26 to Wed Oct 28`, or just the day when [endDay] is null or not after it. */
+fun daySpanLine(day: LocalDate, endDay: LocalDate?): String =
+    if (endDay != null && endDay > day) "${dayLine(day)} to ${dayLine(endDay)}" else dayLine(day)

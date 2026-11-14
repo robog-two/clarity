@@ -215,7 +215,7 @@ class AttachmentFetchStore(private val database: Database) {
             val others = AttachmentFetches.select(AttachmentFetches.id, AttachmentFetches.size, AttachmentFetches.doneAt)
                 .where { (AttachmentFetches.status eq FetchStatus.DONE.wire) and (AttachmentFetches.id neq id) }
                 .map { CacheEntry(it[AttachmentFetches.id].toString(), it[AttachmentFetches.size] ?: 0L, it[AttachmentFetches.doneAt] ?: now) }
-            val drop = evictionsFor(others, cacheMaxBytes - bytes.size).map { Uuid.parse(it) }
+            val drop = evictionsOnComplete(others, bytes.size.toLong(), cacheMaxBytes, now).map { Uuid.parse(it) }
             if (drop.isNotEmpty()) AttachmentFetches.deleteWhere { AttachmentFetches.id inList drop }
         }
         null

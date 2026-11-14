@@ -4,7 +4,9 @@ import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.util.Base64
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonArray
@@ -35,6 +37,9 @@ private const val SANDBOX_WRITE = "sandbox__write_file"
 private const val SANDBOX_READ_BASE64 = "sandbox__read_file_base64"
 
 private val saving = Semaphore(3)
+
+/** Pictures decoded and scaled at once: each can hold tens of megapixels. */
+private val decoding = Semaphore(2)
 
 /** The tools a helper with the sandbox uses on email attachments and pictures. Both exist only where the sandbox does. */
 @Inject
@@ -120,7 +125,8 @@ class AttachmentTools(
         } catch (e: IllegalArgumentException) {
             return@tool ToolResult.Error("The sandbox sent something that is not a file.")
         }
-        prepareImage(bytes).fold(
+        // Decoding is heavy: off the request threads, a couple at a time.
+        withContext(Dispatchers.IO) { decoding.withPermit { prepareImage(bytes) } }.fold(
             { ToolResult.Error(it) },
             { shown ->
                 val size = shown.width?.let { " (${shown.width} x ${shown.height}${shown.scaledFrom?.let { f -> ", scaled down from ${f.first} x ${f.second}" }.orEmpty()})" }.orEmpty()

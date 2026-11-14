@@ -12,7 +12,10 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import kotlin.math.roundToLong
+import kotlin.time.Clock
 import kotlin.time.Duration
+import kotlin.time.Instant
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
@@ -36,6 +39,23 @@ private val log = KotlinLogging.logger {}
 
 /** What a provider said about the pictures of a request. */
 enum class ImageRefusal { UNSUPPORTED, REJECTED }
+
+/** How long a model's "no image input" answer is believed. */
+private val NO_IMAGE_MEMORY = 1.hours
+
+/** Names remembered for [ttl] on [clock]; an entry older than that is forgotten. */
+internal class TimedMemory(private val clock: Clock, private val ttl: Duration) {
+    private val seen = ConcurrentHashMap<String, Instant>()
+
+    fun remember(name: String) { seen[name] = clock.now() }
+
+    fun knows(name: String): Boolean {
+        val at = seen[name] ?: return false
+        if (clock.now() - at < ttl) return true
+        seen.remove(name, at)
+        return false
+    }
+}
 
 /** OpenRouter refused or failed a request. [status] is the HTTP status, or null for an error sent mid-stream. */
 class OpenRouterException(val status: Int?, message: String) : RuntimeException(message)
@@ -126,9 +146,10 @@ class OpenRouterModelGateway(
     private val idleTimeout: Duration = STREAM_IDLE_TIMEOUT,
     /** Where the pictures tools showed are kept; read when a request is built. */
     private val images: ToolImageStore = ToolImageStore.NONE,
+    clock: Clock = Clock.System,
 ) : ModelGateway {
-    /** Models that answered "no image input" in this process: later requests leave pictures out from the start. */
-    private val noImageInput: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    /** Models that answered "no image input" in this process (for an hour): later requests leave pictures out from the start. */
+    private val noImageInput = TimedMemory(clock, NO_IMAGE_MEMORY)
 
     private val endpoint: URI = URI.create(baseUrl.trimEnd('/') + "/chat/completions")
 
@@ -161,14 +182,14 @@ class OpenRouterModelGateway(
      */
     private suspend fun generate(request: ModelRequest, sticky: Stickiness, onTextDelta: (String) -> Unit): ModelResponse {
         val pictures = hasImages(request.messages)
-        val first = if (pictures && request.model in noImageInput) IMAGE_UNSUPPORTED else null
+        val first = if (pictures && noImageInput.knows(request.model)) IMAGE_UNSUPPORTED else null
         return try {
             generate(request, sticky, first, onTextDelta)
         } catch (e: OpenRouterException) {
             val refusal = if (pictures && first == null) imageRefusal(e.status, e.message.orEmpty()) else null
             if (refusal == null) throw e
             log.warn { "${request.model} refused the pictures (${refusal.name.lowercase()}: ${e.message}); sending the request without them" }
-            if (refusal == ImageRefusal.UNSUPPORTED) noImageInput += request.model
+            if (refusal == ImageRefusal.UNSUPPORTED) noImageInput.remember(request.model)
             generate(request, sticky, if (refusal == ImageRefusal.UNSUPPORTED) IMAGE_UNSUPPORTED else IMAGE_REJECTED, onTextDelta)
         }
     }
@@ -547,9 +568,9 @@ class OpenRouterModelGateway(
 
         internal fun hasImages(messages: List<Message>): Boolean = messages.any { m -> m.content.any { it is Block.Image } }
 
+        // Only wording about the model's abilities: format, size or type complaints are about one picture.
         private val NO_IMAGE_INPUT = Regex(
-            "input_modalit|(support|accept|allow|take)s?\\b[^.\\n]{0,40}\\b(image|vision|multimodal|visual)|" +
-                "\\b(image|vision|multimodal|visual)[^.\\n]{0,40}(not (be )?(supported|available|allowed)|unsupported)",
+            "input_modalit|(does not|doesn't|do not|don't) support (any )?images?\\b|no endpoints\\b[^.\\n]{0,80}\\bimage",
             RegexOption.IGNORE_CASE,
         )
         private val ABOUT_IMAGES = Regex("image|picture|base64|media type|mime", RegexOption.IGNORE_CASE)

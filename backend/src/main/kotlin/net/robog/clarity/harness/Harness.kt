@@ -19,6 +19,12 @@ import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 
+private val log = io.github.oshai.kotlinlogging.KotlinLogging.logger {}
+
+/** Added to a tool result whose picture could not be stored. */
+internal const val IMAGE_NOT_KEPT = "\n(The picture could not be kept, so it will not be shown.)"
+
+
 /** Everything one agent run needs; immutable so a run is reproducible from its request. */
 data class RunRequest(
     val model: String,
@@ -465,10 +471,19 @@ class Harness(
         }
         send(HarnessEvent.ToolCompleted(call.id, call.name, content, isError))
         val picture = (result as? ToolResult.Ok)?.show?.firstOrNull()
+        var journaled = content
         val shown = if (picture == null) emptyList() else {
-            images.save(runId, call.id, picture)
+            // A store that fails must not end the run: the block stays, with no bytes, and renders as expired.
+            try {
+                images.save(runId, call.id, picture)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.warn(e) { "Could not keep the picture of ${call.name} for run $runId" }
+                journaled = content + IMAGE_NOT_KEPT
+            }
             listOf(Block.Image(call.id, picture.mimeType, picture.base64.length.toLong() / 4 * 3))
         }
-        return Executed(Block.Result(call.id, content, isError), shown)
+        return Executed(Block.Result(call.id, journaled, isError), shown)
     }
 }

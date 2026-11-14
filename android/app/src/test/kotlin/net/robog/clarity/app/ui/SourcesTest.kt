@@ -173,6 +173,8 @@ class SourcePresentationTest {
         val allDay = SourceItem.Entity("e1", SourceKind.EVENT, "Holiday", "Tue Oct 27", day = LocalDate(2026, 10, 27))
         assertEquals("Tue Oct 27", sourceItemLine(allDay, newYork))
         assertEquals("Tue Oct 27", sourceItemLine(allDay, TimeZone.of("Pacific/Auckland")))
+        val span = allDay.copy(day = LocalDate(2026, 10, 26), endDay = LocalDate(2026, 10, 28))
+        assertEquals("Mon Oct 26 to Wed Oct 28", sourceItemLine(span, newYork))
         assertEquals("", sourceItemLine(SourceItem.Unknown, newYork))
         assertEquals("1 file", sourceItemLine(entity.copy(sub = "", attachments = 1), newYork))
         assertEquals("", sourceItemLine(entity.copy(sub = "", attachments = 0), newYork))

@@ -8,7 +8,6 @@ import dev.zacsweers.metro.ContributesBinding
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.ktor.http.HttpStatusCode
-import java.util.concurrent.ConcurrentHashMap
 import io.ktor.server.application.Application
 import io.ktor.server.auth.authenticate
 import io.ktor.server.response.respond
@@ -38,6 +37,9 @@ import org.jetbrains.exposed.v1.jdbc.Database
 /** Helper runs of one lead thread whose reads count (a far larger number than a thread ever starts). */
 private const val MAX_HELPER_RUNS = 5_000
 
+/** Runs whose page index is kept. */
+private const val MAX_INDEXED_RUNS = 512
+
 /**
  * Turns the items the agent named in a sources card into the card the person sees: refuses what no run
  * read, and fills each title and sub line from Clarity's own data (the record, or the page as fetched),
@@ -51,12 +53,15 @@ class SourceResolver(
     private val journal: RunJournal,
     private val runs: RunStore,
 ) {
-    /** The id and page index of each run, kept while its journal has the same length (a journal only grows). */
-    private val indexed = ConcurrentHashMap<String, Pair<Int, RunReads>>()
+    /** The id and page index of each run, kept while its journal has the same length (a journal only grows). Least recently used go first. */
+    private val indexed = java.util.Collections.synchronizedMap(object : LinkedHashMap<String, Pair<Int, RunReads>>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Pair<Int, RunReads>>) = size > MAX_INDEXED_RUNS
+    })
 
     private suspend fun readsOfRun(runId: String): RunReads {
+        val size = journal.size(runId)
+        indexed[runId]?.takeIf { it.first == size }?.let { return it.second }
         val messages = journal.load(runId)
-        indexed[runId]?.takeIf { it.first == messages.size }?.let { return it.second }
         return readsOf(messages).also { indexed[runId] = messages.size to it }
     }
 
@@ -69,7 +74,7 @@ class SourceResolver(
 
     /** The card for [items], or the one error to hand the model. */
     suspend fun resolve(items: List<SourceItem>, runId: String?): Either<String, Card.Sources> {
-        val wanted = requestedSources(items).fold({ return it.left() }, { it })
+        val wanted = requestedSources(items).fold({ return it.left() }, { canonicalSources(it) })
         val reads = reads(runId)
         val unread = unreadSources(wanted, reads)
         if (unread.isNotEmpty()) return refusal(unread).left()

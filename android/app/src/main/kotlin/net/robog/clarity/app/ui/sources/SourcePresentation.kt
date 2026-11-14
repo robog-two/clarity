@@ -9,7 +9,7 @@ import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.source.SourceAttachment
 import net.robog.clarity.shared.source.SourceItem
 import net.robog.clarity.shared.source.SourceView
-import net.robog.clarity.shared.source.dayLine
+import net.robog.clarity.shared.source.daySpanLine
 import net.robog.clarity.shared.source.momentLine
 
 /** A labelled line in the viewer, such as "From" and who. */
@@ -159,7 +159,7 @@ fun isWebAddress(url: String): Boolean =
  */
 fun sourceItemLine(item: SourceItem, zone: TimeZone = TimeZone.currentSystemDefault()): String = when (item) {
     is SourceItem.Entity -> {
-        val when_ = item.at?.let { momentLine(it, zone) } ?: item.day?.let(::dayLine)
+        val when_ = item.at?.let { momentLine(it, zone) } ?: item.day?.let { daySpanLine(it, item.endDay) }
         val main = if (when_ != null) listOf(item.by, when_).filter(String::isNotBlank).joinToString(" · ") else item.sub
         listOfNotNull(
             main.takeIf(String::isNotBlank),

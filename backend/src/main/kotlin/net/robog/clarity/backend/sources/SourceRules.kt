@@ -3,7 +3,9 @@ package net.robog.clarity.backend.sources
 import arrow.core.Either
 import arrow.core.left
 import arrow.core.right
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.backend.reports.fetchedPagesIn
 import net.robog.clarity.harness.Block
@@ -22,7 +24,7 @@ import net.robog.clarity.shared.source.SourceItem
 import net.robog.clarity.shared.source.SourceKind
 import net.robog.clarity.shared.source.SourceView
 import net.robog.clarity.shared.text.oneLine
-import net.robog.clarity.shared.source.dayLine
+import net.robog.clarity.shared.source.daySpanLine
 import net.robog.clarity.shared.source.momentLine
 import net.robog.clarity.shared.text.stripInvisible
 
@@ -135,6 +137,15 @@ fun requestedSources(items: List<SourceItem>): Either<String, List<SourceItem>> 
     return unique.right()
 }
 
+/** Pure: [id] as the canonical lower case UUID string; anything else only trimmed and lower cased. */
+@OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+fun canonicalEntityId(id: String): String = runCatching { kotlin.uuid.Uuid.parse(id.trim()).toString() }.getOrElse { id.trim().lowercase() }
+
+/** Pure: [items] with record ids canonical and a record named twice (in different spellings) kept once. */
+fun canonicalSources(items: List<SourceItem>): List<SourceItem> =
+    items.map { if (it is SourceItem.Entity) SourceItem.Entity(canonicalEntityId(it.id)) else it }
+        .distinctBy { if (it is SourceItem.Entity) "e:" + it.id else it }
+
 /** Pure: the items of [wanted] that no run read, by the rule in [idRead] and [pageRead]. */
 fun unreadSources(wanted: List<SourceItem>, reads: RunReads): List<SourceItem> = wanted.filter {
     when (it) {
@@ -185,12 +196,15 @@ fun entityItem(id: String, payload: Payload, zone: TimeZone): SourceItem.Entity?
     }
     is CalendarEventPayload -> {
         val day = if (payload.allDay) payload.start.toLocalDateTime(TimeZone.UTC).date else null
+        // An all-day end is exclusive: the last day is the one before it.
+        val endDay = if (day != null) payload.end.toLocalDateTime(TimeZone.UTC).date.minus(1, DateTimeUnit.DAY).takeIf { it > day } else null
         SourceItem.Entity(
             id, SourceKind.EVENT,
             title = oneLine(payload.title.ifBlank { "(untitled)" }, TITLE_CHARS),
-            sub = if (day != null) dayLine(day) else momentLine(payload.start, zone),
+            sub = if (day != null) daySpanLine(day, endDay) else momentLine(payload.start, zone),
             at = if (day == null) payload.start else null,
             day = day,
+            endDay = endDay,
         )
     }
     is DocumentPayload -> SourceItem.Entity(id, SourceKind.DOCUMENT, title = oneLine(payload.title.ifBlank { payload.path }, TITLE_CHARS), sub = oneLine(payload.path, SUB_CHARS))

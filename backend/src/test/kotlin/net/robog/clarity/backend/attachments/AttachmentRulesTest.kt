@@ -150,6 +150,17 @@ class AttachmentRulesTest : FunSpec({
         evictionsFor(emptyList(), 0) shouldBe emptyList()
     }
 
+    test("room for a new file never costs a file completed in the last minute, and a huge one is kept anyway") {
+        val now = kotlin.time.Instant.parse("2026-10-26T12:00:00Z")
+        val old = CacheEntry("old", 100, now - 10.minutes)
+        val older = CacheEntry("older", 100, now - 20.minutes)
+        val fresh = CacheEntry("fresh", 100, now - 30.seconds)
+        evictionsOnComplete(listOf(old, older, fresh), 100, 300, now) shouldBe listOf("older")
+        evictionsOnComplete(listOf(old, older, fresh), 100, 1_000, now) shouldBe emptyList()
+        // bigger than the whole cap: every older file goes, the recent one stays, the budget is never negative
+        evictionsOnComplete(listOf(old, older, fresh), 5_000, 300, now) shouldBe listOf("older", "old")
+    }
+
     test("status names round trip") {
         FetchStatus.entries.forEach { FetchStatus.fromWire(it.wire) shouldBe it }
     }

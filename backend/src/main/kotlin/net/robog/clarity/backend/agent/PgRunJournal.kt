@@ -41,4 +41,8 @@ class PgRunJournal(private val database: Database, private val clock: Clock) : R
         AgentJournal.selectAll().where { AgentJournal.runId eq runId }.orderBy(AgentJournal.seq, SortOrder.ASC)
             .map { it[AgentJournal.message] }
     }
+
+    override suspend fun size(runId: String): Int = database.tx {
+        AgentJournal.select(AgentJournal.seq.max()).where { AgentJournal.runId eq runId }.single()[AgentJournal.seq.max()] ?: 0
+    }
 }

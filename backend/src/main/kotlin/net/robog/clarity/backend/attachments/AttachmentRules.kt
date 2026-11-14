@@ -1,6 +1,7 @@
 package net.robog.clarity.backend.attachments
 
 import kotlin.time.Duration
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import net.robog.clarity.shared.fetch.FetchRequest
 import net.robog.clarity.shared.noun.AttachmentMeta
@@ -174,4 +175,17 @@ fun evictionsFor(entries: List<CacheEntry>, maxBytes: Long): List<String> {
         total -= e.size
     }
     return out
+}
+
+/** A file completed this recently is never evicted to make room: the request that wanted it may not have read it yet. */
+val EVICTION_GRACE: Duration = 60.seconds
+
+/**
+ * The ids to drop when a file of [newSize] was just stored, so the cache fits [cap] if it can: oldest first, never one
+ * completed within [EVICTION_GRACE] of [now]. A file bigger than the cap is kept anyway and costs only the older entries.
+ */
+fun evictionsOnComplete(others: List<CacheEntry>, newSize: Long, cap: Long, now: Instant): List<String> {
+    val (old, recent) = others.partition { now - it.doneAt >= EVICTION_GRACE }
+    val room = (cap - newSize - recent.sumOf { it.size }).coerceAtLeast(0)
+    return evictionsFor(old, room)
 }

@@ -104,6 +104,15 @@ class ImageInputTest : FunSpec({
         prepareImage(ByteArray((MAX_IMAGE_FILE_BYTES + 1).toInt())).leftOrNull()!! shouldContain "too large"
     }
 
+    test("a picture whose header claims over 40 megapixels is refused from the header alone, without decoding") {
+        // Signature and an IHDR chunk only: with no pixels to decode, reading them would say "could not be read".
+        fun be(n: Int) = byteArrayOf((n ushr 24).toByte(), (n ushr 16).toByte(), (n ushr 8).toByte(), n.toByte())
+        val ihdr = "IHDR".toByteArray() + be(20_000) + be(20_000) + byteArrayOf(8, 2, 0, 0, 0)
+        val crc = java.util.zip.CRC32().also { it.update(ihdr) }.value.toInt()
+        val bytes = byteArrayOf(0x89.toByte(), 'P'.code.toByte(), 'N'.code.toByte(), 'G'.code.toByte(), 0x0D, 0x0A, 0x1A, 0x0A) + be(13) + ihdr + be(crc)
+        prepareImage(bytes).leftOrNull()!! shouldContain "20000 x 20000"
+    }
+
     test("WebP and GIF are passed through when small, a big WebP is refused") {
         val webp = "RIFF\u0001\u0000\u0000\u0000WEBPVP8 ".toByteArray() + ByteArray(100)
         prepareImage(webp).getOrNull()!!.image.mimeType shouldBe "image/webp"

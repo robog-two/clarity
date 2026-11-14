@@ -170,6 +170,24 @@ class SourcesDbTest : FunSpec({
         send(id(theirs)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain theirs
     }
 
+    test("a second cite of an unchanged journal does not load it again; a new message does") {
+        val a = addMessage("cached", "Cached")
+        journalResult(lead, "id $a")
+        var loads = 0
+        val counting = object : net.robog.clarity.harness.RunJournal by journal {
+            override suspend fun load(runId: String): List<Message> { loads++; return journal.load(runId) }
+        }
+        val resolver = SourceResolver(reader, { Settings(homeZone = "America/New_York") }, counting, runs)
+        resolver.reads(lead).ids.contains(a) shouldBe true
+        loads shouldBe 1
+        resolver.reads(lead).ids.contains(a) shouldBe true
+        loads shouldBe 1
+        val b = addMessage("cached2", "Cached 2")
+        journalResult(lead, "id $b")
+        resolver.reads(lead).ids.contains(b) shouldBe true
+        loads shouldBe 2
+    }
+
     test("a record that is gone is named as missing") {
         val gone = addMessage("gone", "Gone")
         journalResult(lead, "id $gone")

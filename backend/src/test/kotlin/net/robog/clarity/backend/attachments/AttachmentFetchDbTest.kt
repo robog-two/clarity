@@ -10,6 +10,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.coroutines.async
@@ -258,6 +259,29 @@ class AttachmentFetchDbTest : FunSpec({
         runBlocking { store.request(keys[2], t0 + 4.hours, 24.hours) }.shouldBeInstanceOf<Ticket.Cached>()
         // a request nobody answered is dropped after a while
         runBlocking { store.sweep(t0 + 4.hours + 20.minutes, 24.hours, 10_000) } shouldBe 1
+    }
+
+    test("completing a file never evicts one completed in the last minute, even over the cap") {
+        runBlocking { store.sweep(t0 + 10_000.hours, 24.hours, 0) }
+        val keys = (1..3).map { FetchKey(mail, Uuid.random(), "acct/INBOX/1/4$it", "2", "2") }
+        // two files 10 minutes apart, then a third just after the second; the cap holds only two
+        val times = listOf(t0, t0 + 10.minutes, t0 + 10.minutes + 20.seconds)
+        keys.forEachIndexed { i, key ->
+            val ticket = runBlocking { store.request(key, times[i], 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+            runBlocking { store.lease(mail, times[i], 1_000_000) }
+            runBlocking { store.complete(mail, ticket.id, ByteArray(1_000), "f$i", "text/plain", times[i], 1_000_000, cacheMaxBytes = 2_000) } shouldBe null
+        }
+        // the oldest went to make room; the one from 20 seconds ago is safe
+        runBlocking { store.cachedBytes() } shouldBe 2_000
+        runBlocking { store.request(keys[0], times[2], 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.request(keys[1], times[2], 24.hours) }.shouldBeInstanceOf<Ticket.Cached>()
+        // a file bigger than the whole cap is stored; only older files were dropped
+        val big = FetchKey(mail, Uuid.random(), "acct/INBOX/1/50", "2", "2")
+        val ticket = runBlocking { store.request(big, times[2] + 5.seconds, 24.hours) }.shouldBeInstanceOf<Ticket.Waiting>()
+        runBlocking { store.lease(mail, times[2] + 5.seconds, 1_000_000) }
+        runBlocking { store.complete(mail, ticket.id, ByteArray(5_000), "big", "text/plain", times[2] + 5.seconds, 1_000_000, cacheMaxBytes = 2_000) } shouldBe null
+        runBlocking { store.request(big, times[2] + 5.seconds, 24.hours) }.shouldBeInstanceOf<Ticket.Cached>()
+        runBlocking { store.request(keys[2], times[2] + 5.seconds, 24.hours) }.shouldBeInstanceOf<Ticket.Cached>()
     }
 
     test("a failed request is asked again by the next fetch") {

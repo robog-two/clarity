@@ -62,6 +62,8 @@ sealed interface SourceItem {
         val at: Instant? = null,
         /** The day of an all-day event, which has no clock time and never shifts with a time zone. */
         val day: LocalDate? = null,
+        /** The last day of a multi-day all-day event (inclusive); null for a single day. */
+        val endDay: LocalDate? = null,
     ) : SourceItem
 
     /** An item this build cannot read (a newer server's, or the model's own malformed one): not drawn. */
