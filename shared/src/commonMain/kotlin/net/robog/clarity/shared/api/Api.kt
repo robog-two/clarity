@@ -46,6 +46,8 @@ object ApiPaths {
     const val REPORTS = "$APP/reports"
     /** `GET {entityId}/attachments/{part}`: one attachment of an email as a download (404 unknown, 413 too large, 504 the connector did not answer). */
     const val MESSAGES = "$APP/messages"
+    /** `GET {entityId}`: a record a Sources card cites, as stored (a `SourceView`); 404 when unknown, deleted or never cited. */
+    const val SOURCES = "$APP/sources"
 
     /** A Good's public download page (`/g/{token}`, its files `/g/{token}/{format}`): the only unauthenticated report routes. */
     const val GOODS_PUBLIC = "/g"

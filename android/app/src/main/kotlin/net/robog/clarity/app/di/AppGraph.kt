@@ -284,6 +284,9 @@ interface AppGraph : ViewModelGraph {
     @Provides fun todayRepository(api: ClarityApi): TodayRepository = DefaultTodayRepository(api)
     @Provides fun pathRepository(api: KtorClarityApi): net.robog.clarity.app.data.PathRepository = net.robog.clarity.app.data.DefaultPathRepository(api)
 
+    @Provides fun sourcesRepository(api: KtorClarityApi): net.robog.clarity.app.data.SourcesRepository =
+        net.robog.clarity.app.data.DefaultSourcesRepository(api)
+
     @Provides fun goodsRepository(api: KtorClarityApi): net.robog.clarity.app.data.GoodsRepository =
         net.robog.clarity.app.data.DefaultGoodsRepository(api)
 

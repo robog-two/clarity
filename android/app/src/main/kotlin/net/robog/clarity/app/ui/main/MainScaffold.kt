@@ -67,6 +67,8 @@ fun MainScaffold(
     onOpenMcp: () -> Unit = {},
     /** A Good opened, from the Goods tab or a card in the thread; the label is where back goes. */
     onOpenReport: (reportId: String, backLabel: String) -> Unit = { _, _ -> },
+    /** A record a sources card cites, opened from the thread. */
+    onOpenSource: (entityId: String, backLabel: String) -> Unit = { _, _ -> },
     viewModel: MainViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -110,7 +112,7 @@ fun MainScaffold(
         PhaseSwap(tab, label = "tab") { shown ->
             when (shown) {
                 MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content, onOpenTask = onOpenTask)
-                MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") })
+                MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") }, onOpenSource = { onOpenSource(it, "Ask") })
                 MainTab.Goods -> GoodsScreen(onOpen = { onOpenReport(it, "Goods") }, modifier = content)
                 MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
                 MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content, onOpenMcp = onOpenMcp)
