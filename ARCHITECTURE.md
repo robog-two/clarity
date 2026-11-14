@@ -149,6 +149,7 @@ net.robog.clarity.harness   agent loop over OpenRouter's Chat Completions API (t
 | `GET /api/v1/reports/{id}/source?rev=` | device | a revision's Markdown (latest without `rev`) |
 | `GET /api/v1/reports/{id}/download/{format}?rev=` | device | the rendered file (pdf, docx, odt, txt, md), named after the title; rendered on demand and cached |
 | `POST /api/v1/reports/{id}/link` · `DELETE …/link` | device | the Good's secret download link and its download count (made on first use, the same one while live); turn it off |
+| `GET /api/v1/sources/{entityId}` | device | a record a Sources card cites, as stored (a `SourceView`: message, event, document or contact); 404 when unknown, deleted or never cited |
 | `GET /g/{token}` · `GET /g/{token}/{format}` | **none: the secret token** | the Good's download page (title, date, a link per format) and its latest revision's files; unknown or turned-off tokens get a plain 404 page |
 | `GET /g/font/libre-caslon-text-italic.ttf` | none | the download page's title font (OFL), cached for a year |
 | `PUT /ingest/v1/manifest` | connector | connector announces kind, nouns, actions it handles, config schema |
@@ -255,6 +256,19 @@ person managing a to-do list with a few assistants.
   nudge at the end of the thread and runs once more; never twice, and never for turns made only
   of events, where silence is fine. A helper that finishes with no result text is likewise asked
   once for it.
+- **Sources (verifiability).** When the lead tells the person something taken from mail, an event, a
+  file or a web page it adds a `sources` card to its `send_to_user`: `{type:"sources", items:[{id}|{url}]}`,
+  at most 8, repeats dropped. The server (`backend/sources`) resolves each item and refuses the card,
+  with one error naming the bad items, unless the run read it: an id must stand as a whole token in a
+  successful tool result of the lead's run or of a helper it delegated (`agent_run.parent_run_id`), a
+  URL must be a page those runs fetched (`fetch_page`) or a web search citation. Words the model wrote
+  itself, its tool inputs and the person's messages never count. Titles and sub lines (sender and date,
+  time, path, the page's fetched title and punycode host) come from the stored record, never from the
+  model, and the card carries a `fallbackText` for apps that do not know it. The app opens a record in a
+  read-only viewer (`GET /api/v1/sources/{id}`, served only for records some Sources card in the feed
+  cites: the device is trusted but this keeps the route from being a second way to browse mail) and a
+  page in the browser. A message's attachments download through the device route
+  `GET /api/v1/messages/{id}/attachments/{part}` and open in another app through a cache `FileProvider`.
 - **Should I bother them?** `send_to_user(urgency = …)` is filtered by the pure notification
   policy: `URGENT` respects "who gets through" and protected times from the constitution
   (push now or hold until the block ends); `NORMAL` shows in the feed without a push; `BATCH`

@@ -44,6 +44,8 @@ object ApiPaths {
      * Markdown; `GET {id}/download/{format}?rev=` the rendered file (pdf, docx, odt, txt, md).
      */
     const val REPORTS = "$APP/reports"
+    /** `GET {entityId}`: a record a Sources card cites, as stored (a `SourceView`); 404 when unknown, deleted or never cited. */
+    const val SOURCES = "$APP/sources"
 
     /** A Good's public download page (`/g/{token}`, its files `/g/{token}/{format}`): the only unauthenticated report routes. */
     const val GOODS_PUBLIC = "/g"

@@ -140,6 +140,9 @@ interface RunStore {
     /** Runs that were queued or running when the process stopped. */
     suspend fun open(): List<HelperRun>
     suspend fun list(openOnly: Boolean, limit: Int = 50): List<HelperRun>
+
+    /** The helper runs [parentRunId] started, newest first (what a source check reads). */
+    suspend fun childrenOf(parentRunId: String, limit: Int = 50): List<HelperRun> = emptyList()
 }
 
 @Inject
@@ -315,6 +318,14 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
     override suspend fun open(): List<HelperRun> = database.tx {
         AgentRuns.selectAll().where { (AgentRuns.reason eq "helper") and (AgentRuns.status inList RunStatus.OPEN) }
             .orderBy(AgentRuns.startedAt).map { it.toRun() }
+    }
+
+    override suspend fun childrenOf(parentRunId: String, limit: Int): List<HelperRun> {
+        val parent = runCatching { Uuid.parse(parentRunId) }.getOrNull() ?: return emptyList()
+        return database.tx {
+            AgentRuns.selectAll().where { (AgentRuns.reason eq "helper") and (AgentRuns.parentRunId eq parent) }
+                .orderBy(AgentRuns.startedAt, org.jetbrains.exposed.v1.core.SortOrder.DESC).limit(limit).map { it.toRun() }
+        }
     }
 
     override suspend fun list(openOnly: Boolean, limit: Int): List<HelperRun> = database.tx {

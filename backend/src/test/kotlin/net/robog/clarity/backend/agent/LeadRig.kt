@@ -177,7 +177,7 @@ class LeadRig(
 
     val mcp = McpToolSources(config, null, sandboxTools)
     val large = LargeResults(database, mcp, clock)
-    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate)
+    val own = OwnStateTools(feed, memory, constitutions, tasks, settingsProvider, clock, failureGate, net.robog.clarity.backend.sources.SourceResolver(ExposedNounReader(database), settingsProvider, journal, runs))
     val collections = ExposedCollectionStore(database, clock)
     val embeddings = Embeddings(config, { embeddingClient }, database, clock)
     val vectors = VectorIndex(database, embeddings)

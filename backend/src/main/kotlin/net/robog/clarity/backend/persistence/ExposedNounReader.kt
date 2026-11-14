@@ -207,6 +207,13 @@ class ExposedNounReader(private val database: Database) : NounReader {
         }
     }
 
+    override suspend fun contact(id: EntityId): Stored<ContactPayload>? {
+        val uuid = Uuid.parseOrNull(id.value) ?: return null
+        return database.tx {
+            Contacts.selectAll().where { (Contacts.id eq uuid) and Contacts.deletedAt.isNull() }.singleOrNull()?.toContact()
+        }
+    }
+
     override suspend fun changedSince(since: Instant, limit: Int): List<Stored<Payload>> =
         database.tx {
             val cap = limit.coerceIn(1, MAX_LIMIT)

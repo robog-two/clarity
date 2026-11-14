@@ -50,6 +50,10 @@ interface NounReader {
     /** Full-text search over document titles, paths and extracted excerpts; best matches first. */
     suspend fun searchDocuments(query: String, limit: Int = 20): List<Stored<DocumentPayload>> = emptyList()
     suspend fun document(id: EntityId): Stored<DocumentPayload>? = null
+    /** One contact by id, or null when there is none (or it was deleted). */
+    suspend fun contact(id: EntityId): Stored<ContactPayload>? = null
+    /** Whatever record has [id]: a message, event, document or contact; null when none (or deleted). */
+    suspend fun entity(id: EntityId): Stored<Payload>? = message(id) ?: calendarEvent(id) ?: document(id) ?: contact(id)
     /** Entities created or updated after [since], across nouns (for periodic review). */
     suspend fun changedSince(since: Instant, limit: Int = 200): List<Stored<Payload>>
 }
