@@ -273,6 +273,7 @@ class AgentToolbox(
     private val vault: VaultTools,
     private val browser: BrowserPilot,
     private val nudges: NudgeTools,
+    private val planItemTools: PlanItemTools,
     private val reports: ReportTools,
     private val thirdParty: McpToolKit,
     private val attachmentTools: AttachmentTools,
@@ -301,7 +302,7 @@ class AgentToolbox(
         addAll(if (forLead) reports.leadTools(scope) else reports.helperTools(scope))
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
-        if (forLead) addAll(nudges.all())
+        if (forLead) addAll(nudges.all() + planItemTools.all())
         if (forLead) addAll(outings.all())
         if (forLead) add(thirdParty.suggestTool())
     }.map { if (forLead && it.name == "send_to_user") outings.gateSuggestions(it, scope) else it }.let { guarded(scope, it) }

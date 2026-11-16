@@ -16,7 +16,7 @@ import net.robog.clarity.backend.scheduler.ScheduledJob
 import net.robog.clarity.shared.session.Settings
 
 /** Pure: the instruction to the lead for the quiet preparation, with yesterday's plan and what was parked. */
-fun prepInstruction(yesterday: DayPlan?): String = buildString {
+fun prepInstruction(yesterday: DayPlan?, stuck: List<String> = emptyList()): String = buildString {
     append(Playbooks.preparation())
     if (yesterday != null && (yesterday.priorities.isNotEmpty() || yesterday.plan.isNotEmpty() || yesterday.parked.isNotEmpty())) {
         append("\nYesterday (").append(yesterday.date).append("):")
@@ -26,6 +26,10 @@ fun prepInstruction(yesterday: DayPlan?): String = buildString {
     } else {
         append("\nThere is no plan from yesterday.")
     }
+    if (stuck.isNotEmpty()) {
+        append("\nItems that keep coming back (mention them in the call without blame; in COMMIT ask for a two-minute first step, offer help, or offer to drop them; pass the plan item id as `continues` when planning them again):")
+        stuck.forEach { append("\n- ").append(it) }
+    }
 }
 
 /**
@@ -34,7 +38,7 @@ fun prepInstruction(yesterday: DayPlan?): String = buildString {
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class MorningCallPrepJob(private val inbox: InboxStore, private val plans: DayPlanStore) : ScheduledJob {
+class MorningCallPrepJob(private val inbox: InboxStore, private val plans: DayPlanStore, private val planItems: PlanItemStore) : ScheduledJob {
     override val name = "morning-call-prep"
 
     override fun schedule(settings: Settings) = Schedule.Computed { after, zone ->
@@ -47,7 +51,7 @@ class MorningCallPrepJob(private val inbox: InboxStore, private val plans: DayPl
         val callDate = localDate(context.scheduledFor + prepLead(call), context.settings.homeZone)
         val yesterday = plans.get(callDate.minus(DatePeriod(days = 1)))
         inbox.enqueue(
-            InboxItem.System(prepInstruction(yesterday), Priority.LOW),
+            InboxItem.System(prepInstruction(yesterday, stuckItems(planItems.open(), callDate).map { stuckLine(it, callDate) }), Priority.LOW),
             dedupKey = "job:$name:${context.scheduledFor}",
         )
     }

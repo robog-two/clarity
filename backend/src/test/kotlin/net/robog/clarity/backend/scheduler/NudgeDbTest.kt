@@ -46,6 +46,7 @@ import net.robog.clarity.backend.feed.ExposedFeedStore
 import net.robog.clarity.backend.feed.FeedHub
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.integration.ContainerRuntimeAvailable
+import net.robog.clarity.backend.sessions.PlanItemStore
 import net.robog.clarity.backend.persistence.DatabaseFactory
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.harness.ToolResult
@@ -94,8 +95,8 @@ class NudgeDbTest : FunSpec({
         val calls = AtomicInteger()
         private val counting = client?.let { inner -> DecisionClient { s, q -> calls.incrementAndGet(); inner.decide(s, q) } }
         val config = AgentConfig(openRouterApiKey = "k", reviewInterval = 2.hours)
-        val runner = NudgeRunner(store, tasks, inbox, activity, Decisions(config, { counting }, database, clock), { Settings() }, clock)
-        val tools = NudgeTools(store, tasks, { Settings() }, clock).all().associateBy { it.name }
+        val runner = NudgeRunner(store, tasks, PlanItemStore(database), inbox, activity, Decisions(config, { counting }, database, clock), { Settings() }, clock)
+        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock).all().associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue(name).invoke(input)
         suspend fun nudgeItems() = inbox.pending().map { it.item }.filterIsInstance<InboxItem.NudgeDue>()

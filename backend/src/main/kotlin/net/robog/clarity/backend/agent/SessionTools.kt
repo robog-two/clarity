@@ -20,6 +20,11 @@ import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.backend.sessions.DayPlanStore
+import net.robog.clarity.backend.sessions.PlanItem
+import net.robog.clarity.backend.sessions.PlanItemStore
+import net.robog.clarity.backend.sessions.PlanSource
+import net.robog.clarity.backend.sessions.Planned
+import net.robog.clarity.backend.sessions.STUCK_FROM_DAY
 import net.robog.clarity.backend.sessions.Playbooks
 import net.robog.clarity.backend.sessions.SessionError
 import net.robog.clarity.backend.sessions.SessionRecord
@@ -144,6 +149,8 @@ class SessionTools(
     private val sessions: SessionService,
     private val feed: FeedService,
     private val plans: DayPlanStore,
+    private val planItems: PlanItemStore,
+    private val nudger: PlanNudger,
     private val tasks: TaskStore,
     private val constitutions: ConstitutionStore,
     private val settings: SettingsProvider,
@@ -155,7 +162,8 @@ class SessionTools(
 
     private suspend fun live() = sessions.live()
 
-    private suspend fun today(): LocalDate = localDate(clock.now(), settings.current().homeZone)
+    /** The person's date, from the same zone source as the nudge tools (`settings.homeZone()`). */
+    private suspend fun today(): LocalDate = ScheduleClock.homeDate(clock.now(), settings.homeZone())
 
     /** Keyed by the tool call, so a call re-run after a crash does not post its card twice. */
     private suspend fun callKey(): String? =
@@ -171,6 +179,12 @@ class SessionTools(
                 notify = "in_app",
             ),
         )
+    }
+
+    /** " (plan item <id>, day 3, stuck ...)" for the lead; the id is what `continues`, `item` and plan_item take. */
+    private fun itemNote(item: PlanItem, date: LocalDate): String {
+        val day = item.dayOn(date)
+        return " (plan item ${item.id}" + (if (day > 1) ", day $day" else "") + (if (day >= STUCK_FROM_DAY) ", stuck: ask for a two-minute first step, offer help, or offer to drop it" else "") + ")"
     }
 
     private fun SessionError.text() = "$title: $detail"
@@ -216,6 +230,8 @@ class SessionTools(
     class PriorityInput(
         @Description("The priority in the person's words.") val text: String,
         @Description("A few words on why, e.g. \"important\" or \"due today\".") val note: String = "",
+        @Description("The plan item id of the same task from an earlier day (the morning preparation lists them). Leave out for a new task; close wording is matched on its own.")
+        val continues: String? = null,
     )
 
     @Serializable
@@ -236,15 +252,28 @@ class SessionTools(
             input.also?.let { Chip(it.text.trim(), it.note.trim().ifEmpty { "also" }) },
         )
         if (chips.any { it.text.isEmpty() }) return@tool ToolResult.Error("A priority needs text.")
-        plans.update(today()) { it.copy(priorities = chips, sessionId = session.id.value) }
+        val date = today()
+        val report = planItems.planReport(date, listOfNotNull(input.important, input.also).map { Planned(it.text.trim(), it.continues) })
+        val planned = report.items
+        // Items this call dropped from today (put back, or replaced) lose today's waiting check-ins.
+        nudger.cancelFor(report.undone, date)
+        plans.update(date) { it.copy(priorities = chips, sessionId = session.id.value) }
         post(session, listOf(Card.Chips("today’s two", chips)))
-        ToolResult.Ok("Priorities saved: ${chips.joinToString("; ") { it.text }}.")
+        ToolResult.Ok("Priorities saved: ${chips.zip(planned).joinToString("; ") { (chip, item) -> chip.text + itemNote(item, date) }}.")
     }
 
     @Serializable
     class IfThenInput(
         @Description("The cue, written to follow \"If\": \"it's 9:30\", \"Dana emails\".") val cue: String,
         @Description("What happens then, written to follow \"then\": \"spec at my desk until 12\".") val action: String,
+        @Description("For a priority that has been on the plan for days: the two-minute first step the person agreed to (\"open the file and write the title\").")
+        val firstStep: String? = null,
+        @Description("The plan item id of the priority this plan is for (from set_priorities), so its check-ins follow it.") val item: String? = null,
+        @Description(
+            "The start time of this plan, HH:MM in 24 hour time, the person's local time TODAY (\"09:30\"). Set it ONLY when the person named a start time for it. " +
+                "Leave it empty for a deadline (\"by 5pm\"), an event (\"Dana emails\"), or anything vague, and ask the person if you are unsure. A check-in is set at this time and only for if-thens that have one.",
+        )
+        val at: String? = null,
     )
 
     @Serializable
@@ -252,17 +281,35 @@ class SessionTools(
 
     private fun setPlan(): Tool = tool<SetPlanInput>(
         name = "set_plan",
-        description = "Morning call, COMMIT stage: record the if-then plans. Shows the \"your plan\" card and saves it for Today.",
+        description = "Morning call, COMMIT stage: record the if-then plans. Shows the \"your plan\" card and saves it for Today. " +
+            "An if-then with an `at` (the start time the person named, HH:MM today) gets a check-in at that time automatically; do not nudge for it yourself. " +
+            "Set `at` only when the person named a start time; leave it empty for deadlines and event cues.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
         val session = requireSession(live(), "set_plan", SessionKind.MORNING_CALL, setOf(CallStage.COMMIT)).getOrElse { return@tool ToolResult.Error(it) }
-        val items = input.ifThens.map { IfThen(it.cue.trim().removePrefix("If ").removePrefix("if "), it.action.trim().removePrefix("then ")) }
+        val items = input.ifThens.map {
+            IfThen(
+                it.cue.trim().removePrefix("If ").removePrefix("if "), it.action.trim().removePrefix("then "),
+                it.firstStep?.trim()?.takeIf { s -> s.isNotEmpty() }, it.at?.trim()?.takeIf { s -> s.isNotEmpty() },
+            )
+        }
         if (items.isEmpty() || items.size > MAX_PLANS) return@tool ToolResult.Error("Give 1 to $MAX_PLANS if-then plans.")
         if (items.any { it.cue.isEmpty() || it.action.isEmpty() }) return@tool ToolResult.Error("Each plan needs a cue and an action.")
-        plans.update(today()) { it.copy(plan = items, sessionId = session.id.value) }
-        post(session, listOf(Card.Plan(items)))
-        ToolResult.Ok("Plan saved (${items.size}).")
+        val date = today()
+        val previous = plans.get(date)?.plan.orEmpty()
+        val planned = linkableToday(planItems.open(), date)
+        val linked = items.zip(input.ifThens).map { (ifThen, raw) ->
+            val item = linkedItem(ifThen, raw.item, planned)
+            PlanCheckIn(ifThen.copy(item = item?.id), item)
+        }
+        plans.update(date) { it.copy(plan = linked.map { c -> c.ifThen }, sessionId = session.id.value) }
+        // The first step an if-then carries stays on its item (with the day it was agreed), so a later day can say it is an earlier one.
+        linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }
+        val checkIns = linked.map { c -> c.item?.let { i -> c.copy(item = planItems.get(i.id)) } ?: c }
+        val scheduled = nudger.schedule(date, checkIns, previous)
+        post(session, listOf(Card.Plan(linked.map { c -> c.ifThen })))
+        ToolResult.Ok("Plan saved (${items.size}).$scheduled")
     }
 
     @Serializable
@@ -278,7 +325,12 @@ class SessionTools(
         @Description("Things you prepare but the person reviews first (anything that goes out as them).")
         val review: List<TaskInput> = emptyList(),
         @Description("Things to leave until tomorrow, a few words each.") val parked: List<String> = emptyList(),
+        @Description("Parked things that were on an earlier day's plan too: their plan item id in `continues` (close wording is matched on its own, so this is only for when the wording changed).")
+        val parkedItems: List<ParkedInput> = emptyList(),
     )
+
+    @Serializable
+    class ParkedInput(val text: String, @Description("The plan item id of the same task from an earlier day.") val continues: String? = null)
 
     private fun handOff(): Tool = tool<HandOffInput>(
         name = "hand_off",
@@ -290,7 +342,8 @@ class SessionTools(
         val session = requireSession(live(), "hand_off", SessionKind.MORNING_CALL, setOf(CallStage.HAND_OFF)).getOrElse { return@tool ToolResult.Error(it) }
         val alone = input.alone.filter { it.title.isNotBlank() }
         val review = input.review.filter { it.title.isNotBlank() }
-        val parked = input.parked.map(String::trim).filter(String::isNotEmpty)
+        val parkedPlanned = (input.parked.map { Planned(it.trim()) } + input.parkedItems.map { Planned(it.text.trim(), it.continues) }).filter { it.text.isNotEmpty() }
+        val parked = parkedPlanned.map { it.text }.distinct()
         if (alone.isEmpty() && review.isEmpty() && parked.isEmpty()) return@tool ToolResult.Error("Nothing to hand off: give at least one of alone, review or parked.")
         val key = callKey() ?: "manual"
         var duplicate = false
@@ -305,7 +358,9 @@ class SessionTools(
         val created = (alone.map { it to "alone" } + review.map { it to "you review" }).map { (item, sub) ->
             tasks.upsert(null, item.title.trim(), item.detail.trim().ifEmpty { sub }, AgentTask.Status.WORKING)!! to sub
         }
-        plans.update(today()) { it.copy(parked = parked, called = true, sessionId = session.id.value) }
+        val date = today()
+        val parkedItems = if (parked.isEmpty()) emptyList() else planItems.plan(date, parkedPlanned, PlanSource.PARKED)
+        plans.update(date) { it.copy(parked = parked, called = true, sessionId = session.id.value) }
         val cards = buildList<Card> {
             if (created.isNotEmpty()) add(Card.Chips("I’ll do", created.map { (task, sub) -> Chip(task.title, sub) }))
             if (parked.isNotEmpty()) add(Card.Chips("parked until tomorrow", parked.map { Chip(it) }))
@@ -314,7 +369,8 @@ class SessionTools(
         post(session, cards)
         ToolResult.Ok(
             "Handed off: ${created.size} task(s) created" + created.joinToString(prefix = " (", postfix = ")") { (t, _) -> "${t.id.value}: ${t.title}" } +
-                ", ${parked.size} parked. Now call stage_done; carry the tasks out after the call ends.",
+                ", ${parked.size} parked" + parkedItems.filter { it.dayOn(date) >= STUCK_FROM_DAY }.joinToString("") { " (${it.text}:${itemNote(it, date)})" } +
+                    ". Now call stage_done; carry the tasks out after the call ends.",
         )
     }
 

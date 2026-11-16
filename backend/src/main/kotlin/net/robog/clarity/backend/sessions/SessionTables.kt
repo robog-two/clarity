@@ -40,3 +40,20 @@ object DayPlans : Table("day_plan") {
     val updatedAt = timestamp("updated_at")
     override val primaryKey = PrimaryKey(date)
 }
+
+/** Mirrors db/migration/V52__plan_item.sql. */
+object PlanItems : Table("plan_item") {
+    val id = uuid("id")
+    val text = text("text")
+    val firstDate = date("first_date")
+    val lastDate = date("last_date")
+    val daysCarried = integer("days_carried")
+    val state = text("state")
+    val startedOn = date("started_on").nullable()
+    val firstStep = text("first_step").nullable()
+    val firstStepOn = date("first_step_on").nullable()
+    val planSource = text("source")
+    val prevLastDate = date("prev_last_date").nullable()
+    val prevDaysCarried = integer("prev_days_carried").nullable()
+    override val primaryKey = PrimaryKey(id)
+}

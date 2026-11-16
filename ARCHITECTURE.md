@@ -541,6 +541,31 @@ the lead "Nudge you set at <time>: <note>" plus the task's title and status. A f
 nothing by itself; the lead decides whether to ask one short question through `send_to_user`, so
 the notify policy and protected-time holds apply as for anything else.
 
+**Stuck tasks.** `plan_item` (`V52`) follows what the person puts on a day's plan (the priorities and parked
+items of the morning call) from day to day. Pure `carryOver` (`sessions/PlanItems.kt`) matches today's items to
+open ones by the id the model passes (`continues` on `set_priorities` and `hand_off`), else by close wording
+(lower case, no filler words, same numbers; up to three words all must match, longer wordings four in five; the
+best score wins, ties go to the lower id), at most once each, for items last planned within 3 days. Each new day
+adds one to `days_carried`; planning twice in a day changes nothing, and a plan redone the same day puts the items
+it dropped back where they were (`replaceUnplanned`). An item on its third day or later is stuck: the prep job
+lists it ("stuck: <text>, day 3") for the lead to bring up without blame, and the COMMIT playbook offers a
+two-minute first step (`firstStep` on the if-then, stored with the day it was agreed and called "earlier first
+step" on later days), help, or dropping it. After `set_plan` the server sets one nudge at each if-then that has an
+`at`: the start time the person named, which the lead fills in as HH:MM (24 hour, their local time that day); the
+cue text is never parsed. Leaving `at` empty is right for deadlines, event cues and anything vague (the lead asks
+when unsure). The server validates it (`readCheckInTime`): malformed or already passed is skipped and reported once,
+never moved to another time, and an if-then with no `at` is listed back so the lead can nudge itself; an if-then that
+the day's earlier save already reported is not reported again. Check-ins are marked `auto_check_in` and linked to a
+priority by explicit id or by repeating its wording. Saving the plan again replaces them (`reconcileCheckIns`, over the
+day's check-ins of any status): one that fired, was skipped or missed, or was ended by Starting or by the agent's
+`cancel_nudge` is not asked again, a waiting one whose time has come is left to fire, and the write is one transaction
+that re-checks the limits under a lock and cancels only rows still waiting. Plan nudges (check-ins and follow-ups) have their own caps (10 waiting, 12 a
+day), apart from the person's own nudges, with one ceiling of 20 waiting and 20 a day over both. The lead's own `nudge` is "already covered" only when it is about the same plan item. When a
+check-in fires, the lead posts a `check_in` with a `Card.Choices` (Starting, Later, Make it smaller) and records
+the tap with `plan_item`: started (no more check-ins on it that day, today's waiting ones cancelled, a due one
+skipped), later (at the time the person picks) or smaller (a new first step, back in 10 minutes). Follow-ups are
+capped at 2 per item per day by the server.
+
 Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
