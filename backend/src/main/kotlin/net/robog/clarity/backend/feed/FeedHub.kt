@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.FeedItemId
@@ -52,8 +53,15 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
      * Records the person's tap on a [Card.Choices] option of item [id] and tells every device, so the
      * buttons disable everywhere ([FeedEvent.ItemFinal]). Null when nothing changed (already answered, or not an option).
      */
-    suspend fun chooseOption(id: FeedItemId, reply: String): FeedItem? =
-        store.markChosen(id, reply)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+    suspend fun chooseOption(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? =
+        store.markChosen(id, reply, by)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+
+    /** Takes back the answer [by] recorded (see [FeedStore.unmarkChosen]) and tells every device. */
+    suspend fun unchooseOption(id: FeedItemId, by: ClientInputId): FeedItem? =
+        store.unmarkChosen(id, by)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+
+    /** The item stored for the person's input [id], when the same request came before. */
+    suspend fun byClientInput(id: ClientInputId) = store.byClientInput(id)
 
     /** Pushes that counted toward the daily limit in `[from, to)`. */
     suspend fun countedPushes(from: Instant, to: Instant) = store.countedPushes(from, to)

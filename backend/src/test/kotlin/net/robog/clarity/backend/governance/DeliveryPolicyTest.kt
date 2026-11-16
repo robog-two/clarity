@@ -4,8 +4,10 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import net.robog.clarity.backend.agent.choicesCardsProblem
 import net.robog.clarity.backend.agent.choicesProblem
 import net.robog.clarity.backend.agent.needsAnswer
+import net.robog.clarity.backend.agent.needsPerson
 import net.robog.clarity.backend.agent.resolveKind
 import net.robog.clarity.backend.feed.answerChoices
 import net.robog.clarity.shared.feed.Card
@@ -38,7 +40,8 @@ private fun delivery(
     at: Instant = now,
     pushedToday: Int = 0,
     actionable: Boolean = false,
-) = deliveryOf(kind, urgency, dueBy, people, constitution, s, at, pushedToday, actionable)
+    needsPerson: Boolean = false,
+) = deliveryOf(kind, urgency, dueBy, people, constitution, s, at, pushedToday, actionable, needsPerson)
 
 class DeliveryPolicyTest : FunSpec({
 
@@ -49,8 +52,8 @@ class DeliveryPolicyTest : FunSpec({
         delivery(MessageKind.REPLY, pushedToday = 99, constitution = consti(listOf(deepWork))) shouldBe Delivery(NotifyDecision.Reply, counts = false)
     }
 
-    test("a check-in and a look-forward push, and count") {
-        delivery(MessageKind.CHECK_IN) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
+    test("a check-in pushes without counting, a look-forward pushes and counts") {
+        delivery(MessageKind.CHECK_IN) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
         delivery(MessageKind.LOOK_FORWARD) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
     }
 
@@ -71,8 +74,8 @@ class DeliveryPolicyTest : FunSpec({
         delivery(MessageKind.FINDING, people = listOf(stranger), constitution = c).decision shouldBe NotifyDecision.EveningBatch(Instant.parse("2026-03-04T18:00:00Z"))
     }
 
-    test("urgent keeps today's behaviour for every kind and is not counted") {
-        for (kind in MessageKind.entries) {
+    test("urgent keeps today's behaviour for every kind but a reply, and is not counted") {
+        for (kind in MessageKind.entries.filter { it != MessageKind.REPLY }) {
             delivery(kind, Urgency.URGENT, pushedToday = 99) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
         }
         val deepWork = block("deep work", setOf(3), "09:00", "18:00")
@@ -80,16 +83,20 @@ class DeliveryPolicyTest : FunSpec({
             Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
     }
 
-    test("protected time holds a counted push unless the sender gets through") {
+    test("protected time holds a push unless the sender gets through") {
         val deepWork = block("deep work", setOf(3), "09:00", "18:00")
         val c = consti(listOf(deepWork), listOf(Person("Dana", listOf(dana))))
-        delivery(MessageKind.CHECK_IN, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = true)
+        delivery(MessageKind.CHECK_IN, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
+        delivery(MessageKind.LOOK_FORWARD, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = true)
         delivery(MessageKind.FINDING, people = listOf(dana), constitution = c) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
     }
 
     test("the budget: once the limit is reached a push is shown in the app without one") {
-        delivery(MessageKind.CHECK_IN, pushedToday = 4) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
-        delivery(MessageKind.CHECK_IN, pushedToday = 5) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
+        delivery(MessageKind.LOOK_FORWARD, pushedToday = 4) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
+        delivery(MessageKind.LOOK_FORWARD, pushedToday = 5) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
+        // a check-in is never refused for the budget
+        delivery(MessageKind.CHECK_IN, pushedToday = 5) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.CHECK_IN, pushedToday = 99, s = settings.copy(pushesPerDay = 1)) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
         delivery(MessageKind.FINDING, dueBy = now + 1.hours, pushedToday = 6) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
         delivery(MessageKind.LOOK_FORWARD, s = settings.copy(pushesPerDay = 1), pushedToday = 1).budgetSpent shouldBe true
         delivery(MessageKind.LOOK_FORWARD, s = settings.copy(pushesPerDay = 10), pushedToday = 9).counts shouldBe true
@@ -111,6 +118,40 @@ class DeliveryPolicyTest : FunSpec({
         delivery(MessageKind.CHECK_IN, Urgency.BATCH).decision shouldBe NotifyDecision.EveningBatch(Instant.parse("2026-03-04T18:00:00Z"))
         delivery(MessageKind.FINDING, Urgency.BATCH, dueBy = now + 1.hours).decision shouldBe NotifyDecision.EveningBatch(Instant.parse("2026-03-04T18:00:00Z"))
         delivery(MessageKind.REPLY, Urgency.BATCH).decision shouldBe NotifyDecision.Reply
+    }
+
+    test("a reply wins over urgency: always a reply, even with push off or in protected time") {
+        val deepWork = block("deep work", setOf(3), "09:00", "18:00")
+        delivery(MessageKind.REPLY, Urgency.URGENT, s = settings.copy(pushUrgent = false)) shouldBe Delivery(NotifyDecision.Reply, counts = false)
+        delivery(MessageKind.REPLY, Urgency.URGENT, constitution = consti(listOf(deepWork)), pushedToday = 99) shouldBe Delivery(NotifyDecision.Reply, counts = false)
+    }
+
+    test("an approval or a login follows the urgent rules whatever its kind, and is not counted") {
+        val deepWork = block("deep work", setOf(3), "09:00", "18:00")
+        val c = consti(listOf(deepWork), listOf(Person("Dana", listOf(dana))))
+        delivery(MessageKind.FINDING, needsPerson = true) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.FINDING, needsPerson = true, pushedToday = 99) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.FINDING, Urgency.BATCH, needsPerson = true) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.CHECK_IN, needsPerson = true, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
+        delivery(MessageKind.FINDING, needsPerson = true, constitution = c, people = listOf(dana)) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.FINDING, needsPerson = true, s = settings.copy(pushUrgent = false)) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false)
+        // a choices card keeps the rule of its kind
+        delivery(MessageKind.FINDING, actionable = true) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false)
+        needsPerson(Card.Proposal(net.robog.clarity.shared.governance.HeldActionId("h"))) shouldBe true
+        needsPerson(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r"))) shouldBe true
+        needsPerson(Card.Choices(null, listOf(Choice("A", "a")))) shouldBe false
+    }
+
+    test("a post inside a session: a reply is a reply whatever the urgency, the rest follows notifyDecision, never counted") {
+        val deepWork = block("deep work", setOf(3), "09:00", "18:00")
+        val c = consti(listOf(deepWork))
+        sessionDelivery(MessageKind.REPLY, Urgency.NORMAL, emptyList(), c, settings, now) shouldBe Delivery(NotifyDecision.Reply, counts = false)
+        sessionDelivery(MessageKind.REPLY, Urgency.URGENT, emptyList(), c, settings, now) shouldBe Delivery(NotifyDecision.Reply, counts = false)
+        sessionDelivery(MessageKind.FINDING, Urgency.NORMAL, emptyList(), c, settings, now) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false)
+        sessionDelivery(MessageKind.CHECK_IN, Urgency.URGENT, emptyList(), c, settings, now) shouldBe
+            Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
+        sessionDelivery(MessageKind.FINDING, Urgency.BATCH, emptyList(), consti(), settings, now).decision shouldBe
+            NotifyDecision.EveningBatch(Instant.parse("2026-03-04T18:00:00Z"))
     }
 
     test("something that asks for an answer is never held for the evening") {
@@ -152,12 +193,16 @@ class DeliveryPolicyTest : FunSpec({
         (choicesProblem(Card.Choices(null, listOf(Choice(" ", "x")))) != null) shouldBe true
         (choicesProblem(Card.Choices(null, listOf(Choice("A", "same"), Choice("B", "same")))) != null) shouldBe true
         (choicesProblem(Card.Choices(null, List(5) { Choice("L$it", "r$it") })) != null) shouldBe true
+        choicesCardsProblem(listOf(ok)) shouldBe null
+        (choicesCardsProblem(listOf(ok, ok)) != null) shouldBe true
+        (choicesCardsProblem(listOf(Card.Text("x"), Card.Choices(null, emptyList()))) != null) shouldBe true
     }
 
     test("the first tap answers a choices card; a second, or a typed reply, changes nothing") {
         val cards = listOf(Card.Text("Hi"), Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no"))))
-        val answered = answerChoices(cards, "no")!!
+        val answered = answerChoices(cards, "no", "client-1")!!
         (answered[1] as Card.Choices).chosen shouldBe "no"
+        (answered[1] as Card.Choices).answeredBy shouldBe "client-1"
         answered[0] shouldBe cards[0]
         answerChoices(answered, "yes") shouldBe null
         answerChoices(cards, "maybe") shouldBe null

@@ -249,8 +249,9 @@ data class Delivery(val seqs: List<Long>, val message: Message)
 fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, statesClock: Boolean = false): List<Delivery> {
     val users = items.filter { it.item is InboxItem.UserInput }
     val others = items.filter { it.item !is InboxItem.UserInput }
-    // The person's words never pass for a client-side summary (which would cut the context there).
-    fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
+    // The person's words never pass for a client-side summary (which would cut the context there) or a harness note.
+    fun spoken(text: String) =
+        if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER) || net.robog.clarity.harness.isHarnessNote(text)) " $text" else text
     // The person's words stay exactly theirs; what a tap answered is the server's own note, a separate system message after it.
     val userDeliveries = users.flatMap {
         val input = it.item as InboxItem.UserInput

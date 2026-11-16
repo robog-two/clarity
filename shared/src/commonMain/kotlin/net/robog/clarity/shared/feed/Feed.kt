@@ -80,7 +80,7 @@ data class FeedItem(
  *    [Card.Choices] option) is a reply, and a model-supplied reply outside such a turn becomes a
  *    [FINDING]. The phone notifies for it only while the app is closed, and it never counts against
  *    the daily push budget.
- *  - [CHECK_IN] asks how something is going, at the time a nudge was set for. Pushes, and counts.
+ *  - [CHECK_IN] asks how something is going, at the time a nudge was set for. Pushes, never counted.
  *  - [LOOK_FORWARD] offers something pleasant to plan (an outing). Pushes, and counts.
  *  - [FINDING] is anything the agent noticed on its own (mail, calendar). Pushes only when it is due
  *    within a day or the sender gets through; otherwise it waits for the evening summary.
@@ -217,6 +217,8 @@ sealed interface Card {
         val fallbackText: String = choicesFallback(prompt, options),
         /** An opaque tag set by the poster and never shown ("outing:<idea id>"). A tap reaches the agent with it, so it knows which question was answered. */
         val ref: String? = null,
+        /** Server bookkeeping: the client id of the input that answered, so only a retry of that same request passes for the answer. Apps ignore it. */
+        val answeredBy: String? = null,
     ) : Card
 
     /**

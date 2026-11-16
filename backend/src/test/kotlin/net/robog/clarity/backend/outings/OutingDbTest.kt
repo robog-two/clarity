@@ -637,4 +637,21 @@ class OutingDbTest : FunSpec({
         person.offersThisTurn.get() shouldBe 0
         rig.feed.page(0, 20).items.shouldBeEmpty()
     }
+    test("the server still decides what is a reply: an outing post in a turn answering the person is one, in a job turn it is look_forward") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        val b = rig.saveIdea("Pottery class")
+        val c = rig.saveIdea("Hike at the lake")
+        rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(b, asked = true, kind = "look_forward").shouldBeInstanceOf<ToolResult.Ok>()
+        // a job turn the person interrupted is answering them (a reply), yet the outing gate still treats it as the lead's own idea
+        val interrupted = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false); it.userAsked() }
+        rig.postVia(rig.sendAs(interrupted), "outing:$c").shouldBeInstanceOf<ToolResult.Ok>()
+        val kinds = rig.feed.page(0, 20).items.map { it.kind }
+        kinds shouldBe listOf(MessageKind.LOOK_FORWARD, MessageKind.REPLY, MessageKind.REPLY)
+        // a model that claims reply outside such a turn gets a finding (a question with buttons is shown at once), whatever the cards
+        val job = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false) }
+        rig.postVia(rig.sendAs(job), null, kind = "reply").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.feed.page(0, 20).items.last().kind shouldBe MessageKind.FINDING
+    }
 })

@@ -36,6 +36,7 @@ import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.feed.FeedStore
 import net.robog.clarity.backend.feed.eveningSummaryCards
+import net.robog.clarity.backend.feed.summarizedBy
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.ClientInputId
@@ -111,7 +112,7 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
         val cards = eveningSummaryCards(pending, comingUp, done)
         if (cards.isEmpty()) return
         // Keyed by the slot: a retry after a crash finds the summary already posted and only finishes marking.
-        feed.append(
+        val posted = feed.append(
             FeedDraft(
                 author = FeedItem.Author.AGENT,
                 cards = cards,
@@ -120,7 +121,7 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
                 notify = NotifyDecision.EveningBatch(context.scheduledFor).wire(),
             ),
         )
-        store.markSummarized(pending.map { it.id })
+        store.markSummarized(summarizedBy(pending, posted).map { it.id })
     }
 }
 

@@ -29,6 +29,12 @@ fun mergeItem(existing: FeedItem?, incoming: FeedItem, final: Boolean): FeedItem
     else -> null
 }
 
+/** The item holds a choices card nobody has answered yet, as far as this phone knows: the answer may have come from elsewhere. */
+fun hasOpenChoices(item: FeedItem): Boolean = item.cards.any { it is Card.Choices && it.chosen == null }
+
+/** The item holds a choices card that has been answered. */
+fun hasAnsweredChoices(item: FeedItem): Boolean = item.cards.any { it is Card.Choices && it.chosen != null }
+
 /** The item's notification still waits for protected time to end (`hold_until:`). */
 fun isHeld(item: FeedItem): Boolean = item.notify.startsWith("hold_until")
 

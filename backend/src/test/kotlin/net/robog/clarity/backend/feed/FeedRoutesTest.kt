@@ -37,6 +37,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.withTimeout
@@ -62,6 +63,7 @@ private class MemoryFeedStore : FeedStore {
     private val items = CopyOnWriteArrayList<Pair<FeedItem, FeedDraft>>()
 
     override suspend fun append(draft: FeedDraft): Appended = synchronized(items) {
+        if (failAppendNext && draft.author == FeedItem.Author.USER) { failAppendNext = false; error("feed down") }
         draft.clientInputId?.let { id -> items.firstOrNull { it.second.clientInputId == id }?.let { return@synchronized Appended(it.first, created = false) } }
         val item = FeedItem(
             FeedItemId(Uuid.random().toString()), items.size + 1L, Clock.System.now(), draft.author, draft.sessionId, draft.cards, draft.streaming, draft.notify ?: NOTIFY_IN_APP,
@@ -88,11 +90,20 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
     override suspend fun countedPushes(from: Instant, to: Instant): Int = 0
     override suspend fun lookForwardSince(since: Instant): List<FeedItem> = emptyList()
-    override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? = synchronized(items) {
+    override suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem? = synchronized(items) {
         val index = items.indexOfFirst { it.first.id == id }
         if (index < 0) return@synchronized null
         val (item, draft) = items[index]
-        val cards = answerChoices(item.cards, reply) ?: return@synchronized null
+        val cards = unanswerChoices(item.cards, by.value) ?: return@synchronized null
+        item.copy(cards = cards).also { items[index] = it to draft }
+    }
+    @Volatile var failAppendNext = false
+    override suspend fun byClientInput(id: ClientInputId): FeedItem? = items.firstOrNull { it.second.clientInputId == id }?.first
+    override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? = synchronized(items) {
+        val index = items.indexOfFirst { it.first.id == id }
+        if (index < 0) return@synchronized null
+        val (item, draft) = items[index]
+        val cards = answerChoices(item.cards, reply, by.value) ?: return@synchronized null
         item.copy(cards = cards).also { items[index] = it to draft }
     }
 }
@@ -100,7 +111,10 @@ private class MemoryFeedStore : FeedStore {
 private class MemoryInbox : InboxStore {
     val enqueued = CopyOnWriteArrayList<Pair<InboxItem, String?>>()
 
+    @Volatile var failNext = false
+
     override suspend fun enqueue(item: InboxItem, dedupKey: String?): Boolean = synchronized(enqueued) {
+        if (failNext) { failNext = false; error("inbox down") }
         if (dedupKey != null && enqueued.any { it.second == dedupKey }) false else { enqueued += item to dedupKey; true }
     }
 
@@ -177,10 +191,124 @@ class FeedRoutesTest : FunSpec({
             }
             tap("tap-1", "Starting now").body<InputAccepted>().item.cards shouldBe listOf(Card.Said("Starting now"))
             (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
-            // a second device tapping the other button: its words still reach the lead, the card keeps the first answer
-            tap("tap-2", "Later").status shouldBe HttpStatusCode.OK
+            // a second device tapping the other button: refused, the card keeps the first answer and only the first reaches the lead
+            tap("tap-2", "Later").status shouldBe HttpStatusCode.Conflict
             (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
-            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("tap-") }.map { it.text } shouldBe listOf("Starting now", "Later")
+            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("tap-") }.map { it.text } shouldBe listOf("Starting now")
+        }
+    }
+
+    test("a tap that does not answer the card is refused and queues nothing") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            val plain = feed.append(agentItem("just text")).item
+            val queuedBefore = inbox.enqueued.size
+            val seqBefore = feed.page(0, 1000).items.size
+            suspend fun tap(clientId: String, reply: String, to: net.robog.clarity.shared.feed.FeedItemId) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), reply, inReplyTo = to))
+            }
+            tap("bad-1", "Whenever", asked.id).status shouldBe HttpStatusCode.BadRequest
+            tap("bad-2", "Later", plain.id).status shouldBe HttpStatusCode.BadRequest
+            tap("bad-3", "Later", net.robog.clarity.shared.feed.FeedItemId("nope")).status shouldBe HttpStatusCode.BadRequest
+            inbox.enqueued.size shouldBe queuedBefore
+            feed.page(0, 1000).items.size shouldBe seqBefore
+
+            // first tap wins; a second one from another device gets the conflict with the answered card and queues nothing
+            tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
+            val queuedAfterFirst = inbox.enqueued.size
+            val sizeAfterFirst = feed.page(0, 1000).items.size
+            val conflict = tap("ok-2", "Later", asked.id)
+            conflict.status shouldBe HttpStatusCode.Conflict
+            (conflict.body<InputAccepted>().item.cards.single() as Card.Choices).chosen shouldBe "Starting now"
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+
+            // the same option from another client id is just as late: conflict, nothing queued
+            tap("ok-3", "Starting now", asked.id).status shouldBe HttpStatusCode.Conflict
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+
+            // the same tap again (a retry with the same client id) is still accepted and is not a second message
+            tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+        }
+    }
+
+    test("when the person's message cannot be stored the card is reopened, with no message and nothing queued") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            suspend fun tap() = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId("reopen-1"), "Later", inReplyTo = asked.id))
+            }
+            val before = inbox.enqueued.size
+            val itemsBefore = feed.page(0, 1000).items.size
+            store.failAppendNext = true
+            tap().status shouldBe HttpStatusCode.InternalServerError
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe null
+            feed.page(0, 1000).items.size shouldBe itemsBefore
+            inbox.enqueued.size shouldBe before
+            tap().status shouldBe HttpStatusCode.OK
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            inbox.enqueued.size shouldBe before + 1
+        }
+    }
+
+    test("when only queueing fails the message is stored and the card stays answered, and the same tap heals it") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            suspend fun tap(clientId: String) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), "Later", inReplyTo = asked.id))
+            }
+            val before = inbox.enqueued.size
+            inbox.failNext = true
+            val itemsBefore = feed.page(0, 1000).items.size
+            tap("heal-1").status shouldBe HttpStatusCode.InternalServerError
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            feed.page(0, 1000).items.size shouldBe itemsBefore + 1
+            inbox.enqueued.size shouldBe before
+            // the retry (same client id) reaches the lead once and adds no second message
+            tap("heal-1").status shouldBe HttpStatusCode.OK
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            feed.page(0, 1000).items.size shouldBe itemsBefore + 1
+            inbox.enqueued.size shouldBe before + 1
+        }
+    }
+
+    test("two identical taps at once reach the lead once") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            val before = inbox.enqueued.size
+            val sizeBefore = feed.page(0, 1000).items.size
+            val statuses = kotlinx.coroutines.coroutineScope {
+                (1..6).map { n ->
+                    async(kotlinx.coroutines.Dispatchers.Default) {
+                        client.post("/api/v1/input") {
+                            header(HttpHeaders.Authorization, TOKEN)
+                            contentType(ContentType.Application.Json)
+                            setBody(UserInput(ClientInputId("race-$n"), "Later", inReplyTo = asked.id))
+                        }.status
+                    }
+                }.map { it.await() }
+            }
+            statuses.count { it == HttpStatusCode.OK } shouldBe 1
+            statuses.count { it == HttpStatusCode.Conflict } shouldBe 5
+            inbox.enqueued.size shouldBe before + 1
+            feed.page(0, 1000).items.size shouldBe sizeBefore + 1
         }
     }
 

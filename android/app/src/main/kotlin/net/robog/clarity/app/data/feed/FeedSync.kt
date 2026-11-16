@@ -235,10 +235,15 @@ class FeedSync(
         }
     }
 
-    /** The last cached seq, or just before the oldest recent item still streaming or held. */
+    /**
+ * The last cached seq, or just before the oldest recent item still streaming, held, or holding a
+ * choices card that is unanswered here. The server updates such an item in place without a new seq (a
+ * tap on another device, or while this phone was offline), so the catch-up fetches it again and the
+ * final copy replaces the cached one; once it shows an answer it is no longer fetched.
+ */
     private suspend fun resumePoint(): Long {
         val last = store.lastSeq()
-        val open = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming || isHeld(it) }.minOfOrNull { it.seq } ?: return last
+        val open = store.recentItems(STREAMING_LOOKBACK).filter { it.streaming || isHeld(it) || hasOpenChoices(it) }.minOfOrNull { it.seq } ?: return last
         return minOf(last, open - 1)
     }
 
