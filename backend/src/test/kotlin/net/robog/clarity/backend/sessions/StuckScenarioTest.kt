@@ -466,4 +466,47 @@ class StuckScenarioTest : FunSpec({
         rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec", item = id)).text() shouldContain "Check-ins set at"
         r.nudges.pending().single { it.at > day2 }.note shouldContain "Earlier first step: write the title."
     }
+
+    test("a replaced priority loses its check-in, a re-save after it fired or after Starting sets nothing new, and a past time is reported") {
+        val rig = rig()
+        val r = rig.r
+        rig.callAt(day1, CallStage.CHOOSE)
+        val a = idIn(rig.call("set_priorities", priorities("write the onboarding spec")).text())
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec at my desk", item = a)).text() shouldContain "Check-ins set at"
+        val check = r.nudges.pending().single()
+
+        // the person changes the priority in the same call: the old one's check-in goes with it
+        rig.callAt(day1, CallStage.CHOOSE)
+        rig.call("set_priorities", priorities("call the dentist"))
+        r.planItems.get(a)!!.state shouldBe PlanItemState.REPLACED
+        r.nudges.get(check.id)!!.status shouldBe Nudge.Status.CANCELLED
+        rig.call("plan_item", buildJsonObject { put("id", a); put("outcome", "started") }).text() shouldContain "replaced"
+
+        // a new plan, its check-in fires, and saving the same plan again does not ask twice
+        rig.callAt(day1, CallStage.CHOOSE)
+        val b = idIn(rig.call("set_priorities", priorities("renew the passport")).text())
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "renew the passport", item = b)).text() shouldContain "Check-ins set at"
+        rig.clock.now = Instant.parse("2026-03-02T09:30:20Z")
+        rig.runner.fireDue(rig.clock.now(), TimeZone.UTC).single().second.status shouldBe Nudge.Status.FIRED
+        rig.callAt(rig.clock.now, CallStage.COMMIT)
+        val again = rig.call("set_plan", planOf("it's 9:30", "renew the passport", item = b)).text()
+        again shouldContain "already passed"
+        again shouldNotContain "Check-ins set at"
+        r.nudges.pending().shouldBeEmpty()
+        // a later time in the same plan after it fired is a new plan for the item: still nothing, it had its check-in today
+        rig.call("set_plan", planOf("it's 3pm", "renew the passport", item = b)).text() shouldNotContain "Check-ins set at"
+        r.nudges.pending().shouldBeEmpty()
+
+        // Starting: saving again sets nothing for that item
+        rig.callAt(day1, CallStage.CHOOSE)
+        val c = idIn(rig.call("set_priorities", priorities("sort the receipts")).text())
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.clock.now = Instant.parse("2026-03-02T09:40:00Z")
+        rig.call("set_plan", planOf("it's 11:00", "sort the receipts", item = c)).text() shouldContain "Check-ins set at"
+        rig.call("plan_item", buildJsonObject { put("id", c); put("outcome", "started") }).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.call("set_plan", planOf("it's 11:00", "sort the receipts", item = c)).text() shouldNotContain "Check-ins set at"
+        r.nudges.pending().shouldBeEmpty()
+    }
 })

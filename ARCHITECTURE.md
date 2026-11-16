@@ -542,12 +542,13 @@ it dropped back where they were (`replaceUnplanned`). An item on its third day o
 lists it ("stuck: <text>, day 3") for the lead to bring up without blame, and the COMMIT playbook offers a
 two-minute first step (`firstStep` on the if-then, stored with the day it was agreed and called "earlier first
 step" on later days), help, or dropping it. After `set_plan` the server sets one nudge at each if-then whose cue
-names a time of day (`parseCueTime`: 9:30, 9.30, 3pm, noon, "between 9 and 10am"; a bare 1 to 6 is afternoon, a
-bare time already past means the evening when that is still today), marked `auto_check_in` and linked to its item
-by explicit id or by repeating its wording. Saving the plan again replaces them (`reconcileCheckIns`); follow-ups
-and the person's reminders are untouched, and cues with no time are listed back to the lead so it can nudge for
-them itself. Plan nudges (check-ins and follow-ups) have their own caps (10 waiting, 12 a day), apart from the
-person's own nudges. The lead's own `nudge` is "already covered" only when it is about the same plan item. When a
+names a start time (`parseCueTime`: 9:30, 3pm, noon, ranges by their start, dotted 9.30 only after a time word or
+before am/pm; a bare 1 to 6 is afternoon unless the cue is about the morning). A time that has already passed
+is skipped and reported, never moved; a deadline ("by 5pm") or a cue with no time gets none and is listed back to
+the lead. Check-ins are marked `auto_check_in` and linked to a priority by explicit id or by repeating its wording. Saving the plan again replaces them in one transaction (`reconcileCheckIns`, over the day's check-ins of any
+status: one that already fired, was skipped, or was ended by Starting is not asked again); follow-ups and the
+person's reminders are untouched. Plan nudges (check-ins and follow-ups) have their own caps (10 waiting, 12 a
+day), apart from the person's own nudges, with one ceiling of 20 waiting and 20 a day over both. The lead's own `nudge` is "already covered" only when it is about the same plan item. When a
 check-in fires, the lead posts a `check_in` with a `Card.Choices` (Starting, Later, Make it smaller) and records
 the tap with `plan_item`: started (no more check-ins on it that day, today's waiting ones cancelled, a due one
 skipped), later (at the time the person picks) or smaller (a new first step, back in 10 minutes). Follow-ups are

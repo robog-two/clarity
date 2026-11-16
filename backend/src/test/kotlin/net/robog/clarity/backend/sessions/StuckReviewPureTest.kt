@@ -118,12 +118,6 @@ class StuckReviewPureTest : FunSpec({
             clockTimeIn("afternoon").shouldBeNull()
             clockTimeIn("version 3.14.2 ships").shouldBeNull()
         }
-        test("a bare time that has passed today means this evening when that is still today") {
-            cueMoment("it's 9:30", wed, zone, Instant.parse("2026-03-04T10:00:00Z")) shouldBe Instant.parse("2026-03-04T21:30:00Z")
-            cueMoment("it's 9:30", wed, zone, now) shouldBe at930
-            cueMoment("it's 9:30 am", wed, zone, Instant.parse("2026-03-04T10:00:00Z")) shouldBe Instant.parse("2026-03-04T09:30:00Z")
-            cueMoment("it's 12:30", wed, zone, Instant.parse("2026-03-04T13:00:00Z")) shouldBe Instant.parse("2026-03-04T12:30:00Z") // +12h would be tomorrow
-        }
         test("the cues with no time are listed so the lead can nudge itself") {
             val out = planAutoNudges(
                 listOf(PlanCheckIn(IfThen("Dana emails", "it waits"), null), PlanCheckIn(IfThen("after lunch", "spec"), spec), PlanCheckIn(IfThen("it's 9:30", "spec"), spec)),

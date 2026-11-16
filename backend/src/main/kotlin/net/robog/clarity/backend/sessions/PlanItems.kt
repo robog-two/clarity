@@ -3,7 +3,6 @@ package net.robog.clarity.backend.sessions
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.datetime.LocalDate
@@ -114,7 +113,11 @@ fun sameWording(a: String, b: String): Boolean = wordingScore(a, b) > 0.0
  * with an id from [newId]. The result lists [today]'s items in order.
  */
 fun carryOver(open: List<PlanItem>, today: List<Planned>, date: LocalDate, newId: () -> String, source: PlanSource = PlanSource.PRIORITY): List<PlanItem> {
-    val candidates = open.filter { it.state == PlanItemState.OPEN && it.lastDate <= date && it.lastDate.daysUntil(date) <= CARRY_WINDOW_DAYS }
+    val candidates = open.filter {
+        it.state == PlanItemState.OPEN && it.lastDate <= date && it.lastDate.daysUntil(date) <= CARRY_WINDOW_DAYS &&
+            // a parked plan never claims a priority of the same day
+            !(source == PlanSource.PARKED && it.lastDate == date && it.source == PlanSource.PRIORITY)
+    }
     val taken = mutableSetOf<String>()
     // Ids first, so a wording match never takes an item the model named.
     val byId = today.map { p -> p.continues?.trim()?.let { id -> candidates.firstOrNull { it.id == id && taken.add(it.id) } } }
@@ -168,68 +171,77 @@ fun firstStepNote(item: PlanItem, date: LocalDate): String? =
 fun stuckLine(item: PlanItem, date: LocalDate): String =
     "stuck: ${item.text}, day ${item.dayOn(date)} (plan item ${item.id}" + (firstStepNote(item, date)?.let { ", $it" } ?: "") + ")"
 
-/** A time of day read from a cue; [bare] when it had no am/pm and could be morning or evening. */
-data class CueTime(val time: LocalTime, val bare: Boolean)
+/** A time of day read from a cue. [deadline] when the cue says "by", "before", "until" or "till" it: an end, not a start. */
+data class CueTime(val time: LocalTime, val deadline: Boolean = false)
 
+private const val NUM = """(\d{1,2})(?:[:.]([0-5]\d))?"""
 private val NOON = Regex("""\bnoon\b""", RegexOption.IGNORE_CASE)
 private val MIDNIGHT = Regex("""\bmidnight\b""", RegexOption.IGNORE_CASE)
-private val RANGE = Regex(
-    """\bbetween\s+(\d{1,2})(?:[:.]([0-5]\d))?\s*(?:([ap])\.?m\b\.?)?\s+and\s+(\d{1,2})(?:[:.]([0-5]\d))?\s*([ap])\.?m\b""",
-    RegexOption.IGNORE_CASE,
+private val RANGES = listOf(
+    Regex("""\bbetween\s+$NUM\s*(?:([ap])\.?m\b\.?)?\s+and\s+$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
+    Regex("""\bfrom\s+$NUM\s*(?:([ap])\.?m\b\.?)?\s+to\s+$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
+    Regex("""(?<![\d:.])$NUM\s*(?:([ap])\.?m\b\.?)?\s*[-–]\s*$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
 )
-private val CLOCK = Regex("""(?<![\d:.$])([01]?\d|2[0-3])[:.]([0-5]\d)(?![\d:])(?!\.\d)(?:\s*([ap])\.?m\b)?""", RegexOption.IGNORE_CASE)
-private val HOUR_AMPM = Regex("""(?<![\d:.$])(1[0-2]|0?[1-9])\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE)
+private val COLON = Regex("""(?<![\d:.$€£])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])(?!\.\d)(?:\s*([ap])\.?m\b)?""", RegexOption.IGNORE_CASE)
+private val DOTTED = Regex("""(?<![\p{L}\d:.$€£])([01]?\d|2[0-3])\.([0-5]\d)(?![\d:])(?!\.\d)(?:\s*([ap])\.?m\b)?""", RegexOption.IGNORE_CASE)
+private val DOT_TIME_WORD = Regex("""\b(?:at|it['’]?s|its|from|around|about|until|till|after)\s+$""", RegexOption.IGNORE_CASE)
+private val HOUR_AMPM = Regex("""(?<![\d:.$€£])(1[0-2]|0?[1-9])\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE)
+private val DEADLINE = Regex("""\b(?:by|before|until|till|due|no later than)\s*(?:about\s+|around\s+)?$""", RegexOption.IGNORE_CASE)
+private val MORNING = Regex("""\b(?:wake|wakes|woke|waking|morning|breakfast|alarm|early|(?:get|gets|got|getting)\s+up)\b""", RegexOption.IGNORE_CASE)
 
 private fun to24(hour12: Int, pm: Boolean): Int = (hour12 % 12) + if (pm) 12 else 0
 
-private fun suffixed(hour: Int, minute: Int, suffix: String): CueTime? =
-    if (hour in 1..12) CueTime(LocalTime(to24(hour, suffix.lowercase() == "p"), minute), bare = false) else null
+private fun suffixed(hour: Int, minute: Int, suffix: String): LocalTime? =
+    if (hour in 1..12) LocalTime(to24(hour, suffix.lowercase() == "p"), minute) else null
+
+/** The start of a range like "9-11am": its own am/pm, else the end's, flipped when the start hour is later than the end's ("11 to 1pm" starts at 11 in the morning). */
+private fun rangeStart(g: List<String>): LocalTime? {
+    val hour = g[1].toInt()
+    val minute = g[2].ifEmpty { "0" }.toInt()
+    val endHour = g[4].toInt()
+    val endSuffix = g[6].lowercase()
+    val suffix = g[3].ifEmpty { if (hour % 12 > endHour % 12) (if (endSuffix == "p") "a" else "p") else endSuffix }
+    return suffixed(hour, minute, suffix)
+}
 
 /**
  * Pure: the time of day an if-then cue names, or null when it names none ("Dana emails"). Understands
- * "9:30", "9.30", "14:00", "3pm", "noon", "midnight" and "between 9 and 10am" (its start). A bare
- * 1:00 to 6:59 is the afternoon; a bare 7:00 to 12:59 stays as written, flagged [CueTime.bare]. The
- * first time in the cue wins.
+ * "9:30", "14:00", "3pm", "noon", "midnight", dotted "9.30" (only after a time word such as "at", "it's",
+ * "from", "around", "until", or before am/pm, never in "v1.25", "Python 3.12", "€2.50" or "11.16"), and the
+ * start of a range ("9-11am", "from 9 to 11am", "between 11 and 1pm"). A bare 1:00 to 6:59 is the afternoon
+ * unless the cue is about the morning (wake, morning, breakfast, alarm, early, "get up"); 7:00 to 12:59 stays as
+ * written. A time that follows "by", "before", "until" or "till" is flagged [CueTime.deadline]. The first time in
+ * the cue wins.
  */
 fun parseCueTime(cue: String): CueTime? {
-    val found = mutableListOf<Pair<Int, CueTime?>>()
-    NOON.find(cue)?.let { found += it.range.first to CueTime(LocalTime(12, 0), false) }
-    MIDNIGHT.find(cue)?.let { found += it.range.first to CueTime(LocalTime(0, 0), false) }
-    RANGE.find(cue)?.let { m ->
+    val morning = MORNING.containsMatchIn(cue)
+    fun bare(hour: Int, minute: Int): LocalTime = LocalTime(if (hour in 1..6 && !morning) hour + 12 else hour, minute)
+    val found = mutableListOf<Pair<Int, LocalTime?>>()
+    NOON.find(cue)?.let { found += it.range.first to LocalTime(12, 0) }
+    MIDNIGHT.find(cue)?.let { found += it.range.first to LocalTime(0, 0) }
+    RANGES.forEach { re -> re.find(cue)?.let { found += it.range.first to rangeStart(it.groupValues) } }
+    COLON.find(cue)?.let { m ->
         val g = m.groupValues
-        val suffix = g[3].ifEmpty { g[6] }
-        found += m.range.first to suffixed(g[1].toInt(), g[2].ifEmpty { "0" }.toInt(), suffix)
+        found += m.range.first to if (g[3].isNotEmpty()) suffixed(g[1].toInt(), g[2].toInt(), g[3]) else bare(g[1].toInt(), g[2].toInt())
     }
-    CLOCK.find(cue)?.let { m ->
+    DOTTED.find(cue)?.let { m ->
         val g = m.groupValues
-        val hour = g[1].toInt()
-        val minute = g[2].toInt()
-        found += m.range.first to when {
-            g[3].isNotEmpty() -> suffixed(hour, minute, g[3])
-            hour in 1..6 -> CueTime(LocalTime(hour + 12, minute), false)
-            hour in 7..12 -> CueTime(LocalTime(hour, minute), true)
-            else -> CueTime(LocalTime(hour, minute), false)
-        }
+        val allowed = g[3].isNotEmpty() || DOT_TIME_WORD.containsMatchIn(cue.substring(0, m.range.first))
+        if (allowed) found += m.range.first to if (g[3].isNotEmpty()) suffixed(g[1].toInt(), g[2].toInt(), g[3]) else bare(g[1].toInt(), g[2].toInt())
     }
     HOUR_AMPM.find(cue)?.let { m -> found += m.range.first to suffixed(m.groupValues[1].toInt(), 0, m.groupValues[2]) }
-    return found.minByOrNull { it.first }?.second
+    val first = found.minByOrNull { it.first } ?: return null
+    val time = first.second ?: return null
+    return CueTime(time, deadline = DEADLINE.containsMatchIn(cue.substring(0, first.first)))
 }
 
 /** Pure: the time of day a cue names (see [parseCueTime]). */
 fun clockTimeIn(cue: String): LocalTime? = parseCueTime(cue)?.time
 
-/**
- * Pure: the moment a cue means on [date]: its time on the person's clock. A bare time that has already
- * passed at [now] means the same time in the evening when that is still [date] and still ahead.
- */
+/** Pure: the moment a cue starts on [date], on the person's clock; null for a cue with no time or only a deadline. A time that has passed stays as it is (the caller reports it, nothing is guessed). */
 fun cueMoment(cue: String, date: LocalDate, zone: TimeZone, now: Instant): Instant? {
-    val cueTime = parseCueTime(cue) ?: return null
-    val at = ScheduleClock.occurrence(date, cueTime.time, zone)
-    if (cueTime.bare && at <= now) {
-        val evening = at + 12.hours
-        if (evening > now && ScheduleClock.homeDate(evening, zone) == date) return evening
-    }
-    return at
+    val cueTime = parseCueTime(cue)?.takeIf { !it.deadline } ?: return null
+    return ScheduleClock.occurrence(date, cueTime.time, zone)
 }
 
 private fun ResultRow.toItem() = PlanItem(
@@ -246,6 +258,9 @@ private fun ResultRow.toItem() = PlanItem(
     prevLastDate = this[PlanItems.prevLastDate],
     prevDaysCarried = this[PlanItems.prevDaysCarried],
 )
+
+/** What a plan did: [items] are today's, in order; [undone] are earlier items of the day it put back or replaced. */
+data class PlanReport(val items: List<PlanItem>, val undone: List<PlanItem>)
 
 /** `plan_item`: the durable plan items. */
 @Inject
@@ -264,11 +279,15 @@ class PlanItemStore(private val database: Database) {
      * Puts [planned] on the plan of [date] as [source] (see [carryOver]), puts back what an earlier plan of
      * the day had that this one no longer has (see [replaceUnplanned]), and stores both; returns [planned]'s items in order.
      */
-    suspend fun plan(date: LocalDate, planned: List<Planned>, source: PlanSource = PlanSource.PRIORITY): List<PlanItem> = database.tx {
+    suspend fun plan(date: LocalDate, planned: List<Planned>, source: PlanSource = PlanSource.PRIORITY): List<PlanItem> = planReport(date, planned, source).items
+
+    /** Like [plan], and says which items the plan put back or replaced ([PlanReport.undone]). */
+    suspend fun planReport(date: LocalDate, planned: List<Planned>, source: PlanSource = PlanSource.PRIORITY): PlanReport = database.tx {
         val open = PlanItems.selectAll().where { PlanItems.state eq PlanItemState.OPEN.wire() }.forUpdate().map { it.toItem() }
         val items = carryOver(open, planned, date, { Uuid.random().toString() }, source)
         val known = open.associateBy { it.id }
-        (items + replaceUnplanned(open, items, date, source)).forEach { item ->
+        val undone = replaceUnplanned(open, items, date, source)
+        (items + undone).forEach { item ->
             val before = known[item.id]
             if (before == null) {
                 PlanItems.insert {
@@ -293,7 +312,7 @@ class PlanItemStore(private val database: Database) {
                 }
             }
         }
-        items
+        PlanReport(items, undone)
     }
 
     /** Applies [change] to the item under a row lock; null when there is no such item. */

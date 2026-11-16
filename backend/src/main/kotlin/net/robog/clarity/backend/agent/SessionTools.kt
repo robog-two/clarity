@@ -252,7 +252,10 @@ class SessionTools(
         )
         if (chips.any { it.text.isEmpty() }) return@tool ToolResult.Error("A priority needs text.")
         val date = today()
-        val planned = planItems.plan(date, listOfNotNull(input.important, input.also).map { Planned(it.text.trim(), it.continues) })
+        val report = planItems.planReport(date, listOfNotNull(input.important, input.also).map { Planned(it.text.trim(), it.continues) })
+        val planned = report.items
+        // Items this call dropped from today (put back, or replaced) lose today's waiting check-ins.
+        nudger.cancelFor(report.undone, date)
         plans.update(date) { it.copy(priorities = chips, sessionId = session.id.value) }
         post(session, listOf(Card.Chips("today’s two", chips)))
         ToolResult.Ok("Priorities saved: ${chips.zip(planned).joinToString("; ") { (chip, item) -> chip.text + itemNote(item, date) }}.")
@@ -285,7 +288,7 @@ class SessionTools(
         if (items.any { it.cue.isEmpty() || it.action.isEmpty() }) return@tool ToolResult.Error("Each plan needs a cue and an action.")
         val date = today()
         plans.update(date) { it.copy(plan = items, sessionId = session.id.value) }
-        val planned = planItems.open().filter { it.lastDate == date }
+        val planned = linkableToday(planItems.open(), date)
         val linked = items.zip(input.ifThens).map { (ifThen, raw) -> PlanCheckIn(ifThen, linkedItem(ifThen, raw.item, planned)) }
         // The first step an if-then carries stays on its item (with the day it was agreed), so a later day can say it is an earlier one.
         linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }

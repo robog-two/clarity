@@ -76,6 +76,22 @@ const val MAX_PENDING_NUDGES = 10
 /** How many nudges may fire on one of the person's days (and be set for one). */
 const val MAX_NUDGES_PER_DAY = 12
 
+/** The most nudges waiting at once, the person's and the plan's together. */
+const val MAX_PENDING_NUDGES_ALL = 20
+
+/** The most nudges (waiting or fired) due on one of the person's days, the person's and the plan's together. */
+const val MAX_NUDGES_ALL_PER_DAY = 20
+
+/** Pure: why one more nudge cannot be set because of the ceiling over everyone's nudges, or null. [pendingAll] wait now, [dayAll] are due that day. */
+fun combinedRefusal(pendingAll: Int, dayAll: Int): String? = when {
+    pendingAll >= MAX_PENDING_NUDGES_ALL -> "There are already $MAX_PENDING_NUDGES_ALL nudges and check-ins waiting in all. Cancel one first."
+    dayAll >= MAX_NUDGES_ALL_PER_DAY -> "That day already has $MAX_NUDGES_ALL_PER_DAY nudges and check-ins in all, the most allowed."
+    else -> null
+}
+
+/** A nudge to be stored. */
+data class NewNudge(val at: Instant, val note: String, val planItemId: String? = null, val followUp: Boolean = false, val autoCheckIn: Boolean = false)
+
 /** How far ahead a nudge may be set. */
 val NUDGE_HORIZON: Duration = 7.days
 
@@ -100,6 +116,15 @@ interface NudgeStore {
 
     /** The person's own nudges (not plan check-ins or follow-ups) due in [from, until) that are pending or fired: what counts toward a day's cap when setting one. */
     suspend fun countActive(from: Instant, until: Instant): Int
+
+    /** The automatic check-ins (any status, follow-ups excluded) due in [from, until). */
+    suspend fun autoCheckIns(from: Instant, until: Instant): List<Nudge>
+
+    /** Cancels the pending nudges [cancel] and stores [create], in one transaction; returns the new ones. */
+    suspend fun replaceCheckIns(cancel: List<NudgeId>, reason: String, create: List<NewNudge>): List<Nudge>
+
+    /** Plan nudges that fired in [from, until). */
+    suspend fun countFiredPlan(from: Instant, until: Instant): Int
 
     /** The same for the plan flow's nudges (check-ins an if-then set, follow-ups), which have their own cap. */
     suspend fun countActivePlan(from: Instant, until: Instant): Int
@@ -164,6 +189,47 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
         NudgeTable.selectAll().where {
             (NudgeTable.status inList listOf(PENDING, FIRED)) and (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until) and
                 NudgeTable.planItemId.isNull() and not(NudgeTable.autoCheckIn) and not(NudgeTable.followUp)
+        }.count().toInt()
+    }
+
+    override suspend fun autoCheckIns(from: Instant, until: Instant): List<Nudge> = database.tx {
+        NudgeTable.selectAll().where {
+            NudgeTable.autoCheckIn and not(NudgeTable.followUp) and (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until)
+        }.orderBy(NudgeTable.dueAt).map { it.toNudge() }
+    }
+
+    override suspend fun replaceCheckIns(cancel: List<NudgeId>, reason: String, create: List<NewNudge>): List<Nudge> {
+        val now = clock.now()
+        val ids = cancel.mapNotNull { it.uuidOrNull() }
+        return database.tx {
+            if (ids.isNotEmpty()) {
+                NudgeTable.update({ (NudgeTable.id inList ids) and (NudgeTable.status eq PENDING) }) {
+                    it[status] = Nudge.Status.CANCELLED.wire()
+                    it[NudgeTable.reason] = reason
+                    it[resolvedAt] = now
+                }
+            }
+            create.map { n ->
+                val id = Uuid.random()
+                NudgeTable.insert {
+                    it[NudgeTable.id] = id
+                    it[dueAt] = n.at
+                    it[note] = n.note
+                    it[planItemId] = n.planItemId?.let { p -> Uuid.parse(p) }
+                    it[followUp] = n.followUp
+                    it[autoCheckIn] = n.autoCheckIn
+                    it[status] = Nudge.Status.PENDING.wire()
+                    it[createdAt] = now
+                }
+                NudgeTable.selectAll().where { NudgeTable.id eq id }.single().toNudge()
+            }
+        }
+    }
+
+    override suspend fun countFiredPlan(from: Instant, until: Instant): Int = database.tx {
+        NudgeTable.selectAll().where {
+            (NudgeTable.status eq FIRED) and (NudgeTable.resolvedAt greaterEq from) and (NudgeTable.resolvedAt less until) and
+                (NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp)
         }.count().toInt()
     }
 
@@ -378,7 +444,9 @@ class NudgeTools(
             return@tool ToolResult.Ok("Nudge ${it.id.value} is already set for ${agentTime(it.at, zone)}; no new one was made.")
         }
         val (dayStart, dayEnd) = homeDay(at, zone)
-        nudgeRefusal(at, note, taskId, now, pending, nudges.countActive(dayStart, dayEnd), zone)
+        val personDay = nudges.countActive(dayStart, dayEnd)
+        combinedRefusal(everything.size, personDay + nudges.countActivePlan(dayStart, dayEnd))?.let { return@tool ToolResult.Error(it) }
+        nudgeRefusal(at, note, taskId, now, pending, personDay, zone)
             ?.let { return@tool ToolResult.Error(it) }
         val created = nudges.create(at, note, taskId)
         ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}. Nothing is sent now; when it fires you decide what to ask.")

@@ -45,6 +45,7 @@ import net.robog.clarity.backend.agent.nudgeTaskFinished
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.backend.agent.MAX_FOLLOW_UPS_PER_DAY
+import net.robog.clarity.backend.agent.MAX_NUDGES_ALL_PER_DAY
 import net.robog.clarity.backend.agent.isPlan
 import net.robog.clarity.backend.agent.planItemWakeText
 import net.robog.clarity.backend.sessions.PlanItem
@@ -155,6 +156,7 @@ fun planNudge(
     sessionLive: Boolean,
     planItem: PlanItem? = null,
     today: LocalDate? = null,
+    firedAll: Int = 0,
 ): NudgePlan {
     val late = now - nudge.at
     return when {
@@ -166,6 +168,9 @@ fun planNudge(
         planItem != null && today != null && planItem.startedOn == today -> NudgePlan.Resolve(NudgeResolution(Nudge.Status.SKIPPED, "the person already said they are starting it today"))
         firedToday >= MAX_NUDGES_PER_DAY -> NudgePlan.Resolve(
             NudgeResolution(Nudge.Status.SKIPPED, "$MAX_NUDGES_PER_DAY nudges already fired today, the daily limit"),
+        )
+        firedAll >= MAX_NUDGES_ALL_PER_DAY -> NudgePlan.Resolve(
+            NudgeResolution(Nudge.Status.SKIPPED, "$MAX_NUDGES_ALL_PER_DAY nudges and check-ins already fired today in all, the daily limit"),
         )
         sessionLive || (lastPersonMessageAt != null && now - lastPersonMessageAt < NUDGE_RECENT_ACTIVITY) -> NudgePlan.Ask
         else -> NudgePlan.Fire
@@ -273,10 +278,13 @@ class NudgeRunner(
     /** Resolves every nudge due by [now]; [zone] is the person's home zone (their day, for the cap). */
     suspend fun fireDue(now: Instant, zone: TimeZone): List<Pair<Nudge, NudgeResolution>> {
         val (dayStart, dayEnd) = homeDay(now, zone)
-        var firedToday = store.countFired(dayStart, dayEnd)
+        var firedPerson = store.countFired(dayStart, dayEnd)
+        var firedPlan = store.countFiredPlan(dayStart, dayEnd)
         val resolved = store.resolveDue(now, NUDGES_PER_TICK) { nudge ->
-            // The plan flow has its own caps (when it is set); the person's day-cap of fired nudges is theirs alone.
-            resolve(nudge, now, zone, if (nudge.isPlan) 0 else firedToday).also { if (it.status == Nudge.Status.FIRED && !nudge.isPlan) firedToday++ }
+            // Each side has its own day-cap, and one ceiling holds over both.
+            resolve(nudge, now, zone, if (nudge.isPlan) firedPlan else firedPerson, firedPerson + firedPlan).also {
+                if (it.status == Nudge.Status.FIRED) { if (nudge.isPlan) firedPlan++ else firedPerson++ }
+            }
         }
         resolved.forEach { (nudge, outcome) ->
             log.info { "nudge ${nudge.id.value} due ${nudge.at}: ${outcome.status.wire()}" + (outcome.reason?.let { " ($it)" } ?: "") }
@@ -284,10 +292,10 @@ class NudgeRunner(
         return resolved
     }
 
-    private suspend fun resolve(nudge: Nudge, now: Instant, zone: TimeZone, firedToday: Int): NudgeResolution {
+    private suspend fun resolve(nudge: Nudge, now: Instant, zone: TimeZone, firedToday: Int, firedAll: Int): NudgeResolution {
         val task = nudge.taskId?.let { tasks.get(it) }
         val item = nudge.planItemId?.let { planItems.get(it) }
-        val plan = planNudge(nudge, task, now, firedToday, activity.lastPersonMessageAt(), activity.sessionLive(), item, ScheduleClock.homeDate(now, zone))
+        val plan = planNudge(nudge, task, now, firedToday, activity.lastPersonMessageAt(), activity.sessionLive(), item, ScheduleClock.homeDate(now, zone), firedAll)
         return when (plan) {
             is NudgePlan.Resolve -> plan.resolution
             NudgePlan.Fire -> wake(nudge, task, item, now, zone)
