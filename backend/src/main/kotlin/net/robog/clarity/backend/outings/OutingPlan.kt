@@ -58,6 +58,9 @@ val SUGGESTION_WINDOW: Duration = 7.days
 /** The scout counts over a little less, so a Tuesday 15:03 post does not make the next Tuesday 15:00 run skip. */
 val SCOUT_BUDGET_WINDOW: Duration = SUGGESTION_WINDOW - 1.hours
 
+/** The most outings one turn the person started may offer. */
+const val MAX_OFFERS_PER_PERSON_TURN = 2
+
 /** Slots handed to the lead at most, so the brief stays short. */
 const val MAX_SLOTS_OFFERED = 3
 
@@ -254,56 +257,14 @@ data class SavedIdea(
     fun fits(slot: Slot): Boolean = state == IdeaState.OPEN && (from == null || to == null || (from < slot.end && to > slot.start))
 }
 
-/** Pure: the kinds of outing the person liked (used ideas) and declined, each kind once, newest first, never more than [max]. Kinds only: no idea text, no names. */
+/** The longest kind of outing the tool takes. */
+const val MAX_KIND_CHARS = 40
+
+/** Pure: the kinds of outing the person liked (used ideas) and declined, each kind once, newest first. Kinds only: no idea text. */
 fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List<String>> {
     fun kinds(state: IdeaState) = ideas.filter { it.state == state }.sortedByDescending { it.createdAt }
-        .mapNotNull { it.category?.trim()?.lowercase()?.takeIf(String::isNotEmpty) }.distinct().take(max)
+        .mapNotNull { it.category?.trim()?.lowercase()?.take(MAX_KIND_CHARS)?.takeIf(String::isNotEmpty) }.distinct().take(max)
     return kinds(IdeaState.USED) to kinds(IdeaState.DECLINED)
-}
-
-private val ORG_WORDS = setOf(
-    "the", "inc", "llc", "ltd", "co", "corp", "company", "group", "cafe", "café", "restaurant", "bar", "pub", "grill", "kitchen", "bakery", "brewing", "brewery",
-    "tavern", "lounge", "room", "hall", "club", "theater", "theatre", "cinema", "gallery", "museum", "records", "music", "nation", "studio", "studios", "team",
-    "school", "church", "hotel", "shop", "store", "market", "bank", "services", "service", "association", "society", "foundation", "institute", "university",
-    "college", "gym", "fitness", "center", "centre", "agency", "office", "support", "events", "tickets", "and", "of",
-)
-
-private val HONORIFICS = setOf("dr", "mr", "mrs", "ms", "mx", "prof", "sir", "rev")
-
-/** First words that are ordinary words as well as names. A contact called "Bill Smith" is still matched by "bill smith", just not by "bill". */
-private val FIRST_NAME_STOP = setOf(
-    "bill", "will", "mark", "pat", "art", "rose", "grace", "hope", "joy", "faith", "dawn", "april", "may", "june", "summer", "autumn", "bob", "jack", "rob",
-    "new", "old", "big", "little", "great", "grand", "royal", "blue", "red", "green", "black", "white", "golden", "north", "south", "east", "west", "live",
-    "good", "best", "city", "park", "lake", "river", "happy", "sunny", "dinner", "lunch", "jazz", "night", "day", "family", "friends", "friend", "home",
-)
-
-/**
- * Pure: how a person is named in a saved contact: the full name and the first name, as words. Null when the contact does
- * not look like a person: a display name of fewer than two words, or one with a business word (Inc, Cafe, The...). "Smith, John"
- * reads "John Smith"; punctuation around a word is dropped; a leading Dr or Mr is skipped. The first name is left out when it
- * is shorter than 3 letters or is an ordinary word.
- */
-fun personNames(displayName: String): List<String>? {
-    val reordered = if (',' in displayName) displayName.substringAfter(',').trim() + " " + displayName.substringBefore(',').trim() else displayName
-    val words = reordered.split(Regex("\\s+")).map { it.trim { c -> !c.isLetter() } }.filter { it.isNotEmpty() }
-    val given = words.dropWhile { it.lowercase() in HONORIFICS }
-    if (given.size < 2 || words.any { it.lowercase() in ORG_WORDS }) return null
-    val first = given.first()
-    return listOfNotNull(given.joinToString(" "), first.takeIf { it.length >= 3 && it.lowercase() !in FIRST_NAME_STOP }).distinct()
-}
-
-/**
- * Pure: the first name of a person among [displayNames] (the people who may be company: [recentContacts]) that [text]
- * mentions: the whole name or the first name, whole words, any case. Businesses and places in the contacts (see
- * [personNames]) never match. [text] is also read percent-decoded, so a name in a web address is found. Null when none.
- */
-fun namesIn(text: String, displayNames: List<String>): String? {
-    val decoded = runCatching { java.net.URLDecoder.decode(text, Charsets.UTF_8) }.getOrDefault(text)
-    val haystacks = listOf(text, decoded).distinct().map { it.lowercase() }
-    return displayNames.mapNotNull(::personNames).flatten().firstOrNull { n ->
-        val rx = Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)")
-        haystacks.any { rx.containsMatchIn(it) }
-    }
 }
 
 /** The ref of the choices card of an outing suggestion: `outing:<idea id>`. */
@@ -360,7 +321,7 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdea
         "\nSteps. 1. list_outing_ideas, and pick an open idea that fits a slot. " +
             "2. If none fits, and the profile or memory tell you the person's city and what they enjoy, delegate ONE helper with tools [\"web_search\"] " +
             "to find up to 3 events in that window. Its brief is built only from the city, the time window, their interests and the " +
-            "\"kinds\" lines of list_outing_ideas (kinds the person liked or declined, no names): never a name, mail, address or anything else private. " +
+            "\"kinds\" lines of list_outing_ideas (kinds the person liked or declined); names, the city, venues and interests are fine, but never a phone number, email address, street address, account or booking number or any other identifier (the server checks the brief). " +
             "Ask for title, time, place and page address of each. If the city or interests are unknown, skip the web search and use saved ideas only. " +
             "3. Nothing fits: send nothing. " +
             "4. Every suggestion is a saved idea: save_outing_idea for a found event first (what with no names, a kind, company in withContactId). " +

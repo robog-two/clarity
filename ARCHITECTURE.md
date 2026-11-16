@@ -565,14 +565,15 @@ place, kind, window, contact, source record, url, `state` open, used or declined
 through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
 `list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
 a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
-(the sources-card rule), a contact outside the 90 days, and the names of people who may be company in the idea's text or address (company goes in
-`withContactId`; only contacts that look like people count, never businesses or places such as "The Hive" or "Live Nation", and a first name is matched only when it is not an ordinary word). A declined idea stays declined: saving it again (same wording or page) is refused
+(the sources-card rule) and a contact outside the 90 days. Company goes in `withContactId` and never in the idea's
+text (a prompt rule). The kind (`category`) is short free text, at most 40 characters. A declined idea stays declined: saving it again (same wording or page) is refused
 and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
 
 If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
 tools, so its brief is all it knows: the city (from the profile or memory), the time window, the
 interests, and the "kinds liked / kinds declined" lines of `list_outing_ideas` (a separate summary of
-categories only, no idea text and no names). When the city or interests are unknown the lead skips
+the kinds only, never idea text); names, venues and the city are fine in a brief, identifiers are not
+(see the web search section: the brief is checked before the helper starts). When the city or interests are unknown the lead skips
 the web search and offers saved ideas only. The helper searches and fetches pages in its own run; only
 its short result (up to 3 events) returns to the lead, which saves the one it picks as an idea first.
 
@@ -581,7 +582,10 @@ Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sourc
 `look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
 outing suggestions. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
 `send_to_user`, and any post with a choices ref starting `outing:` goes through it whatever its kind; a
-malformed ref (anything but `outing:` plus a lower-case uuid) is refused. The idea must be saved, open
+malformed ref (anything but `outing:` plus a lower-case uuid, prefix in any case) is refused, and the gate fails
+closed: cards that cannot be read in a look_forward, or anywhere mentioning `outing:`, are refused. A reserved offer is
+released when the post fails, but only if no feed item exists for the call or carries the idea's ref, and also on
+cancellation (`NonCancellable`). (Lane 2's `plan:<id>` refs must be lower-case uuids to reach the lead.) The idea must be saved, open
 and not offered before (a re-run of the same tool call is let through; the feed dedups it), and at most
 2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
 (`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
@@ -590,7 +594,7 @@ win. A `look_forward` post with no outing ref is refused in every turn, and the 
 open, and a declined idea never comes back, in every turn. In a turn the person started
 (`RunScope.startedByPerson`, not a job turn they interrupted) the weekly budget never applies, tainted
 or not (reading `list_outing_ideas` taints a turn), since they asked; such an offer is recorded but
-flagged `suggested_unprompted = false` and not counted. Only in such a turn that has read nothing
+flagged `suggested_unprompted = false` and not counted. Such a turn may make at most 2 offers. Only in such a turn that has read nothing
 untrusted may an open idea already offered be shown again.
 
 A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
@@ -700,6 +704,15 @@ under ZDR) is not offered.
   every guarded action, the browser, the vault and credentials and saved results are dropped (and
   named in the `delegate` answer), so a query can only carry what the task says. The stored tool list
   keeps `web_search`, so a resumed run gets it back.
+- **No identifiers in the brief.** Names, the city, venues and interests may go to the open web; phone
+  numbers, email addresses, street addresses, account or booking numbers and similar identifiers may
+  not. The lead's prompt and the `delegate` description say so, and `delegate` asks the decision model
+  (Decision-1, `agent/SearchBriefCheck.kt`) one question over the brief and done criteria, quoted as
+  untrusted data: "does this contain a phone number, email address, street address, account or booking
+  number, or other personal identifier?" At p >= 0.8 the delegate is refused with an error telling the
+  lead to remove the identifiers and retry. As with the other Decision-1 gates it fails open (no
+  decision model, a failed call or no answer lets the brief go, logged). The pure `searchBriefRefusal`
+  maps the verdict to the refusal.
 - **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
   as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
   per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),

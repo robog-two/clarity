@@ -8,6 +8,8 @@ import kotlin.coroutines.coroutineContext
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +34,7 @@ import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.feed.Card
 import org.jetbrains.exposed.v1.core.Op
+import org.jetbrains.exposed.v1.core.TextColumnType
 import org.jetbrains.exposed.v1.core.QueryBuilder
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.SortOrder
@@ -165,6 +168,13 @@ class ExposedOutingStore(private val database: Database, private val clock: Cloc
     override suspend fun release(id: String, call: String?) {
         val uuid = Uuid.parseOrNull(id) ?: return
         database.tx {
+            // A post that reached the feed (found by its tool call key, or by this idea's ref on a card) stands: the
+            // reservation stays, so a cancellation after the post cannot make the idea offerable again.
+            val posted = exec(
+                "SELECT 1 FROM feed_item WHERE client_input_id = ? OR cards::text LIKE ? LIMIT 1",
+                listOf(TextColumnType() to ("tool:" + call.orEmpty()), TextColumnType() to "%\"ref\":\"outing:$id\"%"),
+            ) { rs -> rs.next() } == true
+            if (posted) return@tx
             OutingIdeas.update({ (OutingIdeas.id eq uuid) and (if (call == null) OutingIdeas.suggestedCall.isNull() else OutingIdeas.suggestedCall eq call) }) {
                 it[suggestedAt] = null
                 it[suggestedCall] = null
@@ -260,7 +270,6 @@ class ExposedOutingPeople(private val database: Database) : OutingPeople {
 
 private const val MAX_WHAT = 300
 private const val MAX_FIELD = 200
-private const val MAX_KIND = 40
 
 /** The lead's outing tools: it saves ideas it spots or finds, lists them, and records the answer. */
 @Inject
@@ -279,7 +288,7 @@ class OutingTools(
     class SaveIdeaInput(
         @Description("What the outing is, with no people's names: \"Jazz night at the Blue Room\", \"dinner at the new place\". Company goes in withContactId.") val what: String,
         @Description("Where, if known.") val place: String? = null,
-        @Description("The kind of outing in one or two generic words (live music, dinner, hike, museum), never a name or place: later searches are built from these.") val category: String? = null,
+        @Description("The kind of outing in one or two generic words (live music, dinner, hike, museum), at most $MAX_KIND_CHARS characters. Later searches are built from these.") val category: String? = null,
         @Description("Earliest time it can happen, the person's local time, if it is bound to a date. $LOCAL_HINT") val from: String? = null,
         @Description("Latest time it can happen (an event's end), local time like `from`.") val until: String? = null,
         @Description("The contact id (from search_contacts) of a person to bring. Only people the person messaged in the last 90 days; nobody else.") val withContactId: String? = null,
@@ -302,13 +311,8 @@ class OutingTools(
             return@tool ToolResult.Error("`url` must be an http(s) address.")
         }
         val place = input.place?.trim()?.take(MAX_FIELD)?.ifEmpty { null }
-        val category = input.category?.trim()?.ifEmpty { null }
-        if (category != null && (category.length > MAX_KIND || '@' in category || category.any(Char::isDigit))) {
-            return@tool ToolResult.Error("`category` is the kind of outing in one or two generic words (live music, dinner, hike), at most $MAX_KIND characters, no names or numbers.")
-        }
-        val company = people.recent(clock.now())
-        namesIn("$what ${place.orEmpty()} ${category.orEmpty()} ${url.orEmpty()}", company.map { it.name })?.let {
-            return@tool ToolResult.Error("The idea names \"$it\", someone the person may bring. Put them in `withContactId` and rephrase the text without the name.")
+        val category = input.category?.trim()?.ifEmpty { null }?.also {
+            if (it.length > MAX_KIND_CHARS) return@tool ToolResult.Error("`category` is the kind of outing in one or two words, at most $MAX_KIND_CHARS characters.")
         }
         ideaRefusal(what, url, store.all())?.let { return@tool ToolResult.Error(it) }
         val from = input.from?.takeIf { it.isNotBlank() }?.let { readToolTime("from", it, zone).fold({ e -> return@tool ToolResult.Error(e) }, { t -> t }) }
@@ -325,7 +329,7 @@ class OutingTools(
         }
         val withContact = input.withContactId?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
             val parsed = Uuid.parseOrNull(raw)?.toString() ?: return@tool ToolResult.Error("`withContactId` is not a contact id: \"$raw\".")
-            if (company.none { it.id == parsed }) {
+            if (people.recent(clock.now()).none { it.id == parsed }) {
                 return@tool ToolResult.Error("Only people the person exchanged messages with in the last 90 days can be company. Save the idea without `withContactId`.")
             }
             parsed
@@ -393,22 +397,31 @@ class OutingTools(
 
     /**
      * The server is the authority on outing suggestions: [send] (`send_to_user`) is run only when its cards pass. Any
-     * post with a choices card whose `ref` starts with `outing:` goes through the gate, whatever its kind, and a
-     * malformed ref is refused. The idea must be saved, open and not offered before, and at most [SUGGESTIONS_PER_WEEK]
-     * other ideas may have been offered unprompted in 7 days; the reservation is atomic ([OutingStore.reserve]) and
-     * is taken back if the post fails. A look_forward post with no outing ref is refused in every turn. In a turn the
-     * person started ([RunScope.startedByPerson]), tainted or not, the weekly budget does not apply and the offer is
-     * not counted: they asked. Only if that turn has also read nothing untrusted may an open idea already offered be
-     * shown again. A job turn the person interrupted gets none of this.
+     * post with a choices card whose `ref` starts with `outing:` (any case) goes through the gate, whatever its kind; a
+     * ref that is not exactly `outing:` plus a lower-case uuid is refused, and so is a post whose cards cannot be read
+     * when it is a look_forward or mentions `outing:` anywhere (fail closed). The idea must be saved, open and not offered
+     * before, and at most [SUGGESTIONS_PER_WEEK] other ideas may have been offered unprompted in 7 days; the reservation is
+     * atomic ([OutingStore.reserve]). If the post fails it is taken back, but never once the post reached the feed (see
+     * [OutingStore.release]), also on cancellation. A look_forward post with no outing ref is refused in every turn. In a
+     * turn the person started ([RunScope.startedByPerson]), tainted or not, the weekly budget does not apply and the offer
+     * is not counted: they asked; such a turn may make at most [MAX_OFFERS_PER_PERSON_TURN] offers. Only in such a turn
+     * that has read nothing untrusted may an open idea already offered be shown again. A job turn the person interrupted
+     * gets none of this.
      */
     fun gateSuggestions(send: Tool, scope: RunScope?): Tool = object : Tool by send {
         override suspend fun invoke(input: JsonObject): ToolResult {
-            val cards = runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(Card.serializer()), input["cards"] ?: return send.invoke(input)) }
-                .getOrNull() ?: return send.invoke(input)
-            val refs = cards.filterIsInstance<Card.Choices>().mapNotNull { it.ref?.trim() }.filter { it.startsWith(OUTING_REF_PREFIX) }
+            val lookForward = (input["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "look_forward"
+            val cards = input["cards"]?.let { runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(Card.serializer()), it) }.getOrNull() }
+            if (cards == null) {
+                return if (lookForward || input.toString().contains(OUTING_REF_PREFIX, ignoreCase = true)) {
+                    ToolResult.Error("The cards could not be read. Send valid cards; an outing suggestion is a look_forward with a choices card whose ref is \"outing:<idea id>\".")
+                } else {
+                    send.invoke(input)
+                }
+            }
+            val refs = cards.filterIsInstance<Card.Choices>().mapNotNull { it.ref?.trim() }.filter { it.startsWith(OUTING_REF_PREFIX, ignoreCase = true) }
             val personTurn = scope?.startedByPerson == true
             val reshow = personTurn && !scope.untrusted
-            val lookForward = (input["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "look_forward"
             if (refs.isEmpty()) {
                 return if (lookForward) {
                     ToolResult.Error("A look_forward message is an outing suggestion: save the outing with save_outing_idea, then post it with a choices card whose ref is \"outing:<idea id>\".")
@@ -417,7 +430,10 @@ class OutingTools(
                 }
             }
             val ideaId = refs.singleOrNull()?.let(::outingIdeaOf)
-                ?: return ToolResult.Error("The ref of an outing card is exactly \"outing:<idea id>\", one per message, with the id from save_outing_idea.")
+                ?: return ToolResult.Error("The ref of an outing card is exactly \"outing:<idea id>\" (lower case), one per message, with the id from save_outing_idea.")
+            if (personTurn && scope.offersThisTurn.get() >= MAX_OFFERS_PER_PERSON_TURN) {
+                return ToolResult.Error("$MAX_OFFERS_PER_PERSON_TURN outings were already offered in this turn. Offer no more now.")
+            }
             val call = coroutineContext[ToolCallContext]?.let { "${it.runId}:${it.toolUseId}" }
             val reserved = when (val r = store.reserve(ideaId, clock.now(), call, personTurn, reshow)) {
                 is Reservation.Refused -> return ToolResult.Error(r.reason)
@@ -426,10 +442,11 @@ class OutingTools(
             val result = try {
                 send.invoke(input)
             } catch (e: Throwable) {
-                if (reserved.fresh) store.release(ideaId, call)
+                if (reserved.fresh) withContext(NonCancellable) { store.release(ideaId, call) }
                 throw e
             }
-            if (result !is ToolResult.Ok && reserved.fresh) store.release(ideaId, call)
+            if (result !is ToolResult.Ok && reserved.fresh) withContext(NonCancellable) { store.release(ideaId, call) }
+            if (result is ToolResult.Ok) scope?.offersThisTurn?.incrementAndGet()
             return result
         }
     }

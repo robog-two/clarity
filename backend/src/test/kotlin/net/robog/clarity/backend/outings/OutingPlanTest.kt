@@ -315,47 +315,25 @@ class OutingPlanTest : FunSpec({
         suggestionRefusal(idea.copy(state = IdeaState.DECLINED), spent, now, personTurn = true, reshow = true)!! shouldContain "declined"
     }
 
-    test("the brief for a web search holds kinds only, and a name in an idea's text is found") {
+    test("the kinds lines hold kinds only, newest first, each once, cut short") {
         fun idea(what: String, kind: String?, state: IdeaState, day: Int) =
             SavedIdea("i$day", what, null, kind, null, null, null, null, null, state, now + day.days)
         val (liked, declined) = kindsSummary(
             listOf(
                 idea("Gig with Sam Example", "Live Music", IdeaState.USED, 1), idea("Dinner", "dinner", IdeaState.USED, 2),
                 idea("Opera", "opera", IdeaState.DECLINED, 3), idea("Another", "live music", IdeaState.DECLINED, 4), idea("Open one", "hike", IdeaState.OPEN, 5),
+                idea("Walk", null, IdeaState.USED, 6), idea("Long", "x".repeat(100), IdeaState.DECLINED, 7),
             ),
         )
         liked shouldBe listOf("dinner", "live music")
-        declined shouldBe listOf("live music", "opera")
-        (liked + declined).none { "sam" in it.lowercase() } shouldBe true
-        namesIn("Dinner with Sam Example at Luigi's", listOf("Sam Example", "Pat Example")) shouldBe "Sam Example"
-        namesIn("dinner with sam", listOf("Sam Example")) shouldBe "Sam" // a first name is enough
-        namesIn("Dinner with Example Inc", listOf("Sam Example")) shouldBe null // a last name alone is not
-        namesIn("Jazz at the Blue Room", listOf("Pat Example")) shouldBe null // a venue is not the company
-        namesIn("Samurai exhibit", listOf("Sam Example")) shouldBe null // whole words only
-        namesIn("jazz night", listOf("Sam Example", "Al Example")) shouldBe null // a first name under 3 letters is not matched
-        namesIn("https://example.com/events/sam-and-friends", listOf("Sam Example")) shouldBe "Sam"
-        // businesses and places among the contacts never block ordinary words
-        namesIn("dinner at the hive, then live music", listOf("The Hive", "Live Nation", "Bill", "Blue Room Cafe", "Quiet Cafe Ltd")) shouldBe null
-        namesIn("pay the bill", listOf("Bill")) shouldBe null // one word is not a person's name
-        personNames("Live Nation") shouldBe null
-        personNames("The Hive") shouldBe null
-        personNames("Bill") shouldBe null
-        personNames("Acme Records Inc") shouldBe null
-        // a person whose first name is an ordinary word is found by the whole name only
-        namesIn("a bill for lunch", listOf("Bill Smith")) shouldBe null
-        namesIn("lunch with bill smith", listOf("Bill Smith")) shouldBe "Bill Smith"
-        // "Smith, John" is John Smith, punctuation and a title fall away
-        personNames("Smith, John") shouldBe listOf("John Smith", "John")
-        namesIn("dinner with john", listOf("Smith, John")) shouldBe "John"
-        personNames("Dr. Pat Example") shouldBe listOf("Pat Example")
-        personNames("Mr. Sam Example,") shouldBe listOf("Sam Example", "Sam")
-        // the text is read percent-decoded
-        namesIn("https://example.com/events?with=Sam%20Example", listOf("Sam Example")) shouldBe "Sam Example"
-        namesIn("https://example.com/dinner-with-%53am", listOf("Sam Example")) shouldBe "Sam"
+        declined shouldBe listOf("x".repeat(MAX_KIND_CHARS), "live music", "opera")
+        // the idea's own text never comes out
+        (liked + declined).none { "sam" in it } shouldBe true
         // strict ref
         outingIdeaOf("outing:3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6") shouldBe null
         outingIdeaOf("outing:----------------------------------------") shouldBe null
         outingIdeaOf("outing:3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6cc") shouldBe null
+        outingIdeaOf("Outing:3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6c") shouldBe null
         net.robog.clarity.backend.agent.answeringNote("outing:----------------------------------------") shouldBe null
     }
 

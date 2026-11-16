@@ -236,12 +236,11 @@ class OutingDbTest : FunSpec({
 
         // company only from the last 90 days, no names in the text, and a source the run has read
         rig.call("save_outing_idea", "what" to "Dinner at the new place", "withContactId" to quiet).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "90 days"
-        rig.call("save_outing_idea", "what" to "Dinner with Sam Example").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
         rig.call("save_outing_idea", "what" to "Dinner at the new place", "sourceId" to Uuid.random().toString()).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No record"
         rig.call("save_outing_idea", "what" to "Dinner at the new place", "sourceId" to samMail).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "have not read"
         rig.read("""[{"id":"$samMail","subject":"Dinner?"}]""")
         rig.call(
-            "save_outing_idea", "what" to "Dinner at the new place", "category" to "dinner", "place" to "Main Street",
+            "save_outing_idea", "what" to "Dinner at the new place", "category" to "food_drink", "place" to "Main Street",
             "withContactId" to sam, "sourceId" to samMail,
         ).shouldBeInstanceOf<ToolResult.Ok>()
 
@@ -271,9 +270,9 @@ class OutingDbTest : FunSpec({
 
     test("every suggestion is a saved open idea, the server counts two a week, and the scout counts a little less") {
         val rig = Rig(database, now, settings)
-        val a = rig.saveIdea("Jazz night", "category" to "live music")
-        val b = rig.saveIdea("Pottery class", "category" to "class")
-        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        val a = rig.saveIdea("Jazz night", "category" to "music")
+        val b = rig.saveIdea("Pottery class", "category" to "learning")
+        val c = rig.saveIdea("Hike at the lake", "category" to "outdoors")
 
         rig.suggest(a, ref = null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
         rig.suggest(Uuid.random().toString()).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "save_outing_idea"
@@ -304,7 +303,7 @@ class OutingDbTest : FunSpec({
 
     test("a declined idea is never offered again, and nothing is paused") {
         val rig = Rig(database, now, settings)
-        val id = rig.saveIdea("Jazz night at the Blue Room", "category" to "live music", "url" to "https://example.com/jazz")
+        val id = rig.saveIdea("Jazz night at the Blue Room", "category" to "music", "url" to "https://example.com/jazz")
         rig.fire()
         rig.due().single().instruction shouldContain "Saved ideas waiting: 1"
         rig.suggest(id).shouldBeInstanceOf<ToolResult.Ok>()
@@ -314,7 +313,7 @@ class OutingDbTest : FunSpec({
         rig.ideas.all().single().state shouldBe IdeaState.DECLINED
         val listed = rig.call("list_outing_ideas").shouldBeInstanceOf<ToolResult.Ok>().content
         listed shouldContain "Open ideas:\n(none)"
-        listed shouldContain "Kinds declined: live music"
+        listed shouldContain "Kinds declined: music"
         listed shouldNotContain "Jazz night" // what is for the lead's own list only while open; the brief lines hold kinds
 
         // it cannot be offered again, nor saved again in other words or from the same page
@@ -341,7 +340,7 @@ class OutingDbTest : FunSpec({
         rig.call("update_outing_idea", "id" to Uuid.random().toString(), "state" to "declined").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No idea"
         rig.call("save_outing_idea", "what" to "Pottery class").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "calendar"
         rig.call("save_outing_idea", "what" to "x", "url" to "javascript:alert(1)").shouldBeInstanceOf<ToolResult.Error>()
-        rig.call("save_outing_idea", "what" to "Pottery 2", "category" to "dinner at 8pm").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "generic words"
+        rig.call("save_outing_idea", "what" to "Pottery 2", "category" to "x".repeat(41)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "at most 40"
         rig.ideas.all().filter { it.state == IdeaState.OPEN }.shouldBeEmpty()
     }
 
@@ -385,7 +384,7 @@ class OutingDbTest : FunSpec({
     }
     test("an idea is offered once; a re-run of the same call is the same post; a ref gates any kind") {
         val rig = Rig(database, now, settings)
-        val a = rig.saveIdea("Jazz night", "category" to "live music")
+        val a = rig.saveIdea("Jazz night", "category" to "music")
         rig.suggest(a, toolUseId = "use-1").shouldBeInstanceOf<ToolResult.Ok>()
         // the same call again (a crash and re-run): let through, and the feed keeps one post
         rig.suggest(a, toolUseId = "use-1").shouldBeInstanceOf<ToolResult.Ok>()
@@ -393,18 +392,18 @@ class OutingDbTest : FunSpec({
         // a new call about the same idea is a re-offer
         rig.suggest(a, toolUseId = "use-2").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
         // a finding carrying an outing ref is gated too: with the budget spent it is refused
-        val b = rig.saveIdea("Pottery class", "category" to "class")
-        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        val b = rig.saveIdea("Pottery class", "category" to "learning")
+        val c = rig.saveIdea("Hike at the lake", "category" to "outdoors")
         rig.suggest(b, kind = "finding").shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(c, kind = "finding").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
     }
 
     test("when the person asks for something to do, neither the ref nor the budget applies, and the offer is still remembered") {
         val rig = Rig(database, now, settings)
-        val a = rig.saveIdea("Jazz night", "category" to "live music")
-        val b = rig.saveIdea("Pottery class", "category" to "class")
-        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
-        val d = rig.saveIdea("Museum visit", "category" to "museum")
+        val a = rig.saveIdea("Jazz night", "category" to "music")
+        val b = rig.saveIdea("Pottery class", "category" to "learning")
+        val c = rig.saveIdea("Hike at the lake", "category" to "outdoors")
+        val d = rig.saveIdea("Museum visit", "category" to "art_museums")
         rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(c).shouldBeInstanceOf<ToolResult.Error>() // unprompted: the week's budget is used
@@ -417,27 +416,29 @@ class OutingDbTest : FunSpec({
         rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
         rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Ok>() // an open idea already offered may be shown again when asked
         rig.call("update_outing_idea", "id" to d, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.answeringScope.startTurn(untrusted = false, requestedByUser = true) // a new turn
         rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
         // and the scout still sees two unprompted offers
         rig.fire(at = now + 1.hours)
         rig.due().shouldBeEmpty()
     }
 
-    test("names are refused only for people who may be company, in the text or the address") {
+    test("the kind is short free text, and only kinds reach the kinds lines") {
         val rig = Rig(database, now, settings)
-        rig.person("Sam Example", "sam@example.com")
-        rig.mail("sam@example.com", daysAgo = 5)
-        rig.person("Blue Room", "blueroom@example.com") // a saved contact, not messaged lately
-        rig.call("save_outing_idea", "what" to "dinner with Sam").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
-        rig.call("save_outing_idea", "what" to "Gig", "url" to "https://example.com/sam-and-friends").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
-        rig.call("save_outing_idea", "what" to "Jazz at the Blue Room").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.call("save_outing_idea", "what" to "Gig", "category" to "x".repeat(41)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "at most 40"
+        val id = rig.saveIdea("Gig with the band", "category" to "Live Music")
+        rig.call("update_outing_idea", "id" to id, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
+        val listed = rig.call("list_outing_ideas").shouldBeInstanceOf<ToolResult.Ok>().content
+        listed shouldContain "Kinds declined: live music"
+        listed shouldNotContain "band"
     }
+
     test("a turn the person started skips the weekly budget even after reading ideas; a job turn does not; re-showing needs an untainted person turn") {
         val rig = Rig(database, now, settings)
-        val a = rig.saveIdea("Jazz night", "category" to "live music")
-        val b = rig.saveIdea("Pottery class", "category" to "class")
-        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
-        val d = rig.saveIdea("Museum visit", "category" to "museum")
+        val a = rig.saveIdea("Jazz night", "category" to "music")
+        val b = rig.saveIdea("Pottery class", "category" to "learning")
+        val c = rig.saveIdea("Hike at the lake", "category" to "outdoors")
+        val d = rig.saveIdea("Museum visit", "category" to "art_museums")
         rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>() // the week's unprompted budget is used
 
@@ -504,5 +505,77 @@ class OutingDbTest : FunSpec({
         rig2.postVia(failing, "outing:$b").shouldBeInstanceOf<ToolResult.Error>().message shouldBe "could not post"
         rig2.ideas.all().first { it.id == b }.suggestedAt shouldBe null
         rig2.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
+    }
+    test("a post that failed gives the reservation back, a post that reached the feed keeps it, also on cancellation") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        val failing = rig.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by rig.own.sendToUser(rig.leadScope) {
+                override suspend fun invoke(input: JsonObject): ToolResult = ToolResult.Error("could not post")
+            },
+            rig.leadScope,
+        )
+        rig.postVia(failing, "outing:$a").shouldBeInstanceOf<ToolResult.Error>().message shouldBe "could not post"
+        rig.ideas.all().single().suggestedAt shouldBe null
+
+        // cancelled before anything was posted: released too, even though the coroutine is cancelled
+        val cancelledEarly = rig.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by rig.own.sendToUser(rig.leadScope) {
+                override suspend fun invoke(input: JsonObject): ToolResult = throw kotlinx.coroutines.CancellationException("stopped")
+            },
+            rig.leadScope,
+        )
+        runCatching { rig.postVia(cancelledEarly, "outing:$a") }.exceptionOrNull().shouldBeInstanceOf<kotlinx.coroutines.CancellationException>()
+        rig.ideas.all().single().suggestedAt shouldBe null
+
+        // cancelled after the post reached the feed: the idea stays reserved, so it is not offered twice
+        val real = rig.own.sendToUser(rig.leadScope)
+        val cancelledLate = rig.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by real {
+                override suspend fun invoke(input: JsonObject): ToolResult {
+                    real.invoke(input)
+                    throw kotlinx.coroutines.CancellationException("stopped after the post")
+                }
+            },
+            rig.leadScope,
+        )
+        runCatching { rig.postVia(cancelledLate, "outing:$a", toolUseId = "late-1") }.exceptionOrNull().shouldBeInstanceOf<kotlinx.coroutines.CancellationException>()
+        rig.feed.page(0, 20).items.filter { it.kind == MessageKind.LOOK_FORWARD } shouldHaveSize 1
+        rig.ideas.all().single().suggestedAt shouldBe now
+        // the same idea from another call is a re-offer, and the retry of the same call still goes through
+        rig.postVia(rig.sendToUser, "outing:$a", toolUseId = "other").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
+        rig.postVia(rig.sendToUser, "outing:$a", toolUseId = "late-1").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.feed.page(0, 20).items.filter { it.kind == MessageKind.LOOK_FORWARD } shouldHaveSize 1
+    }
+
+    test("a turn the person started may make two offers and no more, however many ideas it read") {
+        val rig = Rig(database, now, settings)
+        val ids = (1..3).map { rig.saveIdea("Outing $it") }
+        val person = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true); it.taint() }
+        rig.postVia(rig.sendAs(person), "outing:${ids[0]}").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.postVia(rig.sendAs(person), "outing:${ids[1]}").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.postVia(rig.sendAs(person), "outing:${ids[2]}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered in this turn"
+        rig.ideas.all().first { it.id == ids[2] }.suggestedAt shouldBe null
+        rig.ideas.offeredSince(now - 7.days).shouldBeEmpty() // none counted against the unprompted budget
+        // the next turn starts again
+        person.startTurn(untrusted = false, requestedByUser = true)
+        rig.postVia(rig.sendAs(person), "outing:${ids[2]}").shouldBeInstanceOf<ToolResult.Ok>()
+    }
+
+    test("the gate fails closed: unreadable cards, a prefix in another case, or an outing mention it cannot parse") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        suspend fun raw(vararg pairs: Pair<String, kotlinx.serialization.json.JsonElement>): ToolResult =
+            withContext(ToolCallContext(rig.run, "call-${Uuid.random()}")) { rig.sendToUser.invoke(JsonObject(mapOf(*pairs))) }
+        val prim = kotlinx.serialization.json.JsonPrimitive("look_forward")
+        raw("kind" to prim).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "could not be read"
+        raw("kind" to prim, "cards" to kotlinx.serialization.json.JsonPrimitive("outing:$a")).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "could not be read"
+        raw("kind" to kotlinx.serialization.json.JsonPrimitive("finding"), "cards" to kotlinx.serialization.json.JsonPrimitive("Outing:$a"))
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "could not be read"
+        listOf("Outing:$a", "OUTING:$a", " outing:$a ".replace("outing", "Outing")).forEach { ref ->
+            rig.postVia(rig.sendToUser, ref, kind = "finding").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "lower case"
+        }
+        rig.ideas.all().single().suggestedAt shouldBe null
+        rig.feed.page(0, 20).items.shouldBeEmpty()
     }
 })

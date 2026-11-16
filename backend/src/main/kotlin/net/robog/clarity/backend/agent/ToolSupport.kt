@@ -50,6 +50,9 @@ class RunScope(
 
     private val personTurnFlag = AtomicBoolean(false)
 
+    /** Outing suggestions posted in the current turn (a turn the person started may make only a few). */
+    val offersThisTurn = java.util.concurrent.atomic.AtomicInteger(0)
+
     /**
      * Whether the person started this turn (their words were in its first batch), as opposed to a job or nudge turn they
      * interrupted later ([userAsked] sets [requestedByUser] but not this).
@@ -68,6 +71,7 @@ class RunScope(
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
         personTurnFlag.set(requestedByUser)
+        offersThisTurn.set(0)
         turn.reset()
     }
 

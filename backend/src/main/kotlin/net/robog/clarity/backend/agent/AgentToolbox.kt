@@ -73,12 +73,14 @@ class HelperTools(
     private val tasks: TaskStore,
     private val runs: RunStore,
     private val gate: FailureGate,
+    /** Asks the decision model whether a web search brief carries identifiers; by default nothing is checked. */
+    private val searchBrief: SearchBriefCheck = SearchBriefCheck.OFF,
 ) {
     @Serializable
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
         val task: String,
-        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named (plus ask_lead, which every helper has), so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task.")
+        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named (plus ask_lead, which every helper has), so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task, but never a phone number, email address, street address, account or booking number or other identifier (the brief is checked).")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
         @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
@@ -193,9 +195,12 @@ class HelperTools(
             val named = input.taskId?.trim()?.ifEmpty { null }
             // Resolved to the task's full id, so a shortened id links the same task update_task touched.
             val taskId = named?.let { tasks.get(TaskId(it))?.id }
+            // A helper with web search sends its brief to the open web: no phone numbers, addresses or account numbers in it.
+            val identifiers = if (WEB_SEARCH in input.tools.orEmpty()) searchBrief.refusal((listOf(input.task) + input.doneWhen.orEmpty()).joinToString("\n")) else null
             when {
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
+                identifiers != null -> ToolResult.Error(identifiers)
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 // The done criteria are part of the brief too.
                 !input.doneWhen.isNullOrEmpty() && gate.check(GateKind.BRIEF, "delegate", input.doneWhen.joinToString("\n")) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
