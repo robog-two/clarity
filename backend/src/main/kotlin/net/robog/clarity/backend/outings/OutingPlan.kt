@@ -10,9 +10,12 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.plus
+import net.robog.clarity.backend.agent.CardRefs
 import net.robog.clarity.backend.agent.agentTime
 import net.robog.clarity.backend.governance.occurrences
 import net.robog.clarity.backend.persistence.handleKey
+import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.TimeBlock
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.time.LocalTimes
@@ -270,11 +273,8 @@ fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List
 /** The ref of the choices card of an outing suggestion: `outing:<idea id>`. */
 const val OUTING_REF_PREFIX = "outing:"
 
-/** Pure: the idea id in [ref] (`outing:<id>`), or null when it is not an outing ref. */
-fun outingIdeaOf(ref: String?): String? =
-    ref?.trim()?.takeIf { OUTING_REF.matches(it) }?.removePrefix(OUTING_REF_PREFIX)
-
-private val OUTING_REF = Regex("^outing:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+/** Pure: the idea id in [ref] (`outing:<id>`, read by the one grammar in [CardRefs]), or null when it is not an outing ref. */
+fun outingIdeaOf(ref: String?): String? = CardRefs.parse(ref)?.takeIf { it.kind == CardRefs.Kind.OUTING }?.id
 
 /**
  * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved idea in every turn
@@ -337,3 +337,18 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdea
 }
 
 private const val MAX_CONTACTS_SHOWN = 15
+
+/**
+ * Pure: the evening summary's "Coming up" without the outing suggestions the person turned down: those whose idea is
+ * declined, or whose choices card was answered with its "Not this time" option. Unanswered and accepted ones stay.
+ */
+fun withoutDeclinedOutings(comingUp: List<FeedItem>, ideas: List<SavedIdea>): List<FeedItem> = comingUp.filterNot { item ->
+    item.cards.filterIsInstance<Card.Choices>().any { card ->
+        val idea = outingIdeaOf(card.ref)?.let { id -> ideas.firstOrNull { it.id.equals(id, ignoreCase = true) } }
+        val declinedByAnswer = card.chosen != null && card.options.any { it.reply == card.chosen && it.label.trim().equals(DECLINE_LABEL, ignoreCase = true) }
+        idea?.state == IdeaState.DECLINED || (card.ref != null && outingIdeaOf(card.ref) != null && declinedByAnswer)
+    }
+}
+
+/** The label of the option that turns an outing down. */
+const val DECLINE_LABEL = "Not this time"

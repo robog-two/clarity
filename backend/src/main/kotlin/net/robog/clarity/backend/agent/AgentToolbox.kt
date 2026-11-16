@@ -278,6 +278,7 @@ class AgentToolbox(
     private val thirdParty: McpToolKit,
     private val attachmentTools: AttachmentTools,
     private val outings: net.robog.clarity.backend.outings.OutingTools,
+    private val refGate: CardRefGate,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -305,7 +306,7 @@ class AgentToolbox(
         if (forLead) addAll(nudges.all() + planItemTools.all())
         if (forLead) addAll(outings.all())
         if (forLead) add(thirdParty.suggestTool())
-    }.map { if (forLead && it.name == "send_to_user") outings.gateSuggestions(it, scope) else it }.let { guarded(scope, it) }
+    }.map { if (forLead && it.name == "send_to_user") outings.gateSuggestions(refGate.wrap(it), scope) else it }.let { guarded(scope, it) }
 
     /**
      * The lead's tools, all sent with every request. The lead gets no MCP tools (the browser, the
