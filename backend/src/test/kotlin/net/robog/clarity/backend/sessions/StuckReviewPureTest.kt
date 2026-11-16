@@ -53,15 +53,15 @@ class StuckReviewPureTest : FunSpec({
     context("1. two items at the same time each get their check-in") {
         test("covered means the same plan item") {
             val out = planAutoNudges(
-                listOf(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), PlanCheckIn(IfThen("it's 9:30", "dentist call"), dentist)),
+                listOf(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), PlanCheckIn(IfThen("it's 9:30", "dentist call", at = "09:30"), dentist)),
                 wed, zone, now, emptyList(), 0,
             )
             out.nudges.map { it.planItemId } shouldBe listOf("a", "b")
         }
         test("an earlier check-in for another item does not cover, one for the same item does") {
             val other = pending(at930, "x", item = "b", auto = true)
-            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec"), spec)), wed, zone, now, listOf(other), 0).nudges shouldHaveSize 1
-            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec"), spec)), wed, zone, now, listOf(pending(at930, "x", item = "a", auto = true)), 0).nudges.shouldBeEmpty()
+            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec)), wed, zone, now, listOf(other), 0).nudges shouldHaveSize 1
+            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec)), wed, zone, now, listOf(pending(at930, "x", item = "a", auto = true)), 0).nudges.shouldBeEmpty()
         }
     }
 
@@ -83,48 +83,25 @@ class StuckReviewPureTest : FunSpec({
         fun wanted(at: Instant, note: String, item: String? = "a") = AutoNudge(at, note, item)
         val old = pending(at930, "old note", item = "a", auto = true)
         test("the same check-in stays, nothing changes") {
-            val r = reconcileCheckIns(listOf(wanted(at930, "old note")), listOf(old))
+            val r = reconcileCheckIns(listOf(wanted(at930, "old note")), listOf(old), now)
             r.cancel.shouldBeEmpty()
             r.create.shouldBeEmpty()
         }
         test("replace at the same time: the old one is cancelled, the new one made") {
-            val r = reconcileCheckIns(listOf(wanted(at930, "new note")), listOf(old))
+            val r = reconcileCheckIns(listOf(wanted(at930, "new note")), listOf(old), now)
             r.cancel shouldBe listOf(old)
             r.create.single().note shouldBe "new note"
         }
         test("replace at a new time") {
-            val r = reconcileCheckIns(listOf(wanted(at930 + 60.minutes, "old note")), listOf(old))
+            val r = reconcileCheckIns(listOf(wanted(at930 + 60.minutes, "old note")), listOf(old), now)
             r.cancel shouldBe listOf(old)
             r.create.single().at shouldBe at930 + 60.minutes
         }
         test("a check-in no longer wanted is cancelled; follow-ups and the person's nudges are not in the set") {
-            reconcileCheckIns(emptyList(), listOf(old)).cancel shouldBe listOf(old)
+            reconcileCheckIns(emptyList(), listOf(old), now).cancel shouldBe listOf(old)
             (pending(at930, "later", item = "a", followUp = true).isPlan) shouldBe true
             (pending(at930, "mine").isPlan) shouldBe false
             (pending(at930, "x", auto = true).isPlan) shouldBe true
-        }
-    }
-
-    context("4/5. reading the time of a cue") {
-        test("more ways to say it") {
-            clockTimeIn("it's 9.30") shouldBe LocalTime(9, 30)
-            clockTimeIn("at noon") shouldBe LocalTime(12, 0)
-            clockTimeIn("at midnight") shouldBe LocalTime(0, 0)
-            clockTimeIn("between 9 and 10am") shouldBe LocalTime(9, 0)
-            clockTimeIn("between 9:30 and 11 am") shouldBe LocalTime(9, 30)
-            clockTimeIn("it's 3:30") shouldBe LocalTime(15, 30) // a bare 1 to 6 is afternoon
-            clockTimeIn("it's 7:30") shouldBe LocalTime(7, 30)
-            clockTimeIn("it's 14:00") shouldBe LocalTime(14, 0)
-            clockTimeIn("afternoon").shouldBeNull()
-            clockTimeIn("version 3.14.2 ships").shouldBeNull()
-        }
-        test("the cues with no time are listed so the lead can nudge itself") {
-            val out = planAutoNudges(
-                listOf(PlanCheckIn(IfThen("Dana emails", "it waits"), null), PlanCheckIn(IfThen("after lunch", "spec"), spec), PlanCheckIn(IfThen("it's 9:30", "spec"), spec)),
-                wed, zone, now, emptyList(), 0,
-            )
-            out.unscheduled shouldBe listOf("If Dana emails, then it waits.", "If after lunch, then spec.")
-            out.nudges shouldHaveSize 1
         }
     }
 
@@ -176,19 +153,19 @@ class StuckReviewPureTest : FunSpec({
 
     context("8. an if-then links only by id or by real overlap") {
         test("an unrelated call does not attach to the only priority") {
-            linkedItem(IfThen("it's 3pm", "call the dentist"), null, listOf(spec)).shouldBeNull()
-            linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec)).shouldBeNull()
+            linkedItem(IfThen("it's 3pm", "call the dentist", at = "15:00"), null, listOf(spec)).shouldBeNull()
+            linkedItem(IfThen("it's 9:30", "at my desk until 12", at = "09:30"), null, listOf(spec)).shouldBeNull()
         }
         test("the words of the item, nearly all of them, link it") {
-            linkedItem(IfThen("it's 9:30", "write the onboarding spec at my desk"), null, listOf(dentist, spec)) shouldBe spec
-            linkedItem(IfThen("it's 9:30", "write the spec"), null, listOf(spec)).shouldBeNull() // onboarding is missing
+            linkedItem(IfThen("it's 9:30", "write the onboarding spec at my desk", at = "09:30"), null, listOf(dentist, spec)) shouldBe spec
+            linkedItem(IfThen("it's 9:30", "write the spec", at = "09:30"), null, listOf(spec)).shouldBeNull() // onboarding is missing
         }
         test("ties link nothing; an explicit id always works") {
             val a = item("a", "call the dentist", wed)
             val b = item("b", "call the dentist office", wed)
-            linkedItem(IfThen("it's 9:30", "call the dentist office"), null, listOf(a, b)) shouldBe b
-            linkedItem(IfThen("it's 9:30", "call the dentist"), null, listOf(a.copy(id = "c"), a.copy(id = "d"))).shouldBeNull()
-            linkedItem(IfThen("it's 9:30", "anything"), "b", listOf(a, b)) shouldBe b
+            linkedItem(IfThen("it's 9:30", "call the dentist office", at = "09:30"), null, listOf(a, b)) shouldBe b
+            linkedItem(IfThen("it's 9:30", "call the dentist", at = "09:30"), null, listOf(a.copy(id = "c"), a.copy(id = "d"))).shouldBeNull()
+            linkedItem(IfThen("it's 9:30", "anything", at = "09:30"), "b", listOf(a, b)) shouldBe b
         }
     }
 
@@ -196,11 +173,11 @@ class StuckReviewPureTest : FunSpec({
         val person = (1..10).map { pending(Instant.parse("2026-03-05T12:00:00Z") + it.minutes * 20, "mine $it") }
         test("the person's ten pending reminders do not block a check-in, and are not counted in its day") {
             val planOnly = person.filter { it.isPlan }
-            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec"), spec)), wed, zone, now, planOnly, 0).nudges shouldHaveSize 1
+            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec)), wed, zone, now, planOnly, 0).nudges shouldHaveSize 1
         }
         test("check-ins have a cap of their own") {
             val full = (1..10).map { pending(Instant.parse("2026-03-05T12:00:00Z") + it.minutes * 20, "c$it", item = "x$it", auto = true) }
-            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec"), spec)), wed, zone, now, full, 0).skipped.single() shouldContain "already 10"
+            planAutoNudges(listOf(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec)), wed, zone, now, full, 0).skipped.single() shouldContain "already 10"
         }
     }
 
@@ -213,9 +190,9 @@ class StuckReviewPureTest : FunSpec({
         }
         test("the prep line, the check-in note and the wake-up say so") {
             stuckLine(stepped, wed) shouldContain "earlier first step: write the title"
-            planCheckInNote(IfThen("it's 9:30", "spec"), stepped, wed) shouldContain "Earlier first step: write the title."
-            planCheckInNote(IfThen("it's 9:30", "spec"), stepped.copy(firstStepOn = wed), wed) shouldContain "First step: write the title."
-            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "open the doc"), stepped, wed) shouldContain "First step: open the doc."
+            planCheckInNote(IfThen("it's 9:30", "spec", at = "09:30"), stepped, wed) shouldContain "Earlier first step: write the title."
+            planCheckInNote(IfThen("it's 9:30", "spec", at = "09:30"), stepped.copy(firstStepOn = wed), wed) shouldContain "First step: write the title."
+            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "open the doc", at = "09:30"), stepped, wed) shouldContain "First step: open the doc."
         }
     }
 

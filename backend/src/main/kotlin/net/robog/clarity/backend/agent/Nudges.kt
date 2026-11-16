@@ -89,6 +89,9 @@ fun combinedRefusal(pendingAll: Int, dayAll: Int): String? = when {
     else -> null
 }
 
+/** Why `cancel_nudge` cancels (the lead's own doing): a check-in cancelled so counts as settled and is not made again by a re-save. */
+const val AGENT_CANCEL_REASON = "cancelled by the agent"
+
 /** A nudge to be stored. */
 data class NewNudge(val at: Instant, val note: String, val planItemId: String? = null, val followUp: Boolean = false, val autoCheckIn: Boolean = false)
 
@@ -120,8 +123,12 @@ interface NudgeStore {
     /** The automatic check-ins (any status, follow-ups excluded) due in [from, until). */
     suspend fun autoCheckIns(from: Instant, until: Instant): List<Nudge>
 
-    /** Cancels the pending nudges [cancel] and stores [create], in one transaction; returns the new ones. */
-    suspend fun replaceCheckIns(cancel: List<NudgeId>, reason: String, create: List<NewNudge>): List<Nudge>
+    /**
+     * In one transaction, under a lock that serialises plan writers: cancels the nudges [cancel] that are STILL pending
+     * (one that fired in between is left, and no replacement is made for its item), then stores each of [create] that the
+     * combined and per-side limits still allow (counted again here; [dayOf] is the person's day of a moment). Returns the new ones.
+     */
+    suspend fun replaceCheckIns(cancel: List<NudgeId>, reason: String, create: List<NewNudge>, dayOf: (Instant) -> Pair<Instant, Instant>): List<Nudge>
 
     /** Plan nudges that fired in [from, until). */
     suspend fun countFiredPlan(from: Instant, until: Instant): Int
@@ -198,18 +205,35 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
         }.orderBy(NudgeTable.dueAt).map { it.toNudge() }
     }
 
-    override suspend fun replaceCheckIns(cancel: List<NudgeId>, reason: String, create: List<NewNudge>): List<Nudge> {
+    override suspend fun replaceCheckIns(
+        cancel: List<NudgeId>,
+        reason: String,
+        create: List<NewNudge>,
+        dayOf: (Instant) -> Pair<Instant, Instant>,
+    ): List<Nudge> {
         val now = clock.now()
         val ids = cancel.mapNotNull { it.uuidOrNull() }
         return database.tx {
-            if (ids.isNotEmpty()) {
-                NudgeTable.update({ (NudgeTable.id inList ids) and (NudgeTable.status eq PENDING) }) {
+            exec("SELECT pg_advisory_xact_lock(5202)")
+            val stillPending = NudgeTable.selectAll().where { (NudgeTable.id inList ids) and (NudgeTable.status eq PENDING) }.forUpdate().map { it[NudgeTable.id] }.toSet()
+            val lost = NudgeTable.selectAll().where { NudgeTable.id inList ids }.filter { it[NudgeTable.id] !in stillPending }.mapNotNull { it[NudgeTable.planItemId]?.toString() }.toSet()
+            if (stillPending.isNotEmpty()) {
+                NudgeTable.update({ NudgeTable.id inList stillPending.toList() }) {
                     it[status] = Nudge.Status.CANCELLED.wire()
                     it[NudgeTable.reason] = reason
                     it[resolvedAt] = now
                 }
             }
-            create.map { n ->
+            val planRow = NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp
+            create.filter { it.planItemId == null || it.planItemId !in lost }.mapNotNull { n ->
+                val (dayStart, dayEnd) = dayOf(n.at)
+                val live = NudgeTable.status inList listOf(PENDING, FIRED)
+                val inDay = (NudgeTable.dueAt greaterEq dayStart) and (NudgeTable.dueAt less dayEnd)
+                val pendingAll = NudgeTable.selectAll().where { NudgeTable.status eq PENDING }.count().toInt()
+                val pendingPlan = NudgeTable.selectAll().where { (NudgeTable.status eq PENDING) and planRow }.count().toInt()
+                val dayAll = NudgeTable.selectAll().where { live and inDay }.count().toInt()
+                val dayPlan = NudgeTable.selectAll().where { live and inDay and planRow }.count().toInt()
+                if (combinedRefusal(pendingAll, dayAll) != null || pendingPlan >= MAX_PENDING_NUDGES || dayPlan >= MAX_NUDGES_PER_DAY) return@mapNotNull null
                 val id = Uuid.random()
                 NudgeTable.insert {
                     it[NudgeTable.id] = id
@@ -480,7 +504,7 @@ class NudgeTools(
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
-        val after = nudges.cancel(NudgeId(input.id.trim()), "cancelled by the agent")
+        val after = nudges.cancel(NudgeId(input.id.trim()), AGENT_CANCEL_REASON)
             ?: return@tool ToolResult.Error("No nudge with id ${input.id}. See list_nudges.")
         when (after.status) {
             Nudge.Status.CANCELLED -> ToolResult.Ok("Nudge ${after.id.value} cancelled.")

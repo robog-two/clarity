@@ -124,25 +124,6 @@ class PlanItemsPureTest : FunSpec({
             prepInstruction(null) shouldNotContain "stuck"
         }
     }
-
-    context("clock times in an if-then cue") {
-        test("24 hour and am/pm forms") {
-            clockTimeIn("it's 9:30") shouldBe LocalTime(9, 30)
-            clockTimeIn("it's 14:05 and I'm at my desk") shouldBe LocalTime(14, 5)
-            clockTimeIn("it's 3pm") shouldBe LocalTime(15, 0)
-            clockTimeIn("it is 9:30 am") shouldBe LocalTime(9, 30)
-            clockTimeIn("it's 12:15 PM") shouldBe LocalTime(12, 15)
-            clockTimeIn("it's 12am") shouldBe LocalTime(0, 0)
-        }
-
-        test("no time, or something that is not one") {
-            clockTimeIn("Dana emails").shouldBeNull()
-            clockTimeIn("I have 3 emails open").shouldBeNull()
-            clockTimeIn("it's 25:00").shouldBeNull()
-            clockTimeIn("after lunch").shouldBeNull()
-            clockTimeIn("it's 9:30 a meeting starts") shouldBe LocalTime(9, 30)
-        }
-    }
 })
 
 private val zone = TimeZone.UTC
@@ -157,24 +138,24 @@ class StuckNudgesPureTest : FunSpec({
     context("linking an if-then to its item") {
         val dentist = item("b", "call the dentist", wed)
         test("the id the model gave, when it is one of today's") {
-            linkedItem(IfThen("it's 9:30", "something else"), "b", listOf(spec, dentist)) shouldBe dentist
-            linkedItem(IfThen("it's 9:30", "something else"), "zzz", listOf(spec, dentist)).shouldBeNull()
+            linkedItem(IfThen("it's 9:30", "something else", at = "09:30"), "b", listOf(spec, dentist)) shouldBe dentist
+            linkedItem(IfThen("it's 9:30", "something else", at = "09:30"), "zzz", listOf(spec, dentist)).shouldBeNull()
         }
         test("else the item whose words it mentions, else the only item") {
-            linkedItem(IfThen("it's 9:30", "write the onboarding spec at my desk"), null, listOf(dentist, spec)) shouldBe spec
-            linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec)).shouldBeNull()
-            linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec, dentist)).shouldBeNull()
+            linkedItem(IfThen("it's 9:30", "write the onboarding spec at my desk", at = "09:30"), null, listOf(dentist, spec)) shouldBe spec
+            linkedItem(IfThen("it's 9:30", "at my desk until 12", at = "09:30"), null, listOf(spec)).shouldBeNull()
+            linkedItem(IfThen("it's 9:30", "at my desk until 12", at = "09:30"), null, listOf(spec, dentist)).shouldBeNull()
         }
     }
 
     context("the check-in note") {
         test("names the item, the plan and the first step") {
-            val note = planCheckInNote(IfThen("it's 9:30", "spec at my desk"), spec, wed)
+            val note = planCheckInNote(IfThen("it's 9:30", "spec at my desk", at = "09:30"), spec, wed)
             note shouldContain PLAN_CHECK_IN
             note shouldContain "plan item a"
             note shouldContain "If it's 9:30, then spec at my desk."
             note shouldContain "First step: open the doc and write the title."
-            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "write the title"), null, wed) shouldContain "First step: write the title."
+            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "write the title", at = "09:30"), null, wed) shouldContain "First step: write the title."
         }
     }
 
@@ -184,9 +165,9 @@ class StuckNudgesPureTest : FunSpec({
 
         test("one nudge at each if-then with a clock time; others get none") {
             val out = plan(
-                PlanCheckIn(IfThen("it's 9:30", "spec at my desk"), spec),
+                PlanCheckIn(IfThen("it's 9:30", "spec at my desk", at = "09:30"), spec),
                 PlanCheckIn(IfThen("Dana emails", "it waits until 12"), null),
-                PlanCheckIn(IfThen("it's 3pm", "call the dentist"), null),
+                PlanCheckIn(IfThen("it's 3pm", "call the dentist", at = "15:00"), null),
             )
             out.nudges.map { it.at } shouldBe listOf(Instant.parse("2026-03-04T09:30:00Z"), Instant.parse("2026-03-04T15:00:00Z"))
             out.nudges.first().planItemId shouldBe "a"
@@ -195,23 +176,23 @@ class StuckNudgesPureTest : FunSpec({
         }
 
         test("a time that has passed gets none, and says why") {
-            val out = plan(PlanCheckIn(IfThen("it's 7:00 am", "spec"), spec))
+            val out = plan(PlanCheckIn(IfThen("it's 7:00 am", "spec", at = "07:00"), spec))
             out.nudges.shouldBeEmpty()
             out.skipped.single() shouldContain "passed"
         }
 
         test("no duplicate when a check-in for the same item is already around that time, or an earlier one of these") {
             val at = Instant.parse("2026-03-04T09:30:00Z")
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = listOf(pendingNudge(at + 5.minutes, "$PLAN_CHECK_IN: spec", "a"))).nudges.shouldBeEmpty()
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = listOf(pendingNudge(at, "ask about it", planItemId = "a"))).nudges.shouldBeEmpty()
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), pending = listOf(pendingNudge(at + 5.minutes, "$PLAN_CHECK_IN: spec", "a"))).nudges.shouldBeEmpty()
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), pending = listOf(pendingNudge(at, "ask about it", planItemId = "a"))).nudges.shouldBeEmpty()
             // two if-then plans a few minutes apart for the same item: only the first
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), PlanCheckIn(IfThen("it's 9:35", "spec again"), spec)).nudges shouldHaveSize 1
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), PlanCheckIn(IfThen("it's 9:35", "spec again", at = "09:35"), spec)).nudges shouldHaveSize 1
         }
 
         test("the nudge limits apply: the day's cap and the pending cap") {
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), sameDay = 12).skipped.single() shouldContain "12 nudges"
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), sameDay = 12).skipped.single() shouldContain "12 nudges"
             val full = (1..10).map { pendingNudge(Instant.parse("2026-03-05T12:00:00Z") + it.hours, "other $it", planItemId = "x$it", id = "p$it") }
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = full).skipped.single() shouldContain "already 10"
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec", at = "09:30"), spec), pending = full).skipped.single() shouldContain "already 10"
         }
 
         test("a cue with no clock time schedules nothing and says nothing") {

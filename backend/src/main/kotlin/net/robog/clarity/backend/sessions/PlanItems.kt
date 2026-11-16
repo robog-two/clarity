@@ -3,18 +3,14 @@ package net.robog.clarity.backend.sessions
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import kotlin.time.Instant
 import kotlin.uuid.Uuid
 import kotlinx.datetime.LocalDate
-import kotlinx.datetime.LocalTime
-import kotlinx.datetime.TimeZone
 import kotlinx.datetime.daysUntil
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.persistence.parseWire
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
-import net.robog.clarity.shared.time.ScheduleClock
 import org.jetbrains.exposed.v1.core.ResultRow
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -170,79 +166,6 @@ fun firstStepNote(item: PlanItem, date: LocalDate): String? =
 /** Pure: "stuck: spec, day 3 (plan item ...)" for the lead's preparation, as of the call on [date]. */
 fun stuckLine(item: PlanItem, date: LocalDate): String =
     "stuck: ${item.text}, day ${item.dayOn(date)} (plan item ${item.id}" + (firstStepNote(item, date)?.let { ", $it" } ?: "") + ")"
-
-/** A time of day read from a cue. [deadline] when the cue says "by", "before", "until" or "till" it: an end, not a start. */
-data class CueTime(val time: LocalTime, val deadline: Boolean = false)
-
-private const val NUM = """(\d{1,2})(?:[:.]([0-5]\d))?"""
-private val NOON = Regex("""\bnoon\b""", RegexOption.IGNORE_CASE)
-private val MIDNIGHT = Regex("""\bmidnight\b""", RegexOption.IGNORE_CASE)
-private val RANGES = listOf(
-    Regex("""\bbetween\s+$NUM\s*(?:([ap])\.?m\b\.?)?\s+and\s+$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
-    Regex("""\bfrom\s+$NUM\s*(?:([ap])\.?m\b\.?)?\s+to\s+$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
-    Regex("""(?<![\d:.])$NUM\s*(?:([ap])\.?m\b\.?)?\s*[-–]\s*$NUM\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE),
-)
-private val COLON = Regex("""(?<![\d:.$€£])([01]?\d|2[0-3]):([0-5]\d)(?![\d:])(?!\.\d)(?:\s*([ap])\.?m\b)?""", RegexOption.IGNORE_CASE)
-private val DOTTED = Regex("""(?<![\p{L}\d:.$€£])([01]?\d|2[0-3])\.([0-5]\d)(?![\d:])(?!\.\d)(?:\s*([ap])\.?m\b)?""", RegexOption.IGNORE_CASE)
-private val DOT_TIME_WORD = Regex("""\b(?:at|it['’]?s|its|from|around|about|until|till|after)\s+$""", RegexOption.IGNORE_CASE)
-private val HOUR_AMPM = Regex("""(?<![\d:.$€£])(1[0-2]|0?[1-9])\s*([ap])\.?m\b""", RegexOption.IGNORE_CASE)
-private val DEADLINE = Regex("""\b(?:by|before|until|till|due|no later than)\s*(?:about\s+|around\s+)?$""", RegexOption.IGNORE_CASE)
-private val MORNING = Regex("""\b(?:wake|wakes|woke|waking|morning|breakfast|alarm|early|(?:get|gets|got|getting)\s+up)\b""", RegexOption.IGNORE_CASE)
-
-private fun to24(hour12: Int, pm: Boolean): Int = (hour12 % 12) + if (pm) 12 else 0
-
-private fun suffixed(hour: Int, minute: Int, suffix: String): LocalTime? =
-    if (hour in 1..12) LocalTime(to24(hour, suffix.lowercase() == "p"), minute) else null
-
-/** The start of a range like "9-11am": its own am/pm, else the end's, flipped when the start hour is later than the end's ("11 to 1pm" starts at 11 in the morning). */
-private fun rangeStart(g: List<String>): LocalTime? {
-    val hour = g[1].toInt()
-    val minute = g[2].ifEmpty { "0" }.toInt()
-    val endHour = g[4].toInt()
-    val endSuffix = g[6].lowercase()
-    val suffix = g[3].ifEmpty { if (hour % 12 > endHour % 12) (if (endSuffix == "p") "a" else "p") else endSuffix }
-    return suffixed(hour, minute, suffix)
-}
-
-/**
- * Pure: the time of day an if-then cue names, or null when it names none ("Dana emails"). Understands
- * "9:30", "14:00", "3pm", "noon", "midnight", dotted "9.30" (only after a time word such as "at", "it's",
- * "from", "around", "until", or before am/pm, never in "v1.25", "Python 3.12", "€2.50" or "11.16"), and the
- * start of a range ("9-11am", "from 9 to 11am", "between 11 and 1pm"). A bare 1:00 to 6:59 is the afternoon
- * unless the cue is about the morning (wake, morning, breakfast, alarm, early, "get up"); 7:00 to 12:59 stays as
- * written. A time that follows "by", "before", "until" or "till" is flagged [CueTime.deadline]. The first time in
- * the cue wins.
- */
-fun parseCueTime(cue: String): CueTime? {
-    val morning = MORNING.containsMatchIn(cue)
-    fun bare(hour: Int, minute: Int): LocalTime = LocalTime(if (hour in 1..6 && !morning) hour + 12 else hour, minute)
-    val found = mutableListOf<Pair<Int, LocalTime?>>()
-    NOON.find(cue)?.let { found += it.range.first to LocalTime(12, 0) }
-    MIDNIGHT.find(cue)?.let { found += it.range.first to LocalTime(0, 0) }
-    RANGES.forEach { re -> re.find(cue)?.let { found += it.range.first to rangeStart(it.groupValues) } }
-    COLON.find(cue)?.let { m ->
-        val g = m.groupValues
-        found += m.range.first to if (g[3].isNotEmpty()) suffixed(g[1].toInt(), g[2].toInt(), g[3]) else bare(g[1].toInt(), g[2].toInt())
-    }
-    DOTTED.find(cue)?.let { m ->
-        val g = m.groupValues
-        val allowed = g[3].isNotEmpty() || DOT_TIME_WORD.containsMatchIn(cue.substring(0, m.range.first))
-        if (allowed) found += m.range.first to if (g[3].isNotEmpty()) suffixed(g[1].toInt(), g[2].toInt(), g[3]) else bare(g[1].toInt(), g[2].toInt())
-    }
-    HOUR_AMPM.find(cue)?.let { m -> found += m.range.first to suffixed(m.groupValues[1].toInt(), 0, m.groupValues[2]) }
-    val first = found.minByOrNull { it.first } ?: return null
-    val time = first.second ?: return null
-    return CueTime(time, deadline = DEADLINE.containsMatchIn(cue.substring(0, first.first)))
-}
-
-/** Pure: the time of day a cue names (see [parseCueTime]). */
-fun clockTimeIn(cue: String): LocalTime? = parseCueTime(cue)?.time
-
-/** Pure: the moment a cue starts on [date], on the person's clock; null for a cue with no time or only a deadline. A time that has passed stays as it is (the caller reports it, nothing is guessed). */
-fun cueMoment(cue: String, date: LocalDate, zone: TimeZone, now: Instant): Instant? {
-    val cueTime = parseCueTime(cue)?.takeIf { !it.deadline } ?: return null
-    return ScheduleClock.occurrence(date, cueTime.time, zone)
-}
 
 private fun ResultRow.toItem() = PlanItem(
     id = this[PlanItems.id].toString(),

@@ -265,6 +265,8 @@ data class IfThen(
     val action: String,
     /** The two-minute first move for a task that keeps coming back; null when none was agreed. */
     val firstStep: String? = null,
+    /** The start time the person named for it, "HH:MM" (24 hour, their local time that day); null when none. A check-in is set at it. */
+    val at: String? = null,
 ) {
     /** "If it’s 9:30, then spec at my desk until 12." */
     fun sentence(): String = "If $cue, then $action."

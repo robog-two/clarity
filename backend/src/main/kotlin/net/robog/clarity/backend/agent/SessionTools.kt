@@ -268,6 +268,11 @@ class SessionTools(
         @Description("For a priority that has been on the plan for days: the two-minute first step the person agreed to (\"open the file and write the title\").")
         val firstStep: String? = null,
         @Description("The plan item id of the priority this plan is for (from set_priorities), so its check-ins follow it.") val item: String? = null,
+        @Description(
+            "The start time of this plan, HH:MM in 24 hour time, the person's local time TODAY (\"09:30\"). Set it ONLY when the person named a start time for it. " +
+                "Leave it empty for a deadline (\"by 5pm\"), an event (\"Dana emails\"), or anything vague, and ask the person if you are unsure. A check-in is set at this time and only for if-thens that have one.",
+        )
+        val at: String? = null,
     )
 
     @Serializable
@@ -276,24 +281,29 @@ class SessionTools(
     private fun setPlan(): Tool = tool<SetPlanInput>(
         name = "set_plan",
         description = "Morning call, COMMIT stage: record the if-then plans. Shows the \"your plan\" card and saves it for Today. " +
-            "An if-then whose cue has a clock time (\"it's 9:30\") gets a check-in at that time automatically; do not nudge for it yourself.",
+            "An if-then with an `at` (the start time the person named, HH:MM today) gets a check-in at that time automatically; do not nudge for it yourself. " +
+            "Set `at` only when the person named a start time; leave it empty for deadlines and event cues.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
         val session = requireSession(live(), "set_plan", SessionKind.MORNING_CALL, setOf(CallStage.COMMIT)).getOrElse { return@tool ToolResult.Error(it) }
         val items = input.ifThens.map {
-            IfThen(it.cue.trim().removePrefix("If ").removePrefix("if "), it.action.trim().removePrefix("then "), it.firstStep?.trim()?.takeIf { s -> s.isNotEmpty() })
+            IfThen(
+                it.cue.trim().removePrefix("If ").removePrefix("if "), it.action.trim().removePrefix("then "),
+                it.firstStep?.trim()?.takeIf { s -> s.isNotEmpty() }, it.at?.trim()?.takeIf { s -> s.isNotEmpty() },
+            )
         }
         if (items.isEmpty() || items.size > MAX_PLANS) return@tool ToolResult.Error("Give 1 to $MAX_PLANS if-then plans.")
         if (items.any { it.cue.isEmpty() || it.action.isEmpty() }) return@tool ToolResult.Error("Each plan needs a cue and an action.")
         val date = today()
+        val previous = plans.get(date)?.plan.orEmpty()
         plans.update(date) { it.copy(plan = items, sessionId = session.id.value) }
         val planned = linkableToday(planItems.open(), date)
         val linked = items.zip(input.ifThens).map { (ifThen, raw) -> PlanCheckIn(ifThen, linkedItem(ifThen, raw.item, planned)) }
         // The first step an if-then carries stays on its item (with the day it was agreed), so a later day can say it is an earlier one.
         linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }
         val checkIns = linked.map { c -> c.item?.let { i -> c.copy(item = planItems.get(i.id)) } ?: c }
-        val scheduled = nudger.schedule(date, checkIns)
+        val scheduled = nudger.schedule(date, checkIns, previous)
         post(session, listOf(Card.Plan(items)))
         ToolResult.Ok("Plan saved (${items.size}).$scheduled")
     }

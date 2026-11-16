@@ -139,8 +139,13 @@ class StuckScenarioTest : FunSpec({
     fun priorities(text: String, continues: String? = null) =
         json(SessionTools.SetPrioritiesInput(SessionTools.PriorityInput(text, "important", continues)))
 
+    /** The lead fills `at` from what the person said; here from the cue ("it's 9:30", "it's 3pm"), and leaves it out for event cues. */
+    fun atOf(cue: String): String? =
+        Regex("""it's (\d{1,2}):(\d{2})""").find(cue)?.let { "%02d:%s".format(it.groupValues[1].toInt(), it.groupValues[2]) }
+            ?: Regex("""it's (\d{1,2})pm""").find(cue)?.let { "%02d:00".format(it.groupValues[1].toInt() + 12) }
+
     fun planOf(cue: String, action: String, firstStep: String? = null, item: String? = null) =
-        json(SessionTools.SetPlanInput(listOf(SessionTools.IfThenInput(cue, action, firstStep, item))))
+        json(SessionTools.SetPlanInput(listOf(SessionTools.IfThenInput(cue, action, firstStep, item, atOf(cue)))))
 
     fun idIn(text: String): String = Regex("plan item ([0-9a-f-]{36})").find(text)?.groupValues?.get(1) ?: error("no plan item id in: $text")
 
@@ -389,10 +394,10 @@ class StuckScenarioTest : FunSpec({
         rig.callAt(day1, CallStage.COMMIT)
         val reworded = rig.call(
             "set_plan",
-            json(SessionTools.SetPlanInput(listOf(SessionTools.IfThenInput("it's 10:30", "write the onboarding spec, title first", item = id), SessionTools.IfThenInput("Dana emails", "it waits")))),
+            json(SessionTools.SetPlanInput(listOf(SessionTools.IfThenInput("it's 10:30", "write the onboarding spec, title first", item = id, at = "10:30"), SessionTools.IfThenInput("Dana emails", "it waits")))),
         ).text()
         reworded shouldContain "Replaced 1 earlier check-in"
-        reworded shouldContain "No check-in for: If Dana emails, then it waits."
+        reworded shouldContain "Nothing wakes you for: If Dana emails, then it waits."
         reworded shouldContain "nudge for them yourself"
         r.nudges.pending().filter { it.autoCheckIn }.single().note shouldContain "title first"
     }
@@ -492,7 +497,7 @@ class StuckScenarioTest : FunSpec({
         rig.runner.fireDue(rig.clock.now(), TimeZone.UTC).single().second.status shouldBe Nudge.Status.FIRED
         rig.callAt(rig.clock.now, CallStage.COMMIT)
         val again = rig.call("set_plan", planOf("it's 9:30", "renew the passport", item = b)).text()
-        again shouldContain "already passed"
+        again shouldNotContain "already passed" // reported when it was new, not on every save
         again shouldNotContain "Check-ins set at"
         r.nudges.pending().shouldBeEmpty()
         // a later time in the same plan after it fired is a new plan for the item: still nothing, it had its check-in today
@@ -508,5 +513,46 @@ class StuckScenarioTest : FunSpec({
         rig.call("plan_item", buildJsonObject { put("id", c); put("outcome", "started") }).shouldBeInstanceOf<ToolResult.Ok>()
         rig.call("set_plan", planOf("it's 11:00", "sort the receipts", item = c)).text() shouldNotContain "Check-ins set at"
         r.nudges.pending().shouldBeEmpty()
+    }
+
+    test("replacing check-ins re-checks inside the transaction: a row that fired is not cancelled or replaced, and the limits hold") {
+        val start = Instant.parse("2026-03-04T08:00:00Z")
+        val rig = rig(start)
+        val r = rig.r
+        val dayOf = { at: Instant -> net.robog.clarity.backend.agent.homeDay(at, TimeZone.UTC) }
+        val item = r.planItems.plan(LocalDate(2026, 3, 4), listOf(Planned("write the onboarding spec"))).single()
+        val old = r.nudges.create(Instant.parse("2026-03-04T09:00:00Z"), "old", null, item.id, autoCheckIn = true)
+
+        // it fires between the decision and the write
+        r.nudges.resolveDue(Instant.parse("2026-03-04T09:00:30Z"), 5) { net.robog.clarity.backend.agent.NudgeResolution(Nudge.Status.FIRED) }
+        val made = r.nudges.replaceCheckIns(
+            listOf(old.id), "the plan was saved again",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T11:00:00Z"), "new", item.id, autoCheckIn = true)), dayOf,
+        )
+        made.shouldBeEmpty()
+        r.nudges.get(old.id)!!.status shouldBe Nudge.Status.FIRED
+
+        // a row still waiting is replaced
+        val waiting = r.nudges.create(Instant.parse("2026-03-04T12:00:00Z"), "waiting", null, item.id, autoCheckIn = true)
+        val replaced = r.nudges.replaceCheckIns(
+            listOf(waiting.id), "the plan was saved again",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T13:00:00Z"), "later", item.id, autoCheckIn = true)), dayOf,
+        )
+        replaced.single().note shouldBe "later"
+        r.nudges.get(waiting.id)!!.status shouldBe Nudge.Status.CANCELLED
+
+        // ten plan nudges are waiting: the plan's own limit holds in the write too
+        (1..9).forEach { i -> r.nudges.create(Instant.parse("2026-03-05T08:00:00Z") + (i * 30).minutes, "c$i", null, java.util.UUID.randomUUID().toString(), autoCheckIn = true) }
+        r.nudges.replaceCheckIns(
+            emptyList(), "x",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T15:00:00Z"), "one too many", item.id, autoCheckIn = true)), dayOf,
+        ).shouldBeEmpty()
+
+        // twenty waiting in all (the person's too): the ceiling holds
+        (1..10).forEach { i -> r.nudges.create(Instant.parse("2026-03-06T08:00:00Z") + (i * 30).minutes, "mine $i", null) }
+        r.nudges.replaceCheckIns(
+            emptyList(), "x",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T16:00:00Z"), "ceiling", null, autoCheckIn = true)), dayOf,
+        ).shouldBeEmpty()
     }
 })
