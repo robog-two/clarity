@@ -18,7 +18,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import net.robog.clarity.backend.feed.FeedDraft
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
+import net.robog.clarity.backend.governance.Delivery
 import net.robog.clarity.backend.governance.NotifyDecision
+import net.robog.clarity.backend.governance.deliveryOf
 import net.robog.clarity.backend.governance.emptyConstitution
 import net.robog.clarity.backend.governance.notifyDecision
 import net.robog.clarity.backend.governance.zoneOrUtc
@@ -37,7 +39,10 @@ import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.ItemReaction
+import net.robog.clarity.shared.feed.MessageKind
+import net.robog.clarity.shared.feed.choicesFallback
 import net.robog.clarity.shared.feed.NOTIFY_IN_APP
+import net.robog.clarity.shared.feed.NOTIFY_REPLY
 import net.robog.clarity.shared.feed.Reaction
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldActionId
@@ -49,6 +54,7 @@ import kotlin.coroutines.coroutineContext
 fun NotifyDecision.wire(): String = when (this) {
     NotifyDecision.PushNow -> "push_now"
     NotifyDecision.ShowInApp -> "in_app"
+    NotifyDecision.Reply -> NOTIFY_REPLY
     is NotifyDecision.HoldUntil -> "hold_until:$at"
     is NotifyDecision.EveningBatch -> "evening_batch:$at"
 }
@@ -57,9 +63,36 @@ fun NotifyDecision.wire(): String = when (this) {
 fun NotifyDecision.describe(zone: kotlinx.datetime.TimeZone): String = when (this) {
     NotifyDecision.PushNow -> "Delivered. The person is being notified now."
     NotifyDecision.ShowInApp -> "Delivered. It shows in the app without a notification."
+    NotifyDecision.Reply -> "Delivered as a reply. It shows in the app; the phone notifies only if the app is closed."
     is NotifyDecision.HoldUntil -> "Delivered in the app. The notification waits until ${agentTime(at, zone)} because the person is in protected time."
     is NotifyDecision.EveningBatch -> "Saved for the evening summary at ${agentTime(at, zone)}; it is not shown before then."
 }
+
+/**
+ * Pure: the kind a post is stored with. A post made in a turn that carries the person's input
+ * ([personWrote]: their message, or a tap on a choice) is a reply whatever the model said; a reply
+ * the model claims outside such a turn is a finding. The server decides this, never the model.
+ */
+fun resolveKind(requested: MessageKind, personWrote: Boolean): MessageKind = when {
+    personWrote -> MessageKind.REPLY
+    requested == MessageKind.REPLY -> MessageKind.FINDING
+    else -> requested
+}
+
+/** Pure: why a choices card cannot be posted, or null. At least one option, every label and reply filled, replies distinct. */
+fun choicesProblem(card: Card.Choices): String? = when {
+    card.options.isEmpty() -> "a `choices` card needs at least one option"
+    card.options.size > MAX_CHOICES -> "a `choices` card has at most $MAX_CHOICES options"
+    card.options.any { it.label.isBlank() || it.reply.isBlank() } -> "every option of a `choices` card needs a label and a reply"
+    card.options.map { it.reply.trim() }.distinct().size != card.options.size -> "the replies of a `choices` card must differ"
+    else -> null
+}
+
+/** Pure: a card that asks the person for something (an approval, a login, a pick), so its post must not wait for the evening. */
+fun needsAnswer(card: Card): Boolean = card is Card.Proposal || card is Card.CredentialRequest || card is Card.Choices
+
+/** The most buttons one choices card shows. */
+const val MAX_CHOICES = 4
 
 /**
  * The lead's tools over its own state: talking to the person, memory and the task list.
@@ -79,16 +112,25 @@ class OwnStateTools(
 ) {
     @Serializable
     class SendToUserInput(
-        @Description("What to show, in order. Each card names its `type`, e.g. {\"type\": \"text\", \"text\": \"...\"}. Card types: text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}, sources {items:[{id:\"<record id>\"} or {url:\"https://...\"}]} (up to 8; the records and pages your facts came from, so the person can open and check them; only ones a tool returned this conversation or a helper fetched). Held items and credential forms are not in the chat until you post their card; post each once.")
+        @Description("What to show, in order. Each card names its `type`, e.g. {\"type\": \"text\", \"text\": \"...\"}. Card types: choices {prompt, options:[{label, reply}]} (one-tap answers drawn as buttons, at most 4; a tap comes back to you as the person writing `reply`; use it to ask a short question with fixed answers), text {text}, chips {label, items:[{text, sub}]}, plan {items:[{cue, action}]}, note {text}, context {label, items:[{tag, title}]}, proposal {heldActionId}, tasks {label, taskIds}, credential_request {requestId}, sources {items:[{id:\"<record id>\"} or {url:\"https://...\"}]} (up to 8; the records and pages your facts came from, so the person can open and check them; only ones a tool returned this conversation or a helper fetched). Held items and credential forms are not in the chat until you post their card; post each once.")
         val cards: List<Card>,
         @Description("urgent = interrupt now (respects protected time), normal = shows in the app, batch = evening summary. Default normal.")
         val urgency: Urgency = Urgency.NORMAL,
         @Description("The session this belongs to, if you are in one.") val sessionId: String? = null,
         @Description("Emails/phone numbers of the people this message is about, so that people who get through can interrupt protected time.")
         val about: List<String> = emptyList(),
+        @Description(
+            "Why you are writing: finding (default: something you noticed, e.g. in mail or the calendar; it interrupts only when due within 24 hours or the sender gets through, else it waits for the evening summary), " +
+                "check_in (a check-in at the time of a nudge), look_forward (something pleasant to plan, e.g. an outing). " +
+                "Do not pass reply: the server marks your message a reply itself when the person just wrote to you.",
+        )
+        val kind: MessageKind = MessageKind.FINDING,
+        @Description("For a finding: when it is due or happens, the person's local time (2026-10-27T18:00, or a date). Within 24 hours of now it interrupts. Leave out when there is no deadline.")
+        val dueBy: String? = null,
     )
 
-    fun sendToUser(): Tool = tool<SendToUserInput>(
+    /** [scope] is the run posting; when it carries the person's input in this turn the post is a reply (see [resolveKind]). */
+    fun sendToUser(scope: RunScope? = null): Tool = tool<SendToUserInput>(
         name = "send_to_user",
         description = "The only way to reach the person. Shows typed cards in their feed; urgency decides whether it also notifies them. " +
             "Always answer when the person wrote to you; otherwise silence is fine. Short.",
@@ -98,10 +140,22 @@ class OwnStateTools(
     ) { input ->
         when {
             input.cards.isEmpty() -> ToolResult.Error("`cards` must not be empty")
-            input.cards.any { it is Card.Unknown } -> ToolResult.Error("`unknown` is not a card type; use text, chips, plan, note, context, proposal, tasks, credential_request or sources")
+            input.cards.any { it is Card.Unknown } -> ToolResult.Error("`unknown` is not a card type; use text, chips, plan, note, context, proposal, tasks, credential_request, choices or sources")
             input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal, tasks or sources")
             input.cards.any { it is Card.Report } -> ToolResult.Error("Show a report with present_report, which checks it exists and lists its formats.")
-            else -> resolveSources(input.cards).fold({ ToolResult.Error(it) }) { cards -> post(cards, input.urgency, input.sessionId, input.about) }
+            else -> {
+                val problem = input.cards.filterIsInstance<Card.Choices>().firstNotNullOfOrNull(::choicesProblem)
+                val dueBy = input.dueBy?.takeIf { it.isNotBlank() }?.let { readToolTime("dueBy", it, settings.homeZone(), DayAs.END) }
+                when {
+                    problem != null -> ToolResult.Error(problem)
+                    dueBy is Either.Left -> ToolResult.Error(dueBy.value)
+                    else -> resolveSources(input.cards).fold({ ToolResult.Error(it) }) { cards ->
+                        // A model cannot pre-answer its own buttons.
+                        val fresh = cards.map { if (it is Card.Choices) it.copy(chosen = null, fallbackText = choicesFallback(it.prompt, it.options)) else it }
+                        post(fresh, input.urgency, input.sessionId, input.about, input.kind, (dueBy as? Either.Right)?.value, scope?.requestedByUser == true)
+                    }
+                }
+            }
         }
     }
 
@@ -116,11 +170,29 @@ class OwnStateTools(
      * from [urgency], the constitution and settings, and the post is keyed by the tool call so a call
      * re-run after a crash does not post twice. `present_report` goes through here too.
      */
-    suspend fun post(cards: List<Card>, urgency: Urgency, sessionId: String?, about: List<String>): ToolResult {
+    suspend fun post(
+        cards: List<Card>,
+        urgency: Urgency,
+        sessionId: String?,
+        about: List<String>,
+        kind: MessageKind = MessageKind.FINDING,
+        dueBy: Instant? = null,
+        personWrote: Boolean = false,
+    ): ToolResult {
         val now = clock.now()
         val constitution = constitutions.current() ?: emptyConstitution(now)
         val handles = about.map(::parseHandle)
-        val decision = notifyDecision(urgency, handles, constitution, settings.current(), now)
+        val current = settings.current()
+        val resolved = resolveKind(kind, personWrote)
+        val delivery = if (sessionId != null) {
+            // A call or interview keeps its own flow: no budget, no batching. An answer to the person is a reply as anywhere; the phone's own call exception covers the rest.
+            if (resolved == MessageKind.REPLY && urgency != Urgency.URGENT) Delivery(NotifyDecision.Reply, counts = false)
+            else Delivery(notifyDecision(urgency, handles, constitution, current, now), counts = false)
+        } else {
+            val (dayStart, dayEnd) = homeDay(now, zoneOrUtc(current.homeZone))
+            deliveryOf(resolved, urgency, dueBy, handles, constitution, current, now, feed.countedPushes(dayStart, dayEnd), actionable = cards.any(::needsAnswer))
+        }
+        val decision = delivery.decision
         // Keyed by the tool call, so a call re-run after a crash does not post twice.
         val call = coroutineContext[ToolCallContext]
         feed.append(
@@ -132,9 +204,12 @@ class OwnStateTools(
                 notify = decision.wire(),
                 batchPending = decision is NotifyDecision.EveningBatch,
                 about = if (decision is NotifyDecision.HoldUntil) handles else emptyList(),
+                kind = resolved,
+                pushCounted = delivery.counts,
             ),
         )
-        return ToolResult.Ok(decision.describe(settings.homeZone()))
+        val note = if (delivery.budgetSpent) " The day's notification limit is reached, so this one was not pushed." else ""
+        return ToolResult.Ok(decision.describe(zoneOrUtc(current.homeZone)) + note)
     }
 
     @Serializable

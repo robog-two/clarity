@@ -86,6 +86,15 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun releaseHold(id: FeedItemId, from: String, to: String, releasedAt: Instant?): FeedItem? = null
     val released = CopyOnWriteArrayList<FeedItem>()
     override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
+    override suspend fun countedPushes(from: Instant, to: Instant): Int = 0
+    override suspend fun lookForwardSince(since: Instant): List<FeedItem> = emptyList()
+    override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? = synchronized(items) {
+        val index = items.indexOfFirst { it.first.id == id }
+        if (index < 0) return@synchronized null
+        val (item, draft) = items[index]
+        val cards = answerChoices(item.cards, reply) ?: return@synchronized null
+        item.copy(cards = cards).also { items[index] = it to draft }
+    }
 }
 
 private class MemoryInbox : InboxStore {
@@ -153,6 +162,25 @@ class FeedRoutesTest : FunSpec({
             inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value == "c-1" }.size shouldBe 1
             client.get("/api/v1/feed?after=${accepted.item.seq - 1}") { header(HttpHeaders.Authorization, TOKEN) }
                 .body<FeedPage>().items.count { it.id == accepted.item.id } shouldBe 1
+        }
+    }
+
+    test("a tap on a choice is input like any other, and marks the card answered once and for every device") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            suspend fun tap(clientId: String, reply: String) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), reply, inReplyTo = asked.id))
+            }
+            tap("tap-1", "Starting now").body<InputAccepted>().item.cards shouldBe listOf(Card.Said("Starting now"))
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
+            // a second device tapping the other button: its words still reach the lead, the card keeps the first answer
+            tap("tap-2", "Later").status shouldBe HttpStatusCode.OK
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
+            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("tap-") }.map { it.text } shouldBe listOf("Starting now", "Later")
         }
     }
 

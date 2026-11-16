@@ -51,6 +51,8 @@ import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Chip
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.ContextItem
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.IfThen
@@ -82,6 +84,8 @@ data class CardEnv(
     val onOpenReport: ((String) -> Unit)? = null,
     /** Opens a cited record's viewer (by entity id); null where there is nowhere to go (the call). */
     val onOpenSource: ((String) -> Unit)? = null,
+    /** A tap on a button of a choices card (the item holding it, the option); null where there is nobody to answer (the call), so the buttons stay off. */
+    val onChoose: ((FeedItemId, Choice) -> Unit)? = null,
 )
 
 /** The block drawn after a reply that is still being written. Screen readers never hear it. */
@@ -118,6 +122,8 @@ fun CardView(card: Card, modifier: Modifier = Modifier, streaming: Boolean = fal
         is Card.CredentialRequest -> CredentialFormCard(card.requestId, modifier)
         is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport, modifier)
         is Card.Sources -> net.robog.clarity.app.ui.sources.SourcesCardView(card, env.onOpenSource, modifier)
+        // Without the item that holds it there is nothing to answer: shown as it stands, buttons off.
+        is Card.Choices -> ChoicesView(card, onChoose = null, modifier)
         // A newer server's card: its own words when it sent some, else nothing.
         is Card.Unknown -> card.fallbackText?.let { NoteBox(it, modifier) }
     }

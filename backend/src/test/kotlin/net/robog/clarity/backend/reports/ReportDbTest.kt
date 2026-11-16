@@ -217,7 +217,7 @@ class ReportDbTest : FunSpec({
         presented.shouldBeInstanceOf<ToolResult.Ok>().content shouldContain "Delivered"
         val item = r.feed.page(0, 10).items.last()
         item.cards shouldBe listOf(Card.Text("Here is your essay."), Card.Report(id, "The 1918 flu", listOf("pdf", "docx", "odt", "txt", "md")))
-        item.notify shouldBe "in_app"
+        item.notify shouldBe "reply" // a report is always an answer: shown in the app, pushed only while it is closed
 
         r.reportTools.presentReport().invoke(args("id" to "00000000-0000-0000-0000-000000000000")).shouldBeInstanceOf<ToolResult.Error>()
         r.own.sendToUser().invoke(buildJsonObject {

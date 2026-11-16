@@ -282,10 +282,29 @@ person managing a to-do list with a few assistants.
   cites: the device is trusted but this keeps the route from being a second way to browse mail) and a
   page in the browser. A message's attachments download through the device route
   `GET /api/v1/messages/{id}/attachments/{part}` and open in another app through a cache `FileProvider`.
-- **Should I bother them?** `send_to_user(urgency = …)` is filtered by the pure notification
-  policy: `URGENT` respects "who gets through" and protected times from the constitution
-  (push now or hold until the block ends); `NORMAL` shows in the feed without a push; `BATCH`
-  goes to the evening summary.
+- **Should I bother them?** `send_to_user(kind, urgency, dueBy)` is decided by the pure
+  `deliveryOf` (governance/NotifyPolicy.kt), which runs before `notifyDecision`. Each agent message
+  has a `MessageKind` stored on the feed item (`feed_item.kind`): `reply`, `check_in`,
+  `look_forward` or `finding` (the model's default). **`reply` is decided by the server**: a post
+  made during a lead turn whose batch included the person's input (a message, or a tap on a choice;
+  `RunScope.requestedByUser`) is a reply whatever the model said, and a model-supplied `reply`
+  outside such a turn is stored as `finding`. `URGENT` keeps the old behaviour (protected times,
+  who gets through) and never counts. A `reply` shows in the app and the phone notifies only when
+  the app is closed (`notify = reply`), also uncounted. A `check_in` or `look_forward` pushes; a
+  `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
+  waits for the evening summary (`BATCH`). A push follows the urgent rules for protected time and
+  counts toward `Settings.pushesPerDay` (1 to 10, default 5, per local day: `feed_item.push_counted`,
+  `pushBudget`); once the day's pushes are used the item is shown in the app without one. A post
+  that asks for an answer (proposal, credential request, choices) is never held for the evening, and
+  posts inside a session keep the old rules (a reply there is still a `reply`). The evening summary
+  lists "Coming up" (`look_forward` items since the last summary), "Done today" (tasks finished on the
+  person's local day) and the held findings, each only when non-empty; with nothing at all there is
+  no summary.
+- **One-tap answers.** `Card.Choices(prompt, options[label, reply], chosen)` renders as buttons. A tap
+  sends `reply` through the ordinary `POST /api/v1/input` with `inReplyTo` set to the item that holds
+  the card, so it counts as the person writing (the lead's answer is a reply). The server records
+  the tapped reply in `chosen` (first tap wins, row locked) and publishes the item as `ItemFinal`,
+  so the buttons turn off on every device. The card's `fallbackText` lists the options for older apps.
 
 ### Helpers (subagents)
 
@@ -1109,7 +1128,10 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - Push without Google or extra containers: the app keeps the `GET /api/v1/events` SSE stream
   open from a foreground service (type `remoteMessaging`, asks for the battery-optimization
   exemption), reconnects with backoff on network changes and resumes from its last `seq`.
-  Urgent items arrive as `FeedEvent`s the service turns into notifications. If the person
+  The service turns `FeedEvent`s into notifications by the item's recorded decision only (`PushPolicy.kt`):
+  `push_now` and released holds always notify, a `reply` notifies while the app is not on screen, and a
+  quiet `in_app` item never notifies (except a message of the running call). The evening summary
+  uses the low-importance channel. If the person
   turns this off, the app syncs on open and on a periodic WorkManager job. (UnifiedPush can be
   added later as a second transport without backend changes beyond one POST.)
 - `vault/`: the phone-held vault key (Android Keystore, per-use biometric), credential forms,

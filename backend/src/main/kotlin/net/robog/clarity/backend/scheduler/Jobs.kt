@@ -7,6 +7,7 @@ import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -27,6 +28,8 @@ import net.robog.clarity.backend.agent.MEMORY_GC_TOOLS
 import net.robog.clarity.backend.agent.MemoryStore
 import net.robog.clarity.backend.agent.Priority
 import net.robog.clarity.backend.agent.RunScope
+import net.robog.clarity.backend.agent.TaskStore
+import net.robog.clarity.backend.agent.homeDay
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.mcpservers.McpCatalog
 import net.robog.clarity.backend.feed.FeedDraft
@@ -34,6 +37,7 @@ import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.feed.FeedStore
 import net.robog.clarity.backend.feed.eveningSummaryCards
 import net.robog.clarity.backend.governance.ConstitutionStore
+import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.session.Settings
@@ -86,17 +90,24 @@ class PeriodicReviewJob(private val config: AgentConfig, private val inbox: Inbo
     }
 }
 
-/** At the person's evening-summary time: everything held with urgency `batch` becomes one feed item. */
+/**
+ * At the person's evening-summary time, one feed item with what is worth saying about the day:
+ * the look-forward items posted since the last summary, the tasks finished today, and the findings
+ * held for it ([eveningSummaryCards]). Nothing to say, no summary.
+ */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class EveningBatchJob(private val store: FeedStore, private val feed: FeedService) : ScheduledJob {
+class EveningBatchJob(private val store: FeedStore, private val feed: FeedService, private val tasks: TaskStore) : ScheduledJob {
     override val name = "evening-batch"
 
     override fun schedule(settings: Settings) = Schedule.DailyAt(settings.eveningSummaryAt)
 
     override suspend fun fire(context: FireContext) {
         val pending = store.pendingBatch()
-        val cards = eveningSummaryCards(pending)
+        val dayStart = homeDay(context.scheduledFor, zoneOrUtc(context.settings.homeZone)).first
+        val comingUp = store.lookForwardSince(context.lastRunAt ?: (context.scheduledFor - 24.hours))
+        val done = tasks.list(finishedSince = dayStart).filter { it.status == AgentTask.Status.DONE && it.updatedAt >= dayStart }.map { it.title }
+        val cards = eveningSummaryCards(pending, comingUp, done)
         if (cards.isEmpty()) return
         // Keyed by the slot: a retry after a crash finds the summary already posted and only finishes marking.
         feed.append(

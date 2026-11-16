@@ -20,6 +20,9 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.LaunchedEffect
@@ -373,6 +376,44 @@ fun ToggleRow(
                 if (caption.isNotEmpty()) Kicker(caption)
             }
             Switch(checked = checked, onCheckedChange = null)
+        }
+    }
+}
+
+/**
+ * A labelled number row with a minus and a plus (`.tg` for a count): a card of its own, or a segment
+ * of a [CardGroup] through [shape]. The value stays inside [range]; each button is off at its end.
+ * Screen readers get the value as the row's state and the two buttons by name.
+ */
+@Composable
+fun StepperRow(
+    title: String,
+    caption: String,
+    value: Int,
+    range: IntRange,
+    onValueChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = groupShape(0, 1),
+) {
+    SegmentCard(shape, modifier.semantics(mergeDescendants = true) { stateDescription = value.toString() }, minHeight = 64.dp) {
+        Row(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                Text(sentenceCase(title), style = MaterialTheme.typography.titleMedium.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal))
+                if (caption.isNotEmpty()) Kicker(caption)
+            }
+            androidx.compose.material3.IconButton(onClick = { onValueChange((value - 1).coerceIn(range)) }, enabled = value > range.first) {
+                androidx.compose.material3.Icon(Icons.Outlined.Remove, contentDescription = "Fewer")
+            }
+            Text(
+                value.toString(),
+                Modifier.widthIn(min = 24.dp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            androidx.compose.material3.IconButton(onClick = { onValueChange((value + 1).coerceIn(range)) }, enabled = value < range.last) {
+                androidx.compose.material3.Icon(Icons.Outlined.Add, contentDescription = "More")
+            }
         }
     }
 }

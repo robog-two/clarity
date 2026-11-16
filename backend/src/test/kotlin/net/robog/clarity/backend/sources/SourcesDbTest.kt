@@ -104,6 +104,7 @@ class SourcesDbTest : FunSpec({
                 buildJsonObject { put("type", "text"); put("text", "Lunch is at noon.") },
                 buildJsonObject { put("type", "sources"); put("items", JsonArray(items.toList())) },
             )))
+            put("kind", "check_in") // posted at once, not held for the evening summary
         }
         val tool = own.sendToUser()
         return if (run == null) tool.invoke(input) else withContext(ToolCallContext(run, "call-${Uuid.random()}")) { tool.invoke(input) }

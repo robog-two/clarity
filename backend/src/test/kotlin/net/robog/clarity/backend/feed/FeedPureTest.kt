@@ -43,11 +43,29 @@ class FeedPureTest : FunSpec({
     test("evening summary: nothing, one, many") {
         eveningSummaryCards(emptyList()).shouldBeEmpty()
         val one = eveningSummaryCards(listOf(item(1, Card.Text("Dana replied about the contract."))))
-        one[0] shouldBe Card.Text("One thing waited for tonight.")
-        one[1].shouldBeInstanceOf<Card.Chips>().items shouldBe listOf(Chip("Dana replied about the contract."))
+        one[0] shouldBe Card.Text("1 held.")
+        one[1] shouldBe Card.Chips("Held for tonight", listOf(Chip("Dana replied about the contract.")))
         val many = eveningSummaryCards(listOf(item(1, Card.Note("a")), item(2, Card.Text("b\nsecond line"))))
-        many[0] shouldBe Card.Text("2 things waited for tonight.")
+        many[0] shouldBe Card.Text("2 held.")
         many[1].shouldBeInstanceOf<Card.Chips>().items.map { it.text } shouldBe listOf("a", "b")
+    }
+
+    test("evening summary sections come in order and empty ones are left out") {
+        val lookForward = item(3, Card.Text("Jazz on Thursday evening?\nWith Sam Example."))
+        val all = eveningSummaryCards(listOf(item(1, Card.Note("a"))), listOf(lookForward), listOf("Send the report", " File receipts "))
+        all.map { (it as? Card.Chips)?.label ?: "intro" } shouldBe listOf("intro", "Coming up", "Done today", "Held for tonight")
+        all[0] shouldBe Card.Text("1 coming up. 2 done today. 1 held.")
+        (all[1] as Card.Chips).items shouldBe listOf(Chip("Jazz on Thursday evening?"))
+        (all[2] as Card.Chips).items shouldBe listOf(Chip("Send the report"), Chip("File receipts"))
+
+        eveningSummaryCards(emptyList(), emptyList(), listOf("Send the report")).map { (it as? Card.Chips)?.label ?: "intro" } shouldBe listOf("intro", "Done today")
+        eveningSummaryCards(emptyList(), listOf(lookForward)).map { (it as? Card.Chips)?.label ?: "intro" } shouldBe listOf("intro", "Coming up")
+        eveningSummaryCards(emptyList(), emptyList(), emptyList()).shouldBeEmpty()
+    }
+
+    test("a choices card has a one-line headline") {
+        headline(item(1, Card.Choices("Ready to start?", listOf(net.robog.clarity.shared.feed.Choice("Yes", "yes"))))) shouldBe "Ready to start?"
+        headline(item(1, Card.Choices(null, listOf(net.robog.clarity.shared.feed.Choice("Yes", "yes"))))) shouldBe "Something to look at"
     }
 
     test("headlines are one short line") {

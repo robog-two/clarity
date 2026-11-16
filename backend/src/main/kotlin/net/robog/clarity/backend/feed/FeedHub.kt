@@ -48,6 +48,19 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
     suspend fun finish(itemId: FeedItemId, cards: List<Card>): FeedItem? =
         store.update(itemId, cards, streaming = false)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
 
+    /**
+     * Records the person's tap on a [Card.Choices] option of item [id] and tells every device, so the
+     * buttons disable everywhere ([FeedEvent.ItemFinal]). Null when nothing changed (already answered, or not an option).
+     */
+    suspend fun chooseOption(id: FeedItemId, reply: String): FeedItem? =
+        store.markChosen(id, reply)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+
+    /** Pushes that counted toward the daily limit in `[from, to)`. */
+    suspend fun countedPushes(from: Instant, to: Instant) = store.countedPushes(from, to)
+
+    /** The `look_forward` items posted since [since], for the evening summary. */
+    suspend fun lookForwardSince(since: Instant) = store.lookForwardSince(since)
+
     fun publish(event: FeedEvent) = hub.publish(event)
 
     /** Items whose held notification was released at or after [since] (resent to a reconnecting phone). */

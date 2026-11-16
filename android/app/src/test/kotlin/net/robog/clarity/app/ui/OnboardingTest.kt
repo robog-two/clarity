@@ -198,7 +198,7 @@ private class FakeFeed : FeedRepository {
     override val syncState: Flow<SyncState> = MutableStateFlow(SyncState.Live)
     override val agentBusy: Flow<Boolean> = MutableStateFlow(false)
     override val signals: Flow<SyncSignal> = signalFlow
-    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?): ApiResult<InputAccepted> {
+    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?, inReplyTo: net.robog.clarity.shared.feed.FeedItemId?): ApiResult<InputAccepted> {
         sent += Triple(text, source, sessionId)
         return ApiResult.Success(InputAccepted(userItem(100, text, sessionId)))
     }

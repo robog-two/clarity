@@ -96,7 +96,12 @@ fun statusText(state: SyncState, host: String): String = when (state) {
 /** The stored notify decision (`feed_item.notify`), parsed. Unknown spellings are treated as in-app. */
 sealed interface NotifyKind {
     data object PushNow : NotifyKind
+
+    /** Shown in the app and quiet: it never notifies, except as part of a call. */
     data object InApp : NotifyKind
+
+    /** An answer to the person (`reply`): notifies only while the app is not on screen. */
+    data object Reply : NotifyKind
     data object Hold : NotifyKind
     data object EveningBatch : NotifyKind
 
@@ -107,6 +112,7 @@ sealed interface NotifyKind {
 fun parseNotify(value: String?): NotifyKind = when {
     value == null || value == "in_app" -> NotifyKind.InApp
     value == "push_now" -> NotifyKind.PushNow
+    value == "reply" -> NotifyKind.Reply
     value.startsWith("hold_until") -> NotifyKind.Hold
     value.startsWith(RELEASED) -> NotifyKind.Released(runCatching { Instant.parse(value.removePrefix(RELEASED)) }.getOrNull())
     value.startsWith("evening_batch") -> NotifyKind.EveningBatch
@@ -186,8 +192,10 @@ fun showsItem(where: Place, item: FeedItem): Boolean = when (where) {
 
 /**
  * Whether [arrival] earns a notification, and which. Push-now agent items, released holds, the
- * evening summary and urgent held actions always do; any other agent message does while the app is
- * not on screen ("hold until" waits for its release, whose age counts from the release). Never when
+ * evening summary and urgent held actions always do; a reply to the person does while the app is
+ * not on screen; a quiet in-app item never does (the server decided it was not worth an
+ * interruption), except a message of the running call ("hold until" waits for its release, whose age
+ * counts from the release). Never when
  * notifications are off, when the item is stale, or when the person is looking at the very place
  * it shows up (the feed on Today or Ask, the call screen, the Held list, or that held action).
  * Messages become one conversation with a reply box; something to approve or a login to enter only
@@ -226,7 +234,9 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
     val channel = when (kind) {
         NotifyKind.PushNow, is NotifyKind.Released -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
-        NotifyKind.InApp -> if (front == Front.Background || ofCall) PushChannel.Agent else return null
+        NotifyKind.Reply -> if (front == Front.Background || ofCall) PushChannel.Agent else return null
+        // Quiet items never notify (the server pushes what is worth it as push-now); only a call's messages do.
+        NotifyKind.InApp -> if (ofCall) PushChannel.Agent else return null
         NotifyKind.Hold -> return null
     }
     if (channel == PushChannel.Evening) {
@@ -372,6 +382,7 @@ fun itemText(item: FeedItem, limit: Int = 140, fallback: String = "New from Clar
         when (card) {
             is Card.Text -> card.text
             is Card.Note -> card.text
+            is Card.Choices -> card.prompt
             else -> null
         }
     }

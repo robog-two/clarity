@@ -55,11 +55,11 @@ class CallPushPolicyTest {
         val ask = agentItem(8, "Done.").copy(notify = "in_app")
         assertNull(decide(inCall, ask))
         assertNull(decide(Front.Showing(Place.Tab(MainTab.Settings)), ask))
-        assertNotNull(decide(Front.Background, ask))
+        assertNull(decide(Front.Background, ask), "quiet items never notify; the server pushes what is worth it")
     }
 
     @Test fun aSessionMessageWithNoCallGoingOnStillOpensAsk() {
-        val p = assertNotNull(decide(Front.Background, call = null))
+        val p = assertNotNull(decide(Front.Background, reply().copy(notify = "reply"), call = null))
         assertEquals(DeepLink.Ask, p.link)
         assertNull(decide(Front.Showing(Place.Tab(MainTab.Today)), call = null), "in-app, with the app open")
     }

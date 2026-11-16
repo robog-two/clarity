@@ -88,7 +88,7 @@ sealed interface InboxItem {
     data class NudgeDue(val nudgeId: String, val at: String, val note: String, val task: String? = null) : InboxItem {
         override val priority get() = Priority.NORMAL
         override val summary get() = "Nudge you set at $at: $note" + (task?.let { " Task: $it." } ?: "") +
-            " If it still helps, ask the person one short, specific question with send_to_user (urgency urgent: a check-in they asked for; " +
+            " If it still helps, ask the person one short, specific question with send_to_user (kind check_in, and urgency urgent: a check-in they asked for; " +
             "protected time still holds it). If it no longer applies, send nothing."
     }
 

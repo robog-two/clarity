@@ -22,6 +22,7 @@ import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.app.testutil.heldAction
 import net.robog.clarity.app.testutil.userItem
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.Choice
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Urgency
@@ -106,18 +107,44 @@ class ReconnectPolicyTest {
 }
 
 class NotificationDecisionTest {
-    @Test fun pushNowAlwaysNotifiesInAppOnlyWhileTheAppIsClosedAndHoldWaits() {
+    @Test fun pushNowAlwaysNotifiesAReplyOnlyWhileTheAppIsClosedAndQuietItemsAndHoldsNever() {
         val elsewhere = Front.Showing(Place.Tab(MainTab.Settings))
         assertNotNull(plan(Arrival.Item(item("push_now")), elsewhere))
         assertNull(plan(Arrival.Item(item("in_app")), elsewhere))
         assertNull(plan(Arrival.Item(agentItem(7, "old client item")), elsewhere), "an item without a stored decision is in-app")
-        assertNotNull(plan(Arrival.Item(item("in_app"))))
-        assertNotNull(plan(Arrival.Item(agentItem(7, "old client item"))))
+        assertNull(plan(Arrival.Item(item("in_app"))), "a quiet item does not notify even with the app closed")
+        assertNull(plan(Arrival.Item(agentItem(7, "old client item"))), "an old server's item without a decision is quiet too")
         assertNull(plan(Arrival.Item(item("hold_until:2026-10-26T12:00:00Z"))))
+        assertNull(plan(Arrival.Item(item("reply")), elsewhere), "a reply waits for the app to be closed")
+        assertNull(plan(Arrival.Item(item("reply")), Front.Showing(Place.Tab(MainTab.Ask))), "the feed shows it")
+        assertNotNull(plan(Arrival.Item(item("reply"))), "a reply notifies while the app is closed")
+    }
+
+    @Test fun aRepliesNotificationIsAMessageThatLeadsToTheFeed() {
+        val p = plan(Arrival.Item(item("reply")))!!
+        assertEquals(PushChannel.Agent, p.channel)
+        assertEquals(PlanStyle.Message, p.style)
+        assertEquals(DeepLink.Today, p.link)
+        // old enough to be stale: not worth a buzz
+        assertNull(decideNotification(Arrival.Item(item("reply")), Front.Background, true, T0 + 3.hours))
+    }
+
+    @Test fun aChoicesCardNotifiesWithItsPrompt() {
+        val asked = agentItem(11, "unused").copy(
+            notify = "push_now",
+            cards = listOf(Card.Choices("Ready to start the report?", listOf(Choice("Starting", "Starting"), Choice("Later", "Later")))),
+        )
+        assertEquals("Ready to start the report?", plan(Arrival.Item(asked))!!.text)
+    }
+
+    @Test fun aMessageOfTheRunningCallStillNotifiesWhileQuiet() {
+        val p = decideNotification(Arrival.Item(item("in_app").copy(sessionId = SessionId("s1"))), Front.Showing(Place.Tab(MainTab.Settings)), true, T0, call = SessionId("s1"))
+        assertNotNull(p)
+        assertEquals(DeepLink.Call(), p.link)
     }
 
     @Test fun aMessageWhileClosedIsOneConversationWithAReplyForItsSession() {
-        val p = plan(Arrival.Item(item("in_app").copy(sessionId = SessionId("s1"))))!!
+        val p = plan(Arrival.Item(item("reply").copy(sessionId = SessionId("s1"))))!!
         assertEquals(PlanStyle.Message, p.style)
         assertEquals(MESSAGE_ID, p.id)
         assertEquals(SessionId("s1"), p.sessionId)
@@ -133,6 +160,7 @@ class NotificationDecisionTest {
         // the same notification as the urgent held action itself
         assertEquals(plan(Arrival.Held(urgentHeld("h1")))!!.id, p.id)
         val login = agentItem(10, "I need your Ulta login").copy(
+            notify = "reply",
             cards = listOf(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r1")), Card.Text("I need your Ulta login")),
         )
         val q = plan(Arrival.Item(login))!!
@@ -228,6 +256,7 @@ class NotificationDecisionTest {
     @Test fun notifyValuesParse() {
         assertEquals(NotifyKind.PushNow, parseNotify("push_now"))
         assertEquals(NotifyKind.InApp, parseNotify("in_app"))
+        assertEquals(NotifyKind.Reply, parseNotify("reply"))
         assertEquals(NotifyKind.InApp, parseNotify(null))
         assertEquals(NotifyKind.InApp, parseNotify("something_new"))
         assertEquals(NotifyKind.Hold, parseNotify("hold_until:2026-10-26T12:00:00Z"))

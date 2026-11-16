@@ -41,7 +41,7 @@ private fun reaction(seq: Long, to: FeedItem, kind: String) =
 /** Clarity's tapbacks: drawn on the person's message, never a message or a notification of their own. */
 class ReactionTest {
     private val ok = userItem(1, "ok thanks")
-    private val reply = agentItem(2, "Moved it to 4pm.")
+    private val reply = agentItem(2, "Moved it to 4pm.").copy(notify = "reply")
     private val done = userItem(3, "done!")
 
     @Test fun aReactionGoesOntoItsMessageAndIsNotAnEntryOfItsOwn() {
@@ -69,7 +69,7 @@ class ReactionTest {
     }
 
     @Test fun aReactionNeverNotifiesEvenWithTheAppInTheBackground() {
-        // An in-app agent item does notify in the background; a reaction (also in-app) does not.
+        // A reply to the person does notify in the background; a reaction (also in-app) does not.
         assertTrue(decideNotification(Arrival.Item(reply), Front.Background, canPost = true, now = T0 + 1.minutes) != null)
         assertNull(decideNotification(Arrival.Item(reaction(4, ok, "heart")), Front.Background, canPost = true, now = T0 + 1.minutes))
     }
