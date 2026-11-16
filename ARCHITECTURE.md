@@ -586,12 +586,12 @@ and not offered before (a re-run of the same tool call is let through; the feed 
 2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
 (`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
 in one transaction) and is released if the post fails, so two offers racing past the budget cannot both
-win. A `look_forward` post with no outing ref is refused. Only in a turn the person started
-(`RunScope.startedByPerson`, not a job turn they interrupted) that has read nothing untrusted do the
-ref requirement and the budget not apply, since they asked; there an open idea already offered may be
-shown again, a declined one never, and an offer is flagged `suggested_unprompted = false` and not
-counted. Note that `list_outing_ideas` itself taints a turn, so a person's turn that reads ideas is
-gated like a job turn.
+win. A `look_forward` post with no outing ref is refused in every turn, and the idea must be saved and
+open, and a declined idea never comes back, in every turn. In a turn the person started
+(`RunScope.startedByPerson`, not a job turn they interrupted) the weekly budget never applies, tainted
+or not (reading `list_outing_ideas` taints a turn), since they asked; such an offer is recorded but
+flagged `suggested_unprompted = false` and not counted. Only in such a turn that has read nothing
+untrusted may an open idea already offered be shown again.
 
 A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
 "Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it matches

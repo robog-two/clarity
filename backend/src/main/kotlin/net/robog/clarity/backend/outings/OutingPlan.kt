@@ -316,27 +316,26 @@ fun outingIdeaOf(ref: String?): String? =
 private val OUTING_REF = Regex("^outing:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 /**
- * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved idea. It must not
- * have been offered before (the post of the same call [call], re-run after a crash, is the same post), and fewer than
- * [perWeek] other ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]). When the person
- * [asked] for something to do, in a turn that is theirs and untainted, an open idea already offered may be shown again and
- * the budget does not apply; a declined idea never comes back.
+ * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved idea in every turn
+ * (a declined idea never comes back). It must not have been offered before, except by a re-run of the same call [call],
+ * or when [reshow] (the person's own untainted turn: they asked, and may see an open idea again). Unless it is
+ * a [personTurn] (the person started the turn and asked for something to do, tainted or not), fewer than [perWeek] other
+ * ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]).
  */
 fun suggestionRefusal(
     idea: SavedIdea?,
     offered: List<Instant>,
     now: Instant,
     call: String? = null,
-    asked: Boolean = false,
+    personTurn: Boolean = false,
+    reshow: Boolean = false,
     perWeek: Int = SUGGESTIONS_PER_WEEK,
 ): String? = when {
     idea == null -> "No saved idea has that id. Save the outing with save_outing_idea first, then suggest it."
     idea.state != IdeaState.OPEN -> "\"${idea.what}\" is ${idea.state.wire}; only an open idea can be suggested."
-    asked -> null
-    idea.suggestedAt != null && (call == null || idea.suggestedCall != call) ->
+    idea.suggestedAt != null -> if (reshow || (call != null && idea.suggestedCall == call)) null else
         "\"${idea.what}\" was already offered and is waiting for the person's answer. Suggest another idea or send nothing."
-    idea.suggestedAt != null -> null
-    offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
+    !personTurn && offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
     else -> null
 }
 

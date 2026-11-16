@@ -409,7 +409,8 @@ class OutingDbTest : FunSpec({
         rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(c).shouldBeInstanceOf<ToolResult.Error>() // unprompted: the week's budget is used
         // "suggest something for tonight": a reply with no ref at all, and one with a ref
-        rig.suggest(c, ref = null, kind = "look_forward", asked = true).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(c, ref = null, kind = "look_forward", asked = true).shouldBeInstanceOf<ToolResult.Error>() // a look_forward needs its ref in every turn
+        rig.suggest(c, ref = null, kind = "finding", asked = true).shouldBeInstanceOf<ToolResult.Ok>() // a plain reply is not an outing post
         rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Ok>()
         // an answered offer is recorded (so it is never offered again) but is not counted against the unprompted budget
         rig.ideas.all().first { it.id == d }.suggestedAt shouldBe now
@@ -431,30 +432,42 @@ class OutingDbTest : FunSpec({
         rig.call("save_outing_idea", "what" to "Gig", "url" to "https://example.com/sam-and-friends").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
         rig.call("save_outing_idea", "what" to "Jazz at the Blue Room").shouldBeInstanceOf<ToolResult.Ok>()
     }
-    test("only a turn the person started, with nothing untrusted read, skips the budget and the ref") {
+    test("a turn the person started skips the weekly budget even after reading ideas; a job turn does not; re-showing needs an untainted person turn") {
         val rig = Rig(database, now, settings)
         val a = rig.saveIdea("Jazz night", "category" to "live music")
         val b = rig.saveIdea("Pottery class", "category" to "class")
         val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        val d = rig.saveIdea("Museum visit", "category" to "museum")
         rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
-        rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>() // the week's budget is used
+        rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>() // the week's unprompted budget is used
 
-        // a person's turn that then read mail (list_outing_ideas, list_messages...) is gated like a job turn
-        val tainted = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true); it.taint() }
-        rig.postVia(rig.sendAs(tainted), null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
-        rig.postVia(rig.sendAs(tainted), "outing:$c").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
-        // a turn that began as a job and that the person interrupted does not inherit it
+        // "suggest something for tonight": the person's turn reads the ideas (which taints it), then offers one
+        val person = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        rig.call("list_outing_ideas").shouldBeInstanceOf<ToolResult.Ok>()
+        person.taint()
+        rig.postVia(rig.sendAs(person), "outing:$c").shouldBeInstanceOf<ToolResult.Ok>()
+        // not counted against the unprompted budget, but recorded
+        rig.ideas.all().first { it.id == c }.suggestedAt shouldBe now
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
+        // the other rules hold in this turn too: a look_forward needs its ref, the idea must be open, one outing ref per post
+        rig.postVia(rig.sendAs(person), null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
+        rig.postVia(rig.sendAs(person), "outing:${Uuid.random()}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No saved idea"
+        // an idea offered before is not shown again in a tainted turn
+        rig.postVia(rig.sendAs(person), "outing:$a").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
+
+        // a job turn is still gated, and so is a job turn the person interrupted
+        val job = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false) }
+        rig.postVia(rig.sendAs(job), "outing:$d").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
         val interrupted = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false); it.userAsked() }
         interrupted.requestedByUser shouldBe true
         rig.postVia(rig.sendAs(interrupted), null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
-        rig.postVia(rig.sendAs(interrupted), "outing:$c").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
-        // their own untainted turn does
-        val theirs = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
-        rig.postVia(rig.sendAs(theirs), "outing:$c").shouldBeInstanceOf<ToolResult.Ok>()
-        // and may show an open idea that was offered before again, never a declined one
-        rig.postVia(rig.sendAs(theirs), "outing:$a").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.postVia(rig.sendAs(interrupted), "outing:$d").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+
+        // an untainted person turn may show an open, already offered idea again, never a declined one
+        val clean = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        rig.postVia(rig.sendAs(clean), "outing:$a").shouldBeInstanceOf<ToolResult.Ok>()
         rig.call("update_outing_idea", "id" to a, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
-        rig.postVia(rig.sendAs(theirs), "outing:$a").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
+        rig.postVia(rig.sendAs(clean), "outing:$a").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
     }
 
     test("a malformed outing ref is refused, not let through ungated") {

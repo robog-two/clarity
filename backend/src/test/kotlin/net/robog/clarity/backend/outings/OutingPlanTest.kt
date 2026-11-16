@@ -308,10 +308,11 @@ class OutingPlanTest : FunSpec({
         suggestionRefusal(idea, emptyList(), now, call = "run:use1") shouldBe null
         val spent = listOf(now - 1.days, now - 2.days)
         suggestionRefusal(idea.copy(suggestedAt = null, suggestedCall = null), spent, now)!! shouldContain "2 outings"
-        suggestionRefusal(idea.copy(suggestedAt = null, suggestedCall = null), spent, now, asked = true) shouldBe null
-        // asked: an open idea already offered may be shown again, a declined one never
-        suggestionRefusal(idea, spent, now, call = "run:use2", asked = true) shouldBe null
-        suggestionRefusal(idea.copy(state = IdeaState.DECLINED), spent, now, asked = true)!! shouldContain "declined"
+        suggestionRefusal(idea.copy(suggestedAt = null, suggestedCall = null), spent, now, personTurn = true) shouldBe null
+        // a person turn skips the budget only; an open idea already offered is shown again only with reshow, a declined one never
+        suggestionRefusal(idea, spent, now, call = "run:use2", personTurn = true)!! shouldContain "already offered"
+        suggestionRefusal(idea, spent, now, call = "run:use2", personTurn = true, reshow = true) shouldBe null
+        suggestionRefusal(idea.copy(state = IdeaState.DECLINED), spent, now, personTurn = true, reshow = true)!! shouldContain "declined"
     }
 
     test("the brief for a web search holds kinds only, and a name in an idea's text is found") {
