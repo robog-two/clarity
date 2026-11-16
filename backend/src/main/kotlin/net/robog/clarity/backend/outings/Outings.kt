@@ -440,7 +440,13 @@ class OutingTools(
             }
             fun giveBackSlot() { if (slot) scope!!.offersThisTurn.decrementAndGet() }
             val call = coroutineContext[ToolCallContext]?.let { "${it.runId}:${it.toolUseId}" }
-            val reserved = when (val r = store.reserve(ideaId, clock.now(), call, personTurn, reshow)) {
+            val reservation = try {
+                store.reserve(ideaId, clock.now(), call, personTurn, reshow)
+            } catch (e: Throwable) {
+                giveBackSlot()
+                throw e
+            }
+            val reserved = when (val r = reservation) {
                 is Reservation.Refused -> { giveBackSlot(); return ToolResult.Error(r.reason) }
                 is Reservation.Granted -> r
             }

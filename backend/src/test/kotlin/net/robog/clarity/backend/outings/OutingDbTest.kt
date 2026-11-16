@@ -624,4 +624,17 @@ class OutingDbTest : FunSpec({
         person2.offersThisTurn.get() shouldBe 0
         rig.ideas.all().first { it.id == ids[3] }.suggestedAt shouldBe null
     }
+    test("a reservation that throws gives the offer slot back") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        val broken = object : OutingStore by rig.ideas {
+            override suspend fun reserve(id: String, at: Instant, call: String?, personTurn: Boolean, reshow: Boolean): Reservation = error("database down")
+        }
+        val person = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        val gate = OutingTools(broken, rig.people, rig.reader, SourceResolver(rig.reader, { settings }, rig.journal, ExposedRunStore(database, rig.clock)), { settings }, rig.clock)
+            .gateSuggestions(rig.own.sendToUser(person), person)
+        runCatching { rig.postVia(gate, "outing:$a") }.exceptionOrNull()?.message shouldBe "database down"
+        person.offersThisTurn.get() shouldBe 0
+        rig.feed.page(0, 20).items.shouldBeEmpty()
+    }
 })
