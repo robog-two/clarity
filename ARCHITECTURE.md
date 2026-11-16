@@ -565,8 +565,8 @@ place, kind, window, contact, source record, url, `state` open, used or declined
 through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
 `list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
 a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
-(the sources-card rule), a contact outside the 90 days, and names of people who may be company in the idea's text or address (company goes in
-`withContactId`). A declined idea stays declined: saving it again (same wording or page) is refused
+(the sources-card rule), a contact outside the 90 days, and the names of people who may be company in the idea's text or address (company goes in
+`withContactId`; only contacts that look like people count, never businesses or places such as "The Hive" or "Live Nation", and a first name is matched only when it is not an ordinary word). A declined idea stays declined: saving it again (same wording or page) is refused
 and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
 
 If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
@@ -580,13 +580,18 @@ Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sourc
 `Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
 `look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
 outing suggestions. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
-`send_to_user`, and any post with an outing ref goes through it whatever its kind. It must name a saved
-idea that is open and was not offered before (a re-run of the same tool call is let through; the feed
-dedups it), and at most 2 other ideas may have been offered unprompted in 7 days; a `look_forward` post
-with no outing ref is refused. After a successful post `suggested_at` is set. In a turn answering the
-person (they asked "suggest something for tonight") neither the ref nor the budget applies, since they
-asked; a ref there still records the offer (so a later no is final) but the offer is flagged
-`suggested_unprompted = false` and not counted.
+`send_to_user`, and any post with a choices ref starting `outing:` goes through it whatever its kind; a
+malformed ref (anything but `outing:` plus a lower-case uuid) is refused. The idea must be saved, open
+and not offered before (a re-run of the same tool call is let through; the feed dedups it), and at most
+2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
+(`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
+in one transaction) and is released if the post fails, so two offers racing past the budget cannot both
+win. A `look_forward` post with no outing ref is refused. Only in a turn the person started
+(`RunScope.startedByPerson`, not a job turn they interrupted) that has read nothing untrusted do the
+ref requirement and the budget not apply, since they asked; there an open idea already offered may be
+shown again, a declined one never, and an offer is flagged `suggested_unprompted = false` and not
+counted. Note that `list_outing_ideas` itself taints a turn, so a person's turn that reads ideas is
+gated like a job turn.
 
 A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
 "Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it matches

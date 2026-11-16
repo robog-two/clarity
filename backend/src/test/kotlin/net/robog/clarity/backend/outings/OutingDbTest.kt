@@ -14,6 +14,7 @@ import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -152,6 +153,18 @@ class OutingDbTest : FunSpec({
             job.fire(FireContext(scheduledFor = scheduledFor, now = at, lastRunAt = null, settings = settings))
 
         suspend fun due(): List<InboxItem.JobDue> = inbox.pending().map { it.item }.filterIsInstance<InboxItem.JobDue>().filter { it.job == OUTING_JOB }
+
+        /** send_to_user as the lead's turn [scope] would have it, gated. */
+        fun sendAs(scope: RunScope) = outing.gateSuggestions(own.sendToUser(scope), scope)
+
+        suspend fun postVia(send: net.robog.clarity.harness.Tool, ideaRef: String?, kind: String = "look_forward", toolUseId: String = "call-${Uuid.random()}"): ToolResult {
+            val cards = listOf(
+                Card.Text("Thursday evening is free."),
+                Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time")), ref = ideaRef),
+            )
+            val input = buildJsonObject { put("kind", kind); put("cards", ClarityJson.encodeToJsonElement(cards)) }
+            return withContext(ToolCallContext(run, toolUseId)) { send.invoke(input) }
+        }
 
         suspend fun saveIdea(what: String, vararg more: Pair<String, String>): String =
             (call("save_outing_idea", "what" to what, *more).shouldBeInstanceOf<ToolResult.Ok>().content.split(" ")[1])
@@ -401,7 +414,7 @@ class OutingDbTest : FunSpec({
         // an answered offer is recorded (so it is never offered again) but is not counted against the unprompted budget
         rig.ideas.all().first { it.id == d }.suggestedAt shouldBe now
         rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
-        rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
+        rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Ok>() // an open idea already offered may be shown again when asked
         rig.call("update_outing_idea", "id" to d, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
         rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
         // and the scout still sees two unprompted offers
@@ -417,5 +430,66 @@ class OutingDbTest : FunSpec({
         rig.call("save_outing_idea", "what" to "dinner with Sam").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
         rig.call("save_outing_idea", "what" to "Gig", "url" to "https://example.com/sam-and-friends").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
         rig.call("save_outing_idea", "what" to "Jazz at the Blue Room").shouldBeInstanceOf<ToolResult.Ok>()
+    }
+    test("only a turn the person started, with nothing untrusted read, skips the budget and the ref") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night", "category" to "live music")
+        val b = rig.saveIdea("Pottery class", "category" to "class")
+        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>() // the week's budget is used
+
+        // a person's turn that then read mail (list_outing_ideas, list_messages...) is gated like a job turn
+        val tainted = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true); it.taint() }
+        rig.postVia(rig.sendAs(tainted), null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
+        rig.postVia(rig.sendAs(tainted), "outing:$c").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+        // a turn that began as a job and that the person interrupted does not inherit it
+        val interrupted = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false); it.userAsked() }
+        interrupted.requestedByUser shouldBe true
+        rig.postVia(rig.sendAs(interrupted), null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
+        rig.postVia(rig.sendAs(interrupted), "outing:$c").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+        // their own untainted turn does
+        val theirs = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        rig.postVia(rig.sendAs(theirs), "outing:$c").shouldBeInstanceOf<ToolResult.Ok>()
+        // and may show an open idea that was offered before again, never a declined one
+        rig.postVia(rig.sendAs(theirs), "outing:$a").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.call("update_outing_idea", "id" to a, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.postVia(rig.sendAs(theirs), "outing:$a").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
+    }
+
+    test("a malformed outing ref is refused, not let through ungated") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        listOf("outing:", "outing:abc", "outing:${a}x", "outing:${a.uppercase()}", "outing:$a and more").forEach { ref ->
+            rig.postVia(rig.sendToUser, ref, kind = "finding").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "exactly"
+        }
+        rig.feed.page(0, 20).items.shouldBeEmpty()
+    }
+
+    test("two offers racing past the weekly budget cannot both win, and a failed post gives the reservation back") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>() // one of two used
+        val others = (1..6).map { rig.saveIdea("Outing $it") }
+        val results = kotlinx.coroutines.coroutineScope {
+            val scope = this
+            others.map { id -> scope.async(kotlinx.coroutines.Dispatchers.IO) { rig.suggest(id) } }.map { it.await() }
+        }
+        results.count { it is ToolResult.Ok } shouldBe 1
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
+
+        // a post that fails after the reservation releases it
+        database.tx { exec("TRUNCATE outing_idea, feed_item RESTART IDENTITY CASCADE") }
+        val rig2 = Rig(database, now, settings)
+        val b = rig2.saveIdea("Hike")
+        val failing = rig2.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by rig2.own.sendToUser(rig2.leadScope) {
+                override suspend fun invoke(input: JsonObject): ToolResult = ToolResult.Error("could not post")
+            },
+            rig2.leadScope,
+        )
+        rig2.postVia(failing, "outing:$b").shouldBeInstanceOf<ToolResult.Error>().message shouldBe "could not post"
+        rig2.ideas.all().first { it.id == b }.suggestedAt shouldBe null
+        rig2.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
     }
 })

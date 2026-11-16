@@ -273,7 +273,7 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     return userDeliveries + Delivery(others.map { it.seq }, Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text(text))))
 }
 
-private val ANSWER_REF = Regex("^(outing|plan):[0-9a-f-]{36}$")
+private val ANSWER_REF = Regex("^(outing|plan):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 /**
  * Pure: the operator's note for a tap, "Tap answers card ref outing:<id>", from the card's [ref] only and only when

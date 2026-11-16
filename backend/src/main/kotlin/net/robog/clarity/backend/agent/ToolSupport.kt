@@ -48,6 +48,14 @@ class RunScope(
     val untrusted: Boolean get() = untrustedFlag.get()
     val requestedByUser: Boolean get() = requestedFlag.get()
 
+    private val personTurnFlag = AtomicBoolean(false)
+
+    /**
+     * Whether the person started this turn (their words were in its first batch), as opposed to a job or nudge turn they
+     * interrupted later ([userAsked] sets [requestedByUser] but not this).
+     */
+    val startedByPerson: Boolean get() = personTurnFlag.get()
+
     fun taint() {
         if (!untrustedFlag.getAndSet(true)) onTaint()
     }
@@ -59,6 +67,7 @@ class RunScope(
     fun startTurn(untrusted: Boolean, requestedByUser: Boolean) {
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
+        personTurnFlag.set(requestedByUser)
         turn.reset()
     }
 

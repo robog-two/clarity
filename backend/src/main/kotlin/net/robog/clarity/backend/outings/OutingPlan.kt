@@ -261,17 +261,48 @@ fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List
     return kinds(IdeaState.USED) to kinds(IdeaState.DECLINED)
 }
 
+private val ORG_WORDS = setOf(
+    "the", "inc", "llc", "ltd", "co", "corp", "company", "group", "cafe", "café", "restaurant", "bar", "pub", "grill", "kitchen", "bakery", "brewing", "brewery",
+    "tavern", "lounge", "room", "hall", "club", "theater", "theatre", "cinema", "gallery", "museum", "records", "music", "nation", "studio", "studios", "team",
+    "school", "church", "hotel", "shop", "store", "market", "bank", "services", "service", "association", "society", "foundation", "institute", "university",
+    "college", "gym", "fitness", "center", "centre", "agency", "office", "support", "events", "tickets", "and", "of",
+)
+
+private val HONORIFICS = setOf("dr", "mr", "mrs", "ms", "mx", "prof", "sir", "rev")
+
+/** First words that are ordinary words as well as names. A contact called "Bill Smith" is still matched by "bill smith", just not by "bill". */
+private val FIRST_NAME_STOP = setOf(
+    "bill", "will", "mark", "pat", "art", "rose", "grace", "hope", "joy", "faith", "dawn", "april", "may", "june", "summer", "autumn", "bob", "jack", "rob",
+    "new", "old", "big", "little", "great", "grand", "royal", "blue", "red", "green", "black", "white", "golden", "north", "south", "east", "west", "live",
+    "good", "best", "city", "park", "lake", "river", "happy", "sunny", "dinner", "lunch", "jazz", "night", "day", "family", "friends", "friend", "home",
+)
+
 /**
- * Pure: the first of [names] (the people who may be company: [recentContacts]) that [text] mentions, as the whole name
- * or its first word of at least 3 letters, whole words, any case; null when none. Names belong in the company field.
+ * Pure: how a person is named in a saved contact: the full name and the first name, as words. Null when the contact does
+ * not look like a person: a display name of fewer than two words, or one with a business word (Inc, Cafe, The...). "Smith, John"
+ * reads "John Smith"; punctuation around a word is dropped; a leading Dr or Mr is skipped. The first name is left out when it
+ * is shorter than 3 letters or is an ordinary word.
  */
-fun namesIn(text: String, names: List<String>): String? {
-    val lower = text.lowercase()
-    return names.map { it.trim() }.filter { it.isNotEmpty() }.firstNotNullOfOrNull { full ->
-        // the whole name, or its first word when that is at least 3 letters
-        listOf(full, full.split(Regex("\\s+")).first()).distinct().filter { it.length >= 3 }.firstOrNull { n ->
-            Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)").containsMatchIn(lower)
-        }
+fun personNames(displayName: String): List<String>? {
+    val reordered = if (',' in displayName) displayName.substringAfter(',').trim() + " " + displayName.substringBefore(',').trim() else displayName
+    val words = reordered.split(Regex("\\s+")).map { it.trim { c -> !c.isLetter() } }.filter { it.isNotEmpty() }
+    val given = words.dropWhile { it.lowercase() in HONORIFICS }
+    if (given.size < 2 || words.any { it.lowercase() in ORG_WORDS }) return null
+    val first = given.first()
+    return listOfNotNull(given.joinToString(" "), first.takeIf { it.length >= 3 && it.lowercase() !in FIRST_NAME_STOP }).distinct()
+}
+
+/**
+ * Pure: the first name of a person among [displayNames] (the people who may be company: [recentContacts]) that [text]
+ * mentions: the whole name or the first name, whole words, any case. Businesses and places in the contacts (see
+ * [personNames]) never match. [text] is also read percent-decoded, so a name in a web address is found. Null when none.
+ */
+fun namesIn(text: String, displayNames: List<String>): String? {
+    val decoded = runCatching { java.net.URLDecoder.decode(text, Charsets.UTF_8) }.getOrDefault(text)
+    val haystacks = listOf(text, decoded).distinct().map { it.lowercase() }
+    return displayNames.mapNotNull(::personNames).flatten().firstOrNull { n ->
+        val rx = Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)")
+        haystacks.any { rx.containsMatchIn(it) }
     }
 }
 
@@ -282,27 +313,30 @@ const val OUTING_REF_PREFIX = "outing:"
 fun outingIdeaOf(ref: String?): String? =
     ref?.trim()?.takeIf { OUTING_REF.matches(it) }?.removePrefix(OUTING_REF_PREFIX)
 
-private val OUTING_REF = Regex("^outing:[0-9a-f-]{36}$")
+private val OUTING_REF = Regex("^outing:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 /**
- * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved
- * idea that was not offered before (the post of the same call [call], re-run after a crash, is the same
- * post). When [budgeted] (the lead's own idea, not an answer to the person asking) fewer than [perWeek]
- * other ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]).
+ * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved idea. It must not
+ * have been offered before (the post of the same call [call], re-run after a crash, is the same post), and fewer than
+ * [perWeek] other ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]). When the person
+ * [asked] for something to do, in a turn that is theirs and untainted, an open idea already offered may be shown again and
+ * the budget does not apply; a declined idea never comes back.
  */
 fun suggestionRefusal(
     idea: SavedIdea?,
     offered: List<Instant>,
     now: Instant,
     call: String? = null,
-    budgeted: Boolean = true,
+    asked: Boolean = false,
     perWeek: Int = SUGGESTIONS_PER_WEEK,
 ): String? = when {
     idea == null -> "No saved idea has that id. Save the outing with save_outing_idea first, then suggest it."
     idea.state != IdeaState.OPEN -> "\"${idea.what}\" is ${idea.state.wire}; only an open idea can be suggested."
+    asked -> null
     idea.suggestedAt != null && (call == null || idea.suggestedCall != call) ->
         "\"${idea.what}\" was already offered and is waiting for the person's answer. Suggest another idea or send nothing."
-    budgeted && offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
+    idea.suggestedAt != null -> null
+    offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
     else -> null
 }
 

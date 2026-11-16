@@ -39,6 +39,7 @@ import org.jetbrains.exposed.v1.core.Table
 import org.jetbrains.exposed.v1.core.and
 import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.core.greaterEq
+import org.jetbrains.exposed.v1.core.neq
 import org.jetbrains.exposed.v1.core.isNull
 import org.jetbrains.exposed.v1.datetime.timestamp
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -79,6 +80,14 @@ data class NewIdea(
     val url: String? = null,
 )
 
+/** The answer of [OutingStore.reserve]. */
+sealed interface Reservation {
+    /** Go on and post. [fresh] is false when the idea was already offered (the same call re-run, or shown again on request). */
+    data class Granted(val fresh: Boolean) : Reservation
+
+    data class Refused(val reason: String) : Reservation
+}
+
 /** The saved outing ideas (`outing_idea`). */
 interface OutingStore {
     suspend fun save(idea: NewIdea): SavedIdea
@@ -90,10 +99,15 @@ interface OutingStore {
     suspend fun decide(id: String, state: IdeaState): SavedIdea?
 
     /**
-     * Records that [id] was offered at [at] by the tool call [call] (the first time only). [unprompted] is false
-     * for an offer the person asked for: it does not count against the weekly budget.
+     * Reserves the offer of [id] for the tool call [call], atomically: under one lock it applies [suggestionRefusal] to
+     * the stored idea and the unprompted offers of the last week, and, if it passes and the idea was never offered, sets
+     * `suggested_at` (and the call, and [unprompted], false for an offer the person asked for). Two offers racing past
+     * the weekly budget cannot both win.
      */
-    suspend fun markSuggested(id: String, at: Instant, call: String?, unprompted: Boolean)
+    suspend fun reserve(id: String, at: Instant, call: String?, asked: Boolean): Reservation
+
+    /** Takes back the reservation [call] made on [id] (the post failed), so the idea can be offered again. */
+    suspend fun release(id: String, call: String?)
 
     /** When ideas other than [except] were offered unprompted at or after [since]. */
     suspend fun offeredSince(since: Instant, except: String? = null): List<Instant>
@@ -128,13 +142,33 @@ class ExposedOutingStore(private val database: Database, private val clock: Cloc
         OutingIdeas.selectAll().orderBy(OutingIdeas.createdAt, SortOrder.DESC).map { it.toIdea() }
     }
 
-    override suspend fun markSuggested(id: String, at: Instant, call: String?, unprompted: Boolean) {
-        val uuid = Uuid.parseOrNull(id) ?: return
-        database.tx {
-            OutingIdeas.update({ (OutingIdeas.id eq uuid) and OutingIdeas.suggestedAt.isNull() }) {
+    override suspend fun reserve(id: String, at: Instant, call: String?, asked: Boolean): Reservation {
+        val uuid = Uuid.parseOrNull(id) ?: return Reservation.Refused(suggestionRefusal(null, emptyList(), at)!!)
+        return database.tx {
+            // One reservation at a time: the budget count and the update below are one step.
+            exec("SELECT pg_advisory_xact_lock(530045)") { }
+            val idea = OutingIdeas.selectAll().where { OutingIdeas.id eq uuid }.forUpdate().singleOrNull()?.toIdea()
+            val offered = OutingIdeas.select(OutingIdeas.id, OutingIdeas.suggestedAt)
+                .where { (OutingIdeas.suggestedAt greaterEq at - SUGGESTION_WINDOW) and OutingIdeas.suggestedUnprompted and (OutingIdeas.id neq uuid) }
+                .mapNotNull { it[OutingIdeas.suggestedAt] }
+            suggestionRefusal(idea, offered, at, call, asked)?.let { return@tx Reservation.Refused(it) }
+            if (idea!!.suggestedAt != null) return@tx Reservation.Granted(fresh = false)
+            OutingIdeas.update({ OutingIdeas.id eq uuid }) {
                 it[suggestedAt] = at
                 it[suggestedCall] = call
-                it[suggestedUnprompted] = unprompted
+                it[suggestedUnprompted] = !asked
+            }
+            Reservation.Granted(fresh = true)
+        }
+    }
+
+    override suspend fun release(id: String, call: String?) {
+        val uuid = Uuid.parseOrNull(id) ?: return
+        database.tx {
+            OutingIdeas.update({ (OutingIdeas.id eq uuid) and (if (call == null) OutingIdeas.suggestedCall.isNull() else OutingIdeas.suggestedCall eq call) }) {
+                it[suggestedAt] = null
+                it[suggestedCall] = null
+                it[suggestedUnprompted] = true
             }
         }
     }
@@ -358,35 +392,43 @@ class OutingTools(
     }
 
     /**
-     * The server is the authority on outing suggestions: [send] (`send_to_user`) is run only when its cards
-     * pass. Any post with a choices card whose `ref` is `outing:<id>` goes through the gate, whatever its kind:
-     * the idea must be saved, open and not offered before. A look_forward post with no such ref is refused.
-     * Unprompted (the lead's own idea) at most [SUGGESTIONS_PER_WEEK] ideas may have been offered in 7 days. In a
-     * turn answering the person ([scope] says they asked) neither the ref nor the budget applies, since they
-     * asked; an outing ref there still records the offer, so a later no is final, but it does not count against
-     * the unprompted budget. A successful post sets `suggested_at`.
+     * The server is the authority on outing suggestions: [send] (`send_to_user`) is run only when its cards pass. Any
+     * post with a choices card whose `ref` starts with `outing:` goes through the gate, whatever its kind, and a
+     * malformed ref is refused. The idea must be saved, open and not offered before, and at most [SUGGESTIONS_PER_WEEK]
+     * other ideas may have been offered unprompted in 7 days; the reservation is atomic ([OutingStore.reserve]) and
+     * is taken back if the post fails. A look_forward post with no outing ref is refused. Only in a turn the person
+     * started and that has read nothing untrusted ([RunScope.startedByPerson], not [RunScope.untrusted]) do the ref
+     * requirement and the budget not apply, and an open idea already offered may be shown again: they asked. A job
+     * turn the person interrupted does not get this, and neither does a turn that has read mail.
      */
     fun gateSuggestions(send: Tool, scope: RunScope?): Tool = object : Tool by send {
         override suspend fun invoke(input: JsonObject): ToolResult {
             val cards = runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(Card.serializer()), input["cards"] ?: return send.invoke(input)) }
                 .getOrNull() ?: return send.invoke(input)
-            val ideaId = cards.filterIsInstance<Card.Choices>().firstNotNullOfOrNull { outingIdeaOf(it.ref) }
-            val answeringPerson = scope?.requestedByUser == true
+            val refs = cards.filterIsInstance<Card.Choices>().mapNotNull { it.ref?.trim() }.filter { it.startsWith(OUTING_REF_PREFIX) }
+            val asked = scope?.startedByPerson == true && !scope.untrusted
             val lookForward = (input["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "look_forward"
-            if (ideaId == null) {
-                return if (lookForward && !answeringPerson) {
+            if (refs.isEmpty()) {
+                return if (lookForward && !asked) {
                     ToolResult.Error("A look_forward message is an outing suggestion: save the outing with save_outing_idea, then post it with a choices card whose ref is \"outing:<idea id>\".")
                 } else {
                     send.invoke(input)
                 }
             }
-            val now = clock.now()
+            val ideaId = refs.singleOrNull()?.let(::outingIdeaOf)
+                ?: return ToolResult.Error("The ref of an outing card is exactly \"outing:<idea id>\", one per message, with the id from save_outing_idea.")
             val call = coroutineContext[ToolCallContext]?.let { "${it.runId}:${it.toolUseId}" }
-            val idea = store.all().firstOrNull { it.id.equals(ideaId, ignoreCase = true) }
-            val offered = store.offeredSince(now - SUGGESTION_WINDOW, except = idea?.id)
-            suggestionRefusal(idea, offered, now, call, budgeted = !answeringPerson)?.let { return ToolResult.Error(it) }
-            val result = send.invoke(input)
-            if (result is ToolResult.Ok) store.markSuggested(idea!!.id, now, call, unprompted = !answeringPerson)
+            val reserved = when (val r = store.reserve(ideaId, clock.now(), call, asked)) {
+                is Reservation.Refused -> return ToolResult.Error(r.reason)
+                is Reservation.Granted -> r
+            }
+            val result = try {
+                send.invoke(input)
+            } catch (e: Throwable) {
+                if (reserved.fresh) store.release(ideaId, call)
+                throw e
+            }
+            if (result !is ToolResult.Ok && reserved.fresh) store.release(ideaId, call)
             return result
         }
     }
