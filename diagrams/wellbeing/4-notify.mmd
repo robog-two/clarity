@@ -1,14 +1,14 @@
 flowchart TD
   SEND["send_to_user(cards, urgency, kind)"] --> KIND{"kind"}
   KIND -->|reply| REPLY["notify when the app is closed<br/>(answers something the person said,<br/>not counted in the budget)"]
-  KIND -->|check_in| CHECK["push at the nudge time"]
+  KIND -->|check_in| CHECK["push at the nudge time<br/>(not counted in the budget)"]
   KIND -->|look_forward| LOOK["push at a calm hour"]
   KIND -->|finding| FIND{"due within 24 h,<br/>or the sender gets through?"}
   FIND -->|yes| NOW["push now"]
   FIND -->|no| BATCH["evening summary"]
 
-  CHECK --> BUDGET{"pushBudget() (pure)<br/>under the daily limit?"}
-  LOOK --> BUDGET
+  LOOK --> BUDGET{"pushBudget() (pure)<br/>under the daily limit?"}
+  CHECK --> POLICY
   NOW --> BUDGET
   BUDGET -->|yes| POLICY["notifyDecision() (unchanged)<br/>protected time, who gets through"]
   BUDGET -->|no| INAPP["in app, no push"]
