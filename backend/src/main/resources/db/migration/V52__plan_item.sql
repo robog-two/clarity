@@ -10,6 +10,12 @@ CREATE TABLE plan_item (
     state        text        NOT NULL DEFAULT 'open',
     started_on   date,
     first_step   text,
+    first_step_on date,
+    -- priority or parked: what the plan was for; a redone plan replaces its own kind only
+    source       text        NOT NULL DEFAULT 'priority',
+    -- where the item stood before the last plan moved it to a new day, so a replaced plan can put it back
+    prev_last_date    date,
+    prev_days_carried integer,
     created_at   timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX plan_item_open_idx ON plan_item (last_date) WHERE state = 'open';
@@ -17,4 +23,6 @@ CREATE INDEX plan_item_open_idx ON plan_item (last_date) WHERE state = 'open';
 -- A nudge may belong to a plan item (the check-in an if-then schedules, or a follow-up the person asked for).
 ALTER TABLE nudge ADD COLUMN plan_item_id uuid;
 ALTER TABLE nudge ADD COLUMN follow_up boolean NOT NULL DEFAULT false;
+-- the check-in an if-then plan sets (the plan saved again replaces it)
+ALTER TABLE nudge ADD COLUMN auto_check_in boolean NOT NULL DEFAULT false;
 CREATE INDEX nudge_plan_item_idx ON nudge (plan_item_id) WHERE plan_item_id IS NOT NULL;

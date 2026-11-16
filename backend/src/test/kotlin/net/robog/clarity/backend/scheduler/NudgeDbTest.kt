@@ -96,7 +96,7 @@ class NudgeDbTest : FunSpec({
         private val counting = client?.let { inner -> DecisionClient { s, q -> calls.incrementAndGet(); inner.decide(s, q) } }
         val config = AgentConfig(openRouterApiKey = "k", reviewInterval = 2.hours)
         val runner = NudgeRunner(store, tasks, PlanItemStore(database), inbox, activity, Decisions(config, { counting }, database, clock), { Settings() }, clock)
-        val tools = NudgeTools(store, tasks, { Settings() }, clock).all().associateBy { it.name }
+        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock).all().associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue(name).invoke(input)
         suspend fun nudgeItems() = inbox.pending().map { it.item }.filterIsInstance<InboxItem.NudgeDue>()

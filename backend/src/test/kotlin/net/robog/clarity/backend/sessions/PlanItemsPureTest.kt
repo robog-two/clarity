@@ -24,7 +24,6 @@ import net.robog.clarity.backend.agent.PLAN_CHECK_IN
 import net.robog.clarity.backend.agent.PlanCheckIn
 import net.robog.clarity.backend.agent.PlanMove
 import net.robog.clarity.backend.agent.PlanOutcome
-import net.robog.clarity.backend.agent.coveringCheckIn
 import net.robog.clarity.backend.agent.followUpRefusal
 import net.robog.clarity.backend.agent.linkedItem
 import net.robog.clarity.backend.agent.planAutoNudges
@@ -62,9 +61,9 @@ class PlanItemsPureTest : FunSpec({
         test("close wording matches: case, punctuation, filler words and small rewording") {
             val open = listOf(item("a", "Write the onboarding spec", mon))
             carryOver(open, listOf(Planned("write onboarding spec!")), tue, ids()).single().id shouldBe "a"
-            carryOver(open, listOf(Planned("finish the onboarding spec")), tue, ids()).single().id shouldBe "a"
+            carryOver(open, listOf(Planned("the onboarding spec, write")), tue, ids()).single().id shouldBe "a"
             carryOver(open, listOf(Planned("call the dentist")), tue, ids()).single().id shouldBe "new1"
-            // one shared word is not enough between two-word wordings
+            // a shared word or two is not enough
             carryOver(listOf(item("a", "expense report", mon)), listOf(Planned("quarterly report")), tue, ids()).single().id shouldBe "new1"
         }
 
@@ -119,7 +118,7 @@ class PlanItemsPureTest : FunSpec({
         test("the preparation lists them without blame, with the plan item id") {
             val stuck = stuckItems(listOf(item("a", "write the spec", mon, days = 2).copy(firstStep = "open the doc")), tue)
             val text = prepInstruction(null, stuck.map { stuckLine(it, tue) })
-            text shouldContain "stuck: write the spec, day 3 (plan item a, first step: open the doc)"
+            text shouldContain "stuck: write the spec, day 3 (plan item a, earlier first step: open the doc)"
             text shouldContain "without blame"
             text shouldContain "two-minute first step"
             prepInstruction(null) shouldNotContain "stuck"
@@ -153,7 +152,7 @@ private fun pendingNudge(at: Instant, note: String, planItemId: String? = null, 
     Nudge(NudgeId(id), at, note, null, Nudge.Status.PENDING, now, planItemId = planItemId)
 
 class StuckNudgesPureTest : FunSpec({
-    val spec = item("a", "write the onboarding spec", wed, days = 3).copy(firstStep = "open the doc and write the title")
+    val spec = item("a", "write the onboarding spec", wed, days = 3).copy(firstStep = "open the doc and write the title", firstStepOn = wed)
 
     context("linking an if-then to its item") {
         val dentist = item("b", "call the dentist", wed)
@@ -162,20 +161,20 @@ class StuckNudgesPureTest : FunSpec({
             linkedItem(IfThen("it's 9:30", "something else"), "zzz", listOf(spec, dentist)).shouldBeNull()
         }
         test("else the item whose words it mentions, else the only item") {
-            linkedItem(IfThen("it's 9:30", "spec at my desk until 12"), null, listOf(dentist, spec)) shouldBe spec
-            linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec)) shouldBe spec
+            linkedItem(IfThen("it's 9:30", "write the onboarding spec at my desk"), null, listOf(dentist, spec)) shouldBe spec
+            linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec)).shouldBeNull()
             linkedItem(IfThen("it's 9:30", "at my desk until 12"), null, listOf(spec, dentist)).shouldBeNull()
         }
     }
 
     context("the check-in note") {
         test("names the item, the plan and the first step") {
-            val note = planCheckInNote(IfThen("it's 9:30", "spec at my desk"), spec)
+            val note = planCheckInNote(IfThen("it's 9:30", "spec at my desk"), spec, wed)
             note shouldContain PLAN_CHECK_IN
             note shouldContain "plan item a"
             note shouldContain "If it's 9:30, then spec at my desk."
             note shouldContain "First step: open the doc and write the title."
-            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "write the title"), null) shouldContain "First step: write the title."
+            planCheckInNote(IfThen("it's 9:30", "spec", firstStep = "write the title"), null, wed) shouldContain "First step: write the title."
         }
     }
 
@@ -196,14 +195,14 @@ class StuckNudgesPureTest : FunSpec({
         }
 
         test("a time that has passed gets none, and says why") {
-            val out = plan(PlanCheckIn(IfThen("it's 7:00", "spec"), spec))
+            val out = plan(PlanCheckIn(IfThen("it's 7:00 am", "spec"), spec))
             out.nudges.shouldBeEmpty()
             out.skipped.single() shouldContain "passed"
         }
 
-        test("no duplicate when a check-in is already around that time, the model's or an earlier one") {
+        test("no duplicate when a check-in for the same item is already around that time, or an earlier one of these") {
             val at = Instant.parse("2026-03-04T09:30:00Z")
-            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = listOf(pendingNudge(at + 5.minutes, "$PLAN_CHECK_IN: spec"))).nudges.shouldBeEmpty()
+            plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = listOf(pendingNudge(at + 5.minutes, "$PLAN_CHECK_IN: spec", "a"))).nudges.shouldBeEmpty()
             plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = listOf(pendingNudge(at, "ask about it", planItemId = "a"))).nudges.shouldBeEmpty()
             // two if-then plans a few minutes apart for the same item: only the first
             plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), PlanCheckIn(IfThen("it's 9:35", "spec again"), spec)).nudges shouldHaveSize 1
@@ -211,7 +210,7 @@ class StuckNudgesPureTest : FunSpec({
 
         test("the nudge limits apply: the day's cap and the pending cap") {
             plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), sameDay = 12).skipped.single() shouldContain "12 nudges"
-            val full = (1..10).map { pendingNudge(Instant.parse("2026-03-05T12:00:00Z") + it.hours, "other $it", id = "p$it") }
+            val full = (1..10).map { pendingNudge(Instant.parse("2026-03-05T12:00:00Z") + it.hours, "other $it", planItemId = "x$it", id = "p$it") }
             plan(PlanCheckIn(IfThen("it's 9:30", "spec"), spec), pending = full).skipped.single() shouldContain "already 10"
         }
 
@@ -219,16 +218,6 @@ class StuckNudgesPureTest : FunSpec({
             val out = plan(PlanCheckIn(IfThen("Dana emails", "it waits"), null))
             out.nudges.shouldBeEmpty()
             out.skipped.shouldBeEmpty()
-        }
-    }
-
-    context("the model's own nudge") {
-        test("is covered by a check-in set around that time") {
-            val at = Instant.parse("2026-03-04T09:30:00Z")
-            val auto = pendingNudge(at, "$PLAN_CHECK_IN: spec", "a")
-            coveringCheckIn(at + 4.minutes, listOf(auto)) shouldBe auto
-            coveringCheckIn(at + 11.minutes, listOf(auto)).shouldBeNull()
-            coveringCheckIn(at, listOf(pendingNudge(at, "ask about the ML report"))).shouldBeNull()
         }
     }
 

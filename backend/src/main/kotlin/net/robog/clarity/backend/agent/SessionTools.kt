@@ -22,6 +22,7 @@ import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.backend.sessions.DayPlanStore
 import net.robog.clarity.backend.sessions.PlanItem
 import net.robog.clarity.backend.sessions.PlanItemStore
+import net.robog.clarity.backend.sessions.PlanSource
 import net.robog.clarity.backend.sessions.Planned
 import net.robog.clarity.backend.sessions.STUCK_FROM_DAY
 import net.robog.clarity.backend.sessions.Playbooks
@@ -285,9 +286,10 @@ class SessionTools(
         val date = today()
         plans.update(date) { it.copy(plan = items, sessionId = session.id.value) }
         val planned = planItems.open().filter { it.lastDate == date }
-        val checkIns = items.zip(input.ifThens).map { (ifThen, raw) -> PlanCheckIn(ifThen, linkedItem(ifThen, raw.item, planned)) }
-        // The first step an if-then carries stays on its item, so the next day's check-in still has it.
-        checkIns.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep) } }
+        val linked = items.zip(input.ifThens).map { (ifThen, raw) -> PlanCheckIn(ifThen, linkedItem(ifThen, raw.item, planned)) }
+        // The first step an if-then carries stays on its item (with the day it was agreed), so a later day can say it is an earlier one.
+        linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }
+        val checkIns = linked.map { c -> c.item?.let { i -> c.copy(item = planItems.get(i.id)) } ?: c }
         val scheduled = nudger.schedule(date, checkIns)
         post(session, listOf(Card.Plan(items)))
         ToolResult.Ok("Plan saved (${items.size}).$scheduled")
@@ -340,7 +342,7 @@ class SessionTools(
             tasks.upsert(null, item.title.trim(), item.detail.trim().ifEmpty { sub }, AgentTask.Status.WORKING)!! to sub
         }
         val date = today()
-        val parkedItems = if (parked.isEmpty()) emptyList() else planItems.plan(date, parkedPlanned)
+        val parkedItems = if (parked.isEmpty()) emptyList() else planItems.plan(date, parkedPlanned, PlanSource.PARKED)
         plans.update(date) { it.copy(parked = parked, called = true, sessionId = session.id.value) }
         val cards = buildList<Card> {
             if (created.isNotEmpty()) add(Card.Chips("I’ll do", created.map { (task, sub) -> Chip(task.title, sub) }))

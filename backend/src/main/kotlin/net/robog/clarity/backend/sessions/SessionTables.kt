@@ -51,5 +51,9 @@ object PlanItems : Table("plan_item") {
     val state = text("state")
     val startedOn = date("started_on").nullable()
     val firstStep = text("first_step").nullable()
+    val firstStepOn = date("first_step_on").nullable()
+    val planSource = text("source")
+    val prevLastDate = date("prev_last_date").nullable()
+    val prevDaysCarried = integer("prev_days_carried").nullable()
     override val primaryKey = PrimaryKey(id)
 }

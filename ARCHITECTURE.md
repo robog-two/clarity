@@ -535,16 +535,23 @@ the notify policy and protected-time holds apply as for anything else.
 **Stuck tasks.** `plan_item` (`V52`) follows what the person puts on a day's plan (the priorities and parked
 items of the morning call) from day to day. Pure `carryOver` (`sessions/PlanItems.kt`) matches today's items to
 open ones by the id the model passes (`continues` on `set_priorities` and `hand_off`), else by close wording
-(lower case, no filler words, two thirds of the shorter wording shared), at most once each, for items last
-planned within 3 days; each new day adds one to `days_carried`, and planning twice in a day changes nothing.
-An item on its third day or later is stuck: the prep job lists it ("stuck: <text>, day 3") for the lead to
-bring up without blame, and the COMMIT playbook offers a two-minute first step (`firstStep` on the if-then),
-help, or dropping it. After `set_plan` the server sets one nudge at each if-then whose cue has a clock time
-("it's 9:30"), linked to its item (`nudge.plan_item_id`), under the usual nudge limits; the lead's own `nudge`
-for that time is answered "already covered". When such a nudge fires, the lead posts a `check_in` with a
-`Card.Choices` (Starting, Later, Make it smaller) and records the tap with `plan_item`: started (no more
-check-ins on it that day, waiting ones cancelled, a due one skipped), later (at the time the person picks) or
-smaller (a new first step, back in 10 minutes). Follow-ups are capped at 2 per item per day by the server.
+(lower case, no filler words, same numbers; up to three words all must match, longer wordings four in five; the
+best score wins, ties go to the lower id), at most once each, for items last planned within 3 days. Each new day
+adds one to `days_carried`; planning twice in a day changes nothing, and a plan redone the same day puts the items
+it dropped back where they were (`replaceUnplanned`). An item on its third day or later is stuck: the prep job
+lists it ("stuck: <text>, day 3") for the lead to bring up without blame, and the COMMIT playbook offers a
+two-minute first step (`firstStep` on the if-then, stored with the day it was agreed and called "earlier first
+step" on later days), help, or dropping it. After `set_plan` the server sets one nudge at each if-then whose cue
+names a time of day (`parseCueTime`: 9:30, 9.30, 3pm, noon, "between 9 and 10am"; a bare 1 to 6 is afternoon, a
+bare time already past means the evening when that is still today), marked `auto_check_in` and linked to its item
+by explicit id or by repeating its wording. Saving the plan again replaces them (`reconcileCheckIns`); follow-ups
+and the person's reminders are untouched, and cues with no time are listed back to the lead so it can nudge for
+them itself. Plan nudges (check-ins and follow-ups) have their own caps (10 waiting, 12 a day), apart from the
+person's own nudges. The lead's own `nudge` is "already covered" only when it is about the same plan item. When a
+check-in fires, the lead posts a `check_in` with a `Card.Choices` (Starting, Later, Make it smaller) and records
+the tap with `plan_item`: started (no more check-ins on it that day, today's waiting ones cancelled, a due one
+skipped), later (at the time the person picks) or smaller (a new first step, back in 10 minutes). Follow-ups are
+capped at 2 per item per day by the server.
 
 Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`

@@ -45,6 +45,8 @@ import net.robog.clarity.backend.agent.nudgeTaskFinished
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
 import net.robog.clarity.backend.agent.MAX_FOLLOW_UPS_PER_DAY
+import net.robog.clarity.backend.agent.isPlan
+import net.robog.clarity.backend.agent.planItemWakeText
 import net.robog.clarity.backend.sessions.PlanItem
 import net.robog.clarity.backend.sessions.PlanItemState
 import net.robog.clarity.backend.sessions.PlanItemStore
@@ -273,7 +275,8 @@ class NudgeRunner(
         val (dayStart, dayEnd) = homeDay(now, zone)
         var firedToday = store.countFired(dayStart, dayEnd)
         val resolved = store.resolveDue(now, NUDGES_PER_TICK) { nudge ->
-            resolve(nudge, now, zone, firedToday).also { if (it.status == Nudge.Status.FIRED) firedToday++ }
+            // The plan flow has its own caps (when it is set); the person's day-cap of fired nudges is theirs alone.
+            resolve(nudge, now, zone, if (nudge.isPlan) 0 else firedToday).also { if (it.status == Nudge.Status.FIRED && !nudge.isPlan) firedToday++ }
         }
         resolved.forEach { (nudge, outcome) ->
             log.info { "nudge ${nudge.id.value} due ${nudge.at}: ${outcome.status.wire()}" + (outcome.reason?.let { " ($it)" } ?: "") }
@@ -318,8 +321,7 @@ class NudgeRunner(
         val itemText = item?.let {
             val (dayStart, dayEnd) = homeDay(now, zone)
             val left = (MAX_FOLLOW_UPS_PER_DAY - store.countFollowUps(it.id, dayStart, dayEnd)).coerceAtLeast(0)
-            "id ${it.id}, \"${it.text}\", day ${it.dayOn(ScheduleClock.homeDate(now, zone))}" + (it.firstStep?.let { s -> ", first step: $s" } ?: "") +
-                ", $left follow-up check-in${if (left == 1) "" else "s"} left today"
+            planItemWakeText(it, ScheduleClock.homeDate(now, zone), left)
         }
         inbox.enqueue(
             InboxItem.NudgeDue(

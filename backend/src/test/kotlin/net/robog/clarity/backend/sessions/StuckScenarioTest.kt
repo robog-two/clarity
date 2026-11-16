@@ -7,6 +7,7 @@ import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
 import io.kotest.matchers.types.shouldBeInstanceOf
@@ -167,9 +168,14 @@ class StuckScenarioTest : FunSpec({
             it.note shouldContain PLAN_CHECK_IN
         }
         // the model nudging for the same time too is told it is covered, and nothing doubles
-        rig.call("nudge", buildJsonObject { put("at", "09:32"); put("note", "ask how the spec is going") })
+        rig.call("nudge", buildJsonObject { put("at", "09:32"); put("note", "ask how the spec is going"); put("planItemId", id) })
             .text() shouldContain "already checks in"
         r.nudges.pending() shouldHaveSize 1
+        // ... but the person's own reminder next to it is theirs, and is made (and has its own limits)
+        rig.call("nudge", buildJsonObject { put("at", "09:35"); put("note", "remind me to call the dentist") })
+            .text() shouldContain "set for"
+        r.nudges.pending() shouldHaveSize 2
+        r.nudges.pending().single { !it.autoCheckIn }.let { mine -> r.nudges.cancel(mine.id, "test") }
 
         // --- day 2: reworded, no id: close wording carries it; still not stuck
         val day2 = Instant.parse("2026-03-03T08:30:00Z")
@@ -276,7 +282,7 @@ class StuckScenarioTest : FunSpec({
 
         // --- a check-in is made from the item's if-then: it is the item's first (planned) nudge
         val first = start + 5.minutes
-        r.nudges.create(first, planCheckInNote(net.robog.clarity.shared.feed.IfThen("it's 10:05", "spec"), item), null, item.id)
+        r.nudges.create(first, planCheckInNote(net.robog.clarity.shared.feed.IfThen("it's 10:05", "spec"), item, LocalDate(2026, 3, 4)), null, item.id)
         val q1 = checkIn(1, first)
         q1.kind shouldBe MessageKind.CHECK_IN
         q1.cards.filterIsInstance<Card.Choices>().single().options.map { it.reply } shouldBe listOf("Starting", "Later", "Make it smaller")
@@ -352,5 +358,112 @@ class StuckScenarioTest : FunSpec({
         r.nudges.pending().shouldBeEmpty()
         rig.call("plan_item", buildJsonObject { put("id", item.id); put("outcome", "later"); put("at", "12:00") }).text() shouldContain "already done"
         r.planItems.open().shouldBeEmpty()
+    }
+
+    test("a second set_plan the same day replaces its check-ins, leaves follow-ups and reminders alone, and lists cues with no time") {
+        val rig = rig()
+        val r = rig.r
+        rig.callAt(day1, CallStage.CHOOSE)
+        val id = idIn(rig.call("set_priorities", priorities("write the onboarding spec")).text())
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec at my desk", item = id)).text() shouldContain "Check-ins set at"
+        val first = r.nudges.pending().single()
+        val mine = r.nudges.create(Instant.parse("2026-03-02T12:00:00Z"), "remind me to call the dentist", null)
+        val followUp = r.nudges.create(Instant.parse("2026-03-02T14:00:00Z"), "$PLAN_CHECK_IN: later", null, id, followUp = true)
+
+        // the same plan again: nothing changes
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec at my desk", item = id)).text() shouldNotContain "Replaced"
+        r.nudges.get(first.id)!!.status shouldBe Nudge.Status.PENDING
+
+        // another time: the old check-in is cancelled, one new one stands
+        rig.callAt(day1, CallStage.COMMIT)
+        val moved = rig.call("set_plan", planOf("it's 10:30", "write the onboarding spec at my desk", item = id)).text()
+        moved shouldContain "Replaced 1 earlier check-in"
+        r.nudges.get(first.id)!!.status shouldBe Nudge.Status.CANCELLED
+        r.nudges.pending().filter { it.autoCheckIn }.single().at shouldBe Instant.parse("2026-03-02T10:30:00Z")
+        r.nudges.get(mine.id)!!.status shouldBe Nudge.Status.PENDING
+        r.nudges.get(followUp.id)!!.status shouldBe Nudge.Status.PENDING
+
+        // the same time with another note replaces it too; a cue with no time is listed for the lead
+        rig.callAt(day1, CallStage.COMMIT)
+        val reworded = rig.call(
+            "set_plan",
+            json(SessionTools.SetPlanInput(listOf(SessionTools.IfThenInput("it's 10:30", "write the onboarding spec, title first", item = id), SessionTools.IfThenInput("Dana emails", "it waits")))),
+        ).text()
+        reworded shouldContain "Replaced 1 earlier check-in"
+        reworded shouldContain "No check-in for: If Dana emails, then it waits."
+        reworded shouldContain "nudge for them yourself"
+        r.nudges.pending().filter { it.autoCheckIn }.single().note shouldContain "title first"
+    }
+
+    test("a redone list of priorities puts the dropped ones back, and an unrelated if-then does not attach to the only priority") {
+        val rig = rig()
+        val r = rig.r
+        rig.callAt(day1, CallStage.CHOOSE)
+        val a = idIn(rig.call("set_priorities", priorities("write the onboarding spec")).text())
+        val day2 = Instant.parse("2026-03-03T08:30:00Z")
+        rig.callAt(day2, CallStage.CHOOSE)
+        rig.call("set_priorities", priorities("write the onboarding spec")).text() shouldContain "day 2"
+        // the person changes their mind in the same call: the spec was not for today after all
+        rig.callAt(day2, CallStage.CHOOSE)
+        val b = idIn(rig.call("set_priorities", priorities("call the dentist")).text())
+        b shouldNotBe a
+        r.planItems.get(a)!!.let { it.lastDate shouldBe LocalDate(2026, 3, 2); it.daysCarried shouldBe 1; it.state shouldBe PlanItemState.OPEN }
+        // and a priority made and replaced on the same day is not left open
+        rig.callAt(day2, CallStage.CHOOSE)
+        rig.call("set_priorities", priorities("renew the passport")).text() shouldContain "plan item"
+        r.planItems.get(b)!!.state shouldBe PlanItemState.REPLACED
+        r.planItems.open().map { it.text }.toSet() shouldBe setOf("write the onboarding spec", "renew the passport")
+
+        // an if-then about something else does not attach to the priority; it still gets its check-in, unlinked
+        rig.callAt(day2, CallStage.COMMIT)
+        val planned = rig.call("set_plan", planOf("it's 3pm", "call the dentist")).text()
+        planned shouldContain "not linked to a plan item"
+        r.nudges.pending().filter { it.autoCheckIn }.single().planItemId shouldBe null
+    }
+
+    test("the person's reminders and the plan's check-ins do not crowd each other") {
+        val start = Instant.parse("2026-03-04T10:00:00Z")
+        val rig = rig(start)
+        val r = rig.r
+        val item = r.planItems.plan(LocalDate(2026, 3, 4), listOf(Planned("write the onboarding spec"))).single()
+        // ten reminders of the person's, the most they may have waiting
+        (1..10).forEach { i -> r.nudges.create(Instant.parse("2026-03-06T08:00:00Z") + (i * 30).minutes, "reminder $i", null) }
+        rig.call("nudge", buildJsonObject { put("at", "2026-03-06T20:00"); put("note", "one more") }).text() shouldContain "already 10"
+        // a tap's follow-up still works
+        rig.call("plan_item", buildJsonObject { put("id", item.id); put("outcome", "later"); put("at", "15:00") }).shouldBeInstanceOf<ToolResult.Ok>()
+        // and the check-in did not use up one of the person's ten (the 11th is still refused, a free day is still open)
+        rig.call("nudge", buildJsonObject { put("at", "2026-03-06T20:30"); put("note", "again") }).text() shouldContain "already 10"
+        r.nudges.pending() shouldHaveSize 11
+    }
+
+    test("Starting cancels only today's waiting check-ins of the item") {
+        val start = Instant.parse("2026-03-04T10:00:00Z")
+        val rig = rig(start)
+        val r = rig.r
+        val item = r.planItems.plan(LocalDate(2026, 3, 4), listOf(Planned("write the onboarding spec"))).single()
+        val today = r.nudges.create(Instant.parse("2026-03-04T15:00:00Z"), "$PLAN_CHECK_IN: today", null, item.id, followUp = true)
+        val tomorrow = r.nudges.create(Instant.parse("2026-03-05T09:00:00Z"), "$PLAN_CHECK_IN: tomorrow", null, item.id, followUp = true)
+        rig.call("plan_item", buildJsonObject { put("id", item.id); put("outcome", "started") }).text() shouldContain "1 waiting one cancelled"
+        r.nudges.get(today.id)!!.status shouldBe Nudge.Status.CANCELLED
+        r.nudges.get(tomorrow.id)!!.status shouldBe Nudge.Status.PENDING
+    }
+
+    test("a first step from an earlier day is presented as an earlier one") {
+        val rig = rig()
+        val r = rig.r
+        rig.callAt(day1, CallStage.CHOOSE)
+        val id = idIn(rig.call("set_priorities", priorities("write the onboarding spec")).text())
+        rig.callAt(day1, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec", firstStep = "write the title", item = id))
+        r.planItems.get(id)!!.firstStepOn shouldBe LocalDate(2026, 3, 2)
+        r.nudges.pending().single().note shouldContain "First step: write the title."
+        val day2 = Instant.parse("2026-03-03T08:30:00Z")
+        rig.callAt(day2, CallStage.CHOOSE)
+        rig.call("set_priorities", priorities("write the onboarding spec", continues = id))
+        rig.callAt(day2, CallStage.COMMIT)
+        rig.call("set_plan", planOf("it's 9:30", "write the onboarding spec", item = id)).text() shouldContain "Check-ins set at"
+        r.nudges.pending().single { it.at > day2 }.note shouldContain "Earlier first step: write the title."
     }
 })

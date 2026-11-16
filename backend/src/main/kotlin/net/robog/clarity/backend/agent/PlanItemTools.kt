@@ -16,7 +16,9 @@ import kotlinx.serialization.Serializable
 import net.robog.clarity.backend.sessions.PlanItem
 import net.robog.clarity.backend.sessions.PlanItemState
 import net.robog.clarity.backend.sessions.PlanItemStore
-import net.robog.clarity.backend.sessions.clockTimeIn
+import net.robog.clarity.backend.sessions.cueMoment
+import net.robog.clarity.backend.sessions.firstStepNote
+import net.robog.clarity.backend.sessions.sameWording
 import net.robog.clarity.backend.sessions.wordsOf
 import net.robog.clarity.harness.Description
 import net.robog.clarity.harness.Tool
@@ -26,6 +28,7 @@ import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.IfThen
 import net.robog.clarity.shared.feed.Nudge
+import net.robog.clarity.shared.feed.NudgeId
 import net.robog.clarity.shared.time.ScheduleClock
 
 /** The words every check-in about a plan item starts its note with (also how the nudge tool knows it is already covered). */
@@ -44,25 +47,37 @@ object CheckInChoices {
     const val SMALLER = "Make it smaller"
 }
 
-/** Pure: the nudge note for the check-in of an if-then, about [item] when one is linked. */
-fun planCheckInNote(ifThen: IfThen, item: PlanItem?): String = buildString {
+/** Pure: whether a nudge belongs to the plan flow (a check-in an if-then set, a follow-up, or anything linked to a plan item); these have caps of their own. */
+val Nudge.isPlan: Boolean get() = planItemId != null || autoCheckIn || followUp
+
+/** Pure: the nudge note for the check-in of an if-then on [date], about [item] when one is linked. */
+fun planCheckInNote(ifThen: IfThen, item: PlanItem?, date: LocalDate): String = buildString {
     append(PLAN_CHECK_IN).append(": ")
     if (item != null) append("\"").append(item.text).append("\" (plan item ").append(item.id).append("). ")
     append(ifThen.sentence())
-    val step = ifThen.firstStep ?: item?.firstStep
-    if (!step.isNullOrBlank()) append(" First step: ").append(step.trim()).append('.')
+    val step = ifThen.firstStep?.takeIf { it.isNotBlank() }?.let { "First step: ${it.trim()}" }
+        ?: item?.let { firstStepNote(it, date) }?.replaceFirstChar { it.uppercase() }
+    if (step != null) append(' ').append(step).append('.')
 }
 
 /**
- * Pure: the plan item an if-then is about. [explicit] (the id the model gave) wins when it is one of
- * [today]; else the item whose words the if-then mentions most; else the only item there is.
+ * Pure: the plan item an if-then is about: the one named by [explicit] when it is one of [today]'s, else the
+ * one whose whole wording the if-then repeats (up to three words all of them, longer ones four in five, and
+ * the same numbers). Two items that fit equally well, or none, link nothing. An unrelated if-then never
+ * attaches to the only item there is.
  */
 fun linkedItem(ifThen: IfThen, explicit: String?, today: List<PlanItem>): PlanItem? {
     explicit?.trim()?.let { id -> today.firstOrNull { it.id == id }?.let { return it } }
     val said = wordsOf(ifThen.cue + " " + ifThen.action).toSet()
-    val scored = today.map { it to wordsOf(it.text).toSet().intersect(said).size }.filter { it.second >= 1 }
-    val top = scored.maxOfOrNull { it.second }
-    return scored.filter { it.second == top }.singleOrNull()?.first ?: today.singleOrNull()
+    val scored = today.mapNotNull { item ->
+        val words = wordsOf(item.text).toSet()
+        val shared = words.intersect(said).size
+        val digits = words.filter { w -> w.any { it.isDigit() } }.toSet()
+        val enough = words.isNotEmpty() && digits.all { it in said } && if (words.size <= 3) shared == words.size else shared * 5 >= words.size * 4
+        if (enough) item to shared else null
+    }
+    val top = scored.maxOfOrNull { it.second } ?: return null
+    return scored.filter { it.second == top }.singleOrNull()?.first
 }
 
 /** One if-then to check in on, with the plan item it was linked to. */
@@ -71,38 +86,83 @@ data class PlanCheckIn(val ifThen: IfThen, val item: PlanItem?)
 /** A nudge [planAutoNudges] wants set. */
 data class AutoNudge(val at: Instant, val note: String, val planItemId: String?)
 
-/** What [planAutoNudges] decided: the nudges to set, and a plain note for each if-then with a clock time that got none. */
-data class AutoNudgePlan(val nudges: List<AutoNudge>, val skipped: List<String>)
+/**
+ * What [planAutoNudges] decided: the nudges to set, why a nudge for a cue with a time was not set ([skipped]), and
+ * the if-thens whose cue names no time of day ([unscheduled], as sentences) so the lead can nudge itself.
+ */
+data class AutoNudgePlan(val nudges: List<AutoNudge>, val skipped: List<String>, val unscheduled: List<String> = emptyList())
+
+private fun String.sameNote(other: String) = normalizedNote() == other.normalizedNote()
+
+private fun String.normalizedNote() = trim().lowercase().replace(Regex("\\s+"), " ")
 
 /**
- * Pure: the nudges to set after the if-thens of [date] are saved: one at each if-then whose cue names
- * a clock time. The limits of the nudge tool apply (future, within 7 days, 10 pending, 12 on the day,
- * [sameDay] already counted); an if-then whose time already has a nudge around it (within the duplicate
- * window, the person's own or an earlier one of these) gets none.
+ * Pure: the nudges to set after the if-thens of [date] are saved: one at each if-then whose cue names a time of
+ * day (see [cueMoment]). [pending] are the waiting plan nudges (check-ins and follow-ups; the person's own
+ * reminders are not in it, and the replaced check-ins of this plan are left out by the caller), [sameDay] the
+ * plan nudges already due that day. Plan nudges have the same limits as the nudge tool (future, within 7 days, 10
+ * pending, 12 a day) counted among themselves. A check-in is not set when one for the SAME plan item is already
+ * around that time (within the duplicate window); another item's does not matter.
  */
 fun planAutoNudges(checkIns: List<PlanCheckIn>, date: LocalDate, zone: TimeZone, now: Instant, pending: List<Nudge>, sameDay: Int): AutoNudgePlan {
     val set = mutableListOf<AutoNudge>()
     val skipped = mutableListOf<String>()
+    val unscheduled = mutableListOf<String>()
     var waiting = pending
     var count = sameDay
     for (check in checkIns) {
-        val time = clockTimeIn(check.ifThen.cue) ?: continue
-        val at = ScheduleClock.occurrence(date, time, zone)
-        val note = planCheckInNote(check.ifThen, check.item)
-        val covered = waiting.any { (it.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW && (it.planItemId != null || it.note.startsWith(PLAN_CHECK_IN) || (check.item != null && it.note.contains(check.item.id))) }
-        if (covered) { skipped += "${agentTime(at, zone)}: a check-in is already set around then"; continue }
+        val at = cueMoment(check.ifThen.cue, date, zone, now)
+        if (at == null) { unscheduled += check.ifThen.sentence(); continue }
+        val note = planCheckInNote(check.ifThen, check.item, date)
+        val covered = waiting.any {
+            (it.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW &&
+                if (check.item != null) it.planItemId == check.item.id else it.planItemId == null && it.note.sameNote(note)
+        }
+        if (covered) { skipped += "${agentTime(at, zone)}: a check-in for it is already set around then"; continue }
         val refusal = nudgeRefusal(at, note, null, now, waiting, count, zone, check.item?.id)
         if (refusal != null) { skipped += refusal; continue }
         set += AutoNudge(at, note, check.item?.id)
-        waiting = waiting + Nudge(net.robog.clarity.shared.feed.NudgeId("planned-${set.size}"), at, note, null, Nudge.Status.PENDING, now, planItemId = check.item?.id)
+        waiting = waiting + Nudge(NudgeId("planned-${set.size}"), at, note, null, Nudge.Status.PENDING, now, planItemId = check.item?.id, autoCheckIn = true)
         count++
     }
-    return AutoNudgePlan(set, skipped)
+    return AutoNudgePlan(set, skipped, unscheduled)
 }
 
-/** Pure: the pending auto check-in near [at] that already covers a nudge for that time, if any. */
-fun coveringCheckIn(at: Instant, pending: List<Nudge>): Nudge? =
-    pending.firstOrNull { (it.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW && (it.planItemId != null || it.note.startsWith(PLAN_CHECK_IN)) }
+/** What saving a plan again does to the check-ins already waiting: [cancel] those no longer wanted, [create] those not there yet. */
+data class Reconcile(val cancel: List<Nudge>, val create: List<AutoNudge>)
+
+/**
+ * Pure: the changes that make the waiting automatic check-ins of a day ([existing]) match the ones the saved plan
+ * wants. A check-in at the same time, for the same item, with the same note stays; every other existing one is
+ * cancelled, every other wanted one created. Follow-ups and the person's own nudges are never in [existing].
+ */
+fun reconcileCheckIns(wanted: List<AutoNudge>, existing: List<Nudge>): Reconcile {
+    val unmatched = existing.toMutableList()
+    val create = wanted.filter { w ->
+        val same = unmatched.firstOrNull { it.at == w.at && it.planItemId == w.planItemId && it.note == w.note }
+        if (same != null) unmatched.remove(same)
+        same == null
+    }
+    return Reconcile(unmatched, create)
+}
+
+/**
+ * Pure: the waiting automatic check-in near [at] that already covers a nudge the model wants for that time,
+ * if any. It covers only a nudge about the SAME plan item: the one the model names in [planItemId], or one
+ * whose [subjects] (its note, its task's title) say what that item's text says. A reminder about anything
+ * else is never covered. [items] are the plan items by id.
+ */
+fun coveringCheckIn(at: Instant, planItemId: String?, subjects: List<String>, pending: List<Nudge>, items: Map<String, PlanItem>): Nudge? =
+    pending.firstOrNull { n ->
+        val itemId = n.planItemId
+        n.autoCheckIn && itemId != null && (n.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW &&
+            (itemId == planItemId || items[itemId]?.text?.let { text -> subjects.any { sameWording(text, it) } } == true)
+    }
+
+/** Pure: how a plan item reads in the lead's wake-up: id, text, day, first step and the follow-ups left today. */
+fun planItemWakeText(item: PlanItem, date: LocalDate, followUpsLeft: Int): String =
+    "id ${item.id}, \"${item.text}\", day ${item.dayOn(date)}" + (firstStepNote(item, date)?.let { ", $it" } ?: "") +
+        ", $followUpsLeft follow-up check-in${if (followUpsLeft == 1) "" else "s"} left today"
 
 /** How the person answered the check-in of a plan item. */
 @Serializable
@@ -161,7 +221,7 @@ fun planMove(item: PlanItem, outcome: PlanOutcome, at: String?, firstStep: Strin
 fun followUpRefusal(existing: Int): String? =
     if (existing >= MAX_FOLLOW_UPS_PER_DAY) "That item already has $MAX_FOLLOW_UPS_PER_DAY follow-up check-ins that day, the most. Ask the person to pick a time on another day, or to drop it." else null
 
-/** Sets the check-ins an if-then plan earns (see [planAutoNudges]). */
+/** Sets the check-ins an if-then plan earns (see [planAutoNudges]) and replaces those of an earlier plan of the same day. */
 @Inject
 @SingleIn(AppScope::class)
 class PlanNudger(
@@ -169,17 +229,32 @@ class PlanNudger(
     private val settings: SettingsProvider,
     private val clock: Clock,
 ) {
-    /** Returns one line for the lead: what was set, and why anything was not. */
+    /**
+     * Saves the check-ins of the plan of [date]: the waiting ones an earlier save set that the plan no longer wants
+     * are cancelled, new ones are created, follow-ups and the person's own nudges are left alone. Returns what the
+     * lead should know: what was set, replaced and skipped, and which cues got no check-in (it can nudge itself for those).
+     */
     suspend fun schedule(date: LocalDate, checkIns: List<PlanCheckIn>): String {
-        if (checkIns.none { clockTimeIn(it.ifThen.cue) != null }) return ""
         val zone = settings.homeZone()
         val now = clock.now()
         val (dayStart, dayEnd) = homeDay(ScheduleClock.occurrence(date, kotlinx.datetime.LocalTime(12, 0), zone), zone)
-        val plan = planAutoNudges(checkIns, date, zone, now, nudges.pending(), nudges.countActive(dayStart, dayEnd))
-        val created = plan.nudges.map { nudges.create(it.at, it.note, null, it.planItemId) }
+        val pending = nudges.pending().filter { it.isPlan }
+        val existing = pending.filter { it.autoCheckIn && !it.followUp && it.at >= dayStart && it.at < dayEnd }
+        val plan = planAutoNudges(checkIns, date, zone, now, pending - existing.toSet(), (nudges.countActivePlan(dayStart, dayEnd) - existing.size).coerceAtLeast(0))
+        val change = reconcileCheckIns(plan.nudges, existing)
+        change.cancel.forEach { nudges.cancel(it.id, "the plan was saved again") }
+        val created = change.create.map { nudges.create(it.at, it.note, null, it.planItemId, autoCheckIn = true) }
         return buildString {
-            if (created.isNotEmpty()) append(" Check-ins set at ").append(created.joinToString(", ") { agentTime(it.at, zone) }).append("; do not nudge for these yourself.")
+            if (created.isNotEmpty()) {
+                append(" Check-ins set at ").append(created.joinToString(", ") { agentTime(it.at, zone) }).append("; do not nudge for these yourself.")
+                val loose = created.filter { it.planItemId == null }
+                if (loose.isNotEmpty()) append(" The one at ").append(loose.joinToString(", ") { agentTime(it.at, zone) }).append(" is not linked to a plan item (pass `item` to link it).")
+            }
+            if (change.cancel.isNotEmpty()) append(" Replaced ${change.cancel.size} earlier check-in${if (change.cancel.size == 1) "" else "s"} of this plan.")
             if (plan.skipped.isNotEmpty()) append(" Not set: ").append(plan.skipped.joinToString("; ")).append('.')
+            if (plan.unscheduled.isNotEmpty()) {
+                append(" No check-in for: ").append(plan.unscheduled.joinToString(" ")).append(" These cues name no time of day, so nothing wakes you; nudge for them yourself if they need a check-in.")
+            }
         }
     }
 }
@@ -222,7 +297,9 @@ class PlanItemTools(
         when (move) {
             PlanMove.Started -> {
                 items.update(item.id) { it.copy(startedOn = today) }
-                val cancelled = nudges.cancelForPlanItem(item.id, "the person is starting it")
+                val (dayStart, dayEnd) = homeDay(now, zone)
+                // Only today's: a check-in the person set for another day stays.
+                val cancelled = nudges.cancelForPlanItem(item.id, "the person is starting it", dayStart, dayEnd)
                 ToolResult.Ok("Marked started. No more check-ins on \"${item.text}\" today" + (if (cancelled > 0) " ($cancelled waiting ${if (cancelled == 1) "one" else "ones"} cancelled)" else "") + ". Acknowledge in a few words.")
             }
             PlanMove.Done, PlanMove.Dropped -> {
@@ -232,11 +309,12 @@ class PlanItemTools(
                 ToolResult.Ok("\"${item.text}\" is ${if (done) "done" else "dropped"}; its waiting check-ins are cancelled.")
             }
             is PlanMove.FollowUp -> {
-                val pending = nudges.pending()
+                // The plan flow has caps of its own: the person's reminders neither block a follow-up nor count against it.
+                val pending = nudges.pending().filter { it.isPlan }
                 val (dayStart, dayEnd) = homeDay(move.at, zone)
                 followUpRefusal(nudges.countFollowUps(item.id, dayStart, dayEnd))?.let { return@tool ToolResult.Error(it) }
-                nudgeRefusal(move.at, move.note, null, now, pending, nudges.countActive(dayStart, dayEnd), zone, item.id)?.let { return@tool ToolResult.Error(it) }
-                if (move.firstStep != null) items.update(item.id) { it.copy(firstStep = move.firstStep) }
+                nudgeRefusal(move.at, move.note, null, now, pending, nudges.countActivePlan(dayStart, dayEnd), zone, item.id)?.let { return@tool ToolResult.Error(it) }
+                if (move.firstStep != null) items.update(item.id) { it.copy(firstStep = move.firstStep, firstStepOn = today) }
                 val created = nudges.create(move.at, move.note, null, item.id, followUp = true)
                 ToolResult.Ok("Check-in ${created.id.value} set for ${agentTime(move.at, zone)}." + (move.firstStep?.let { " First step now: $it." } ?: ""))
             }
