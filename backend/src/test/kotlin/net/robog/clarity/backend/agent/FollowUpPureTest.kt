@@ -10,6 +10,7 @@ import net.robog.clarity.backend.feed.checkChoice
 import net.robog.clarity.backend.feed.summarizedBy
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Message
+import net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER
 import net.robog.clarity.harness.Role
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Choice
@@ -27,24 +28,47 @@ private fun item(seq: Long, vararg cards: Card) = FeedItem(FeedItemId("i$seq"), 
 
 class FollowUpPureTest : FunSpec({
 
-    test("a resumed turn knows whether the person wrote in it") {
+    // what the lead journal really holds: inbox deliveries are system messages, the person's words plain user text,
+    // pre-emption folds a placeholder in front of operator notes, and the reply nudge is a system note
+    val placeholder = Message.user(OPERATOR_UPDATE_PLACEHOLDER)
+    val nudge = Message.system(REPLY_NUDGE)
+
+    test("a person turn: their words open it, whatever follows") {
         openTurnCarriesPerson(listOf(said("hi"))) shouldBe true
-        openTurnCarriesPerson(listOf(said("hi"), toolCall("a"))) shouldBe true
         openTurnCarriesPerson(listOf(said("hi"), toolCall("a"), result("a"), toolCall("b"))) shouldBe true
-        // the person wrote mid-turn
-        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), said("and also this"))) shouldBe true
+        openTurnCarriesPerson(listOf(endTurn(), Message.system("[memory, 2026-10-26] empty"), said("hi"), inbox("[inbox, now 2026-10-26T10:00] Nudge you set at 10:00"), toolCall("a"))) shouldBe true
+    }
+
+    test("a job or trigger turn is not an answer, even with placeholders and nudges") {
+        openTurnCarriesPerson(listOf(inbox("[inbox, now 2026-10-26T10:00] Review"))) shouldBe false
         openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), result("a"))) shouldBe false
-        openTurnCarriesPerson(listOf(inbox("[inbox] job"))) shouldBe false
+        // pre-emption by an operator note: the placeholder user message is not the person
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), placeholder, Message.system("[inbox] helper finished"))) shouldBe false
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), Message.user("(housekeeping: compaction)"), toolCall("b"))) shouldBe false
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), Message.user(HELPER_RESULT_NUDGE))) shouldBe false
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), endTurn(), placeholder, nudge)) shouldBe false
+        openTurnCarriesPerson(listOf(said("hi"), endTurn(), inbox("[inbox] nudge"), toolCall("a"))) shouldBe false
+    }
+
+    test("a person turn cut after the reply nudge is still theirs") {
+        openTurnCarriesPerson(listOf(said("what is next?"), endTurn("thinking"), placeholder, nudge)) shouldBe true
+        openTurnCarriesPerson(listOf(said("what is next?"), endTurn("thinking"), placeholder, nudge, toolCall("a"))) shouldBe true
+    }
+
+    test("words that joined the tool results mid-turn make it theirs") {
+        val merged = Message(Role.USER, listOf(Block.Result("a", "ok"), Block.Text("and also, call Dana")))
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), merged)) shouldBe true
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), merged, toolCall("b"))) shouldBe true
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), said("wait"), toolCall("b"))) shouldBe true
+    }
+
+    test("a new person turn after a job turn, and the other way round") {
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), endTurn(), said("hi"), toolCall("a"))) shouldBe true
+        openTurnCarriesPerson(listOf(said("hi"), endTurn(), inbox("[inbox] job"), toolCall("a"), result("a"))) shouldBe false
+    }
+
+    test("nothing, or only a summary") {
         openTurnCarriesPerson(emptyList()) shouldBe false
-    }
-
-    test("an earlier, finished turn does not count") {
-        openTurnCarriesPerson(listOf(said("hi"), endTurn(), inbox("[inbox] nudge"))) shouldBe false
-        openTurnCarriesPerson(listOf(said("hi"), toolCall("a"), result("a"), endTurn(), inbox("[inbox] nudge"), toolCall("b"))) shouldBe false
-        openTurnCarriesPerson(listOf(said("hi"), endTurn(), said("again"), toolCall("b"))) shouldBe true
-    }
-
-    test("a summary is not the person's words") {
         openTurnCarriesPerson(listOf(Message.summary("earlier talk"), inbox("[inbox] job"))) shouldBe false
     }
 
@@ -54,8 +78,8 @@ class FollowUpPureTest : FunSpec({
         val answered = item(1, Card.Choices("Ready?", options, chosen = "no"))
         checkChoice(open, "yes") shouldBe ChoiceCheck.Open
         checkChoice(open, "maybe") shouldBe ChoiceCheck.NotAnOption
-        checkChoice(answered, "yes") shouldBe ChoiceCheck.Answered(answered, "no")
-        checkChoice(answered, "no") shouldBe ChoiceCheck.Answered(answered, "no")
+        checkChoice(answered, "yes") shouldBe ChoiceCheck.Answered(answered, "no", null)
+        checkChoice(answered, "no") shouldBe ChoiceCheck.Answered(answered, "no", null)
         checkChoice(answered, "maybe") shouldBe ChoiceCheck.NotAnOption
         checkChoice(item(2, Card.Text("hi")), "yes") shouldBe ChoiceCheck.NotChoices
         checkChoice(null, "yes") shouldBe ChoiceCheck.NotChoices

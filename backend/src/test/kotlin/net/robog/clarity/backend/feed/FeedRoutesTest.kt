@@ -37,6 +37,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.withTimeout
@@ -89,11 +90,11 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun countedPushes(from: Instant, to: Instant): Int = 0
     override suspend fun lookForwardSince(since: Instant): List<FeedItem> = emptyList()
     override suspend fun byClientInput(id: ClientInputId): FeedItem? = items.firstOrNull { it.second.clientInputId == id }?.first
-    override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? = synchronized(items) {
+    override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? = synchronized(items) {
         val index = items.indexOfFirst { it.first.id == id }
         if (index < 0) return@synchronized null
         val (item, draft) = items[index]
-        val cards = answerChoices(item.cards, reply) ?: return@synchronized null
+        val cards = answerChoices(item.cards, reply, by.value) ?: return@synchronized null
         item.copy(cards = cards).also { items[index] = it to draft }
     }
 }
@@ -214,10 +215,40 @@ class FeedRoutesTest : FunSpec({
             inbox.enqueued.size shouldBe queuedAfterFirst
             feed.page(0, 1000).items.size shouldBe sizeAfterFirst
 
+            // the same option from another client id is just as late: conflict, nothing queued
+            tap("ok-3", "Starting now", asked.id).status shouldBe HttpStatusCode.Conflict
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+
             // the same tap again (a retry with the same client id) is still accepted and is not a second message
             tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
             inbox.enqueued.size shouldBe queuedAfterFirst
             feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+        }
+    }
+
+    test("two identical taps at once reach the lead once") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            val before = inbox.enqueued.size
+            val sizeBefore = feed.page(0, 1000).items.size
+            val statuses = kotlinx.coroutines.coroutineScope {
+                (1..6).map { n ->
+                    async(kotlinx.coroutines.Dispatchers.Default) {
+                        client.post("/api/v1/input") {
+                            header(HttpHeaders.Authorization, TOKEN)
+                            contentType(ContentType.Application.Json)
+                            setBody(UserInput(ClientInputId("race-$n"), "Later", inReplyTo = asked.id))
+                        }.status
+                    }
+                }.map { it.await() }
+            }
+            statuses.count { it == HttpStatusCode.OK } shouldBe 1
+            statuses.count { it == HttpStatusCode.Conflict } shouldBe 5
+            inbox.enqueued.size shouldBe before + 1
+            feed.page(0, 1000).items.size shouldBe sizeBefore + 1
         }
     }
 

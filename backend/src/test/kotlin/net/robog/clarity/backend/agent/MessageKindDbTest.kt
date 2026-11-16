@@ -31,6 +31,7 @@ import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.MessageKind
 import net.robog.clarity.shared.session.Settings
@@ -73,15 +74,20 @@ class MessageKindDbTest : FunSpec({
         )
 
         /** A turn of the lead; [personWrote] is whether the person's input is in its batch. */
-        fun scope(personWrote: Boolean) = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = personWrote) }
+        fun scope(personWrote: Boolean, resumed: Boolean = false) = RunScope("lead", isLead = true).also {
+            // a resumed turn: the guard's flag stays off, the journal says the person wrote
+            if (resumed) it.startTurn(untrusted = true, requestedByUser = false, answeringPerson = personWrote)
+            else it.startTurn(untrusted = false, requestedByUser = personWrote)
+        }
 
         suspend fun send(
             personWrote: Boolean = false,
+            resumed: Boolean = false,
             kind: String? = null,
             urgency: String? = null,
             dueBy: String? = null,
             cards: List<Card> = listOf(Card.Text("Something")),
-        ): ToolResult = own.sendToUser(scope(personWrote)).invoke(
+        ): ToolResult = own.sendToUser(scope(personWrote, resumed)).invoke(
             buildJsonObject {
                 put("cards", ClarityJson.encodeToJsonElement(cards))
                 kind?.let { put("kind", it) }
@@ -99,6 +105,24 @@ class MessageKindDbTest : FunSpec({
         rig.last().kind shouldBe MessageKind.REPLY
         rig.last().notify shouldBe "reply"
         rig.store.countedPushes(start - 24.hours, start + 24.hours) shouldBe 0
+    }
+
+    test("a turn resumed after a crash still answers the person: the reply flag is not the guard's flag") {
+        val rig = Rig(database, start)
+        rig.send(personWrote = true, resumed = true, kind = "finding").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.last().kind shouldBe MessageKind.REPLY
+        rig.last().notify shouldBe "reply"
+        // a resumed job turn is not an answer
+        rig.send(personWrote = false, resumed = true, kind = "check_in").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.last().kind shouldBe MessageKind.CHECK_IN
+        rig.scope(personWrote = true, resumed = true).let { (it.requestedByUser to it.answeringPerson) } shouldBe (false to true)
+    }
+
+    test("only one choices card fits in a post") {
+        val rig = Rig(database, start)
+        val one = Card.Choices("A?", listOf(Choice("Yes", "yes")))
+        rig.send(cards = listOf(one, one)).shouldBeInstanceOf<ToolResult.Error>()
+        rig.feed.page(0, 100).items.shouldBeEmpty()
     }
 
     test("a reply claimed outside such a turn is a finding") {
@@ -180,11 +204,13 @@ class MessageKindDbTest : FunSpec({
         val rig = Rig(database, start)
         rig.send(kind = "check_in", cards = listOf(Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")))))
         val item = rig.last()
-        val answered = rig.feed.chooseOption(item.id, "no")!!
+        val answered = rig.feed.chooseOption(item.id, "no", ClientInputId("t1"))!!
         (answered.cards.single() as Card.Choices).chosen shouldBe "no"
         (rig.feed.get(item.id)!!.cards.single() as Card.Choices).chosen shouldBe "no"
-        rig.feed.chooseOption(item.id, "yes") shouldBe null
-        rig.feed.chooseOption(item.id, "typed something else") shouldBe null
+        rig.feed.chooseOption(item.id, "yes", ClientInputId("t2")) shouldBe null
+        rig.feed.chooseOption(item.id, "no", ClientInputId("t3")) shouldBe null
+        rig.feed.chooseOption(item.id, "typed something else", ClientInputId("t4")) shouldBe null
+        (rig.feed.get(item.id)!!.cards.single() as Card.Choices).answeredBy shouldBe "t1"
         (rig.feed.get(item.id)!!.cards.single() as Card.Choices).chosen shouldBe "no"
         rig.feed.page(0, 100).items.single().seq shouldBe item.seq
     }

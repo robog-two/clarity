@@ -53,8 +53,8 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
      * Records the person's tap on a [Card.Choices] option of item [id] and tells every device, so the
      * buttons disable everywhere ([FeedEvent.ItemFinal]). Null when nothing changed (already answered, or not an option).
      */
-    suspend fun chooseOption(id: FeedItemId, reply: String): FeedItem? =
-        store.markChosen(id, reply)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+    suspend fun chooseOption(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? =
+        store.markChosen(id, reply, by)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
 
     /** The item stored for the person's input [id], when the same request came before. */
     suspend fun byClientInput(id: ClientInputId) = store.byClientInput(id)

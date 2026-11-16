@@ -95,6 +95,12 @@ fun needsAnswer(card: Card): Boolean = card is Card.Proposal || card is Card.Cre
 /** Pure: a card only the person can act on (an approval, a login): its post must reach them, so it follows the urgent rules. */
 fun needsPerson(card: Card): Boolean = card is Card.Proposal || card is Card.CredentialRequest
 
+/** Pure: why [cards] cannot be posted for their choices cards, or null. At most one per post (a tap answers one card), and each usable. */
+fun choicesCardsProblem(cards: List<Card>): String? {
+    val choices = cards.filterIsInstance<Card.Choices>()
+    return if (choices.size > 1) "a message holds at most one `choices` card" else choices.firstNotNullOfOrNull(::choicesProblem)
+}
+
 /** The most buttons one choices card shows. */
 const val MAX_CHOICES = 4
 
@@ -148,7 +154,7 @@ class OwnStateTools(
             input.cards.any { it is Card.Said } -> ToolResult.Error("`said` cards are the person's own words; use text, chips, plan, note, context, proposal, tasks or sources")
             input.cards.any { it is Card.Report } -> ToolResult.Error("Show a report with present_report, which checks it exists and lists its formats.")
             else -> {
-                val problem = input.cards.filterIsInstance<Card.Choices>().firstNotNullOfOrNull(::choicesProblem)
+                val problem = choicesCardsProblem(input.cards)
                 val dueBy = input.dueBy?.takeIf { it.isNotBlank() }?.let { readToolTime("dueBy", it, settings.homeZone(), DayAs.END) }
                 when {
                     problem != null -> ToolResult.Error(problem)
@@ -156,7 +162,7 @@ class OwnStateTools(
                     else -> resolveSources(input.cards).fold({ ToolResult.Error(it) }) { cards ->
                         // A model cannot pre-answer its own buttons.
                         val fresh = cards.map { if (it is Card.Choices) it.copy(chosen = null, fallbackText = choicesFallback(it.prompt, it.options)) else it }
-                        post(fresh, input.urgency, input.sessionId, input.about, input.kind, (dueBy as? Either.Right)?.value, scope?.requestedByUser == true)
+                        post(fresh, input.urgency, input.sessionId, input.about, input.kind, (dueBy as? Either.Right)?.value, scope?.answeringPerson == true)
                     }
                 }
             }

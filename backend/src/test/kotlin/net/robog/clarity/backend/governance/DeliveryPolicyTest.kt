@@ -4,6 +4,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.shouldBe
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
+import net.robog.clarity.backend.agent.choicesCardsProblem
 import net.robog.clarity.backend.agent.choicesProblem
 import net.robog.clarity.backend.agent.needsAnswer
 import net.robog.clarity.backend.agent.needsPerson
@@ -188,12 +189,16 @@ class DeliveryPolicyTest : FunSpec({
         (choicesProblem(Card.Choices(null, listOf(Choice(" ", "x")))) != null) shouldBe true
         (choicesProblem(Card.Choices(null, listOf(Choice("A", "same"), Choice("B", "same")))) != null) shouldBe true
         (choicesProblem(Card.Choices(null, List(5) { Choice("L$it", "r$it") })) != null) shouldBe true
+        choicesCardsProblem(listOf(ok)) shouldBe null
+        (choicesCardsProblem(listOf(ok, ok)) != null) shouldBe true
+        (choicesCardsProblem(listOf(Card.Text("x"), Card.Choices(null, emptyList()))) != null) shouldBe true
     }
 
     test("the first tap answers a choices card; a second, or a typed reply, changes nothing") {
         val cards = listOf(Card.Text("Hi"), Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no"))))
-        val answered = answerChoices(cards, "no")!!
+        val answered = answerChoices(cards, "no", "client-1")!!
         (answered[1] as Card.Choices).chosen shouldBe "no"
+        (answered[1] as Card.Choices).answeredBy shouldBe "client-1"
         answered[0] shouldBe cards[0]
         answerChoices(answered, "yes") shouldBe null
         answerChoices(cards, "maybe") shouldBe null

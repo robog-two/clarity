@@ -215,6 +215,8 @@ sealed interface Card {
         /** The [Choice.reply] the person tapped; null while unanswered. */
         val chosen: String? = null,
         val fallbackText: String = choicesFallback(prompt, options),
+        /** Server bookkeeping: the client id of the input that answered, so only a retry of that same request passes for the answer. Apps ignore it. */
+        val answeredBy: String? = null,
     ) : Card
 
     /**

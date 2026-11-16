@@ -76,14 +76,18 @@ fun needsResume(history: List<Message>): Boolean {
 }
 
 /**
- * Pure: whether the turn left open at the end of [history] carries the person's own input, so a
- * lead resuming it after a crash still treats what it posts as a reply. The open turn is everything
- * after the last assistant message that ends without tool calls; the person's words are user
- * messages without tool results (not a summary).
+ * Pure: whether the turn left open at the end of [history] carries the person's own words, so a lead
+ * resuming it after a crash still treats what it posts as a reply. The open turn starts at the last
+ * message that opens one ([opensLeadTurn]), together with whatever was delivered with it (back to the
+ * last assistant message); it runs to the end, so words folded in mid-turn count and a reply nudge
+ * or operator placeholder at the end does not cut it. Only [carriesPersonWords] counts as the person.
  */
 fun openTurnCarriesPerson(history: List<Message>): Boolean {
-    val turn = history.takeLastWhile { !(it.role == Role.ASSISTANT && it.content.none { b -> b is Block.ToolUse }) }
-    return turn.any { it.role == Role.USER && !it.isSummary && it.content.none { b -> b is Block.Result } }
+    val opens = history.indexOfLast(::opensLeadTurn)
+    if (opens < 0) return false
+    var start = opens
+    while (start > 0 && history[start - 1].role != Role.ASSISTANT) start--
+    return history.subList(start, history.size).any(::carriesPersonWords)
 }
 
 /** Pure: whether [message] only closes calls a turn had no steps left for ([LEAD_OUT_OF_STEPS]). */

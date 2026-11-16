@@ -105,7 +105,8 @@ data class Delivery(val decision: NotifyDecision, val counts: Boolean, val budge
  *     ([NotifyDecision.Reply]); not counted. It wins over urgency: it answers the person who just wrote.
  *  2. `URGENT` keeps [notifyDecision]'s behaviour (protected time, who gets through) and is not counted.
  *  2b. A post that [needsPerson] (an approval or a login only they can give) follows the same urgent
- *     rules whatever its kind or urgency, and is not counted: it must reach them.
+ *     rules whatever its urgency or kind other than a reply (a reply is already step 1), and is not
+ *     counted: it must reach them.
  *  3. Urgency `BATCH` is the agent's own choice to wait for the evening summary: [notifyDecision]'s BATCH.
  *  4. A [MessageKind.CHECK_IN] or [MessageKind.LOOK_FORWARD] pushes; a [MessageKind.FINDING] pushes only
  *     when [dueBy] is within [DUE_SOON] or one of [people] gets through, else it waits for the evening

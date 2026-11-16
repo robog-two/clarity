@@ -103,17 +103,20 @@ class FeedRoutes(
                         when (val check = checkChoice(feed.get(input.inReplyTo!!), input.text)) {
                             ChoiceCheck.NotChoices -> return@post call.respondProblem(EdgeProblem.BadRequest("inReplyTo is not a card with choices"))
                             ChoiceCheck.NotAnOption -> return@post call.respondProblem(EdgeProblem.BadRequest("text is not one of the options"))
-                            // Another device answered first (or this device's first try did): the app shows the answer.
-                            is ChoiceCheck.Answered -> if (check.chosen != input.text) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(check.item))
+                            // Answered already: only a retry of the very request that answered it (it crashed before queueing) goes on.
+                            // Any other tap, from any device and even with the same option, gets the conflict and the app shows the answer.
+                            is ChoiceCheck.Answered ->
+                                if (check.by != input.clientId.value) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(check.item))
                             ChoiceCheck.Open -> Unit
                         }
                     }
                     // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
                     // Two taps at once can both pass the check; the second loses here and gets the conflict, nothing is queued for it.
-                    if (input.inReplyTo != null && feed.chooseOption(input.inReplyTo!!, input.text) == null) {
+                    if (input.inReplyTo != null && feed.chooseOption(input.inReplyTo!!, input.text, input.clientId) == null) {
+                        // Lost the race, or a retry of the request that won: only the latter goes on.
                         val current = feed.get(input.inReplyTo!!)
-                        val answeredByThis = current != null && (checkChoice(current, input.text) as? ChoiceCheck.Answered)?.chosen == input.text
-                        if (!answeredByThis && current != null) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(current))
+                        val mine = (checkChoice(current, input.text) as? ChoiceCheck.Answered)?.by == input.clientId.value
+                        if (!mine && current != null) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(current))
                     }
                     val appended = feed.append(
                         FeedDraft(

@@ -98,6 +98,14 @@ fun opensLeadTurn(message: Message): Boolean = when (message.role) {
     Role.ASSISTANT -> false
 }
 
+/**
+ * Pure: whether [message] carries the person's own words: a user message with real text (not the
+ * placeholder, housekeeping, summary or helper nudge texts). Unlike [opensLeadTurn] it also counts
+ * words that joined tool results mid-turn.
+ */
+fun carriesPersonWords(message: Message): Boolean =
+    message.role == Role.USER && message.content.any { it is Block.Text && personText(it.text) }
+
 private fun personText(text: String): Boolean {
     val t = text.trim()
     return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE
