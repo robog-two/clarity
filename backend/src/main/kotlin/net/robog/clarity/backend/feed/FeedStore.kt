@@ -112,7 +112,13 @@ interface FeedStore {
      * of its options). Null when the item is unknown, has no such card, or it was answered already,
      * so the first tap wins on every device.
      */
-    suspend fun markChosen(id: FeedItemId, reply: String): FeedItem?
+    suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem?
+
+    /** Undoes [markChosen] by [by] (and only that one), when what should follow the answer failed. Null when there was nothing to undo. */
+    suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem?
+
+    /** The item already stored for the person's input [id] (a retry of the same request), or null. */
+    suspend fun byClientInput(id: ClientInputId): FeedItem?
 }
 
 @Inject
@@ -229,12 +235,26 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
             .orderBy(FeedItems.seq).map { it.toItem() }
     }
 
-    override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? {
+    override suspend fun byClientInput(id: ClientInputId): FeedItem? = database.tx {
+        FeedItems.selectAll().where { FeedItems.clientInputId eq id.value }.singleOrNull()?.toItem()
+    }
+
+    override suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx {
+            val row = FeedItems.selectAll().where { FeedItems.id eq uuid }.forUpdate().singleOrNull() ?: return@tx null
+            val cards = unanswerChoices(row[FeedItems.cards], by.value) ?: return@tx null
+            FeedItems.update({ FeedItems.id eq uuid }) { it[FeedItems.cards] = cards }
+            FeedItems.selectAll().where { FeedItems.id eq uuid }.single().toItem()
+        }
+    }
+
+    override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? {
         val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx {
             // Locked: two devices tapping at once must not both win.
             val row = FeedItems.selectAll().where { FeedItems.id eq uuid }.forUpdate().singleOrNull() ?: return@tx null
-            val cards = answerChoices(row[FeedItems.cards], reply) ?: return@tx null
+            val cards = answerChoices(row[FeedItems.cards], reply, by.value) ?: return@tx null
             FeedItems.update({ FeedItems.id eq uuid }) { it[FeedItems.cards] = cards }
             FeedItems.selectAll().where { FeedItems.id eq uuid }.single().toItem()
         }
@@ -261,12 +281,43 @@ private fun ResultRow.toItem() = FeedItem(
     kind = MessageKind.fromWire(this[FeedItems.kind]),
 )
 
+/** What a tap on a choices card (`POST /input` with `inReplyTo`) amounts to, given the item it answers. */
+sealed interface ChoiceCheck {
+    /** The card is waiting for this answer. */
+    data object Open : ChoiceCheck
+
+    /** Answered already by the input [by] ([item] is the current state, for the app to show). */
+    data class Answered(val item: FeedItem, val chosen: String, val by: String?) : ChoiceCheck
+
+    /** No such item, or it holds no choices card. */
+    data object NotChoices : ChoiceCheck
+
+    /** The reply is not one of the card's options. */
+    data object NotAnOption : ChoiceCheck
+}
+
+/** Pure: whether [reply] may answer the choices card of [item] (null: no such item). An item holds at most one such card (`choicesCardsProblem`). */
+fun checkChoice(item: FeedItem?, reply: String): ChoiceCheck {
+    val card = item?.cards?.filterIsInstance<Card.Choices>()?.firstOrNull() ?: return ChoiceCheck.NotChoices
+    return when {
+        card.options.none { it.reply == reply } -> ChoiceCheck.NotAnOption
+        card.chosen != null -> ChoiceCheck.Answered(item, card.chosen!!, card.answeredBy)
+        else -> ChoiceCheck.Open
+    }
+}
+
+/** Pure: [cards] with the choices card answered by [by] open again; null when [by] did not answer one. */
+fun unanswerChoices(cards: List<Card>, by: String): List<Card>? {
+    if (cards.none { it is Card.Choices && it.answeredBy == by }) return null
+    return cards.map { if (it is Card.Choices && it.answeredBy == by) it.copy(chosen = null, answeredBy = null) else it }
+}
+
 /**
- * Pure: [cards] with the first unanswered [Card.Choices] marked answered with [reply]; null when
+ * Pure: [cards] with the first unanswered [Card.Choices] marked answered with [reply] by the input [by]; null when
  * there is none, or [reply] is not one of its options (the person typed something else).
  */
-fun answerChoices(cards: List<Card>, reply: String): List<Card>? {
+fun answerChoices(cards: List<Card>, reply: String, by: String? = null): List<Card>? {
     val index = cards.indexOfFirst { it is Card.Choices && it.chosen == null && it.options.any { o -> o.reply == reply } }
     if (index < 0) return null
-    return cards.mapIndexed { i, card -> if (i == index) (card as Card.Choices).copy(chosen = reply) else card }
+    return cards.mapIndexed { i, card -> if (i == index) (card as Card.Choices).copy(chosen = reply, answeredBy = by) else card }
 }

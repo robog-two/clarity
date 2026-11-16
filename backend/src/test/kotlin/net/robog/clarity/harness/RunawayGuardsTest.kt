@@ -89,7 +89,7 @@ class RunawayGuardsTest : FunSpec({
             .resume("run-1", request(tool, maxTurns = 5).copy(outOfSteps = OutOfSteps(), countStepsSince = { false }))
             .toList().last().shouldBeInstanceOf<HarnessEvent.Finished>()
         gateway.requests shouldHaveSize 1
-        gateway.requests.single().messages.last().content.filterIsInstance<Block.Text>().single().text shouldBe OutOfSteps().report
+        gateway.requests.single().messages.last().content.filterIsInstance<Block.Text>().single().text shouldBe harnessNote(OutOfSteps().report).text
         done.reason shouldBe FinishReason.MAX_TURNS
         done.result.finalText shouldBe "got this far"
         tool.calls shouldHaveSize 0

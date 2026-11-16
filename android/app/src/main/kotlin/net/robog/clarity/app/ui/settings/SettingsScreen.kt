@@ -539,7 +539,7 @@ private fun HeldActionsSettings(settings: Settings, actions: SettingsActions, on
         }
         segment {
             StepperRow(
-                "Notifications a day", "Replies and urgent items do not count",
+                "Notifications a day", "Replies and urgent excluded",
                 settings.pushesPerDay, Settings.PUSHES_PER_DAY_RANGE, actions.onPushesPerDay, shape = it,
             )
         }

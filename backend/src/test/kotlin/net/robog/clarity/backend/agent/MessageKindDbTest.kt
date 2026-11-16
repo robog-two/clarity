@@ -31,6 +31,7 @@ import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.MessageKind
 import net.robog.clarity.shared.session.Settings
@@ -73,15 +74,20 @@ class MessageKindDbTest : FunSpec({
         )
 
         /** A turn of the lead; [personWrote] is whether the person's input is in its batch. */
-        fun scope(personWrote: Boolean) = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = personWrote) }
+        fun scope(personWrote: Boolean, resumed: Boolean = false) = RunScope("lead", isLead = true).also {
+            // a resumed turn: the guard's flag stays off, the journal says the person wrote
+            if (resumed) it.startTurn(untrusted = true, requestedByUser = false, answeringPerson = personWrote)
+            else it.startTurn(untrusted = false, requestedByUser = personWrote)
+        }
 
         suspend fun send(
             personWrote: Boolean = false,
+            resumed: Boolean = false,
             kind: String? = null,
             urgency: String? = null,
             dueBy: String? = null,
             cards: List<Card> = listOf(Card.Text("Something")),
-        ): ToolResult = own.sendToUser(scope(personWrote)).invoke(
+        ): ToolResult = own.sendToUser(scope(personWrote, resumed)).invoke(
             buildJsonObject {
                 put("cards", ClarityJson.encodeToJsonElement(cards))
                 kind?.let { put("kind", it) }
@@ -99,6 +105,24 @@ class MessageKindDbTest : FunSpec({
         rig.last().kind shouldBe MessageKind.REPLY
         rig.last().notify shouldBe "reply"
         rig.store.countedPushes(start - 24.hours, start + 24.hours) shouldBe 0
+    }
+
+    test("a turn resumed after a crash still answers the person: the reply flag is not the guard's flag") {
+        val rig = Rig(database, start)
+        rig.send(personWrote = true, resumed = true, kind = "finding").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.last().kind shouldBe MessageKind.REPLY
+        rig.last().notify shouldBe "reply"
+        // a resumed job turn is not an answer
+        rig.send(personWrote = false, resumed = true, kind = "check_in").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.last().kind shouldBe MessageKind.CHECK_IN
+        rig.scope(personWrote = true, resumed = true).let { (it.requestedByUser to it.answeringPerson) } shouldBe (false to true)
+    }
+
+    test("only one choices card fits in a post") {
+        val rig = Rig(database, start)
+        val one = Card.Choices("A?", listOf(Choice("Yes", "yes")))
+        rig.send(cards = listOf(one, one)).shouldBeInstanceOf<ToolResult.Error>()
+        rig.feed.page(0, 100).items.shouldBeEmpty()
     }
 
     test("a reply claimed outside such a turn is a finding") {
@@ -136,11 +160,28 @@ class MessageKindDbTest : FunSpec({
         rig.last().notify shouldBe "push_now"
     }
 
-    test("an approval or a login waiting on the person is never held for the evening") {
-        val rig = Rig(database, start)
+    test("an approval or a login waiting on the person is pushed by the urgent rules, never held for the evening, and not counted") {
+        val rig = Rig(database, start, Settings(pushesPerDay = 1))
         rig.send(cards = listOf(Card.Text("Needs your OK"), Card.Proposal(net.robog.clarity.shared.governance.HeldActionId("h1")))).shouldBeInstanceOf<ToolResult.Ok>()
-        rig.feed.page(0, 100).items.single().notify shouldBe "in_app"
+        rig.send(cards = listOf(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r1")))).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.feed.page(0, 100).items.map { it.notify } shouldBe listOf("push_now", "push_now")
         rig.store.pendingBatch().shouldBeEmpty()
+        rig.store.countedPushes(start - 1.hours, start + 1.hours) shouldBe 0
+    }
+
+    test("a retried evening summary does not swallow a finding that arrived after it") {
+        val rig = Rig(database, start)
+        rig.send(cards = listOf(Card.Text("Newsletter ready")))
+        val job = EveningBatchJob(rig.store, rig.feed, rig.tasks)
+        val slot = Instant.parse("2026-03-04T18:00:00Z")
+        rig.clock.now = slot + kotlin.time.Duration.parse("5s")
+        val ctx = FireContext(slot, rig.clock.now, null, Settings())
+        job.fire(ctx)
+        // the crash happened after the post: the finding is still marked pending, and a newer one arrived
+        database.tx { exec("UPDATE feed_item SET batch_state = 'pending' WHERE batch_state = 'summarized'") }
+        rig.send(cards = listOf(Card.Text("Arrived after the summary")))
+        job.fire(ctx)
+        rig.store.pendingBatch().map { (it.cards.single() as Card.Text).text } shouldBe listOf("Arrived after the summary")
     }
 
     test("a due time that is not a time is refused, and a choices card needs options") {
@@ -152,10 +193,11 @@ class MessageKindDbTest : FunSpec({
 
     test("a choices card is stored unanswered with its fallback text, whatever the model passed") {
         val rig = Rig(database, start)
-        val card = Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")), chosen = "yes", fallbackText = "wrong")
+        val card = Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")), chosen = "yes", fallbackText = "wrong", answeredBy = "forged")
         rig.send(kind = "check_in", cards = listOf(card)).shouldBeInstanceOf<ToolResult.Ok>()
         val stored = rig.last().cards.single() as Card.Choices
         stored.chosen shouldBe null
+        stored.answeredBy shouldBe null
         stored.fallbackText shouldBe "Ready? Reply with Yes or No."
     }
 
@@ -163,11 +205,13 @@ class MessageKindDbTest : FunSpec({
         val rig = Rig(database, start)
         rig.send(kind = "check_in", cards = listOf(Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")))))
         val item = rig.last()
-        val answered = rig.feed.chooseOption(item.id, "no")!!
+        val answered = rig.feed.chooseOption(item.id, "no", ClientInputId("t1"))!!
         (answered.cards.single() as Card.Choices).chosen shouldBe "no"
         (rig.feed.get(item.id)!!.cards.single() as Card.Choices).chosen shouldBe "no"
-        rig.feed.chooseOption(item.id, "yes") shouldBe null
-        rig.feed.chooseOption(item.id, "typed something else") shouldBe null
+        rig.feed.chooseOption(item.id, "yes", ClientInputId("t2")) shouldBe null
+        rig.feed.chooseOption(item.id, "no", ClientInputId("t3")) shouldBe null
+        rig.feed.chooseOption(item.id, "typed something else", ClientInputId("t4")) shouldBe null
+        (rig.feed.get(item.id)!!.cards.single() as Card.Choices).answeredBy shouldBe "t1"
         (rig.feed.get(item.id)!!.cards.single() as Card.Choices).chosen shouldBe "no"
         rig.feed.page(0, 100).items.single().seq shouldBe item.seq
     }

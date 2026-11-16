@@ -1,0 +1,45 @@
+flowchart LR
+  subgraph Have["Already synced"]
+    CAL[("calendar_event")]
+    MSG[("message (mail, SMS)")]
+    PLAN[("day_plan")]
+    CON[("constitution")]
+  end
+
+  subgraph Outings["Feature 1: something to look forward to"]
+    REVIEW["PeriodicReviewJob (changed)<br/>lead files ideas it spots"]
+    IDEAS[("outing_idea (new, V51)<br/>what, when, where, with, source id")]
+    SCOUT["OutingScoutJob (new)<br/>twice a week, afternoon"]
+    FREE["freeSlots() + scoutPlan() (new, pure)<br/>free evenings and weekends,<br/>weekly budget"]
+    SEEN["recentContacts() (new, pure)<br/>contacts messaged<br/>in the last 90 days"]
+  end
+
+  subgraph Stuck["Feature 2: stuck tasks"]
+    ITEMS[("plan_item (new, V51)<br/>first planned, days carried")]
+    CARRY["carryOver() (new, pure)"]
+    PREP["MorningCallPrepJob (changed)"]
+    PLAYBOOK["Playbooks COMMIT (changed)<br/>smallest first step"]
+  end
+
+  subgraph Diet["Feature 3: fewer notifications"]
+    SEND["send_to_user (changed)<br/>+ kind"]
+    DELIVERY["deliveryOf() (new, pure)<br/>kind, push budget"]
+    POLICY["notifyDecision() (unchanged)"]
+    EVENING["EveningBatchJob (changed)<br/>coming up, done, then findings"]
+    PHONE["PushPolicy on phone (changed)<br/>replies still notify,<br/>other in-app items stop"]
+  end
+
+  MSG --> REVIEW --> IDEAS
+  CAL --> FREE
+  CON --> FREE
+  MSG --> SEEN
+  IDEAS --> SCOUT
+  FREE --> SCOUT
+  SEEN --> SCOUT
+  SCOUT -->|"look_forward"| SEND
+
+  PLAN --> CARRY --> ITEMS
+  ITEMS --> PREP --> PLAYBOOK
+
+  SEND --> DELIVERY --> POLICY --> PHONE
+  DELIVERY -->|"findings"| EVENING

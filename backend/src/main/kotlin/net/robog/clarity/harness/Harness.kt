@@ -277,7 +277,7 @@ class Harness(
                     send(HarnessEvent.Finished(RunResult(FinishReason.SPEND_LIMIT, usage, history, "")))
                     return
                 }
-                if (!spendReported) append(mergeIntoResults(listOf(Block.Text(cap.report)), drain()))
+                if (!spendReported) append(mergeIntoResults(listOf(harnessNote(cap.report)), drain()))
                 val report = wrapUp(cap.notRun)
                 send(HarnessEvent.Finished(RunResult(FinishReason.SPEND_LIMIT, usage, history, report)))
                 return
@@ -287,7 +287,7 @@ class Harness(
                 val steps = request.outOfSteps
                 var report = ""
                 if (steps != null && steps.finalCall) {
-                    append(mergeIntoResults(listOf(Block.Text(steps.report)), drain()))
+                    append(mergeIntoResults(listOf(harnessNote(steps.report)), drain()))
                     report = wrapUp(steps.notRun)
                 }
                 send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
@@ -338,7 +338,7 @@ class Harness(
                                         send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, response.text)))
                                         return
                                     }
-                                    append(mergeIntoResults(notRun + Block.Text(steps.report), late))
+                                    append(mergeIntoResults(notRun + harnessNote(steps.report), late))
                                     val report = wrapUp(steps.notRun)
                                     send(HarnessEvent.Finished(RunResult(FinishReason.MAX_TURNS, usage, history, report)))
                                     return
@@ -359,7 +359,7 @@ class Harness(
             // At the spend cap the results carry its report request; the next pass makes the wrap-up call.
             spendReported = overSpend(request.spendCap, usage) && request.spendCap?.finalCall == true
             val note = (if (spendReported) request.spendCap?.report else stepsLeftNote(turn, request.maxTurns, request.outOfSteps))
-                ?.let { listOf(Block.Text(it)) }.orEmpty()
+                ?.let { listOf(harnessNote(it)) }.orEmpty()
             append(mergeIntoResults(results + note, drain()))
         }
     }

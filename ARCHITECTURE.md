@@ -288,15 +288,18 @@ person managing a to-do list with a few assistants.
   `look_forward` or `finding` (the model's default). **`reply` is decided by the server**: a post
   made during a lead turn whose batch included the person's input (a message, or a tap on a choice;
   `RunScope.requestedByUser`) is a reply whatever the model said, and a model-supplied `reply`
-  outside such a turn is stored as `finding`. `URGENT` keeps the old behaviour (protected times,
-  who gets through) and never counts. A `reply` shows in the app and the phone notifies only when
-  the app is closed (`notify = reply`), also uncounted. A `check_in` or `look_forward` pushes; a
+  outside such a turn is stored as `finding`. A `reply` is checked first and wins over urgency:
+  it shows in the app and the phone notifies only when the app is closed (`notify = reply`), uncounted.
+  A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
+  apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
+  who gets through) and never counts; so does a post carrying a proposal or a credential request (it
+  needs the person, so it follows the urgent rules whatever its kind). A `check_in` or `look_forward` pushes; a
   `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
   waits for the evening summary (`BATCH`). A push follows the urgent rules for protected time and
   counts toward `Settings.pushesPerDay` (1 to 10, default 5, per local day: `feed_item.push_counted`,
   `pushBudget`); once the day's pushes are used the item is shown in the app without one. A post
-  that asks for an answer (proposal, credential request, choices) is never held for the evening, and
-  posts inside a session keep the old rules (a reply there is still a `reply`). The evening summary
+  with a choices card is never held for the evening, and posts inside a session keep the old rules
+  (`sessionDelivery`; a reply there is still a `reply`). The evening summary
   lists "Coming up" (`look_forward` items since the last summary), "Done today" (tasks finished on the
   person's local day) and the held findings, each only when non-empty; with nothing at all there is
   no summary.
@@ -304,7 +307,13 @@ person managing a to-do list with a few assistants.
   sends `reply` through the ordinary `POST /api/v1/input` with `inReplyTo` set to the item that holds
   the card, so it counts as the person writing (the lead's answer is a reply). The server records
   the tapped reply in `chosen` (first tap wins, row locked) and publishes the item as `ItemFinal`,
-  so the buttons turn off on every device. The card's `fallbackText` lists the options for older apps.
+  so the buttons turn off on every device. A tap that cannot answer the card is refused and queues
+  nothing: 400 when the item is not a choices card or the text is not an option, 409 (body: the item as
+  it stands) when another tap answered first; a retry with the same client id still succeeds. A phone that
+  missed the update (offline) learns it because `FeedSync.fillGap` resumes from just before the oldest
+  recent item that is streaming, held or holds an unanswered choices card, and the refetched copy
+  replaces the cached one; an answered choices item never notifies. The summary job marks as summarized only
+  the findings the posted summary covered (a retry after a crash does not swallow newer ones). The card's `fallbackText` lists the options for older apps.
 
 ### Helpers (subagents)
 

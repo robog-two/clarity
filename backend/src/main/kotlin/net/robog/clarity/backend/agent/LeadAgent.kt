@@ -75,6 +75,21 @@ fun needsResume(history: List<Message>): Boolean {
     }
 }
 
+/**
+ * Pure: whether the turn left open at the end of [history] carries the person's own words, so a lead
+ * resuming it after a crash still treats what it posts as a reply. The open turn starts at the last
+ * message that opens one ([opensLeadTurn]), together with whatever was delivered with it (back to the
+ * last assistant message); it runs to the end, so words folded in mid-turn count and a reply nudge
+ * or operator placeholder at the end does not cut it. Only [carriesPersonWords] counts as the person.
+ */
+fun openTurnCarriesPerson(history: List<Message>): Boolean {
+    val opens = history.indexOfLast(::opensLeadTurn)
+    if (opens < 0) return false
+    var start = opens
+    while (start > 0 && history[start - 1].role != Role.ASSISTANT) start--
+    return history.subList(start, history.size).any(::carriesPersonWords)
+}
+
 /** Pure: whether [message] only closes calls a turn had no steps left for ([LEAD_OUT_OF_STEPS]). */
 fun closedOutOfSteps(message: Message): Boolean =
     message.content.isNotEmpty() && message.content.all { it is Block.Result && it.isError && it.content == LEAD_OUT_OF_STEPS.notRun }
@@ -264,10 +279,11 @@ class LeadAgent(
         val thread = threads.ensure()
         threadId = thread.id
         scope = RunScope(threadId, isLead = true)
-        if (needsResume(journal.load(threadId))) {
+        val saved = journal.load(threadId)
+        if (needsResume(saved)) {
             log.info { "resuming the lead thread from its journal" }
             turnLock.withLock {
-                scope.startTurn(untrusted = true, requestedByUser = false)
+                scope.startTurn(untrusted = true, requestedByUser = false, answeringPerson = openTurnCarriesPerson(saved))
                 replyOwed.set(false)
                 feed.publish(FeedEvent.Busy(true))
                 try {

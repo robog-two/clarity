@@ -251,7 +251,7 @@ class RunawayGuardsDbTest : FunSpec({
         }
         val requests = r.model.requestsFor(HELPER_MODEL)
         requests shouldHaveSize 1
-        textOf(requests.single().messages.last()) shouldBe OutOfSteps().report
+        textOf(requests.single().messages.last()) shouldBe net.robog.clarity.harness.harnessNote(OutOfSteps().report).text
         r.runs.get(spent)!!.result.shouldNotBeNull() shouldContain "ran out of steps"
         r.runs.get(looping)!!.status shouldBe RunStatus.FAILED
         r.runs.get(looping)!!.result.shouldNotBeNull() shouldContain "resumed 4 times"

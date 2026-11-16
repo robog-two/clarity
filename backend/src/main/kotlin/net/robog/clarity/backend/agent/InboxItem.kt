@@ -263,8 +263,9 @@ data class Delivery(val seqs: List<Long>, val message: Message)
 fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, statesClock: Boolean = false): List<Delivery> {
     val users = items.filter { it.item is InboxItem.UserInput }
     val others = items.filter { it.item !is InboxItem.UserInput }
-    // The person's words never pass for a client-side summary (which would cut the context there).
-    fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
+    // The person's words never pass for a client-side summary (which would cut the context there) or a harness note.
+    fun spoken(text: String) =
+        if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER) || net.robog.clarity.harness.isHarnessNote(text)) " $text" else text
     val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user(spoken((it.item as InboxItem.UserInput).text))) }
     if (others.isEmpty()) {
         val clock = Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[now ${LocalTimes.now(now, zone)}]"))))

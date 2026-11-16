@@ -224,6 +224,8 @@ fun decideNotification(
 private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duration, call: SessionId?): NotificationPlan? {
     // A reaction is a quiet tapback on the person's own message: never a notification.
     if (item.author != FeedItem.Author.AGENT || item.streaming || item.reaction != null) return null
+    // Answered already (on another device, or while this phone was away): nothing left to ask.
+    if (net.robog.clarity.app.data.feed.hasAnsweredChoices(item)) return null
     val kind = parseNotify(item.notify)
     val since = (kind as? NotifyKind.Released)?.at ?: item.at
     if (now - since > maxAge) return null

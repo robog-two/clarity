@@ -1,0 +1,16 @@
+flowchart TD
+  CHOOSE["Morning call CHOOSE<br/>set_priorities"] --> CARRY["carryOver(yesterday, today) (pure)<br/>same item id or close wording"]
+  PARK["hand_off parked items"] --> CARRY
+  CARRY --> ITEMS[("plan_item<br/>first planned, days carried")]
+  ITEMS --> PREP["MorningCallPrepJob<br/>prep note lists stuck items"]
+  PREP --> Q{"carried 2 or more days?"}
+  Q -->|no| COMMIT["COMMIT as today<br/>when, where, likely obstacle"]
+  Q -->|yes| SMALL["COMMIT asks for a 2-minute first step,<br/>help from the agent, or to drop it"]
+  COMMIT --> SETPLAN["set_plan(if-then + first step)"]
+  SMALL --> SETPLAN
+  SETPLAN --> AUTONUDGE["nudge at the if-then time (automatic)"]
+  AUTONUDGE --> CARD["check-in card with one-tap replies<br/>Starting / Later / Make it smaller"]
+  CARD -->|Starting| DONE["task in progress, no more nudges"]
+  CARD -->|Later| AGAIN["one more nudge at the chosen time<br/>(at most 2 per item a day)"]
+  CARD -->|Make it smaller| SPLIT["agent splits it into a smaller step"]
+  SPLIT --> AUTONUDGE
