@@ -91,7 +91,7 @@ private fun renderForArchive(message: Message, toolNames: MutableMap<String, Str
                 val text = block.text.trim()
                 if (text.isEmpty()) continue
                 when (message.role) {
-                    Role.USER -> if (!text.startsWith("(housekeeping")) lines += "Person: ${truncateQuoted(text, 1500)}"
+                    Role.USER -> if (personText(block.text)) lines += "Person: ${truncateQuoted(text, 1500)}"
                     Role.ASSISTANT -> lines += "Clarity (to itself): ${truncateQuoted(text, 1000)}"
                     Role.SYSTEM -> if (!text.startsWith("[memory")) {
                         if ("<untrusted" in text) untrusted = true

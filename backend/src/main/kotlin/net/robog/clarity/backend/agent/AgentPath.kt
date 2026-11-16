@@ -106,9 +106,14 @@ fun opensLeadTurn(message: Message): Boolean = when (message.role) {
 fun carriesPersonWords(message: Message): Boolean =
     message.role == Role.USER && message.content.any { it is Block.Text && personText(it.text) }
 
-private fun personText(text: String): Boolean {
+/**
+ * Pure: whether [text] of a user message is the person's own: not the placeholder, housekeeping, a
+ * summary, a helper nudge or a harness note. A harness note is judged on the raw text, so the person's
+ * own words that begin with the mark (escaped with a leading space by `renderDeliveries`) still count.
+ */
+fun personText(text: String): Boolean {
     val t = text.trim()
-    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE && !net.robog.clarity.harness.isHarnessNote(t)
+    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE && !net.robog.clarity.harness.isHarnessNote(text)
 }
 
 /** Pure: the lead journal split into turns ([opensLeadTurn]); rows before the first opening form a turn of their own. */

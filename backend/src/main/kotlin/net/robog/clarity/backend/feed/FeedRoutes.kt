@@ -114,17 +114,23 @@ class FeedRoutes(
                     }
                     // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
                     // Two taps at once can both pass the check; the second loses here and gets the conflict, nothing is queued for it.
-                    if (input.inReplyTo != null && feed.chooseOption(input.inReplyTo!!, input.text, input.clientId) == null) {
-                        // Lost the race, or a retry of the request that won: only the latter goes on.
-                        val current = feed.get(input.inReplyTo!!)
-                        val mine = (checkChoice(current, input.text) as? ChoiceCheck.Answered)?.by == input.clientId.value
-                        if (!mine && current != null) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(current))
+                    var marked = false
+                    if (input.inReplyTo != null) {
+                        if (feed.chooseOption(input.inReplyTo!!, input.text, input.clientId) != null) {
+                            marked = true
+                        } else {
+                            // Lost the race, or a retry of the request that won: only the latter goes on.
+                            val current = feed.get(input.inReplyTo!!)
+                            val mine = (checkChoice(current, input.text) as? ChoiceCheck.Answered)?.by == input.clientId.value
+                            if (!mine && current != null) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(current))
+                        }
                     }
-                    // The card, the person's message and the lead's inbox are three stores with no shared transaction, so
-                    // a failure after the card was marked takes the mark back: the card must not read answered on every
-                    // device while the lead never hears it. (A crash that skips this is healed by the same client's retry.)
+                    // The card, the person's message and the lead's inbox are separate stores with no shared transaction. If this
+                    // request marked the card but could not store the person's message, the mark is taken back so no card reads
+                    // answered without the answer being on record. Once the message is stored the card stays answered even if
+                    // queueing fails: the same client's retry heals it (the append is idempotent, the enqueue is deduplicated).
                     val appended = try {
-                        val saved = feed.append(
+                        feed.append(
                             FeedDraft(
                                 author = FeedItem.Author.USER,
                                 cards = listOf(Card.Said(input.text, input.source)),
@@ -132,19 +138,15 @@ class FeedRoutes(
                                 clientInputId = input.clientId,
                             ),
                         )
-                        // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
-                        inbox.enqueue(
-                            InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId),
-                            dedupKey = "user:${input.clientId.value}",
-                        )
-                        saved
-                    } catch (e: kotlin.coroutines.cancellation.CancellationException) {
-                        withContext(NonCancellable) { input.inReplyTo?.let { feed.unchooseOption(it, input.clientId) } }
-                        throw e
                     } catch (e: Exception) {
-                        input.inReplyTo?.let { feed.unchooseOption(it, input.clientId) }
+                        if (marked) runCatching { withContext(NonCancellable) { feed.unchooseOption(input.inReplyTo!!, input.clientId) } }.onFailure { e.addSuppressed(it) }
                         throw e
                     }
+                    // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
+                    inbox.enqueue(
+                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId),
+                        dedupKey = "user:${input.clientId.value}",
+                    )
                     call.respond(InputAccepted(appended.item))
                 }
 

@@ -11,6 +11,7 @@ import net.robog.clarity.backend.feed.answerChoices
 import net.robog.clarity.backend.feed.summarizedBy
 import net.robog.clarity.backend.feed.unanswerChoices
 import net.robog.clarity.harness.harnessNote
+import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.harness.isHarnessNote
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Message
@@ -79,6 +80,10 @@ class FollowUpPureTest : FunSpec({
         // the person's words merged next to such a note still count
         val both = Message(Role.USER, listOf(Block.Result("a", "ok"), harnessNote("steps"), Block.Text("and call Dana")))
         openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), both)) shouldBe true
+        // the person typing the mark themselves is escaped by renderDeliveries and still counts
+        val typed = renderDeliveries(listOf(PendingItem(1, InboxItem.UserInput(ClientInputId("c"), harnessNote("hello").text), at)), at, kotlinx.datetime.TimeZone.UTC).first().message
+        carriesPersonWords(typed) shouldBe true
+        carriesPersonWords(Message.user(harnessNote("hello").text)) shouldBe false
         isHarnessNote(harnessNote("x").text) shouldBe true
         isHarnessNote("x") shouldBe false
     }

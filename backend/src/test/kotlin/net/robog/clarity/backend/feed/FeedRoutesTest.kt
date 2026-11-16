@@ -63,6 +63,7 @@ private class MemoryFeedStore : FeedStore {
     private val items = CopyOnWriteArrayList<Pair<FeedItem, FeedDraft>>()
 
     override suspend fun append(draft: FeedDraft): Appended = synchronized(items) {
+        if (failAppendNext && draft.author == FeedItem.Author.USER) { failAppendNext = false; error("feed down") }
         draft.clientInputId?.let { id -> items.firstOrNull { it.second.clientInputId == id }?.let { return@synchronized Appended(it.first, created = false) } }
         val item = FeedItem(
             FeedItemId(Uuid.random().toString()), items.size + 1L, Clock.System.now(), draft.author, draft.sessionId, draft.cards, draft.streaming, draft.notify ?: NOTIFY_IN_APP,
@@ -96,6 +97,7 @@ private class MemoryFeedStore : FeedStore {
         val cards = unanswerChoices(item.cards, by.value) ?: return@synchronized null
         item.copy(cards = cards).also { items[index] = it to draft }
     }
+    @Volatile var failAppendNext = false
     override suspend fun byClientInput(id: ClientInputId): FeedItem? = items.firstOrNull { it.second.clientInputId == id }?.first
     override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? = synchronized(items) {
         val index = items.indexOfFirst { it.first.id == id }
@@ -237,7 +239,30 @@ class FeedRoutesTest : FunSpec({
         }
     }
 
-    test("a failure after the card was marked takes the mark back, and the same tap can be retried") {
+    test("when the person's message cannot be stored the card is reopened, with no message and nothing queued") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            suspend fun tap() = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId("reopen-1"), "Later", inReplyTo = asked.id))
+            }
+            val before = inbox.enqueued.size
+            val itemsBefore = feed.page(0, 1000).items.size
+            store.failAppendNext = true
+            tap().status shouldBe HttpStatusCode.InternalServerError
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe null
+            feed.page(0, 1000).items.size shouldBe itemsBefore
+            inbox.enqueued.size shouldBe before
+            tap().status shouldBe HttpStatusCode.OK
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            inbox.enqueued.size shouldBe before + 1
+        }
+    }
+
+    test("when only queueing fails the message is stored and the card stays answered, and the same tap heals it") {
         testApplication {
             val client = setup()
             val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
@@ -249,12 +274,15 @@ class FeedRoutesTest : FunSpec({
             }
             val before = inbox.enqueued.size
             inbox.failNext = true
+            val itemsBefore = feed.page(0, 1000).items.size
             tap("heal-1").status shouldBe HttpStatusCode.InternalServerError
-            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe null
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            feed.page(0, 1000).items.size shouldBe itemsBefore + 1
             inbox.enqueued.size shouldBe before
-            // the retry (same client id) goes through and reaches the lead once
+            // the retry (same client id) reaches the lead once and adds no second message
             tap("heal-1").status shouldBe HttpStatusCode.OK
             (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            feed.page(0, 1000).items.size shouldBe itemsBefore + 1
             inbox.enqueued.size shouldBe before + 1
         }
     }
