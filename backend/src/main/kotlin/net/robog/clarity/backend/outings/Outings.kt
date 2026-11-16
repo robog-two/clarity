@@ -11,6 +11,7 @@ import kotlin.uuid.Uuid
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
+import net.robog.clarity.backend.agent.RunScope
 import net.robog.clarity.backend.agent.SettingsProvider
 import net.robog.clarity.backend.agent.agentTime
 import net.robog.clarity.backend.agent.homeZone
@@ -61,6 +62,8 @@ object OutingIdeas : Table("outing_idea") {
     val createdAt = timestamp("created_at")
     val decidedAt = timestamp("decided_at").nullable()
     val suggestedAt = timestamp("suggested_at").nullable()
+    val suggestedCall = text("suggested_call").nullable()
+    val suggestedUnprompted = bool("suggested_unprompted").default(true)
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -86,10 +89,13 @@ interface OutingStore {
     /** Moves an open idea to [state]; null when it is unknown. A declined idea stays declined. */
     suspend fun decide(id: String, state: IdeaState): SavedIdea?
 
-    /** Records that [id] was offered at [at] (the first time only). */
-    suspend fun markSuggested(id: String, at: Instant)
+    /**
+     * Records that [id] was offered at [at] by the tool call [call] (the first time only). [unprompted] is false
+     * for an offer the person asked for: it does not count against the weekly budget.
+     */
+    suspend fun markSuggested(id: String, at: Instant, call: String?, unprompted: Boolean)
 
-    /** When ideas other than [except] were offered at or after [since]. */
+    /** When ideas other than [except] were offered unprompted at or after [since]. */
     suspend fun offeredSince(since: Instant, except: String? = null): List<Instant>
 }
 
@@ -122,14 +128,20 @@ class ExposedOutingStore(private val database: Database, private val clock: Cloc
         OutingIdeas.selectAll().orderBy(OutingIdeas.createdAt, SortOrder.DESC).map { it.toIdea() }
     }
 
-    override suspend fun markSuggested(id: String, at: Instant) {
+    override suspend fun markSuggested(id: String, at: Instant, call: String?, unprompted: Boolean) {
         val uuid = Uuid.parseOrNull(id) ?: return
-        database.tx { OutingIdeas.update({ (OutingIdeas.id eq uuid) and OutingIdeas.suggestedAt.isNull() }) { it[suggestedAt] = at } }
+        database.tx {
+            OutingIdeas.update({ (OutingIdeas.id eq uuid) and OutingIdeas.suggestedAt.isNull() }) {
+                it[suggestedAt] = at
+                it[suggestedCall] = call
+                it[suggestedUnprompted] = unprompted
+            }
+        }
     }
 
     override suspend fun offeredSince(since: Instant, except: String?): List<Instant> = database.tx {
         val skip = except?.let(Uuid::parseOrNull)
-        OutingIdeas.select(OutingIdeas.id, OutingIdeas.suggestedAt).where { OutingIdeas.suggestedAt greaterEq since }
+        OutingIdeas.select(OutingIdeas.id, OutingIdeas.suggestedAt).where { (OutingIdeas.suggestedAt greaterEq since) and OutingIdeas.suggestedUnprompted }
             .filter { it[OutingIdeas.id] != skip }.mapNotNull { it[OutingIdeas.suggestedAt] }
     }
 
@@ -163,6 +175,7 @@ private fun ResultRow.toIdea() = SavedIdea(
     state = IdeaState.of(this[OutingIdeas.state]) ?: IdeaState.OPEN,
     createdAt = this[OutingIdeas.createdAt],
     suggestedAt = this[OutingIdeas.suggestedAt],
+    suggestedCall = this[OutingIdeas.suggestedCall],
 )
 
 /** What the scout reads about the person's people. A seam: production [ExposedOutingPeople]. */
@@ -259,8 +272,9 @@ class OutingTools(
         if (category != null && (category.length > MAX_KIND || '@' in category || category.any(Char::isDigit))) {
             return@tool ToolResult.Error("`category` is the kind of outing in one or two generic words (live music, dinner, hike), at most $MAX_KIND characters, no names or numbers.")
         }
-        namesIn("$what ${place.orEmpty()} ${category.orEmpty()}", people.contacts().map { it.name })?.let {
-            return@tool ToolResult.Error("The idea names \"$it\". Leave names out of the text and put the person in `withContactId`.")
+        val company = people.recent(clock.now())
+        namesIn("$what ${place.orEmpty()} ${category.orEmpty()} ${url.orEmpty()}", company.map { it.name })?.let {
+            return@tool ToolResult.Error("The idea names \"$it\", someone the person may bring. Put them in `withContactId` and rephrase the text without the name.")
         }
         ideaRefusal(what, url, store.all())?.let { return@tool ToolResult.Error(it) }
         val from = input.from?.takeIf { it.isNotBlank() }?.let { readToolTime("from", it, zone).fold({ e -> return@tool ToolResult.Error(e) }, { t -> t }) }
@@ -277,7 +291,7 @@ class OutingTools(
         }
         val withContact = input.withContactId?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
             val parsed = Uuid.parseOrNull(raw)?.toString() ?: return@tool ToolResult.Error("`withContactId` is not a contact id: \"$raw\".")
-            if (people.recent(clock.now()).none { it.id == parsed }) {
+            if (company.none { it.id == parsed }) {
                 return@tool ToolResult.Error("Only people the person exchanged messages with in the last 90 days can be company. Save the idea without `withContactId`.")
             }
             parsed
@@ -345,28 +359,34 @@ class OutingTools(
 
     /**
      * The server is the authority on outing suggestions: [send] (`send_to_user`) is run only when its cards
-     * pass. A `look_forward` post must carry a choices card whose `ref` is `outing:<id>` of an open saved
-     * idea, and at most [SUGGESTIONS_PER_WEEK] other ideas may have been offered in the last 7 days. After
-     * a successful post the idea's `suggested_at` is set, which is what the scout's weekly budget counts.
+     * pass. Any post with a choices card whose `ref` is `outing:<id>` goes through the gate, whatever its kind:
+     * the idea must be saved, open and not offered before. A look_forward post with no such ref is refused.
+     * Unprompted (the lead's own idea) at most [SUGGESTIONS_PER_WEEK] ideas may have been offered in 7 days. In a
+     * turn answering the person ([scope] says they asked) neither the ref nor the budget applies, since they
+     * asked; an outing ref there still records the offer, so a later no is final, but it does not count against
+     * the unprompted budget. A successful post sets `suggested_at`.
      */
-    fun gateSuggestions(send: Tool): Tool = object : Tool by send {
+    fun gateSuggestions(send: Tool, scope: RunScope?): Tool = object : Tool by send {
         override suspend fun invoke(input: JsonObject): ToolResult {
             val cards = runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(Card.serializer()), input["cards"] ?: return send.invoke(input)) }
                 .getOrNull() ?: return send.invoke(input)
             val ideaId = cards.filterIsInstance<Card.Choices>().firstNotNullOfOrNull { outingIdeaOf(it.ref) }
+            val answeringPerson = scope?.requestedByUser == true
             val lookForward = (input["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.content == "look_forward"
             if (ideaId == null) {
-                return if (lookForward) {
+                return if (lookForward && !answeringPerson) {
                     ToolResult.Error("A look_forward message is an outing suggestion: save the outing with save_outing_idea, then post it with a choices card whose ref is \"outing:<idea id>\".")
                 } else {
                     send.invoke(input)
                 }
             }
             val now = clock.now()
+            val call = coroutineContext[ToolCallContext]?.let { "${it.runId}:${it.toolUseId}" }
             val idea = store.all().firstOrNull { it.id.equals(ideaId, ignoreCase = true) }
-            suggestionRefusal(idea, store.offeredSince(now - SUGGESTION_WINDOW, except = idea?.id), now)?.let { return ToolResult.Error(it) }
+            val offered = store.offeredSince(now - SUGGESTION_WINDOW, except = idea?.id)
+            suggestionRefusal(idea, offered, now, call, budgeted = !answeringPerson)?.let { return ToolResult.Error(it) }
             val result = send.invoke(input)
-            if (result is ToolResult.Ok) store.markSuggested(idea!!.id, now)
+            if (result is ToolResult.Ok) store.markSuggested(idea!!.id, now, call, unprompted = !answeringPerson)
             return result
         }
     }

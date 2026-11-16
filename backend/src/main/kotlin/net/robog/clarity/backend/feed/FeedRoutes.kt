@@ -107,7 +107,7 @@ class FeedRoutes(
                     )
                     // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
                     val answering = input.inReplyTo?.let { id ->
-                        feed.get(id)?.cards?.filterIsInstance<Card.Choices>()?.firstOrNull()?.let { answeringNote(it.prompt, it.ref) }
+                        feed.get(id)?.cards?.filterIsInstance<Card.Choices>()?.firstOrNull()?.let { answeringNote(it.ref) }
                     }
                     input.inReplyTo?.let { feed.chooseOption(it, input.text) }
                     // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.

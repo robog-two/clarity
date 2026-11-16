@@ -43,7 +43,7 @@ sealed interface InboxItem {
         val text: String,
         val source: InputSource = InputSource.TYPED,
         val sessionId: SessionId? = null,
-        /** The prompt and ref of the choices card a tap answered, as [answeringNote] writes them; null for typed words. */
+        /** The server's note on which card a tap answered ([answeringNote], from its ref only); null for typed words. */
         val answering: String? = null,
     ) : InboxItem {
         override val priority get() = Priority.USER
@@ -251,9 +251,13 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     val others = items.filter { it.item !is InboxItem.UserInput }
     // The person's words never pass for a client-side summary (which would cut the context there).
     fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
-    val userDeliveries = users.map {
+    // The person's words stay exactly theirs; what a tap answered is the server's own note, a separate system message after it.
+    val userDeliveries = users.flatMap {
         val input = it.item as InboxItem.UserInput
-        Delivery(listOf(it.seq), Message.user(spoken(input.text + input.answering?.let { note -> " $note" }.orEmpty())))
+        listOfNotNull(
+            Delivery(listOf(it.seq), Message.user(spoken(input.text))),
+            input.answering?.let { note -> Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[operator note, not from the person] $note")))) },
+        )
     }
     if (others.isEmpty()) {
         val clock = Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[now ${LocalTimes.now(now, zone)}]"))))
@@ -269,13 +273,14 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     return userDeliveries + Delivery(others.map { it.seq }, Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text(text))))
 }
 
-/** Pure: what the lead is told about the card a tap answered: "(tapped on: <prompt> [ref outing:<id>])"; null when the card has neither. */
-fun answeringNote(prompt: String?, ref: String?): String? {
-    val asked = prompt?.replace(Regex("\\s+"), " ")?.trim()?.take(120)?.takeIf { it.isNotEmpty() }
-    val tag = ref?.trim()?.take(80)?.takeIf { it.isNotEmpty() }
-    if (asked == null && tag == null) return null
-    return "(tapped on: " + listOfNotNull(asked, tag?.let { "[ref $it]" }).joinToString(" ") + ")"
-}
+private val ANSWER_REF = Regex("^(outing|plan):[0-9a-f-]{36}$")
+
+/**
+ * Pure: the operator's note for a tap, "Tap answers card ref outing:<id>", from the card's [ref] only and only when
+ * it has the shape of one the server makes. The card's prompt is model-written (often from mail) and never
+ * reaches the lead as the person's words; null when there is no valid ref.
+ */
+fun answeringNote(ref: String?): String? = ref?.trim()?.takeIf { ANSWER_REF.matches(it) }?.let { "Tap answers card ref $it" }
 
 private val UNTRUSTED_TAG = Regex("<(/?)\\s*untrusted", RegexOption.IGNORE_CASE)
 

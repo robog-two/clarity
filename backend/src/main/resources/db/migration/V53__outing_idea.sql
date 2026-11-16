@@ -15,6 +15,10 @@ CREATE TABLE outing_idea (
     created_at   timestamptz NOT NULL,
     decided_at   timestamptz,
     -- when its suggestion was posted: the weekly budget of two counts these
-    suggested_at timestamptz
+    suggested_at timestamptz,
+    -- the tool call that posted it (a re-run of that call is let through), and whether the lead offered it on its
+    -- own (counted in the weekly budget) or the person asked for something (not counted)
+    suggested_call text,
+    suggested_unprompted boolean NOT NULL DEFAULT true
 );
 CREATE INDEX outing_idea_state_idx ON outing_idea (state, created_at);

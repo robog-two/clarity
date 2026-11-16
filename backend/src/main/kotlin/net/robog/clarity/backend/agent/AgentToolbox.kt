@@ -304,7 +304,7 @@ class AgentToolbox(
         if (forLead) addAll(nudges.all())
         if (forLead) addAll(outings.all())
         if (forLead) add(thirdParty.suggestTool())
-    }.map { if (forLead && it.name == "send_to_user") outings.gateSuggestions(it) else it }.let { guarded(scope, it) }
+    }.map { if (forLead && it.name == "send_to_user") outings.gateSuggestions(it, scope) else it }.let { guarded(scope, it) }
 
     /**
      * The lead's tools, all sent with every request. The lead gets no MCP tools (the browser, the

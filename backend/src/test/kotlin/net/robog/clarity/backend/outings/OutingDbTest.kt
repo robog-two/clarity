@@ -109,7 +109,12 @@ class OutingDbTest : FunSpec({
             feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, FailureGate(null),
             SourceResolver(reader, { settings }, journal, ExposedRunStore(database, clock)),
         )
-        val sendToUser = outing.gateSuggestions(own.sendToUser(RunScope("lead", isLead = true)))
+        val leadScope = RunScope("lead", isLead = true)
+        val sendToUser = outing.gateSuggestions(own.sendToUser(leadScope), leadScope)
+
+        /** The lead's turn answering the person (they wrote), with its own send_to_user. */
+        val answeringScope = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        val sendWhenAsked = outing.gateSuggestions(own.sendToUser(answeringScope), answeringScope)
 
         suspend fun call(name: String, vararg pairs: Pair<String, String>): ToolResult =
             withContext(ToolCallContext(run, "call-${Uuid.random()}")) {
@@ -124,7 +129,14 @@ class OutingDbTest : FunSpec({
         }
 
         /** A suggestion for [ideaId], the way the lead posts one; [ref] and [kind] can be changed to try the gate. */
-        suspend fun suggest(ideaId: String, ref: String? = "outing:$ideaId", kind: String = "look_forward", text: String = "Thursday evening is free."): ToolResult {
+        suspend fun suggest(
+            ideaId: String,
+            ref: String? = "outing:$ideaId",
+            kind: String = "look_forward",
+            text: String = "Thursday evening is free.",
+            toolUseId: String = "call-${Uuid.random()}",
+            asked: Boolean = false,
+        ): ToolResult {
             val cards = listOf(
                 Card.Text(text),
                 Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time")), ref = ref),
@@ -133,7 +145,7 @@ class OutingDbTest : FunSpec({
                 put("kind", kind)
                 put("cards", ClarityJson.encodeToJsonElement(cards))
             }
-            return withContext(ToolCallContext(run, "call-${Uuid.random()}")) { sendToUser.invoke(input) }
+            return withContext(ToolCallContext(run, toolUseId)) { (if (asked) sendWhenAsked else sendToUser).invoke(input) }
         }
 
         suspend fun fire(at: Instant = now, scheduledFor: Instant = at) =
@@ -357,5 +369,53 @@ class OutingDbTest : FunSpec({
         posted.kind shouldBe MessageKind.LOOK_FORWARD
         posted.cards.map { it::class } shouldBe listOf(Card.Text::class, Card.Sources::class, Card.Choices::class)
         rig.ideas.offeredSince(now - 7.days) shouldHaveSize 1
+    }
+    test("an idea is offered once; a re-run of the same call is the same post; a ref gates any kind") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night", "category" to "live music")
+        rig.suggest(a, toolUseId = "use-1").shouldBeInstanceOf<ToolResult.Ok>()
+        // the same call again (a crash and re-run): let through, and the feed keeps one post
+        rig.suggest(a, toolUseId = "use-1").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.feed.page(0, 20).items.filter { it.kind == MessageKind.LOOK_FORWARD } shouldHaveSize 1
+        // a new call about the same idea is a re-offer
+        rig.suggest(a, toolUseId = "use-2").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
+        // a finding carrying an outing ref is gated too: with the budget spent it is refused
+        val b = rig.saveIdea("Pottery class", "category" to "class")
+        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        rig.suggest(b, kind = "finding").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(c, kind = "finding").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+    }
+
+    test("when the person asks for something to do, neither the ref nor the budget applies, and the offer is still remembered") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night", "category" to "live music")
+        val b = rig.saveIdea("Pottery class", "category" to "class")
+        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
+        val d = rig.saveIdea("Museum visit", "category" to "museum")
+        rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(c).shouldBeInstanceOf<ToolResult.Error>() // unprompted: the week's budget is used
+        // "suggest something for tonight": a reply with no ref at all, and one with a ref
+        rig.suggest(c, ref = null, kind = "look_forward", asked = true).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Ok>()
+        // an answered offer is recorded (so it is never offered again) but is not counted against the unprompted budget
+        rig.ideas.all().first { it.id == d }.suggestedAt shouldBe now
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
+        rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already offered"
+        rig.call("update_outing_idea", "id" to d, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(d, asked = true).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
+        // and the scout still sees two unprompted offers
+        rig.fire(at = now + 1.hours)
+        rig.due().shouldBeEmpty()
+    }
+
+    test("names are refused only for people who may be company, in the text or the address") {
+        val rig = Rig(database, now, settings)
+        rig.person("Sam Example", "sam@example.com")
+        rig.mail("sam@example.com", daysAgo = 5)
+        rig.person("Blue Room", "blueroom@example.com") // a saved contact, not messaged lately
+        rig.call("save_outing_idea", "what" to "dinner with Sam").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
+        rig.call("save_outing_idea", "what" to "Gig", "url" to "https://example.com/sam-and-friends").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
+        rig.call("save_outing_idea", "what" to "Jazz at the Blue Room").shouldBeInstanceOf<ToolResult.Ok>()
     }
 })

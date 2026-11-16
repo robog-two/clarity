@@ -244,6 +244,8 @@ data class SavedIdea(
     val createdAt: Instant,
     /** When it was offered to the person (the post of its suggestion); null while it never was. */
     val suggestedAt: Instant? = null,
+    /** The tool call (`run:toolUse`) that offered it, so a re-run of that call is let through. */
+    val suggestedCall: String? = null,
 ) {
     fun matches(otherWhat: String, otherUrl: String?): Boolean =
         what.normalized() == otherWhat.normalized() || (url != null && otherUrl != null && url.trimEnd('/').equals(otherUrl.trim().trimEnd('/'), ignoreCase = true))
@@ -259,11 +261,17 @@ fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List
     return kinds(IdeaState.USED) to kinds(IdeaState.DECLINED)
 }
 
-/** Pure: the first of [names] that [text] mentions (whole words, any case), or null. Names belong in the company field, never in an idea's text. */
+/**
+ * Pure: the first of [names] (the people who may be company: [recentContacts]) that [text] mentions, as the whole name
+ * or its first word of at least 3 letters, whole words, any case; null when none. Names belong in the company field.
+ */
 fun namesIn(text: String, names: List<String>): String? {
     val lower = text.lowercase()
-    return names.map { it.trim() }.filter { it.length >= 3 }.firstOrNull { n ->
-        Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)").containsMatchIn(lower)
+    return names.map { it.trim() }.filter { it.isNotEmpty() }.firstNotNullOfOrNull { full ->
+        // the whole name, or its first word when that is at least 3 letters
+        listOf(full, full.split(Regex("\\s+")).first()).distinct().filter { it.length >= 3 }.firstOrNull { n ->
+            Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)").containsMatchIn(lower)
+        }
     }
 }
 
@@ -272,17 +280,29 @@ const val OUTING_REF_PREFIX = "outing:"
 
 /** Pure: the idea id in [ref] (`outing:<id>`), or null when it is not an outing ref. */
 fun outingIdeaOf(ref: String?): String? =
-    ref?.trim()?.takeIf { it.startsWith(OUTING_REF_PREFIX) }?.removePrefix(OUTING_REF_PREFIX)?.trim()?.takeIf { it.isNotEmpty() }
+    ref?.trim()?.takeIf { OUTING_REF.matches(it) }?.removePrefix(OUTING_REF_PREFIX)
+
+private val OUTING_REF = Regex("^outing:[0-9a-f-]{36}$")
 
 /**
  * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved
- * idea, and fewer than [perWeek] other ideas may have been offered in the last [SUGGESTION_WINDOW]
- * ([offered] are those other ideas' `suggestedAt`).
+ * idea that was not offered before (the post of the same call [call], re-run after a crash, is the same
+ * post). When [budgeted] (the lead's own idea, not an answer to the person asking) fewer than [perWeek]
+ * other ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]).
  */
-fun suggestionRefusal(idea: SavedIdea?, offered: List<Instant>, now: Instant, perWeek: Int = SUGGESTIONS_PER_WEEK): String? = when {
+fun suggestionRefusal(
+    idea: SavedIdea?,
+    offered: List<Instant>,
+    now: Instant,
+    call: String? = null,
+    budgeted: Boolean = true,
+    perWeek: Int = SUGGESTIONS_PER_WEEK,
+): String? = when {
     idea == null -> "No saved idea has that id. Save the outing with save_outing_idea first, then suggest it."
     idea.state != IdeaState.OPEN -> "\"${idea.what}\" is ${idea.state.wire}; only an open idea can be suggested."
-    offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
+    idea.suggestedAt != null && (call == null || idea.suggestedCall != call) ->
+        "\"${idea.what}\" was already offered and is waiting for the person's answer. Suggest another idea or send nothing."
+    budgeted && offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
     else -> null
 }
 
@@ -315,7 +335,7 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdea
             "a sources card (the idea's source record id from list_outing_ideas, and the event page once a helper fetched it), " +
             "and a choices card with ref \"outing:<idea id>\" and the options Add to calendar and Not this time. " +
             "The server refuses it when the idea is not open or 2 outings were already suggested this week. " +
-            "A tap comes back as \"(tapped on: ... [ref outing:<idea id>])\": that ref names the idea. " +
+            "A tap comes back as the person's words plus an operator note \"Tap answers card ref outing:<idea id>\": that ref names the idea. " +
             "Add to calendar: create_event, and only when it reports done (if it was held for the person's approval, leave the idea open and say nothing more) update_outing_idea used. " +
             "Not this time: add nothing, update_outing_idea declined, and make no other plan for it. " +
             "Either way write_journal what kind of outing it was and the answer, so later briefs improve.",

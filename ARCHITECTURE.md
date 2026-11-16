@@ -565,7 +565,7 @@ place, kind, window, contact, source record, url, `state` open, used or declined
 through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
 `list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
 a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
-(the sources-card rule), a contact outside the 90 days, and names in the idea's text (company goes in
+(the sources-card rule), a contact outside the 90 days, and names of people who may be company in the idea's text or address (company goes in
 `withContactId`). A declined idea stays declined: saving it again (same wording or page) is refused
 and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
 
@@ -578,14 +578,24 @@ its short result (up to 3 events) returns to the lead, which saves the one it pi
 
 Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sources card and a
 `Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
-The server is the authority: `OutingTools.gateSuggestions` wraps the lead's `send_to_user` and refuses
-a look_forward post with no outing ref, an idea that is not open, or a third offer in 7 days; after a
-successful post it sets `suggested_at`. A tap on a choice arrives as the person's input with
-`(tapped on: <prompt> [ref outing:<id>])` appended (`InboxItem.UserInput.answering`), so two open
-suggestions are told apart. Add to calendar is the person's own request, so `create_event` runs (the
-guard still applies) and the idea is marked used only once `create_event` reports done; a held event
-leaves the idea open until it is approved (the lead does not mark it). Not this time adds nothing and
-marks the idea declined. The lead then journals the kind of outing and the answer.
+`look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
+outing suggestions. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
+`send_to_user`, and any post with an outing ref goes through it whatever its kind. It must name a saved
+idea that is open and was not offered before (a re-run of the same tool call is let through; the feed
+dedups it), and at most 2 other ideas may have been offered unprompted in 7 days; a `look_forward` post
+with no outing ref is refused. After a successful post `suggested_at` is set. In a turn answering the
+person (they asked "suggest something for tonight") neither the ref nor the budget applies, since they
+asked; a ref there still records the offer (so a later no is final) but the offer is flagged
+`suggested_unprompted = false` and not counted.
+
+A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
+"Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it matches
+`^(outing|plan):[0-9a-f-]{36}$`; the card's prompt is model-written (often from mail) and never reaches
+the lead as the person's own words. Two open suggestions are told apart by the ref. Add to calendar is
+the person's own request, so `create_event` runs (the guard still applies) and the idea is marked used
+only once `create_event` reports done; a held event leaves the idea open until it is approved (the lead
+does not mark it). Not this time adds nothing and marks the idea declined. The lead then journals the
+kind of outing and the answer.
 
 ### Reports (documents the agent writes)
 
