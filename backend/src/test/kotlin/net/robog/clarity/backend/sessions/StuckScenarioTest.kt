@@ -277,8 +277,8 @@ class StuckScenarioTest : FunSpec({
 
         /** The person taps [label]: the card is marked answered everywhere and the reply reaches the lead as their input. */
         suspend fun tap(n: Int, shown: FeedItem, label: String) {
-            r.feed.chooseOption(shown.id, label).shouldNotBeNull().cards.filterIsInstance<Card.Choices>().single().chosen shouldBe label
-            r.feed.chooseOption(shown.id, "Later") shouldBe null // the first tap wins
+            r.feed.chooseOption(shown.id, label, ClientInputId("tap$n")).shouldNotBeNull().cards.filterIsInstance<Card.Choices>().single().chosen shouldBe label
+            r.feed.chooseOption(shown.id, "Later", ClientInputId("late$n")) shouldBe null // the first tap wins
             r.inbox.enqueue(InboxItem.UserInput(ClientInputId("tap$n"), label, InputSource.TYPED, null))
         }
 
