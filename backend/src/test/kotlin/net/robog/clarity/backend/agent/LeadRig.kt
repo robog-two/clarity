@@ -241,7 +241,7 @@ class LeadRig(
 
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, planItemTools, reportTools, mcpKit, attachmentTools, outingTools)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, planItemTools, reportTools, mcpKit, attachmentTools, outingTools, CardRefGate(planItems))
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime), searchBrief = searchBrief)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,

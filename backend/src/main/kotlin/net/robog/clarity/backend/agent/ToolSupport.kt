@@ -78,10 +78,11 @@ class RunScope(
     /** The lead's current turn: the tasks it touched and the helpers it started (for linking them). */
     val turn = TurnTasks()
 
-    fun startTurn(untrusted: Boolean, requestedByUser: Boolean, answeringPerson: Boolean = requestedByUser) {
+    /** [startedByPerson]: the person typed or spoke to start it; a turn of only taps on choices cards is not theirs in this sense. */
+    fun startTurn(untrusted: Boolean, requestedByUser: Boolean, answeringPerson: Boolean = requestedByUser, startedByPerson: Boolean = requestedByUser) {
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
-        personTurnFlag.set(requestedByUser)
+        personTurnFlag.set(startedByPerson)
         offersThisTurn.set(0)
         answeringFlag.set(answeringPerson)
         turn.reset()

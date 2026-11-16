@@ -286,9 +286,11 @@ person managing a to-do list with a few assistants.
   `deliveryOf` (governance/NotifyPolicy.kt), which runs before `notifyDecision`. Each agent message
   has a `MessageKind` stored on the feed item (`feed_item.kind`): `reply`, `check_in`,
   `look_forward` or `finding` (the model's default). **`reply` is decided by the server**: a post
-  made during a lead turn whose batch included the person's input (a message, or a tap on a choice;
-  `RunScope.requestedByUser`) is a reply whatever the model said, and a model-supplied `reply`
-  outside such a turn is stored as `finding`. A `reply` is checked first and wins over urgency:
+  made during a lead turn that answers the person (their input is in its batch, or arrived while it
+  ran; a message, or a tap on a choice: `RunScope.answeringPerson`) is a reply whatever the model said,
+  and a model-supplied `reply` outside such a turn is stored as `finding`. That flag is about the
+  kind of the message only. The outing gate asks something narrower, `RunScope.startedByPerson` (see
+  Outings): the person typed or spoke to start the turn. A `reply` is checked first and wins over urgency:
   it shows in the app and the phone notifies only when the app is closed (`notify = reply`), uncounted.
   A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
   apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
@@ -614,26 +616,33 @@ its short result (up to 3 events) returns to the lead, which saves the one it pi
 Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sources card and a
 `Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
 `look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
-outing suggestions. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
+outing suggestions, minus those turned down (their idea is declined, or the card was answered with
+"Not this time"); unanswered and accepted ones stay. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
 `send_to_user`, and any post with a choices ref starting `outing:` goes through it whatever its kind; a
 malformed ref (anything but `outing:` plus a lower-case uuid, prefix in any case) is refused, and the gate fails
 closed: cards that cannot be read in a look_forward, or anywhere mentioning `outing:`, are refused. A reserved offer is
 released when the post fails, but only if no feed item exists for the call or carries the idea's ref, and also on
-cancellation (`NonCancellable`). (Lane 2's `plan:<id>` refs must be lower-case uuids to reach the lead.) The idea must be saved, open
+cancellation (`NonCancellable`). A ref is checked when posting, for every `send_to_user` (`CardRefGate`): absent, or exactly that
+grammar; an unknown prefix or a malformed ref is refused, and a `plan:<id>` must name an open plan
+item. The idea must be saved, open
 and not offered before (a re-run of the same tool call is let through; the feed dedups it), and at most
 2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
 (`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
 in one transaction) and is released if the post fails, so two offers racing past the budget cannot both
 win. A `look_forward` post with no outing ref is refused in every turn, and the idea must be saved and
 open, and a declined idea never comes back, in every turn. In a turn the person started
-(`RunScope.startedByPerson`, not a job turn they interrupted) the weekly budget never applies, tainted
+(`RunScope.startedByPerson`: not a job turn they interrupted, and not a turn made only of taps on
+choices cards, since a tap such as "Not this time" or a plan check-in's "Later" answers a question and
+asks for nothing: `InboxItem.UserInput.tap`, `turnStartedByPerson`) the weekly budget never applies, tainted
 or not (reading `list_outing_ideas` taints a turn), since they asked; such an offer is recorded but
 flagged `suggested_unprompted = false` and not counted. Such a turn may make at most 2 offers. Only in such a turn that has read nothing
 untrusted may an open idea already offered be shown again.
 
 A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
-"Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it matches
-`^(outing|plan):[0-9a-f-]{36}$`; the card's prompt is model-written (often from mail) and never reaches
+"Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it fits the one
+ref grammar (`agent/CardRefs.kt`: exactly `outing:<uuid>` or `plan:<uuid>`, the uuid strict lower-case
+8-4-4-4-12, no spaces; the same parser serves the tap note, the outing gate and the post check below);
+the card's prompt is model-written (often from mail) and never reaches
 the lead as the person's own words. Two open suggestions are told apart by the ref. Add to calendar is
 the person's own request, so `create_event` runs (the guard still applies) and the idea is marked used
 only once `create_event` reports done; a held event leaves the idea open until it is approved (the lead

@@ -84,7 +84,7 @@ class OutingDbTest : FunSpec({
     afterSpec { postgres.stop() }
     beforeTest {
         database.tx {
-            exec("TRUNCATE outing_idea, contact, message, calendar_event, inbox_item, feed_item, constitution_version, agent_journal RESTART IDENTITY CASCADE")
+            exec("TRUNCATE plan_item, outing_idea, contact, message, calendar_event, inbox_item, feed_item, constitution_version, agent_journal RESTART IDENTITY CASCADE")
         }
     }
 
@@ -110,12 +110,14 @@ class OutingDbTest : FunSpec({
             feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, FailureGate(null),
             SourceResolver(reader, { settings }, journal, ExposedRunStore(database, clock)),
         )
+        val planItems = net.robog.clarity.backend.sessions.PlanItemStore(database)
+        val refGate = net.robog.clarity.backend.agent.CardRefGate(planItems)
         val leadScope = RunScope("lead", isLead = true)
-        val sendToUser = outing.gateSuggestions(own.sendToUser(leadScope), leadScope)
+        val sendToUser = outing.gateSuggestions(refGate.wrap(own.sendToUser(leadScope)), leadScope)
 
         /** The lead's turn answering the person (they wrote), with its own send_to_user. */
         val answeringScope = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
-        val sendWhenAsked = outing.gateSuggestions(own.sendToUser(answeringScope), answeringScope)
+        val sendWhenAsked = outing.gateSuggestions(refGate.wrap(own.sendToUser(answeringScope)), answeringScope)
 
         suspend fun call(name: String, vararg pairs: Pair<String, String>): ToolResult =
             withContext(ToolCallContext(run, "call-${Uuid.random()}")) {
@@ -155,7 +157,7 @@ class OutingDbTest : FunSpec({
         suspend fun due(): List<InboxItem.JobDue> = inbox.pending().map { it.item }.filterIsInstance<InboxItem.JobDue>().filter { it.job == OUTING_JOB }
 
         /** send_to_user as the lead's turn [scope] would have it, gated. */
-        fun sendAs(scope: RunScope) = outing.gateSuggestions(own.sendToUser(scope), scope)
+        fun sendAs(scope: RunScope) = outing.gateSuggestions(refGate.wrap(own.sendToUser(scope)), scope)
 
         suspend fun postVia(send: net.robog.clarity.harness.Tool, ideaRef: String?, kind: String = "look_forward", toolUseId: String = "call-${Uuid.random()}"): ToolResult {
             val cards = listOf(
@@ -653,5 +655,57 @@ class OutingDbTest : FunSpec({
         val job = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = false) }
         rig.postVia(rig.sendAs(job), null, kind = "reply").shouldBeInstanceOf<ToolResult.Ok>()
         rig.feed.page(0, 20).items.last().kind shouldBe MessageKind.FINDING
+    }
+    test("a tap is not a request: a turn of only taps still has the weekly budget, a typed message in the batch lifts it") {
+        val rig = Rig(database, now, settings)
+        val ids = (1..3).map { rig.saveIdea("Outing $it") }
+        rig.suggest(ids[0]).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(ids[1]).shouldBeInstanceOf<ToolResult.Ok>() // the week's budget is used
+        fun tap(seq: Long) = net.robog.clarity.backend.agent.PendingItem(
+            seq, net.robog.clarity.backend.agent.InboxItem.UserInput(net.robog.clarity.shared.feed.ClientInputId("tap$seq"), "Later", tap = true), now,
+        )
+        val typed = net.robog.clarity.backend.agent.PendingItem(
+            9, net.robog.clarity.backend.agent.InboxItem.UserInput(net.robog.clarity.shared.feed.ClientInputId("typed"), "what could I do tonight"), now,
+        )
+        // "Later" on a plan check-in, then the lead offers an outing in that turn: gated like a job turn
+        val tapsOnly = RunScope("lead", isLead = true).also {
+            val items = listOf(tap(1))
+            it.startTurn(untrusted = false, requestedByUser = true, startedByPerson = net.robog.clarity.backend.agent.turnStartedByPerson(items))
+        }
+        tapsOnly.requestedByUser shouldBe true
+        rig.postVia(rig.sendAs(tapsOnly), "outing:${ids[2]}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+        val typedToo = RunScope("lead", isLead = true).also {
+            val items = listOf(tap(1), typed)
+            it.startTurn(untrusted = false, requestedByUser = true, startedByPerson = net.robog.clarity.backend.agent.turnStartedByPerson(items))
+        }
+        rig.postVia(rig.sendAs(typedToo), "outing:${ids[2]}").shouldBeInstanceOf<ToolResult.Ok>()
+    }
+
+    test("refs are checked when posting: unknown prefixes and malformed refs are refused, a plan ref must name an open plan item") {
+        val rig = Rig(database, now, settings)
+        val item = rig.planItems.plan(kotlinx.datetime.LocalDate(2026, 11, 16), listOf(net.robog.clarity.backend.sessions.Planned("Write the report"))).single()
+        suspend fun post(ref: String?) = rig.postVia(rig.sendToUser, ref, kind = "check_in")
+        post(null).shouldBeInstanceOf<ToolResult.Ok>()
+        post("plan:${item.id}").shouldBeInstanceOf<ToolResult.Ok>()
+        post("task:${item.id}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "neither"
+        post("Plan:${item.id}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "neither"
+        post("plan:${item.id.uppercase()}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "neither"
+        post("plan:${Uuid.random()}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No open plan item"
+        rig.planItems.update(item.id) { it.copy(state = net.robog.clarity.backend.sessions.PlanItemState.DONE) }
+        post("plan:${item.id}").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No open plan item"
+        rig.feed.page(0, 20).items shouldHaveSize 2
+    }
+
+    test("Coming up in the evening summary leaves out an outing whose idea was declined, and keeps an unanswered one") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        val b = rig.saveIdea("Pottery class")
+        rig.suggest(a, text = "Offer jazz").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(b, text = "Offer pottery").shouldBeInstanceOf<ToolResult.Ok>()
+        rig.call("update_outing_idea", "id" to a, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
+        val job = net.robog.clarity.backend.scheduler.EveningBatchJob(rig.feedStore, rig.feed, ExposedTaskStore(database, rig.clock, rig.feed), rig.ideas)
+        job.fire(FireContext(scheduledFor = now + 1.hours, now = now + 1.hours, lastRunAt = null, settings = settings))
+        val summary = rig.feed.page(0, 20).items.last().cards.filterIsInstance<Card.Chips>().single { it.label == "Coming up" }
+        summary.items.map { it.text } shouldBe listOf("Offer pottery")
     }
 })

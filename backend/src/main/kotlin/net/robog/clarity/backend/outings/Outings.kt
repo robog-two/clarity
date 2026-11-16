@@ -420,7 +420,7 @@ class OutingTools(
                     send.invoke(input)
                 }
             }
-            val refs = cards.filterIsInstance<Card.Choices>().mapNotNull { it.ref?.trim() }.filter { it.startsWith(OUTING_REF_PREFIX, ignoreCase = true) }
+            val refs = cards.filterIsInstance<Card.Choices>().mapNotNull { it.ref }.filter { it.trim().startsWith(OUTING_REF_PREFIX, ignoreCase = true) }
             val personTurn = scope?.startedByPerson == true
             val reshow = personTurn && !scope.untrusted
             if (refs.isEmpty()) {

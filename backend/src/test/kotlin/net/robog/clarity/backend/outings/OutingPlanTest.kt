@@ -16,6 +16,7 @@ import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
+import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.governance.TimeBlock
 import net.robog.clarity.shared.noun.Handle
 
@@ -293,7 +294,7 @@ class OutingPlanTest : FunSpec({
     test("the outing ref names the idea, and nothing else") {
         val id = "3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6c"
         outingIdeaOf("outing:$id") shouldBe id
-        outingIdeaOf(" outing:$id ") shouldBe id
+        outingIdeaOf(" outing:$id ") shouldBe null // exact: no spaces
         outingIdeaOf("outing:abc-1") shouldBe null
         outingIdeaOf("outing:") shouldBe null
         outingIdeaOf("outing:$id and more") shouldBe null
@@ -377,5 +378,54 @@ class OutingPlanTest : FunSpec({
         text shouldContain "only when it reports done"
         text shouldNotContain "@"
         outingInstruction(listOf(slot), emptyList(), 0, ny) shouldContain "the person alone"
+    }
+    test("one grammar for refs: absent, or exactly outing or plan with a strict lower-case uuid") {
+        val id = "3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6c"
+        net.robog.clarity.backend.agent.CardRefs.parse("outing:$id") shouldBe net.robog.clarity.backend.agent.CardRefs.Parsed(net.robog.clarity.backend.agent.CardRefs.Kind.OUTING, id)
+        net.robog.clarity.backend.agent.CardRefs.parse("plan:$id")!!.ref shouldBe "plan:$id"
+        listOf("task:$id", "Plan:$id", "plan:${id.uppercase()}", "plan: $id", " plan:$id", "plan:$id ", "plan:$id\n", "plan:3f2b8c1e-5a7d-4e0b-9c64", "plan:", "", "outing:$id;x").forEach {
+            net.robog.clarity.backend.agent.CardRefs.parse(it) shouldBe null
+            net.robog.clarity.backend.agent.CardRefs.problem(it)!! shouldContain "outing:<id>"
+        }
+        net.robog.clarity.backend.agent.CardRefs.problem(null) shouldBe null
+        net.robog.clarity.backend.agent.CardRefs.problem("plan:$id") shouldBe null
+        // the tap note and the outing parser read the same grammar
+        net.robog.clarity.backend.agent.answeringNote("plan:$id") shouldBe "Tap answers card ref plan:$id"
+        net.robog.clarity.backend.agent.answeringNote(" plan:$id") shouldBe null
+        outingIdeaOf("plan:$id") shouldBe null
+    }
+
+    test("a turn of only taps is not the person asking; a typed message in the batch is") {
+        fun item(seq: Long, tap: Boolean) = net.robog.clarity.backend.agent.PendingItem(
+            seq, net.robog.clarity.backend.agent.InboxItem.UserInput(net.robog.clarity.shared.feed.ClientInputId("c$seq"), "x", tap = tap), now,
+        )
+        net.robog.clarity.backend.agent.turnStartedByPerson(listOf(item(1, true))) shouldBe false
+        net.robog.clarity.backend.agent.turnStartedByPerson(listOf(item(1, true), item(2, true))) shouldBe false
+        net.robog.clarity.backend.agent.turnStartedByPerson(listOf(item(1, true), item(2, false))) shouldBe true
+        net.robog.clarity.backend.agent.turnStartedByPerson(listOf(item(1, false))) shouldBe true
+        net.robog.clarity.backend.agent.turnStartedByPerson(emptyList()) shouldBe false
+    }
+
+    test("Coming up drops outing suggestions that were turned down, by the idea or by the answer, and keeps the rest") {
+        val ids = (1..4).map { "3f2b8c1e-5a7d-4e0b-9c64-1d2e3f4a5b6$it" }
+        fun idea(id: String, state: IdeaState) = SavedIdea(id, "Idea $id", null, null, null, null, null, null, null, state, now)
+        fun offer(id: String, chosen: String? = null) = net.robog.clarity.shared.feed.FeedItem(
+            id = net.robog.clarity.shared.feed.FeedItemId("item-$id"), seq = 1, at = now, author = net.robog.clarity.shared.feed.FeedItem.Author.AGENT,
+            cards = listOf(
+                Card.Text("Offer $id"),
+                Card.Choices(
+                    "Add it?", listOf(net.robog.clarity.shared.feed.Choice("Add to calendar", "Add to calendar"), net.robog.clarity.shared.feed.Choice("Not this time", "No thanks")),
+                    chosen = chosen, ref = "outing:$id",
+                ),
+            ),
+        )
+        val ideas = listOf(idea(ids[0], IdeaState.DECLINED), idea(ids[1], IdeaState.OPEN), idea(ids[2], IdeaState.USED), idea(ids[3], IdeaState.OPEN))
+        val items = listOf(offer(ids[0]), offer(ids[1]), offer(ids[2], chosen = "Add to calendar"), offer(ids[3], chosen = "No thanks"))
+        withoutDeclinedOutings(items, ideas).map { it.id.value } shouldBe listOf("item-${ids[1]}", "item-${ids[2]}")
+        // something that is not an outing offer stays
+        val plain = net.robog.clarity.shared.feed.FeedItem(
+            id = net.robog.clarity.shared.feed.FeedItemId("plain"), seq = 2, at = now, author = net.robog.clarity.shared.feed.FeedItem.Author.AGENT, cards = listOf(Card.Text("Hi")),
+        )
+        withoutDeclinedOutings(listOf(plain), ideas) shouldBe listOf(plain)
     }
 })

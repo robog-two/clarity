@@ -99,7 +99,12 @@ class PeriodicReviewJob(private val config: AgentConfig, private val inbox: Inbo
  */
 @Inject
 @ContributesIntoSet(AppScope::class)
-class EveningBatchJob(private val store: FeedStore, private val feed: FeedService, private val tasks: TaskStore) : ScheduledJob {
+class EveningBatchJob(
+    private val store: FeedStore,
+    private val feed: FeedService,
+    private val tasks: TaskStore,
+    private val outings: net.robog.clarity.backend.outings.OutingStore? = null,
+) : ScheduledJob {
     override val name = "evening-batch"
 
     override fun schedule(settings: Settings) = Schedule.DailyAt(settings.eveningSummaryAt)
@@ -107,7 +112,10 @@ class EveningBatchJob(private val store: FeedStore, private val feed: FeedServic
     override suspend fun fire(context: FireContext) {
         val pending = store.pendingBatch()
         val dayStart = homeDay(context.scheduledFor, zoneOrUtc(context.settings.homeZone)).first
-        val comingUp = store.lookForwardSince(context.lastRunAt ?: (context.scheduledFor - 24.hours))
+        // Outing suggestions the person turned down are not "coming up".
+        val comingUp = store.lookForwardSince(context.lastRunAt ?: (context.scheduledFor - 24.hours)).let { items ->
+            if (outings == null) items else net.robog.clarity.backend.outings.withoutDeclinedOutings(items, outings.all())
+        }
         val done = tasks.list(finishedSince = dayStart).filter { it.status == AgentTask.Status.DONE && it.updatedAt >= dayStart }.map { it.title }
         val cards = eveningSummaryCards(pending, comingUp, done)
         if (cards.isEmpty()) return

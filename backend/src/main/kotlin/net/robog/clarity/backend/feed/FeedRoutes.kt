@@ -149,7 +149,7 @@ class FeedRoutes(
                     }
                     // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
                     inbox.enqueue(
-                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId, answering),
+                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId, answering, tap = input.inReplyTo != null),
                         dedupKey = "user:${input.clientId.value}",
                     )
                     call.respond(InputAccepted(appended.item))
