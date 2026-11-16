@@ -210,6 +210,9 @@ class LeadRig(
 
     val nudges = ExposedNudgeStore(database, clock)
     val nudgeTools = NudgeTools(nudges, tasks, settingsProvider, clock)
+    val outingStore = net.robog.clarity.backend.outings.ExposedOutingStore(database, clock)
+    val outingPeople = net.robog.clarity.backend.outings.ExposedOutingPeople(database)
+    val outingTools = net.robog.clarity.backend.outings.OutingTools(outingStore, outingPeople, reader, settingsProvider, clock)
 
     val reportStore = net.robog.clarity.backend.reports.ExposedReportStore(database, clock)
     val reportImages = net.robog.clarity.backend.reports.ReportImages(
@@ -232,7 +235,7 @@ class LeadRig(
 
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
-        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit, attachmentTools)
+        toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit, attachmentTools, outingTools)
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime))
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
@@ -247,7 +250,7 @@ class LeadRig(
                 "TRUNCATE inbox_item, agent_journal, agent_thread, agent_run, feed_item, held_action, action_outbox, activity, " +
                     "helper_change, helper_question, credential_envelope, credential_request, credential, vault_device_key, constitution_version, amendment, memory_journal, memory_scratch, memory_note, memory_collection, conversation_chunk, memory_embedding, agent_task, agent_task_run, model_call, scheduled_job, tool_result, message, " +
                     "agent_session, day_plan, settings, nudge, report, report_revision, report_rendition, report_source, report_link, tool_call_ledger, spend_notice, agent_trigger, job_slot_claim, browser_run_state, " +
-                    "mcp_tool_policy, mcp_server_seen, mcp_suggestion, mcp_suggestion_made " +
+                    "outing_idea, mcp_tool_policy, mcp_server_seen, mcp_suggestion, mcp_suggestion_made " +
                     "RESTART IDENTITY CASCADE",
             )
         }

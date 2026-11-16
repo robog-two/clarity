@@ -276,6 +276,7 @@ class AgentToolbox(
     private val reports: ReportTools,
     private val thirdParty: McpToolKit,
     private val attachmentTools: AttachmentTools,
+    private val outings: net.robog.clarity.backend.outings.OutingTools,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -301,6 +302,7 @@ class AgentToolbox(
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
         if (forLead) addAll(nudges.all())
+        if (forLead) addAll(outings.all())
         if (forLead) add(thirdParty.suggestTool())
     }.let { guarded(scope, it) }
 

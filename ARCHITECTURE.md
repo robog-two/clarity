@@ -536,6 +536,43 @@ Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
 
+### Outings (something to look forward to)
+
+For a person who rarely gets out, Clarity offers one outing at a time. The `outing-scout` job
+(`scheduler/OutingScoutJob.kt`) runs Tuesday and Friday at 15:00 on the home clock and decides in
+pure code (`outings/OutingPlan.kt`), with no model call, whether to wake the lead:
+
+- `freeSlots(events, protectedTimes, now, zone)`: in the next 7 local days, weekday evenings from
+  18:00 and Saturday and Sunday from 09:00, all until 22:00, stretches of at least 2 h that start at
+  least 2 h from now. Taken: calendar events (an all-day event takes its whole days), overlaps with
+  the constitution's protected times, midnight-spanning events and blocks. DST follows the local clock.
+- `scoutPlan(slots, suggestedThisWeek)`: skips with no slot, or when 2 `look_forward` posts already
+  went out in the last 7 days; otherwise offers the 3 soonest slots. There is no cooldown after a
+  "no": only the count of suggestions matters.
+- `recentContacts(contacts, messages, now)`: the only people that may be named as company are saved
+  contacts who sent or received a message (email, SMS or chat) in the last 90 days.
+
+When it wakes the lead, the `job_due` item carries the slots, the number of saved ideas and those
+contacts (names and ids) and the steps to follow. Saved ideas live in `outing_idea` (`V53`: what,
+place, kind, window, contact, source record, url, `state` open, used or declined), through the
+lead-only tools `save_outing_idea`, `list_outing_ideas` (a record tool, so the ids in it can be cited
+on a sources card) and `update_outing_idea`. The periodic review asks the lead to save ideas it spots
+(a gig in a newsletter, "we should get dinner"). A declined idea stays declined: saving the same
+idea again (same wording or page) is refused, a yes cannot revive it, and nothing pauses the scout.
+
+If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
+tools, so its brief is all it knows: the city, the time window, the interests and the kinds of outing
+the person liked or declined, taken from the profile, memory and `list_outing_ideas`. When the city
+or interests are unknown the lead skips the web search and offers saved ideas only. The helper
+searches and fetches pages in its own run; only its short result (up to 3 events with title, time,
+place and page address) comes back to the lead. A suggestion is one `send_to_user` with kind
+`look_forward` (it pushes at the afternoon hour the scout runs, and counts toward the daily limit),
+a text, a sources card and a `Card.Choices` with "Add to calendar" and "Not this time". The sources
+rules hold as everywhere: a record id is citable once `list_outing_ideas` returned it, and a page
+address once the helper fetched it, in an earlier step. A tap on Add comes back as the person's own
+input (so `create_event` is their request, and the guard still applies); Not this time adds nothing.
+The lead then records the answer with `update_outing_idea` and in the journal.
+
 ### Reports (documents the agent writes)
 
 In the product these are the person's **Goods** (the app's Goods tab, card copy and the agent's
