@@ -49,6 +49,17 @@ class RunScope(
     val untrusted: Boolean get() = untrustedFlag.get()
     val requestedByUser: Boolean get() = requestedFlag.get()
 
+    private val personTurnFlag = AtomicBoolean(false)
+
+    /** Outing suggestions posted in the current turn (a turn the person started may make only a few). */
+    val offersThisTurn = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * Whether the person started this turn (their words were in its first batch), as opposed to a job or nudge turn they
+     * interrupted later ([userAsked] sets [requestedByUser] but not this).
+     */
+    val startedByPerson: Boolean get() = personTurnFlag.get()
+
     /**
      * Whether this turn carries the person's own input, so what the lead posts in it is a reply (see
      * `resolveKind`). Apart from [requestedByUser] on purpose: a turn resumed after a crash knows
@@ -70,6 +81,8 @@ class RunScope(
     fun startTurn(untrusted: Boolean, requestedByUser: Boolean, answeringPerson: Boolean = requestedByUser) {
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
+        personTurnFlag.set(requestedByUser)
+        offersThisTurn.set(0)
         answeringFlag.set(answeringPerson)
         turn.reset()
     }
@@ -78,7 +91,7 @@ class RunScope(
 }
 
 /** Tools whose output carries content from outside (mail, contacts' notes, calendar descriptions, search hits). */
-val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "read_result", "read_report", "inspect_helper", SAVE_ATTACHMENT, VIEW_IMAGE)
+val UNTRUSTED_SOURCE_TOOLS = setOf("list_messages", "search_messages", "list_calendar_events", "search_contacts", "search_memory", "read_memory", "read_result", "read_report", "inspect_helper", "list_outing_ideas", SAVE_ATTACHMENT, VIEW_IMAGE)
 
 /** Wraps [tool] so that running it marks [scope] as having seen untrusted content. */
 fun Tool.taintingScope(scope: RunScope): Tool {

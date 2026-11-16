@@ -43,6 +43,8 @@ sealed interface InboxItem {
         val text: String,
         val source: InputSource = InputSource.TYPED,
         val sessionId: SessionId? = null,
+        /** The server's note on which card a tap answered ([answeringNote], from its ref only); null for typed words. */
+        val answering: String? = null,
     ) : InboxItem {
         override val priority get() = Priority.USER
         override val summary get() = text
@@ -97,13 +99,15 @@ sealed interface InboxItem {
         override val summary get() = "Nudge you set at $at: $note" + (task?.let { " Task: $it." } ?: "") +
             (planItem?.let { " Plan item: $it." } ?: "") +
             if (planItem != null) {
-                " Ask with send_to_user, kind check_in, one choices card: a short prompt naming the first step, and exactly these options " +
+                " Ask with send_to_user, kind check_in, one choices card: a short prompt naming the first step, the card's ref set to \"plan:<the plan item id above>\" " +
+                    "(exactly that, the id in lower case), and exactly these options " +
                     "{label \"Starting\", reply \"Starting\"}, {label \"Later\", reply \"Later\"}, {label \"Make it smaller\", reply \"Make it smaller\"}. " +
-                    "When the tap comes back: Starting, call plan_item(started) and answer in a few words; Later, ask when in one short question, then plan_item(later, at); " +
-                    "Make it smaller, split the step into something doable in two minutes, say it in one line, and call plan_item(smaller, firstStep). " +
+                    "Several check-ins can be open at once: a tap comes back with an operator note \"Tap answers card ref plan:<id>\", and that id, not your memory of the last one, says which item it is. " +
+                    "Then: Starting, call plan_item(id, started) and answer in a few words; Later, ask when in one short question, then plan_item(id, later, at); " +
+                    "Make it smaller, split the step into something doable in two minutes, say it in one line, and call plan_item(id, smaller, firstStep). " +
                     "If it no longer applies, send nothing."
             } else {
-                " If it still helps, ask the person one short, specific question with send_to_user (kind check_in; it counts toward their daily notifications like any check-in, " +
+                " If it still helps, ask the person one short, specific question with send_to_user (kind check_in; a check-in is never counted against their daily notifications, " +
                     "and protected time still holds it). If it no longer applies, send nothing."
             }
     }
@@ -266,7 +270,14 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     // The person's words never pass for a client-side summary (which would cut the context there) or a harness note.
     fun spoken(text: String) =
         if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER) || net.robog.clarity.harness.isHarnessNote(text)) " $text" else text
-    val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user(spoken((it.item as InboxItem.UserInput).text))) }
+    // The person's words stay exactly theirs; what a tap answered is the server's own note, a separate system message after it.
+    val userDeliveries = users.flatMap {
+        val input = it.item as InboxItem.UserInput
+        listOfNotNull(
+            Delivery(listOf(it.seq), Message.user(spoken(input.text))),
+            input.answering?.let { note -> Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[operator note, not from the person] $note")))) },
+        )
+    }
     if (others.isEmpty()) {
         val clock = Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[now ${LocalTimes.now(now, zone)}]"))))
         return if (statesClock && userDeliveries.isNotEmpty()) userDeliveries + clock else userDeliveries
@@ -280,6 +291,15 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     }
     return userDeliveries + Delivery(others.map { it.seq }, Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text(text))))
 }
+
+private val ANSWER_REF = Regex("^(outing|plan):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+/**
+ * Pure: the operator's note for a tap, "Tap answers card ref outing:<id>", from the card's [ref] only and only when
+ * it has the shape of one the server makes. The card's prompt is model-written (often from mail) and never
+ * reaches the lead as the person's words; null when there is no valid ref.
+ */
+fun answeringNote(ref: String?): String? = ref?.trim()?.takeIf { ANSWER_REF.matches(it) }?.let { "Tap answers card ref $it" }
 
 private val UNTRUSTED_TAG = Regex("<(/?)\\s*untrusted", RegexOption.IGNORE_CASE)
 

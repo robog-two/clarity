@@ -308,7 +308,7 @@ class SessionTools(
         linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }
         val checkIns = linked.map { c -> c.item?.let { i -> c.copy(item = planItems.get(i.id)) } ?: c }
         val scheduled = nudger.schedule(date, checkIns, previous)
-        post(session, listOf(Card.Plan(items)))
+        post(session, listOf(Card.Plan(linked.map { c -> c.ifThen })))
         ToolResult.Ok("Plan saved (${items.size}).$scheduled")
     }
 

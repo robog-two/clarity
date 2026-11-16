@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import net.robog.clarity.backend.agent.InboxItem
+import net.robog.clarity.backend.agent.answeringNote
 import net.robog.clarity.backend.agent.InboxStore
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.DevicePrincipal
@@ -113,6 +114,10 @@ class FeedRoutes(
                         }
                     }
                     // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
+                    // What the tap answered, read from the card before it is marked (only its ref, see answeringNote).
+                    val answering = input.inReplyTo?.let { id ->
+                        feed.get(id)?.cards?.filterIsInstance<Card.Choices>()?.firstOrNull()?.let { answeringNote(it.ref) }
+                    }
                     // Two taps at once can both pass the check; the second loses here and gets the conflict, nothing is queued for it.
                     var marked = false
                     if (input.inReplyTo != null) {
@@ -144,7 +149,7 @@ class FeedRoutes(
                     }
                     // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
                     inbox.enqueue(
-                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId),
+                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId, answering),
                         dedupKey = "user:${input.clientId.value}",
                     )
                     call.respond(InputAccepted(appended.item))

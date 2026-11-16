@@ -293,9 +293,9 @@ person managing a to-do list with a few assistants.
   A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
   apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
   who gets through) and never counts; so does a post carrying a proposal or a credential request (it
-  needs the person, so it follows the urgent rules whatever its kind). A `check_in` or `look_forward` pushes; a
-  `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
-  waits for the evening summary (`BATCH`). A push follows the urgent rules for protected time and
+  needs the person, so it follows the urgent rules whatever its kind). A `check_in` pushes by the urgent rules but is never counted or refused for the budget (the person
+  asked to be checked on); a `look_forward` pushes; a `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
+  waits for the evening summary (`BATCH`). A `look_forward` or finding push follows the urgent rules for protected time and
   counts toward `Settings.pushesPerDay` (1 to 10, default 5, per local day: `feed_item.push_counted`,
   `pushBudget`); once the day's pushes are used the item is shown in the app without one. A post
   with a choices card is never held for the evening, and posts inside a session keep the old rules
@@ -570,6 +570,76 @@ Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
 
+### Outings (something to look forward to)
+
+For a person who rarely gets out, Clarity offers one outing at a time. The `outing-scout` job
+(`scheduler/OutingScoutJob.kt`) runs Tuesday and Friday at 15:00 on the home clock and decides in
+pure code (`outings/OutingPlan.kt`), with no model call, whether to wake the lead:
+
+- `freeSlots(events, protectedTimes, now, zone)`: in the next 7 local days, weekday evenings from
+  18:00 and Saturday and Sunday from 09:00, all until 22:00, stretches of at least 2 h that start at
+  least 2 h from now. Taken: calendar events, all-day events of two or more days (a trip; a single
+  all-day event such as a holiday or birthday takes nothing), overlaps with the constitution's
+  protected times, midnight-spanning events and blocks. DST follows the local clock. The calendar is
+  read for exactly that window, ordered; a read that hits the 500-event cap fails closed (the rest of
+  the window counts as taken).
+- `scoutPlan(slots, suggestedThisWeek)`: skips with no slot, or when 2 outings were offered in the
+  last 6 days 23 h (counted from `outing_idea.suggested_at`, a little under a week so a Tuesday
+  15:03 post does not make next Tuesday's run skip); otherwise offers the 3 soonest slots. No cooldown
+  after a "no".
+- `recentContacts(contacts, messages, now)`: company may only be a saved contact the person sent a
+  message to, or who sent the person one directly (at most 5 recipients, so lists are out), in the
+  last 90 days, over email, SMS or chat. The person's own addresses and automated senders (`noreply`,
+  `notifications`, `mailer-daemon`...) never count. The message query is newest first, bounded, and
+  drops lists in SQL.
+
+When it wakes the lead, the `job_due` item carries the slots, the number of saved ideas and those
+contacts (names and ids) and the steps to follow. Saved ideas live in `outing_idea` (`V53`: what,
+place, kind, window, contact, source record, url, `state` open, used or declined, `suggested_at`),
+through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
+`list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
+a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
+(the sources-card rule) and a contact outside the 90 days. Company goes in `withContactId` and never in the idea's
+text (a prompt rule). The kind (`category`) is short free text, at most 40 characters. A declined idea stays declined: saving it again (same wording or page) is refused
+and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
+
+If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
+tools, so its brief is all it knows: the city (from the profile or memory), the time window, the
+interests, and the "kinds liked / kinds declined" lines of `list_outing_ideas` (a separate summary of
+the kinds only, never idea text); names, venues and the city are fine in a brief, identifiers are not
+(see the web search section: the brief is checked before the helper starts). When the city or interests are unknown the lead skips
+the web search and offers saved ideas only. The helper searches and fetches pages in its own run; only
+its short result (up to 3 events) returns to the lead, which saves the one it picks as an idea first.
+
+Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sources card and a
+`Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
+`look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
+outing suggestions. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
+`send_to_user`, and any post with a choices ref starting `outing:` goes through it whatever its kind; a
+malformed ref (anything but `outing:` plus a lower-case uuid, prefix in any case) is refused, and the gate fails
+closed: cards that cannot be read in a look_forward, or anywhere mentioning `outing:`, are refused. A reserved offer is
+released when the post fails, but only if no feed item exists for the call or carries the idea's ref, and also on
+cancellation (`NonCancellable`). (Lane 2's `plan:<id>` refs must be lower-case uuids to reach the lead.) The idea must be saved, open
+and not offered before (a re-run of the same tool call is let through; the feed dedups it), and at most
+2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
+(`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
+in one transaction) and is released if the post fails, so two offers racing past the budget cannot both
+win. A `look_forward` post with no outing ref is refused in every turn, and the idea must be saved and
+open, and a declined idea never comes back, in every turn. In a turn the person started
+(`RunScope.startedByPerson`, not a job turn they interrupted) the weekly budget never applies, tainted
+or not (reading `list_outing_ideas` taints a turn), since they asked; such an offer is recorded but
+flagged `suggested_unprompted = false` and not counted. Such a turn may make at most 2 offers. Only in such a turn that has read nothing
+untrusted may an open idea already offered be shown again.
+
+A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
+"Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it matches
+`^(outing|plan):[0-9a-f-]{36}$`; the card's prompt is model-written (often from mail) and never reaches
+the lead as the person's own words. Two open suggestions are told apart by the ref. Add to calendar is
+the person's own request, so `create_event` runs (the guard still applies) and the idea is marked used
+only once `create_event` reports done; a held event leaves the idea open until it is approved (the lead
+does not mark it). Not this time adds nothing and marks the idea declined. The lead then journals the
+kind of outing and the answer.
+
 ### Reports (documents the agent writes)
 
 In the product these are the person's **Goods** (the app's Goods tab, card copy and the agent's
@@ -668,6 +738,20 @@ under ZDR) is not offered.
   every guarded action, the browser, the vault and credentials and saved results are dropped (and
   named in the `delegate` answer), so a query can only carry what the task says. The stored tool list
   keeps `web_search`, so a resumed run gets it back.
+- **No identifiers in the brief.** Names, the city, venues and interests may go to the open web; phone
+  numbers, email addresses, street addresses, account or booking numbers and similar identifiers may
+  not. The lead's prompt and the `delegate` description say so, and `HelperManager` asks the decision
+  model (Decision-1, `agent/SearchBriefCheck.kt`) one question over the text, quoted as untrusted data
+  and sent raw (nothing redacted, nothing cut, since it is what the helper gets): "does this contain a
+  phone number, email address, street address, account or booking number, or other personal
+  identifier?" At p >= 0.5 it is refused with an error telling the lead to remove the identifiers and
+  retry. It covers everything the lead sends a helper whose stored tools include `web_search`: the
+  first brief and done criteria (checked last in `start`, after the cheap refusals, and not for a
+  resumed call), `message_helper` (which is also how a helper's question is answered) and
+  `revise_helper`. Helpers cannot send each other text: `delegate`, `message_helper` and
+  `revise_helper` are lead-only tools. A text over 8000 characters is refused as too long ("shorten
+  it"), only when the decision model is on. It fails open: no decision model, a failed call or no
+  answer lets the text go, logged. The pure `searchBriefRefusal` maps the verdict to the refusal.
 - **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
   as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
   per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),

@@ -149,23 +149,27 @@ private val Nudge.settled: Boolean
         (status == Nudge.Status.CANCELLED && reason != SAVED_AGAIN_REASON && reason != OFF_PLAN_REASON)
 
 /**
- * Pure: whether the day's check-ins ([existing], any status) already cover a wanted one for [itemId] at [at] with
- * [note]: for an item, any settled check-in of its own, or one waiting whose time has come ([now]; it is about to fire);
- * for a check-in with no item, a settled one at the same time with the same note.
+ * Pure: the check-in of the day ([existing], any status) that already covers a wanted one for [itemId] at [at] with
+ * [note], if any: for an item, any settled check-in of its own, or one waiting whose time has come ([now]; it is about
+ * to fire); for a check-in with no item, a settled one at the same time with the same note.
  */
-fun checkInBlocked(existing: List<Nudge>, itemId: String?, at: Instant, note: String, now: Instant): Boolean =
-    existing.any { n ->
+fun blockingCheckIn(existing: List<Nudge>, itemId: String?, at: Instant, note: String, now: Instant): Nudge? =
+    existing.firstOrNull { n ->
         val done = n.settled || (n.status == Nudge.Status.PENDING && n.at <= now)
         done && if (itemId != null) n.planItemId == itemId else n.planItemId == null && n.at == at && n.note == note
     }
+
+/** Pure: whether the day's check-ins already cover a wanted one (see [blockingCheckIn]). */
+fun checkInBlocked(existing: List<Nudge>, itemId: String?, at: Instant, note: String, now: Instant): Boolean =
+    blockingCheckIn(existing, itemId, at, note, now) != null
 
 /**
  * Pure: the nudges to set after the if-thens of [date] are saved: one at each if-then with a valid `at` (see
  * [readCheckInTime]). A time that has already passed or is malformed is skipped and reported, never moved. An
  * if-then with no `at` gets none and is listed. What the earlier save of the day ([previous]) already had is not
  * reported again. [pending] are the waiting plan nudges (the replaced check-ins of this plan are left out by the
- * caller), [sameDay] the plan nudges already due that day, [existing] the day's check-ins of any status (one that
- * already had its check-in is skipped quietly and does not use up a cap); [personPending] and [personDay] are the
+ * caller), [sameDay] the plan nudges already due that day, [existing] the day's check-ins of any status (an if-then
+ * whose item already had its check-in is skipped, reported once as "kept the earlier check-in", and does not use up a cap); [personPending] and [personDay] are the
  * person's own nudges, for the ceiling over both. Plan nudges have the limits of the nudge tool (within 7 days,
  * 10 pending, 12 a day) counted among themselves, and 20 waiting and 20 a day over both. A check-in is not set when
  * one for the SAME plan item is already around that time; another item's does not matter.
@@ -200,8 +204,14 @@ fun planAutoNudges(
             is CheckInTime.Valid -> time.at
         }
         val note = planCheckInNote(check.ifThen, check.item, date)
-        if (checkInBlocked(existing, check.item?.id, at, note, now)) {
-            if (!reported) skipped += "${agentTime(at, zone)}: kept the earlier check-in for it (it already had one today)"
+        blockingCheckIn(existing, check.item?.id, at, note, now)?.let { earlier ->
+            if (!reported) {
+                skipped += when (earlier.status) {
+                    Nudge.Status.CANCELLED -> "${agentTime(at, zone)}: not set, its earlier check-in today was cancelled (${earlier.reason ?: "ended"}) and is not set again"
+                    Nudge.Status.PENDING -> "${agentTime(at, zone)}: not set, its earlier check-in is about to fire"
+                    else -> "${agentTime(at, zone)}: kept the earlier check-in for it (it already had one today)"
+                }
+            }
             continue
         }
         val covered = waiting.any {
@@ -403,7 +413,8 @@ class PlanItemTools(
     private fun planItem(): Tool = tool<PlanItemInput>(
         name = "plan_item",
         description = "Record how the person answered a check-in about a plan item (a priority that keeps coming back): started, later, smaller, done or dropped. " +
-            "Later and smaller set one more check-in (at most $MAX_FOLLOW_UPS_PER_DAY a day per item); started and finished items get no more check-ins that day.",
+            "Later and smaller set one more check-in (at most $MAX_FOLLOW_UPS_PER_DAY a day per item); started and finished items get no more check-ins that day. " +
+            "A tap on a check-in card comes with an operator note \"Tap answers card ref plan:<id>\": pass exactly that id.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->

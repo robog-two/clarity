@@ -134,7 +134,7 @@ data class Settings(
     val eveningSummaryAt: LocalTime = LocalTime(18, 0),
     /** "urgent holds": a notification as it happens. */
     val pushUrgent: Boolean = true,
-    /** "notifications a day" (1 to 10, checked by the server): pushes the agent starts itself; once reached, more are shown in the app without a push. Replies and urgent items do not count. */
+    /** "notifications a day" (1 to 10, checked by the server): pushes the agent starts itself; once reached, more are shown in the app without a push. Replies, check-ins and urgent items do not count. */
     val pushesPerDay: Int = DEFAULT_PUSHES_PER_DAY,
     /** "mic during calls": always on, or push to talk. */
     val micAlwaysOn: Boolean = true,

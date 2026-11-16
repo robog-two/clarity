@@ -5,6 +5,7 @@ import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import kotlin.time.Instant
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
@@ -54,6 +55,28 @@ class StuckFinalPureTest : FunSpec({
         }
         test("an unchanged re-save stays silent") {
             planAutoNudges(listOf(PlanCheckIn(base, spec)), wed, zone, now, emptyList(), 0, existing = listOf(fired), previous = listOf(base)).skipped shouldBe emptyList()
+        }
+    }
+
+    context("the wording says what happened to the earlier check-in") {
+        test("cancelled, about to fire, fired") {
+            val moved = base.copy(at = "11:00", cue = "it's 11:00")
+            fun say(n: Nudge) = planAutoNudges(listOf(PlanCheckIn(moved, spec)), wed, zone, now, emptyList(), 0, existing = listOf(n)).skipped.single()
+            say(settled(at930, "a").copy(status = Nudge.Status.CANCELLED, reason = "cancelled by the agent")) shouldContain "was cancelled (cancelled by the agent)"
+            say(settled(at930, "a").copy(status = Nudge.Status.PENDING, at = now - kotlin.time.Duration.parse("1m"))) shouldContain "about to fire"
+            say(settled(at930, "a")) shouldContain "kept the earlier check-in"
+        }
+    }
+
+    context("what the lead is told about a due check-in") {
+        test("a check-in is not counted against the daily notifications, and a plan item's card carries its ref") {
+            val plain = net.robog.clarity.backend.agent.InboxItem.NudgeDue("n", "09:30", "ask", null).summary
+            plain shouldContain "never counted"
+            plain shouldNotContain "counts toward"
+            val plan = net.robog.clarity.backend.agent.InboxItem.NudgeDue("n", "09:30", "ask", null, "id abc, \"spec\", day 3").summary
+            plan shouldContain "ref set to \"plan:<the plan item id above>\""
+            plan shouldContain "Tap answers card ref plan:<id>"
+            plan shouldNotContain "counts toward"
         }
     }
 })

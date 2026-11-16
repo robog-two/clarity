@@ -577,4 +577,66 @@ class StuckScenarioTest : FunSpec({
         ).shouldHaveSize(1)
         r.nudges.get(loose.id)!!.status shouldBe Nudge.Status.FIRED
     }
+
+    test("two check-ins open at once: each tap carries its own card's ref, so it reaches the right item") {
+        val start = Instant.parse("2026-03-04T10:00:00Z")
+        val rig = rig(start)
+        val r = rig.r
+        val today = LocalDate(2026, 3, 4)
+        val (a, b) = r.planItems.plan(today, listOf(Planned("write the onboarding spec"), Planned("call the dentist office")))
+        a.id shouldNotBe b.id
+        a.id shouldBe a.id.lowercase() // a plan item id is a lowercase uuid, so "plan:<id>" passes the strict ref check
+        net.robog.clarity.backend.agent.answeringNote("plan:${a.id}") shouldBe "Tap answers card ref plan:${a.id}"
+
+        class Script {
+            val steps = ArrayDeque<ModelResponse>()
+            init { r.model.handler = { steps.removeFirstOrNull() ?: end("(script exhausted)") } }
+            fun add(vararg responses: ModelResponse) = steps.addAll(responses)
+        }
+        val script = Script()
+        r.lead.start()
+        fun card(item: PlanItem) = Card.Choices(
+            "Open it now?",
+            listOf(Choice("Starting", "Starting"), Choice("Later", "Later"), Choice("Make it smaller", "Make it smaller")),
+            ref = "plan:${item.id}",
+        )
+        // both check-ins are posted and open
+        for ((n, item) in listOf(a, b).withIndex()) {
+            r.nudges.create(start + (n + 1).minutes, "$PLAN_CHECK_IN: ${item.text}", null, item.id, autoCheckIn = true)
+        }
+        rig.clock.now = start + 5.minutes
+        rig.runner.fireDue(rig.clock.now(), TimeZone.UTC) shouldHaveSize 2
+        script.add(
+            callTool("c1", "send_to_user", buildJsonObject { put("cards", ClarityJson.encodeToJsonElement(listOf<Card>(card(a)))); put("kind", "check_in") }),
+            callTool("c2", "send_to_user", buildJsonObject { put("cards", ClarityJson.encodeToJsonElement(listOf<Card>(card(b)))); put("kind", "check_in") }),
+            end("asked"),
+        )
+        r.lead.step() shouldBe true
+        val shown = r.feed.page(0, 100).items.filter { it.cards.any { c -> c is Card.Choices } }
+        shown shouldHaveSize 2
+
+        /** What FeedRoutes does for a tap: the note comes from the tapped card's ref only. */
+        suspend fun tap(shownItem: FeedItem, n: Int, label: String): String {
+            val note = net.robog.clarity.backend.agent.answeringNote(shownItem.cards.filterIsInstance<Card.Choices>().single().ref)
+            r.feed.chooseOption(shownItem.id, label, ClientInputId("tap$n")).shouldNotBeNull()
+            r.inbox.enqueue(InboxItem.UserInput(ClientInputId("tap$n"), label, InputSource.TYPED, null, answering = note))
+            return note.shouldNotBeNull()
+        }
+        fun lastInboxText(): String = r.model.requests.last().messages.flatMap { it.content }.filterIsInstance<Block.Text>().joinToString("\n") { it.text }
+
+        // the second card is tapped first: it must reach b, not a
+        tap(shown[1], 1, "Make it smaller")
+        script.add(callTool("s1", "plan_item", buildJsonObject { put("id", b.id); put("outcome", "smaller"); put("firstStep", "open the contacts") }), end("split"))
+        r.lead.step() shouldBe true
+        lastInboxText() shouldContain "Tap answers card ref plan:${b.id}"
+        tap(shown[0], 2, "Later")
+        script.add(callTool("l1", "plan_item", buildJsonObject { put("id", a.id); put("outcome", "later"); put("at", "15:00") }), end("later"))
+        r.lead.step() shouldBe true
+        lastInboxText() shouldContain "Tap answers card ref plan:${a.id}"
+
+        r.planItems.get(b.id)!!.firstStep shouldBe "open the contacts"
+        r.planItems.get(a.id)!!.firstStep shouldBe null
+        r.nudges.pending().single { it.planItemId == a.id }.at shouldBe Instant.parse("2026-03-04T15:00:00Z")
+        r.nudges.pending().single { it.planItemId == b.id }.at shouldBe start + 15.minutes
+    }
 })

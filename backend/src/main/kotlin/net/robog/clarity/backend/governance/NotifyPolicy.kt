@@ -108,10 +108,12 @@ data class Delivery(val decision: NotifyDecision, val counts: Boolean, val budge
  *     rules whatever its urgency or kind other than a reply (a reply is already step 1), and is not
  *     counted: it must reach them.
  *  3. Urgency `BATCH` is the agent's own choice to wait for the evening summary: [notifyDecision]'s BATCH.
- *  4. A [MessageKind.CHECK_IN] or [MessageKind.LOOK_FORWARD] pushes; a [MessageKind.FINDING] pushes only
- *     when [dueBy] is within [DUE_SOON] or one of [people] gets through, else it waits for the evening
- *     summary. A push follows the urgent rules for protected time, counts, and is shown in the app
- *     without a push once [pushedToday] has reached [Settings.pushesPerDay].
+ *  4. A [MessageKind.CHECK_IN] pushes through the urgent rules (protected time, who gets through, the push
+ *     setting) but is not counted and never refused for the budget: the person asked to be checked on.
+ *  5. A [MessageKind.LOOK_FORWARD] pushes; a [MessageKind.FINDING] pushes only when [dueBy] is within
+ *     [DUE_SOON] or one of [people] gets through, else it waits for the evening summary. These pushes
+ *     follow the urgent rules too, count, and are shown in the app without a push once [pushedToday]
+ *     has reached [Settings.pushesPerDay].
  * An [actionable] post (it asks the person to approve, log in or pick) is never held back for the
  * evening: when it would not push it is shown in the app instead.
  */
@@ -141,6 +143,8 @@ fun deliveryOf(
     // The urgent rules decide when a push may happen (protected time) and whether pushes are on at all.
     val push = notifyDecision(Urgency.URGENT, people, constitution, settings, now)
     if (push == NotifyDecision.ShowInApp) return Delivery(push, counts = false)
+    // A check-in is the person's own ask: never counted, never refused for the budget.
+    if (kind == MessageKind.CHECK_IN) return Delivery(push, counts = false)
     if (pushBudget(pushedToday, settings.pushesPerDay) == 0) return Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
     return Delivery(push, counts = true)
 }
