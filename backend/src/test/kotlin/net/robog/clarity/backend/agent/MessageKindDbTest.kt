@@ -140,10 +140,13 @@ class MessageKindDbTest : FunSpec({
         rig.store.pendingBatch().single().kind shouldBe MessageKind.FINDING
     }
 
-    test("check-ins push and count; past the daily limit they are shown without a push") {
+    test("check-ins are never counted or refused; look-forwards count, and past the daily limit are shown without a push") {
         val rig = Rig(database, start, Settings(pushesPerDay = 2))
-        repeat(3) { rig.send(kind = "check_in").shouldBeInstanceOf<ToolResult.Ok>() }
-        rig.feed.page(0, 100).items.map { it.notify } shouldBe listOf("push_now", "push_now", "in_app")
+        repeat(4) { rig.send(kind = "check_in").shouldBeInstanceOf<ToolResult.Ok>() }
+        rig.feed.page(0, 100).items.map { it.notify } shouldBe List(4) { "push_now" }
+        rig.store.countedPushes(start - 1.hours, start + 1.hours) shouldBe 0
+        repeat(3) { rig.send(kind = "look_forward").shouldBeInstanceOf<ToolResult.Ok>() }
+        rig.feed.page(0, 100).items.drop(4).map { it.notify } shouldBe listOf("push_now", "push_now", "in_app")
         rig.store.countedPushes(start - 1.hours, start + 1.hours) shouldBe 2
         // the next local day starts over
         rig.clock.now = start + 24.hours
@@ -156,8 +159,10 @@ class MessageKindDbTest : FunSpec({
         rig.send(urgency = "urgent")
         rig.send(personWrote = true)
         rig.store.countedPushes(start - 1.hours, start + 1.hours) shouldBe 0
-        rig.send(kind = "check_in")
+        rig.send(kind = "look_forward")
         rig.last().notify shouldBe "push_now"
+        rig.send(kind = "look_forward")
+        rig.last().notify shouldBe "in_app"
     }
 
     test("an approval or a login waiting on the person is pushed by the urgent rules, never held for the evening, and not counted") {

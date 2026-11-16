@@ -293,9 +293,9 @@ person managing a to-do list with a few assistants.
   A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
   apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
   who gets through) and never counts; so does a post carrying a proposal or a credential request (it
-  needs the person, so it follows the urgent rules whatever its kind). A `check_in` or `look_forward` pushes; a
-  `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
-  waits for the evening summary (`BATCH`). A push follows the urgent rules for protected time and
+  needs the person, so it follows the urgent rules whatever its kind). A `check_in` pushes by the urgent rules but is never counted or refused for the budget (the person
+  asked to be checked on); a `look_forward` pushes; a `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
+  waits for the evening summary (`BATCH`). A `look_forward` or finding push follows the urgent rules for protected time and
   counts toward `Settings.pushesPerDay` (1 to 10, default 5, per local day: `feed_item.push_counted`,
   `pushBudget`); once the day's pushes are used the item is shown in the app without one. A post
   with a choices card is never held for the evening, and posts inside a session keep the old rules
