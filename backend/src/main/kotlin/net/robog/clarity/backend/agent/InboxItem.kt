@@ -85,11 +85,27 @@ sealed interface InboxItem {
      * [task] is the linked task's title and status, if any. All of it is the lead's own text.
      */
     @Serializable @SerialName("nudge_due")
-    data class NudgeDue(val nudgeId: String, val at: String, val note: String, val task: String? = null) : InboxItem {
+    data class NudgeDue(
+        val nudgeId: String,
+        val at: String,
+        val note: String,
+        val task: String? = null,
+        /** The plan item (a priority that keeps coming back) this check-in is about, with its first step and the follow-ups left today. */
+        val planItem: String? = null,
+    ) : InboxItem {
         override val priority get() = Priority.NORMAL
         override val summary get() = "Nudge you set at $at: $note" + (task?.let { " Task: $it." } ?: "") +
-            " If it still helps, ask the person one short, specific question with send_to_user (kind check_in, and urgency urgent: a check-in they asked for; " +
-            "protected time still holds it). If it no longer applies, send nothing."
+            (planItem?.let { " Plan item: $it." } ?: "") +
+            if (planItem != null) {
+                " Ask with send_to_user, kind check_in, one choices card: a short prompt naming the first step, and exactly these options " +
+                    "{label \"Starting\", reply \"Starting\"}, {label \"Later\", reply \"Later\"}, {label \"Make it smaller\", reply \"Make it smaller\"}. " +
+                    "When the tap comes back: Starting, call plan_item(started) and answer in a few words; Later, ask when in one short question, then plan_item(later, at); " +
+                    "Make it smaller, split the step into something doable in two minutes, say it in one line, and call plan_item(smaller, firstStep). " +
+                    "If it no longer applies, send nothing."
+            } else {
+                " If it still helps, ask the person one short, specific question with send_to_user (kind check_in; it counts toward their daily notifications like any check-in, " +
+                    "and protected time still holds it). If it no longer applies, send nothing."
+            }
     }
 
     /**

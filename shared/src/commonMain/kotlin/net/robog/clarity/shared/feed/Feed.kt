@@ -260,7 +260,12 @@ data class ContextItem(
 data class Chip(val text: String, val sub: String = "")
 
 @Serializable
-data class IfThen(val cue: String, val action: String) {
+data class IfThen(
+    val cue: String,
+    val action: String,
+    /** The two-minute first move for a task that keeps coming back; null when none was agreed. */
+    val firstStep: String? = null,
+) {
     /** "If it’s 9:30, then spec at my desk until 12." */
     fun sentence(): String = "If $cue, then $action."
 }

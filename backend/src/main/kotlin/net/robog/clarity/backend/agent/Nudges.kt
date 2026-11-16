@@ -59,6 +59,8 @@ object NudgeTable : Table("nudge") {
     val reason = text("reason").nullable()
     val createdAt = timestamp("created_at")
     val resolvedAt = timestamp("resolved_at").nullable()
+    val planItemId = uuid("plan_item_id").nullable()
+    val followUp = bool("follow_up")
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -83,7 +85,7 @@ data class NudgeResolution(val status: Nudge.Status, val reason: String? = null)
 
 /** The durable nudges (`nudge`). Each pending row is resolved exactly once, by [resolveDue] or [cancel]. */
 interface NudgeStore {
-    suspend fun create(at: Instant, note: String, taskId: TaskId?): Nudge
+    suspend fun create(at: Instant, note: String, taskId: TaskId?, planItemId: String? = null, followUp: Boolean = false): Nudge
 
     suspend fun get(id: NudgeId): Nudge?
 
@@ -92,6 +94,12 @@ interface NudgeStore {
 
     /** Nudges due in [from, until) that are pending or fired: what counts toward a day's cap when setting one. */
     suspend fun countActive(from: Instant, until: Instant): Int
+
+    /** Follow-up nudges for the plan item [planItemId] due in [from, until) that are pending or fired. */
+    suspend fun countFollowUps(planItemId: String, from: Instant, until: Instant): Int
+
+    /** Cancels the pending nudges of the plan item [planItemId]; returns how many. */
+    suspend fun cancelForPlanItem(planItemId: String, reason: String): Int
 
     /** Nudges that fired in [from, until). */
     suspend fun countFired(from: Instant, until: Instant): Int
@@ -115,7 +123,7 @@ interface NudgeStore {
 @SingleIn(AppScope::class)
 @ContributesBinding(AppScope::class)
 class ExposedNudgeStore(private val database: Database, private val clock: Clock) : NudgeStore {
-    override suspend fun create(at: Instant, note: String, taskId: TaskId?): Nudge {
+    override suspend fun create(at: Instant, note: String, taskId: TaskId?, planItemId: String?, followUp: Boolean): Nudge {
         val id = Uuid.random()
         val now = clock.now()
         return database.tx {
@@ -124,6 +132,8 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
                 it[dueAt] = at
                 it[NudgeTable.note] = note
                 it[NudgeTable.taskId] = taskId?.let { t -> Uuid.parse(t.value) }
+                it[NudgeTable.planItemId] = planItemId?.let { p -> Uuid.parse(p) }
+                it[NudgeTable.followUp] = followUp
                 it[status] = Nudge.Status.PENDING.wire()
                 it[createdAt] = now
             }
@@ -144,6 +154,28 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
         NudgeTable.selectAll().where {
             (NudgeTable.status inList listOf(PENDING, FIRED)) and (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until)
         }.count().toInt()
+    }
+
+    override suspend fun countFollowUps(planItemId: String, from: Instant, until: Instant): Int {
+        val item = runCatching { Uuid.parse(planItemId) }.getOrNull() ?: return 0
+        return database.tx {
+            NudgeTable.selectAll().where {
+                (NudgeTable.planItemId eq item) and NudgeTable.followUp and (NudgeTable.status inList listOf(PENDING, FIRED)) and
+                    (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until)
+            }.count().toInt()
+        }
+    }
+
+    override suspend fun cancelForPlanItem(planItemId: String, reason: String): Int {
+        val item = runCatching { Uuid.parse(planItemId) }.getOrNull() ?: return 0
+        val now = clock.now()
+        return database.tx {
+            NudgeTable.update({ (NudgeTable.planItemId eq item) and (NudgeTable.status eq PENDING) }) {
+                it[status] = Nudge.Status.CANCELLED.wire()
+                it[NudgeTable.reason] = reason
+                it[resolvedAt] = now
+            }
+        }
     }
 
     override suspend fun countFired(from: Instant, until: Instant): Int = database.tx {
@@ -207,6 +239,7 @@ private fun ResultRow.toNudge() = Nudge(
     createdAt = this[NudgeTable.createdAt],
     resolvedAt = this[NudgeTable.resolvedAt],
     reason = this[NudgeTable.reason],
+    planItemId = this[NudgeTable.planItemId]?.toString(),
 )
 
 /** Pure: the start and end of the person's day that holds [moment]. */
@@ -234,10 +267,14 @@ fun readNudgeTime(raw: String, zone: TimeZone, now: Instant): Either<String, Ins
  * Pure: why a new nudge for [at] is refused, or null when it may be set. [pending] are the
  * nudges waiting now; [sameDay] counts the pending and fired ones due on [at]'s day.
  */
-fun nudgeRefusal(at: Instant, note: String, taskId: TaskId?, now: Instant, pending: List<Nudge>, sameDay: Int, zone: TimeZone): String? {
+fun nudgeRefusal(at: Instant, note: String, taskId: TaskId?, now: Instant, pending: List<Nudge>, sameDay: Int, zone: TimeZone, planItemId: String? = null): String? {
     val dup = pending.firstOrNull { other ->
         (other.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW &&
-            if (taskId != null) other.taskId == taskId else other.taskId == null && other.note.normalized() == note.normalized()
+            when {
+                taskId != null -> other.taskId == taskId
+                planItemId != null -> other.planItemId == planItemId
+                else -> other.taskId == null && other.note.normalized() == note.normalized()
+            }
     }
     return when {
         note.isBlank() -> "`note` must say what to check."
@@ -300,6 +337,10 @@ class NudgeTools(
             if (nudgeTaskFinished(task)) return@tool ToolResult.Error("Task \"${task.title}\" is already ${task.status.wire()}; there is nothing to check.")
         }
         val pending = nudges.pending()
+        // A check-in on a plan item was already set for this time (set_plan does it); a second one would ask twice.
+        coveringCheckIn(at, pending)?.let {
+            return@tool ToolResult.Ok("Nudge ${it.id.value} at ${agentTime(it.at, zone)} already checks in on the plan then; no new one was made.")
+        }
         // The very same nudge again (a looping model, or a call re-run after a restart) is the one already set.
         sameNudge(at, note, taskId, pending)?.let {
             return@tool ToolResult.Ok("Nudge ${it.id.value} is already set for ${agentTime(it.at, zone)}; no new one was made.")

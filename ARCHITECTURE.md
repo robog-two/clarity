@@ -532,6 +532,20 @@ the lead "Nudge you set at <time>: <note>" plus the task's title and status. A f
 nothing by itself; the lead decides whether to ask one short question through `send_to_user`, so
 the notify policy and protected-time holds apply as for anything else.
 
+**Stuck tasks.** `plan_item` (`V52`) follows what the person puts on a day's plan (the priorities and parked
+items of the morning call) from day to day. Pure `carryOver` (`sessions/PlanItems.kt`) matches today's items to
+open ones by the id the model passes (`continues` on `set_priorities` and `hand_off`), else by close wording
+(lower case, no filler words, two thirds of the shorter wording shared), at most once each, for items last
+planned within 3 days; each new day adds one to `days_carried`, and planning twice in a day changes nothing.
+An item on its third day or later is stuck: the prep job lists it ("stuck: <text>, day 3") for the lead to
+bring up without blame, and the COMMIT playbook offers a two-minute first step (`firstStep` on the if-then),
+help, or dropping it. After `set_plan` the server sets one nudge at each if-then whose cue has a clock time
+("it's 9:30"), linked to its item (`nudge.plan_item_id`), under the usual nudge limits; the lead's own `nudge`
+for that time is answered "already covered". When such a nudge fires, the lead posts a `check_in` with a
+`Card.Choices` (Starting, Later, Make it smaller) and records the tap with `plan_item`: started (no more
+check-ins on it that day, waiting ones cancelled, a due one skipped), later (at the time the person picks) or
+smaller (a new first step, back in 10 minutes). Follow-ups are capped at 2 per item per day by the server.
+
 Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.

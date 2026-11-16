@@ -84,8 +84,9 @@ object Playbooks {
 
         CallStage.CHOOSE -> """
             Stage CHOOSE. $SHORT $REACH
+            If the preparation listed items that keep coming back, mention them lightly, without blame, as part of the question.
             Ask once: "Ignoring deadlines, which one would you regret not moving forward?" Optionally ask for at most ONE more that must happen today.
-            Then call set_priorities(important, also?) with their answer (a short note like "important" or "due today" for each) and finish with stage_done.
+            Then call set_priorities(important, also?) with their answer, passing `continues` (the plan item id) for one that was on an earlier day's plan (a short note like "important" or "due today" for each) and finish with stage_done.
             Never choose for them. Three or more priorities is the opposite of this stage: gently hold it to two.
         """.trimIndent()
 
@@ -95,6 +96,10 @@ object Playbooks {
             with list_calendar_events before agreeing; if it collides, say so and ask for another time.
             Turn each answer into an if-then ("If it's 9:30, then spec at my desk until 12", "If Dana emails, then it waits until 12") and call
             set_plan(ifThens). Then stage_done.
+            A time in the cue ("it's 9:30") gets a check-in at that time on its own; do not nudge for it.
+            A priority that set_priorities reported as stuck (day 3 or more) has been on the plan for days. Say so without blame ("this one keeps coming back"), then offer
+            one of three things: a first step small enough to take in two minutes (put it in the if-then's firstStep and name its plan item in `item`), help from you
+            (something you can do or prepare in hand-off), or dropping it (plan_item dropped, if they choose that). Let them choose; never push.
         """.trimIndent()
 
         CallStage.HAND_OFF -> """
