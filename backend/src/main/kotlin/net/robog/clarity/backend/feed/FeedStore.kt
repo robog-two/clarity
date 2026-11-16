@@ -114,6 +114,9 @@ interface FeedStore {
      */
     suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem?
 
+    /** Undoes [markChosen] by [by] (and only that one), when what should follow the answer failed. Null when there was nothing to undo. */
+    suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem?
+
     /** The item already stored for the person's input [id] (a retry of the same request), or null. */
     suspend fun byClientInput(id: ClientInputId): FeedItem?
 }
@@ -236,6 +239,16 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
         FeedItems.selectAll().where { FeedItems.clientInputId eq id.value }.singleOrNull()?.toItem()
     }
 
+    override suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem? {
+        val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
+        return database.tx {
+            val row = FeedItems.selectAll().where { FeedItems.id eq uuid }.forUpdate().singleOrNull() ?: return@tx null
+            val cards = unanswerChoices(row[FeedItems.cards], by.value) ?: return@tx null
+            FeedItems.update({ FeedItems.id eq uuid }) { it[FeedItems.cards] = cards }
+            FeedItems.selectAll().where { FeedItems.id eq uuid }.single().toItem()
+        }
+    }
+
     override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? {
         val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx {
@@ -291,6 +304,12 @@ fun checkChoice(item: FeedItem?, reply: String): ChoiceCheck {
         card.chosen != null -> ChoiceCheck.Answered(item, card.chosen!!, card.answeredBy)
         else -> ChoiceCheck.Open
     }
+}
+
+/** Pure: [cards] with the choices card answered by [by] open again; null when [by] did not answer one. */
+fun unanswerChoices(cards: List<Card>, by: String): List<Card>? {
+    if (cards.none { it is Card.Choices && it.answeredBy == by }) return null
+    return cards.map { if (it is Card.Choices && it.answeredBy == by) it.copy(chosen = null, answeredBy = null) else it }
 }
 
 /**

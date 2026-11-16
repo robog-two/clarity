@@ -7,7 +7,11 @@ import kotlinx.serialization.json.buildJsonObject
 import net.robog.clarity.backend.feed.Appended
 import net.robog.clarity.backend.feed.ChoiceCheck
 import net.robog.clarity.backend.feed.checkChoice
+import net.robog.clarity.backend.feed.answerChoices
 import net.robog.clarity.backend.feed.summarizedBy
+import net.robog.clarity.backend.feed.unanswerChoices
+import net.robog.clarity.harness.harnessNote
+import net.robog.clarity.harness.isHarnessNote
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER
@@ -65,6 +69,25 @@ class FollowUpPureTest : FunSpec({
     test("a new person turn after a job turn, and the other way round") {
         openTurnCarriesPerson(listOf(inbox("[inbox] job"), endTurn(), said("hi"), toolCall("a"))) shouldBe true
         openTurnCarriesPerson(listOf(said("hi"), endTurn(), inbox("[inbox] job"), toolCall("a"), result("a"))) shouldBe false
+    }
+
+    test("harness notes are not the person: a job turn resumed after the step warning is not a reply") {
+        val warning = Message(Role.USER, listOf(Block.Result("a", "ok"), harnessNote(LEAD_OUT_OF_STEPS.warning.format(3))))
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), warning, toolCall("b"))) shouldBe false
+        val cap = Message(Role.USER, listOf(Block.Result("a", "ok"), harnessNote("You have reached this task's spend limit")))
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), cap)) shouldBe false
+        // the person's words merged next to such a note still count
+        val both = Message(Role.USER, listOf(Block.Result("a", "ok"), harnessNote("steps"), Block.Text("and call Dana")))
+        openTurnCarriesPerson(listOf(inbox("[inbox] job"), toolCall("a"), both)) shouldBe true
+        isHarnessNote(harnessNote("x").text) shouldBe true
+        isHarnessNote("x") shouldBe false
+    }
+
+    test("a failed update after the card was marked can be undone, and only by the one that marked it") {
+        val options = listOf(Choice("Yes", "yes"), Choice("No", "no"))
+        val answered = answerChoices(listOf(Card.Choices("Ready?", options)), "no", "c1")!!
+        unanswerChoices(answered, "c2") shouldBe null
+        unanswerChoices(answered, "c1") shouldBe listOf(Card.Choices("Ready?", options))
     }
 
     test("nothing, or only a summary") {

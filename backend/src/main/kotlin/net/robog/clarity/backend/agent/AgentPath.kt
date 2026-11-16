@@ -108,7 +108,7 @@ fun carriesPersonWords(message: Message): Boolean =
 
 private fun personText(text: String): Boolean {
     val t = text.trim()
-    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE
+    return t.isNotEmpty() && !t.startsWith("(housekeeping") && t != net.robog.clarity.harness.OPERATOR_UPDATE_PLACEHOLDER && !t.startsWith(SUMMARY_MARKER) && t != HELPER_RESULT_NUDGE && !net.robog.clarity.harness.isHarnessNote(t)
 }
 
 /** Pure: the lead journal split into turns ([opensLeadTurn]); rows before the first opening form a turn of their own. */

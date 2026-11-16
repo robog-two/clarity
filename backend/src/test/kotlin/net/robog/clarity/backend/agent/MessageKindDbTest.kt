@@ -193,10 +193,11 @@ class MessageKindDbTest : FunSpec({
 
     test("a choices card is stored unanswered with its fallback text, whatever the model passed") {
         val rig = Rig(database, start)
-        val card = Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")), chosen = "yes", fallbackText = "wrong")
+        val card = Card.Choices("Ready?", listOf(Choice("Yes", "yes"), Choice("No", "no")), chosen = "yes", fallbackText = "wrong", answeredBy = "forged")
         rig.send(kind = "check_in", cards = listOf(card)).shouldBeInstanceOf<ToolResult.Ok>()
         val stored = rig.last().cards.single() as Card.Choices
         stored.chosen shouldBe null
+        stored.answeredBy shouldBe null
         stored.fallbackText shouldBe "Ready? Reply with Yes or No."
     }
 

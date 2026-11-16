@@ -89,6 +89,13 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
     override suspend fun countedPushes(from: Instant, to: Instant): Int = 0
     override suspend fun lookForwardSince(since: Instant): List<FeedItem> = emptyList()
+    override suspend fun unmarkChosen(id: FeedItemId, by: ClientInputId): FeedItem? = synchronized(items) {
+        val index = items.indexOfFirst { it.first.id == id }
+        if (index < 0) return@synchronized null
+        val (item, draft) = items[index]
+        val cards = unanswerChoices(item.cards, by.value) ?: return@synchronized null
+        item.copy(cards = cards).also { items[index] = it to draft }
+    }
     override suspend fun byClientInput(id: ClientInputId): FeedItem? = items.firstOrNull { it.second.clientInputId == id }?.first
     override suspend fun markChosen(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? = synchronized(items) {
         val index = items.indexOfFirst { it.first.id == id }
@@ -102,7 +109,10 @@ private class MemoryFeedStore : FeedStore {
 private class MemoryInbox : InboxStore {
     val enqueued = CopyOnWriteArrayList<Pair<InboxItem, String?>>()
 
+    @Volatile var failNext = false
+
     override suspend fun enqueue(item: InboxItem, dedupKey: String?): Boolean = synchronized(enqueued) {
+        if (failNext) { failNext = false; error("inbox down") }
         if (dedupKey != null && enqueued.any { it.second == dedupKey }) false else { enqueued += item to dedupKey; true }
     }
 
@@ -224,6 +234,28 @@ class FeedRoutesTest : FunSpec({
             tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
             inbox.enqueued.size shouldBe queuedAfterFirst
             feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+        }
+    }
+
+    test("a failure after the card was marked takes the mark back, and the same tap can be retried") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            suspend fun tap(clientId: String) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), "Later", inReplyTo = asked.id))
+            }
+            val before = inbox.enqueued.size
+            inbox.failNext = true
+            tap("heal-1").status shouldBe HttpStatusCode.InternalServerError
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe null
+            inbox.enqueued.size shouldBe before
+            // the retry (same client id) goes through and reaches the lead once
+            tap("heal-1").status shouldBe HttpStatusCode.OK
+            (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Later"
+            inbox.enqueued.size shouldBe before + 1
         }
     }
 

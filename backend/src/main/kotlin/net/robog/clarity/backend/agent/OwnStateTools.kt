@@ -161,7 +161,7 @@ class OwnStateTools(
                     dueBy is Either.Left -> ToolResult.Error(dueBy.value)
                     else -> resolveSources(input.cards).fold({ ToolResult.Error(it) }) { cards ->
                         // A model cannot pre-answer its own buttons.
-                        val fresh = cards.map { if (it is Card.Choices) it.copy(chosen = null, fallbackText = choicesFallback(it.prompt, it.options)) else it }
+                        val fresh = cards.map { if (it is Card.Choices) it.copy(chosen = null, answeredBy = null, fallbackText = choicesFallback(it.prompt, it.options)) else it }
                         post(fresh, input.urgency, input.sessionId, input.about, input.kind, (dueBy as? Either.Right)?.value, scope?.answeringPerson == true)
                     }
                 }

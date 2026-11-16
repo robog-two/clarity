@@ -56,6 +56,10 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
     suspend fun chooseOption(id: FeedItemId, reply: String, by: ClientInputId): FeedItem? =
         store.markChosen(id, reply, by)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
 
+    /** Takes back the answer [by] recorded (see [FeedStore.unmarkChosen]) and tells every device. */
+    suspend fun unchooseOption(id: FeedItemId, by: ClientInputId): FeedItem? =
+        store.unmarkChosen(id, by)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+
     /** The item stored for the person's input [id], when the same request came before. */
     suspend fun byClientInput(id: ClientInputId) = store.byClientInput(id)
 
