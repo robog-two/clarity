@@ -578,4 +578,50 @@ class OutingDbTest : FunSpec({
         rig.ideas.all().single().suggestedAt shouldBe null
         rig.feed.page(0, 20).items.shouldBeEmpty()
     }
+    test("a post that reached the feed without a call key keeps its reservation (found by the idea's ref), also when cancelled after it") {
+        val rig = Rig(database, now, settings)
+        val a = rig.saveIdea("Jazz night")
+        val real = rig.own.sendToUser(rig.leadScope)
+        val cancelledLate = rig.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by real {
+                override suspend fun invoke(input: JsonObject): ToolResult {
+                    real.invoke(input)
+                    throw kotlinx.coroutines.CancellationException("stopped after the post")
+                }
+            },
+            rig.leadScope,
+        )
+        val cards = listOf(
+            Card.Text("Thursday evening is free."),
+            Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time")), ref = "outing:$a"),
+        )
+        // no ToolCallContext at all: the post has no client key, only the card's ref
+        runCatching { cancelledLate.invoke(buildJsonObject { put("kind", "look_forward"); put("cards", ClarityJson.encodeToJsonElement(cards)) }) }
+            .exceptionOrNull().shouldBeInstanceOf<kotlinx.coroutines.CancellationException>()
+        rig.feed.page(0, 20).items.filter { it.kind == MessageKind.LOOK_FORWARD } shouldHaveSize 1
+        rig.ideas.all().single().suggestedAt shouldBe now
+    }
+
+    test("the per-turn offer slot is taken before sending: three at once make two, and a failed post gives its slot back") {
+        val rig = Rig(database, now, settings)
+        val ids = (1..4).map { rig.saveIdea("Outing $it") }
+        val person = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        val results = kotlinx.coroutines.coroutineScope {
+            val scope = this
+            ids.take(3).map { id -> scope.async(kotlinx.coroutines.Dispatchers.IO) { rig.postVia(rig.sendAs(person), "outing:$id") } }.map { it.await() }
+        }
+        results.count { it is ToolResult.Ok } shouldBe 2
+        person.offersThisTurn.get() shouldBe 2
+
+        val person2 = RunScope("lead", isLead = true).also { it.startTurn(untrusted = false, requestedByUser = true) }
+        val failing = rig.outing.gateSuggestions(
+            object : net.robog.clarity.harness.Tool by rig.own.sendToUser(person2) {
+                override suspend fun invoke(input: JsonObject): ToolResult = ToolResult.Error("could not post")
+            },
+            person2,
+        )
+        rig.postVia(failing, "outing:${ids[3]}").shouldBeInstanceOf<ToolResult.Error>().message shouldBe "could not post"
+        person2.offersThisTurn.get() shouldBe 0
+        rig.ideas.all().first { it.id == ids[3] }.suggestedAt shouldBe null
+    }
 })

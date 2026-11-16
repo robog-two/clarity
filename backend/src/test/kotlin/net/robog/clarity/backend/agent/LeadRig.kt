@@ -146,6 +146,8 @@ class LeadRig(
     criteriaChecker: CriteriaChecker? = null,
     /** Which models take images; by default unknown. */
     capabilities: ModelCapabilities = ModelCapabilities { null },
+    /** Checks the briefs of helpers with web search for identifiers; by default nothing is checked. */
+    searchBrief: SearchBriefCheck = SearchBriefCheck.OFF,
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
@@ -236,7 +238,7 @@ class LeadRig(
     init {
         val helperTools = HelperTools(lazy { helpers }, tasks, runs, failureGate)
         toolbox = AgentToolbox(domain, own, memoryTools, external, helperTools, large, mcp, sessionTools, VaultTools(vaultService, vaultHolds), browserPilot, nudgeTools, reportTools, mcpKit, attachmentTools, outingTools)
-        helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime))
+        helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime), searchBrief = searchBrief)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
             effortOverride ?: CallEffortOverride(sessionService), mail, mcpCatalog,

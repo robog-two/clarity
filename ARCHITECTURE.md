@@ -706,13 +706,18 @@ under ZDR) is not offered.
   keeps `web_search`, so a resumed run gets it back.
 - **No identifiers in the brief.** Names, the city, venues and interests may go to the open web; phone
   numbers, email addresses, street addresses, account or booking numbers and similar identifiers may
-  not. The lead's prompt and the `delegate` description say so, and `delegate` asks the decision model
-  (Decision-1, `agent/SearchBriefCheck.kt`) one question over the brief and done criteria, quoted as
-  untrusted data: "does this contain a phone number, email address, street address, account or booking
-  number, or other personal identifier?" At p >= 0.8 the delegate is refused with an error telling the
-  lead to remove the identifiers and retry. As with the other Decision-1 gates it fails open (no
-  decision model, a failed call or no answer lets the brief go, logged). The pure `searchBriefRefusal`
-  maps the verdict to the refusal.
+  not. The lead's prompt and the `delegate` description say so, and `HelperManager` asks the decision
+  model (Decision-1, `agent/SearchBriefCheck.kt`) one question over the text, quoted as untrusted data
+  and sent raw (nothing redacted, nothing cut, since it is what the helper gets): "does this contain a
+  phone number, email address, street address, account or booking number, or other personal
+  identifier?" At p >= 0.5 it is refused with an error telling the lead to remove the identifiers and
+  retry. It covers everything the lead sends a helper whose stored tools include `web_search`: the
+  first brief and done criteria (checked last in `start`, after the cheap refusals, and not for a
+  resumed call), `message_helper` (which is also how a helper's question is answered) and
+  `revise_helper`. Helpers cannot send each other text: `delegate`, `message_helper` and
+  `revise_helper` are lead-only tools. A text over 8000 characters is refused as too long ("shorten
+  it"), only when the decision model is on. It fails open: no decision model, a failed call or no
+  answer lets the text go, logged. The pure `searchBriefRefusal` maps the verdict to the refusal.
 - **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
   as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
   per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),

@@ -170,9 +170,10 @@ class ExposedOutingStore(private val database: Database, private val clock: Cloc
         database.tx {
             // A post that reached the feed (found by its tool call key, or by this idea's ref on a card) stands: the
             // reservation stays, so a cancellation after the post cannot make the idea offerable again.
+            // jsonb containment (served by the GIN index on feed_item.cards), not text matching: jsonb text has spaces.
             val posted = exec(
-                "SELECT 1 FROM feed_item WHERE client_input_id = ? OR cards::text LIKE ? LIMIT 1",
-                listOf(TextColumnType() to ("tool:" + call.orEmpty()), TextColumnType() to "%\"ref\":\"outing:$id\"%"),
+                "SELECT 1 FROM feed_item WHERE client_input_id = ? OR cards @> ?::jsonb LIMIT 1",
+                listOf(TextColumnType() to ("tool:" + call.orEmpty()), TextColumnType() to "[{\"ref\": \"outing:$id\"}]"),
             ) { rs -> rs.next() } == true
             if (posted) return@tx
             OutingIdeas.update({ (OutingIdeas.id eq uuid) and (if (call == null) OutingIdeas.suggestedCall.isNull() else OutingIdeas.suggestedCall eq call) }) {
@@ -431,22 +432,29 @@ class OutingTools(
             }
             val ideaId = refs.singleOrNull()?.let(::outingIdeaOf)
                 ?: return ToolResult.Error("The ref of an outing card is exactly \"outing:<idea id>\" (lower case), one per message, with the id from save_outing_idea.")
-            if (personTurn && scope.offersThisTurn.get() >= MAX_OFFERS_PER_PERSON_TURN) {
+            // The slot is taken before anything is sent, so two calls in one step cannot both pass; it goes back if the post does not happen.
+            val slot = scope != null && personTurn
+            if (slot && scope!!.offersThisTurn.incrementAndGet() > MAX_OFFERS_PER_PERSON_TURN) {
+                scope!!.offersThisTurn.decrementAndGet()
                 return ToolResult.Error("$MAX_OFFERS_PER_PERSON_TURN outings were already offered in this turn. Offer no more now.")
             }
+            fun giveBackSlot() { if (slot) scope!!.offersThisTurn.decrementAndGet() }
             val call = coroutineContext[ToolCallContext]?.let { "${it.runId}:${it.toolUseId}" }
             val reserved = when (val r = store.reserve(ideaId, clock.now(), call, personTurn, reshow)) {
-                is Reservation.Refused -> return ToolResult.Error(r.reason)
+                is Reservation.Refused -> { giveBackSlot(); return ToolResult.Error(r.reason) }
                 is Reservation.Granted -> r
             }
             val result = try {
                 send.invoke(input)
             } catch (e: Throwable) {
                 if (reserved.fresh) withContext(NonCancellable) { store.release(ideaId, call) }
+                giveBackSlot()
                 throw e
             }
-            if (result !is ToolResult.Ok && reserved.fresh) withContext(NonCancellable) { store.release(ideaId, call) }
-            if (result is ToolResult.Ok) scope?.offersThisTurn?.incrementAndGet()
+            if (result !is ToolResult.Ok) {
+                if (reserved.fresh) withContext(NonCancellable) { store.release(ideaId, call) }
+                giveBackSlot()
+            }
             return result
         }
     }

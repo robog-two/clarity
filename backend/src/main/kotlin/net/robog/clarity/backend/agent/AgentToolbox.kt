@@ -73,8 +73,6 @@ class HelperTools(
     private val tasks: TaskStore,
     private val runs: RunStore,
     private val gate: FailureGate,
-    /** Asks the decision model whether a web search brief carries identifiers; by default nothing is checked. */
-    private val searchBrief: SearchBriefCheck = SearchBriefCheck.OFF,
 ) {
     @Serializable
     class DelegateInput(
@@ -195,12 +193,9 @@ class HelperTools(
             val named = input.taskId?.trim()?.ifEmpty { null }
             // Resolved to the task's full id, so a shortened id links the same task update_task touched.
             val taskId = named?.let { tasks.get(TaskId(it))?.id }
-            // A helper with web search sends its brief to the open web: no phone numbers, addresses or account numbers in it.
-            val identifiers = if (WEB_SEARCH in input.tools.orEmpty()) searchBrief.refusal((listOf(input.task) + input.doneWhen.orEmpty()).joinToString("\n")) else null
             when {
                 input.task.isBlank() -> ToolResult.Error("`task` must not be empty")
                 named != null && taskId == null -> ToolResult.Error("No task with id $named; create it with update_task first, or omit `taskId`.")
-                identifiers != null -> ToolResult.Error(identifiers)
                 gate.check(GateKind.BRIEF, "delegate", input.task) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
                 // The done criteria are part of the brief too.
                 !input.doneWhen.isNullOrEmpty() && gate.check(GateKind.BRIEF, "delegate", input.doneWhen.joinToString("\n")) != null -> ToolResult.Error(FailureGate.BRIEF_REFUSAL)
