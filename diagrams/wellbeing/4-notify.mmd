@@ -1,0 +1,19 @@
+flowchart TD
+  SEND["send_to_user(cards, urgency, kind)"] --> KIND{"kind"}
+  KIND -->|reply| REPLY["notify when the app is closed<br/>(answers something the person said,<br/>not counted in the budget)"]
+  KIND -->|check_in| CHECK["push at the nudge time"]
+  KIND -->|look_forward| LOOK["push at a calm hour"]
+  KIND -->|finding| FIND{"due within 24 h,<br/>or the sender gets through?"}
+  FIND -->|yes| NOW["push now"]
+  FIND -->|no| BATCH["evening summary"]
+
+  CHECK --> BUDGET{"pushBudget() (pure)<br/>under the daily limit?"}
+  LOOK --> BUDGET
+  NOW --> BUDGET
+  BUDGET -->|yes| POLICY["notifyDecision() (unchanged)<br/>protected time, who gets through"]
+  BUDGET -->|no| INAPP["in app, no push"]
+  POLICY --> PHONE["phone notifies"]
+  REPLY --> PHONE
+
+  LIMIT[("Settings.pushesPerDay<br/>default 5, adjustable")] -.-> BUDGET
+  BATCH --> EVENING["EveningBatchJob<br/>1. coming up to look forward to<br/>2. done today<br/>3. findings, one short list"]
