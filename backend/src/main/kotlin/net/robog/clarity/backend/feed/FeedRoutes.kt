@@ -26,6 +26,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import net.robog.clarity.backend.agent.InboxItem
+import net.robog.clarity.backend.agent.answeringNote
 import net.robog.clarity.backend.agent.InboxStore
 import net.robog.clarity.backend.auth.AuthProviders
 import net.robog.clarity.backend.auth.DevicePrincipal
@@ -105,10 +106,13 @@ class FeedRoutes(
                         ),
                     )
                     // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
+                    val answering = input.inReplyTo?.let { id ->
+                        feed.get(id)?.cards?.filterIsInstance<Card.Choices>()?.firstOrNull()?.let { answeringNote(it.prompt, it.ref) }
+                    }
                     input.inReplyTo?.let { feed.chooseOption(it, input.text) }
                     // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
                     inbox.enqueue(
-                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId),
+                        InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId, answering),
                         dedupKey = "user:${input.clientId.value}",
                     )
                     call.respond(InputAccepted(appended.item))

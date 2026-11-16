@@ -11,34 +11,30 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.put
 import net.robog.clarity.backend.agent.ExposedInboxStore
 import net.robog.clarity.backend.agent.ExposedMemoryStore
 import net.robog.clarity.backend.agent.ExposedRunStore
 import net.robog.clarity.backend.agent.ExposedTaskStore
 import net.robog.clarity.backend.agent.FailureGate
+import net.robog.clarity.backend.agent.InboxItem
+import net.robog.clarity.backend.agent.InboxSignals
 import net.robog.clarity.backend.agent.OwnStateTools
 import net.robog.clarity.backend.agent.PgRunJournal
 import net.robog.clarity.backend.agent.RunScope
-import net.robog.clarity.backend.feed.FeedHub
-import net.robog.clarity.backend.feed.FeedService
-import net.robog.clarity.backend.sources.SourceResolver
-import net.robog.clarity.harness.ToolCallContext
-import net.robog.clarity.shared.ClarityJson
-import net.robog.clarity.shared.feed.Choice
-import net.robog.clarity.shared.source.SourceItem
-import net.robog.clarity.backend.agent.InboxItem
-import net.robog.clarity.backend.agent.InboxSignals
+import net.robog.clarity.backend.agent.UNTRUSTED_SOURCE_TOOLS
 import net.robog.clarity.backend.config.DatabaseConfig
 import net.robog.clarity.backend.config.Secret
 import net.robog.clarity.backend.feed.ExposedFeedStore
-import net.robog.clarity.backend.feed.FeedDraft
+import net.robog.clarity.backend.feed.FeedHub
+import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.governance.GovernanceEvents
 import net.robog.clarity.backend.governance.HeldActionStore
@@ -52,17 +48,19 @@ import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.scheduler.FireContext
 import net.robog.clarity.backend.scheduler.OUTING_JOB
 import net.robog.clarity.backend.scheduler.OutingScoutJob
-import net.robog.clarity.backend.sources.idRead
-import net.robog.clarity.backend.sources.readsOf
+import net.robog.clarity.backend.sources.SourceResolver
 import net.robog.clarity.harness.Block
 import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.Role
+import net.robog.clarity.harness.ToolCallContext
 import net.robog.clarity.harness.ToolResult
+import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.Card
-import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.Choice
 import net.robog.clarity.shared.feed.MessageKind
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.session.Settings
+import net.robog.clarity.shared.source.SourceItem
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.jetbrains.exposed.v1.jdbc.insert
 import org.testcontainers.postgresql.PostgreSQLContainer
@@ -84,7 +82,9 @@ class OutingDbTest : FunSpec({
     }
     afterSpec { postgres.stop() }
     beforeTest {
-        database.tx { exec("TRUNCATE outing_idea, contact, message, calendar_event, inbox_item, feed_item, constitution_version RESTART IDENTITY CASCADE") }
+        database.tx {
+            exec("TRUNCATE outing_idea, contact, message, calendar_event, inbox_item, feed_item, constitution_version, agent_journal RESTART IDENTITY CASCADE")
+        }
     }
 
     // Monday 14:00 in New York.
@@ -95,20 +95,54 @@ class OutingDbTest : FunSpec({
         val clock = OutingClock(now)
         val reader = ExposedNounReader(database)
         val feedStore = ExposedFeedStore(database, clock)
+        val feed = FeedService(feedStore, FeedHub())
         val inbox = ExposedInboxStore(database, clock, InboxSignals())
         val ideas = ExposedOutingStore(database, clock)
         val people = ExposedOutingPeople(database)
+        val journal = PgRunJournal(database, clock)
         val constitutions = ConstitutionStore(database, clock, HeldActionStore(database, clock), GovernanceEvents())
-        val job = OutingScoutJob(reader, constitutions, feedStore, ideas, people, inbox)
-        val tools = OutingTools(ideas, people, reader, { settings }, clock).all().associateBy { it.name }
+        val job = OutingScoutJob(reader, constitutions, ideas, people, inbox)
+        val run = Uuid.random().toString()
+        val outing = OutingTools(ideas, people, reader, SourceResolver(reader, { settings }, journal, ExposedRunStore(database, clock)), { settings }, clock)
+        val tools = outing.all().associateBy { it.name }
+        val own = OwnStateTools(
+            feed, ExposedMemoryStore(database, clock), constitutions, ExposedTaskStore(database, clock, feed), { settings }, clock, FailureGate(null),
+            SourceResolver(reader, { settings }, journal, ExposedRunStore(database, clock)),
+        )
+        val sendToUser = outing.gateSuggestions(own.sendToUser(RunScope("lead", isLead = true)))
 
         suspend fun call(name: String, vararg pairs: Pair<String, String>): ToolResult =
-            tools.getValue(name).invoke(buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } })
+            withContext(ToolCallContext(run, "call-${Uuid.random()}")) {
+                tools.getValue(name).invoke(buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } })
+            }
+
+        /** The lead read [content] with a record tool in an earlier step of its run. */
+        suspend fun read(content: String, tool: String = "list_messages") {
+            val use = Uuid.random().toString()
+            journal.append(run, Message(Role.ASSISTANT, listOf(Block.ToolUse(use, tool, JsonObject(emptyMap())))))
+            journal.append(run, Message(Role.USER, listOf(Block.Result(use, content, false))))
+        }
+
+        /** A suggestion for [ideaId], the way the lead posts one; [ref] and [kind] can be changed to try the gate. */
+        suspend fun suggest(ideaId: String, ref: String? = "outing:$ideaId", kind: String = "look_forward", text: String = "Thursday evening is free."): ToolResult {
+            val cards = listOf(
+                Card.Text(text),
+                Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time")), ref = ref),
+            )
+            val input = buildJsonObject {
+                put("kind", kind)
+                put("cards", ClarityJson.encodeToJsonElement(cards))
+            }
+            return withContext(ToolCallContext(run, "call-${Uuid.random()}")) { sendToUser.invoke(input) }
+        }
 
         suspend fun fire(at: Instant = now, scheduledFor: Instant = at) =
             job.fire(FireContext(scheduledFor = scheduledFor, now = at, lastRunAt = null, settings = settings))
 
         suspend fun due(): List<InboxItem.JobDue> = inbox.pending().map { it.item }.filterIsInstance<InboxItem.JobDue>().filter { it.job == OUTING_JOB }
+
+        suspend fun saveIdea(what: String, vararg more: Pair<String, String>): String =
+            (call("save_outing_idea", "what" to what, *more).shouldBeInstanceOf<ToolResult.Ok>().content.split(" ")[1])
 
         suspend fun person(name: String, email: String): String {
             val id = Uuid.random()
@@ -164,11 +198,6 @@ class OutingDbTest : FunSpec({
                 it[attendees] = emptyList()
             }
         }
-
-        suspend fun postLookForward(at: Instant) {
-            feedStore.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Jazz?")), notify = "push_now", kind = MessageKind.LOOK_FORWARD))
-                .also { database.tx { exec("UPDATE feed_item SET at = '$at' WHERE id = '${it.item.id.value}'") } }
-        }
     }
 
     test("a saved idea, the scout and the lead's brief: only slots, saved ideas and recently messaged people") {
@@ -180,9 +209,12 @@ class OutingDbTest : FunSpec({
         rig.mail("pat@example.com", daysAgo = 1, received = false) // sent to someone who is not a saved contact
         rig.busy("2026-11-18T00:00:00Z", "2026-11-18T03:00:00Z") // Tuesday 19:00 to 22:00 in New York
 
-        // company only from the last 90 days; the source record must exist
+        // company only from the last 90 days, no names in the text, and a source the run has read
         rig.call("save_outing_idea", "what" to "Dinner at the new place", "withContactId" to quiet).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "90 days"
+        rig.call("save_outing_idea", "what" to "Dinner with Sam Example").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "withContactId"
         rig.call("save_outing_idea", "what" to "Dinner at the new place", "sourceId" to Uuid.random().toString()).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No record"
+        rig.call("save_outing_idea", "what" to "Dinner at the new place", "sourceId" to samMail).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "have not read"
+        rig.read("""[{"id":"$samMail","subject":"Dinner?"}]""")
         rig.call(
             "save_outing_idea", "what" to "Dinner at the new place", "category" to "dinner", "place" to "Main Street",
             "withContactId" to sam, "sourceId" to samMail,
@@ -199,64 +231,75 @@ class OutingDbTest : FunSpec({
         brief shouldContain "Saved ideas waiting: 1"
         brief shouldContain "web_search"
 
-        // the lead reads the idea with its source record, which is what lets the sources card cite it
         val listed = rig.call("list_outing_ideas").shouldBeInstanceOf<ToolResult.Ok>().content
         listed shouldContain "Dinner at the new place"
         listed shouldContain "with Sam Example"
         listed shouldContain "source record $samMail"
-        val reads = readsOf(
-            listOf(
-                Message(Role.ASSISTANT, listOf(Block.ToolUse("t1", "list_outing_ideas", JsonObject(emptyMap())))),
-                Message(Role.USER, listOf(Block.Result("t1", listed, false))),
-            ),
-        )
-        idRead(samMail, reads) shouldBe true
 
         // a retry of the same slot makes no second wake-up
         rig.fire()
         rig.due() shouldHaveSize 1
+
+        // what list_outing_ideas returns is mail-derived text: it taints the turn like any mail tool
+        ("list_outing_ideas" in UNTRUSTED_SOURCE_TOOLS) shouldBe true
     }
 
-    test("two suggestions this week, or no free time, wake nobody") {
+    test("every suggestion is a saved open idea, the server counts two a week, and the scout counts a little less") {
         val rig = Rig(database, now, settings)
-        rig.postLookForward(now - 2.days)
-        rig.fire()
-        rig.due() shouldHaveSize 1 // one this week: one more is allowed
+        val a = rig.saveIdea("Jazz night", "category" to "live music")
+        val b = rig.saveIdea("Pottery class", "category" to "class")
+        val c = rig.saveIdea("Hike at the lake", "category" to "hike")
 
-        rig.postLookForward(now - 1.days)
+        rig.suggest(a, ref = null).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "choices card"
+        rig.suggest(Uuid.random().toString()).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "save_outing_idea"
+        rig.suggest(a, ref = null, kind = "finding").shouldBeInstanceOf<ToolResult.Ok>() // not an outing: untouched by the gate
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 0
+
+        rig.suggest(a).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(b).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.suggest(c).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 2
+        // two open questions in the feed, each tagged with its own idea
+        val refs = rig.feed.page(0, 20).items.filter { it.kind == MessageKind.LOOK_FORWARD }.flatMap { it.cards }.filterIsInstance<Card.Choices>().map { it.ref }
+        refs shouldBe listOf("outing:$a", "outing:$b")
+
+        // the scout skips while both count
         rig.fire(at = now + 1.hours)
-        rig.due() shouldHaveSize 1 // two this week: nothing new
-
-        // a week later the first two are old enough; but a calendar full of all-day events leaves no slot
-        val later = now + 8.days
-        rig.busy("2026-11-24T00:00:00Z", "2026-12-02T00:00:00Z", allDay = true)
-        rig.fire(at = later)
+        rig.due().shouldBeEmpty()
+        // a post at Tuesday 15:03 does not make next Tuesday 15:00 skip, while the server still refuses at that moment
+        val almostWeek = now + 6.days + 23.hours + 30.minutes
+        rig.fire(at = almostWeek)
         rig.due() shouldHaveSize 1
+        rig.clock.now = almostWeek
+        rig.suggest(c).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "2 outings"
+        // a week and a minute later, both are old enough
+        rig.clock.now = now + 7.days + 1.minutes
+        rig.suggest(c).shouldBeInstanceOf<ToolResult.Ok>()
     }
 
     test("a declined idea is never offered again, and nothing is paused") {
         val rig = Rig(database, now, settings)
-        val id = (rig.call("save_outing_idea", "what" to "Jazz night at the Blue Room", "category" to "live music", "url" to "https://example.com/jazz")
-            .shouldBeInstanceOf<ToolResult.Ok>().content.split(" ")[1])
+        val id = rig.saveIdea("Jazz night at the Blue Room", "category" to "live music", "url" to "https://example.com/jazz")
         rig.fire()
         rig.due().single().instruction shouldContain "Saved ideas waiting: 1"
+        rig.suggest(id).shouldBeInstanceOf<ToolResult.Ok>()
 
         // "Not this time"
         rig.call("update_outing_idea", "id" to id, "state" to "declined").shouldBeInstanceOf<ToolResult.Ok>()
         rig.ideas.all().single().state shouldBe IdeaState.DECLINED
         val listed = rig.call("list_outing_ideas").shouldBeInstanceOf<ToolResult.Ok>().content
         listed shouldContain "Open ideas:\n(none)"
-        listed shouldContain "Declined, never suggest again: Jazz night at the Blue Room (live music)"
         listed shouldContain "Kinds declined: live music"
+        listed shouldNotContain "Jazz night" // what is for the lead's own list only while open; the brief lines hold kinds
 
-        // the same idea, saved again in other words or from the same page, is refused
+        // it cannot be offered again, nor saved again in other words or from the same page
+        rig.suggest(id).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "declined"
         rig.call("save_outing_idea", "what" to "jazz night at the blue room").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "never suggested again"
         rig.call("save_outing_idea", "what" to "Late jazz", "url" to "https://example.com/jazz/").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "never suggested again"
-        // a yes cannot revive it
         rig.call("update_outing_idea", "id" to id, "state" to "used").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "stays declined"
         rig.ideas.all().single().state shouldBe IdeaState.DECLINED
 
-        // the very next scout run still offers time: no pause after a no, but the idea is not among the open ones
+        // the very next scout run (the suggestion counts once, two are allowed) still offers time: no pause after a no
         rig.fire(at = now + 3.days, scheduledFor = now + 3.days)
         val offers = rig.due()
         offers shouldHaveSize 2
@@ -266,52 +309,53 @@ class OutingDbTest : FunSpec({
 
     test("an idea used for the calendar is recorded, and unknown ideas and states are refused") {
         val rig = Rig(database, now, settings)
-        val id = rig.call("save_outing_idea", "what" to "Pottery class").shouldBeInstanceOf<ToolResult.Ok>().content.split(" ")[1]
+        val id = rig.saveIdea("Pottery class")
         rig.call("update_outing_idea", "id" to id, "state" to "used").shouldBeInstanceOf<ToolResult.Ok>()
         rig.ideas.all().single().state shouldBe IdeaState.USED
         rig.call("update_outing_idea", "id" to id, "state" to "open").shouldBeInstanceOf<ToolResult.Error>()
         rig.call("update_outing_idea", "id" to Uuid.random().toString(), "state" to "declined").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No idea"
         rig.call("save_outing_idea", "what" to "Pottery class").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "calendar"
         rig.call("save_outing_idea", "what" to "x", "url" to "javascript:alert(1)").shouldBeInstanceOf<ToolResult.Error>()
+        rig.call("save_outing_idea", "what" to "Pottery 2", "category" to "dinner at 8pm").shouldBeInstanceOf<ToolResult.Error>().message shouldContain "generic words"
         rig.ideas.all().filter { it.state == IdeaState.OPEN }.shouldBeEmpty()
     }
-    test("the suggestion posts with a sources card and one-tap choices once the lead read the idea; before that the source is refused") {
+
+    test("a single all-day event does not block the scout, a trip does") {
+        val rig = Rig(database, now, settings)
+        rig.busy("2026-11-17T00:00:00Z", "2026-11-18T00:00:00Z", allDay = true) // Tuesday only
+        rig.fire()
+        rig.due().single().instruction shouldContain "2026-11-17T18:00-05:00 (Tue)"
+        // a trip over the whole window leaves nothing to offer
+        rig.busy("2026-11-16T00:00:00Z", "2026-11-24T00:00:00Z", allDay = true)
+        rig.fire(at = now + 1.hours, scheduledFor = now + 1.hours)
+        rig.due() shouldHaveSize 1
+    }
+
+    test("the suggestion posts with a sources card once the lead read the idea; before that the source is refused") {
         val rig = Rig(database, now, settings)
         val samMail = rig.mail("sam@example.com", daysAgo = 10)
-        rig.call("save_outing_idea", "what" to "Dinner at the new place", "sourceId" to samMail).shouldBeInstanceOf<ToolResult.Ok>()
-        val feed = FeedService(rig.feedStore, FeedHub())
-        val journal = PgRunJournal(database, rig.clock)
-        val own = OwnStateTools(
-            feed, ExposedMemoryStore(database, rig.clock), rig.constitutions, ExposedTaskStore(database, rig.clock, feed), { settings }, rig.clock, FailureGate(null),
-            SourceResolver(rig.reader, { settings }, journal, ExposedRunStore(database, rig.clock)),
+        rig.read("""[{"id":"$samMail"}]""")
+        val id = rig.saveIdea("Dinner at the new place", "sourceId" to samMail)
+        fun cards(): List<Card> = listOf(
+            Card.Text("Thursday evening is free. Dinner at the new place with Sam Example?"),
+            Card.Sources(listOf(SourceItem.Entity(samMail))),
+            Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time")), ref = "outing:$id"),
         )
-        val run = Uuid.random().toString()
-        suspend fun suggest(): ToolResult {
-            val input = buildJsonObject {
-                put("kind", "look_forward")
-                put(
-                    "cards",
-                    ClarityJson.encodeToJsonElement(
-                        listOf(
-                            Card.Text("Thursday evening is free. Dinner at the new place with Sam Example?"),
-                            Card.Sources(listOf(SourceItem.Entity(samMail))),
-                            Card.Choices("Add it?", listOf(Choice("Add to calendar", "Add to calendar"), Choice("Not this time", "Not this time"))),
-                        ),
-                    ),
-                )
-            }
-            return withContext(ToolCallContext(run, "call-${Uuid.random()}")) { own.sendToUser(RunScope("lead", isLead = true)).invoke(input) }
+        suspend fun post() = withContext(ToolCallContext(Uuid.random().toString(), "call-${Uuid.random()}")) {
+            rig.sendToUser.invoke(buildJsonObject { put("kind", "look_forward"); put("cards", ClarityJson.encodeToJsonElement(cards())) })
         }
-        suggest().shouldBeInstanceOf<ToolResult.Error>().message shouldContain samMail
-
-        // the scout's wake-up alone is not a tool result; list_outing_ideas is
+        // a run that never read the record cannot cite it
+        post().shouldBeInstanceOf<ToolResult.Error>().message shouldContain samMail
+        rig.ideas.offeredSince(now - 7.days).shouldBeEmpty()
+        // the lead's run read the idea's list (which names its source record) in an earlier step
         val listed = (rig.call("list_outing_ideas") as ToolResult.Ok).content
-        journal.append(run, Message(Role.ASSISTANT, listOf(Block.ToolUse("u1", "list_outing_ideas", JsonObject(emptyMap())))))
-        journal.append(run, Message(Role.USER, listOf(Block.Result("u1", listed))))
-        suggest().shouldBeInstanceOf<ToolResult.Ok>()
-        val posted = feed.page(0, 10).items.single()
+        rig.read(listed, tool = "list_outing_ideas")
+        withContext(ToolCallContext(rig.run, "call-${Uuid.random()}")) {
+            rig.sendToUser.invoke(buildJsonObject { put("kind", "look_forward"); put("cards", ClarityJson.encodeToJsonElement(cards())) })
+        }.shouldBeInstanceOf<ToolResult.Ok>()
+        val posted = rig.feed.page(0, 10).items.single()
         posted.kind shouldBe MessageKind.LOOK_FORWARD
         posted.cards.map { it::class } shouldBe listOf(Card.Text::class, Card.Sources::class, Card.Choices::class)
-        (posted.cards[2] as Card.Choices).options.map { it.label } shouldBe listOf("Add to calendar", "Not this time")
+        rig.ideas.offeredSince(now - 7.days) shouldHaveSize 1
     }
 })

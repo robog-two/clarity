@@ -212,7 +212,7 @@ class LeadRig(
     val nudgeTools = NudgeTools(nudges, tasks, settingsProvider, clock)
     val outingStore = net.robog.clarity.backend.outings.ExposedOutingStore(database, clock)
     val outingPeople = net.robog.clarity.backend.outings.ExposedOutingPeople(database)
-    val outingTools = net.robog.clarity.backend.outings.OutingTools(outingStore, outingPeople, reader, settingsProvider, clock)
+    val outingTools = net.robog.clarity.backend.outings.OutingTools(outingStore, outingPeople, reader, net.robog.clarity.backend.sources.SourceResolver(reader, settingsProvider, journal, runs), settingsProvider, clock)
 
     val reportStore = net.robog.clarity.backend.reports.ExposedReportStore(database, clock)
     val reportImages = net.robog.clarity.backend.reports.ReportImages(

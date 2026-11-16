@@ -70,12 +70,22 @@ class OutingPlanTest : FunSpec({
         freeSlots(listOf(busy("2026-11-15T22:00", "2026-11-16T21:00")), emptyList(), now, ny).shown().first() shouldBe "2026-11-17T18:00..22:00"
     }
 
-    test("an all-day event takes its whole days, however many, and is read on the date it names") {
+    test("a single all-day event (a holiday, a birthday) takes nothing, a trip of two or more days takes its days") {
         val friday = BusySpan(Instant.parse("2026-11-20T00:00:00Z"), Instant.parse("2026-11-21T00:00:00Z"), allDay = true)
-        val weekend = BusySpan(Instant.parse("2026-11-21T00:00:00Z"), Instant.parse("2026-11-23T00:00:00Z"), allDay = true)
-        freeSlots(listOf(friday), emptyList(), now, ny).shown().none { it.startsWith("2026-11-20") } shouldBe true
-        val rest = freeSlots(listOf(friday, weekend), emptyList(), now, ny).shown()
-        rest shouldBe listOf("2026-11-16T18:00..22:00", "2026-11-17T18:00..22:00", "2026-11-18T18:00..22:00", "2026-11-19T18:00..22:00")
+        freeSlots(listOf(friday), emptyList(), now, ny).shown().any { it.startsWith("2026-11-20") } shouldBe true
+        val trip = BusySpan(Instant.parse("2026-11-21T00:00:00Z"), Instant.parse("2026-11-23T00:00:00Z"), allDay = true) // Saturday and Sunday
+        freeSlots(listOf(friday, trip), emptyList(), now, ny).shown() shouldBe
+            listOf("2026-11-16T18:00..22:00", "2026-11-17T18:00..22:00", "2026-11-18T18:00..22:00", "2026-11-19T18:00..22:00", "2026-11-20T18:00..22:00")
+        val midweek = BusySpan(Instant.parse("2026-11-18T00:00:00Z"), Instant.parse("2026-11-20T00:00:00Z"), allDay = true) // Wednesday and Thursday
+        freeSlots(listOf(midweek), emptyList(), now, ny).shown().none { it.startsWith("2026-11-18") || it.startsWith("2026-11-19") } shouldBe true
+    }
+
+    test("a full calendar read fails closed: after the last event returned, the window counts as taken") {
+        val events = (0 until 3).map { busy("2026-11-16T0${it + 1}:00", "2026-11-16T0${it + 1}:30") }
+        busyFrom(events, at("2026-11-23T00:00"), cap = 4) shouldBe events
+        val cut = busyFrom(events, at("2026-11-23T00:00"), cap = 3)
+        cut.last() shouldBe BusySpan(events.maxOf { it.start }, at("2026-11-23T00:00"))
+        freeSlots(cut, emptyList(), now, ny).shouldBeEmpty()
     }
 
     test("protected times are taken: a blocked evening, and a block that crosses midnight") {
@@ -160,15 +170,18 @@ class OutingPlanTest : FunSpec({
         val quiet = ContactRef("c-quiet", "Quiet Example", listOf(Handle.email("quiet@example.com")))
         val nobody = ContactRef("c-none", "No Handle", emptyList())
         val today = at("2026-11-16T14:00")
-        fun msg(daysAgo: Int, vararg who: Handle) = MessageParties(today - daysAgo.days, who.toList())
+        val me = Handle.email("me@example.com")
+        val myPhone = Handle.phone("+15555550100")
+        fun received(daysAgo: Int, from: Handle, vararg to: Handle = arrayOf(me), account: Handle = me) = MessageParties(today - daysAgo.days, from, to.toList(), account)
+        fun sent(daysAgo: Int, vararg to: Handle, account: Handle = me) = MessageParties(today - daysAgo.days, account, to.toList(), account)
 
         test("sent or received, email or SMS, formatting aside") {
             val found = recentContacts(
                 listOf(sam, pat, quiet, nobody),
                 listOf(
-                    msg(3, Handle.email("SAM@example.com")), // received from Sam, case aside
-                    msg(10, Handle.email("pat@example.com")), // sent to Pat
-                    msg(1, Handle.phone("5555550123")), // an SMS with Sam's number written another way
+                    received(3, Handle.email("SAM@example.com")), // Sam wrote to the person, case aside
+                    sent(10, Handle.email("pat@example.com")), // the person wrote to Pat
+                    received(1, Handle.phone("5555550123"), myPhone, account = myPhone), // a text from Sam's number written another way
                 ),
                 today,
             )
@@ -177,35 +190,114 @@ class OutingPlanTest : FunSpec({
         }
 
         test("a contact with no message, or no handle, is never company") {
-            recentContacts(listOf(quiet, nobody), listOf(msg(1, Handle.email("stranger@example.com"))), today).shouldBeEmpty()
+            recentContacts(listOf(quiet, nobody), listOf(received(1, Handle.email("stranger@example.com"))), today).shouldBeEmpty()
             recentContacts(listOf(sam), emptyList(), today).shouldBeEmpty()
-            recentContacts(emptyList(), listOf(msg(1, Handle.email("sam@example.com"))), today).shouldBeEmpty()
+            recentContacts(emptyList(), listOf(received(1, Handle.email("sam@example.com"))), today).shouldBeEmpty()
         }
 
         test("the edge is ninety days: the day itself counts, a second earlier does not") {
-            val edge = MessageParties(today - 90.days, listOf(Handle.email("pat@example.com")))
+            val edge = sent(90, Handle.email("pat@example.com"))
             recentContacts(listOf(pat), listOf(edge), today) shouldHaveSize 1
             recentContacts(listOf(pat), listOf(edge.copy(sentAt = edge.sentAt - 1.seconds)), today).shouldBeEmpty()
             recentContacts(listOf(pat), listOf(edge.copy(sentAt = today - 89.days)), today) shouldHaveSize 1
         }
 
         test("only the newest message counts, and a message from the future is no exchange") {
-            val msgs = listOf(msg(80, Handle.email("sam@example.com")), msg(5, Handle.email("sam@example.com")), msg(120, Handle.email("sam@example.com")))
+            val msgs = listOf(received(80, Handle.email("sam@example.com")), received(5, Handle.email("sam@example.com")), received(120, Handle.email("sam@example.com")))
             recentContacts(listOf(sam), msgs, today).single().lastAt shouldBe today - 5.days
-            recentContacts(listOf(sam), listOf(MessageParties(today + 1.days, listOf(Handle.email("sam@example.com")))), today).shouldBeEmpty()
+            recentContacts(listOf(sam), listOf(received(-1, Handle.email("sam@example.com"))), today).shouldBeEmpty()
+        }
+
+        test("a mailing list is not an exchange: more than five recipients, or the person not among them") {
+            val list = (1..6).map { Handle.email("p$it@example.com") }
+            recentContacts(listOf(pat), listOf(sent(1, Handle.email("pat@example.com"), *list.toTypedArray())), today).shouldBeEmpty()
+            recentContacts(listOf(pat), listOf(received(1, Handle.email("pat@example.com"), *list.toTypedArray(), me)), today).shouldBeEmpty()
+            // five recipients is still a conversation
+            recentContacts(listOf(pat), listOf(sent(1, Handle.email("pat@example.com"), *list.take(4).toTypedArray())), today) shouldHaveSize 1
+            // Pat wrote to someone else and merely copied the person in a list the person is not on
+            recentContacts(listOf(pat), listOf(received(1, Handle.email("pat@example.com"), Handle.email("other@example.com"))), today).shouldBeEmpty()
+        }
+
+        test("automated senders and the person's own addresses are never company") {
+            val bot = ContactRef("c-bot", "Shop", listOf(Handle.email("no-reply@example.com"), Handle.email("notifications@example.com")))
+            val self = ContactRef("c-self", "Me", listOf(Handle.email("me@example.com")))
+            recentContacts(
+                listOf(bot, self),
+                listOf(received(1, Handle.email("no-reply@example.com")), received(1, Handle.email("Notifications@example.com")), sent(1, Handle.email("me@example.com")), received(1, Handle.email("me@example.com"))),
+                today,
+            ).shouldBeEmpty()
         }
 
         test("most recent first, ties by name") {
             val a = ContactRef("a", "Zed", listOf(Handle.email("z@example.com")))
             val b = ContactRef("b", "Amy", listOf(Handle.email("a@example.com")))
             val c = ContactRef("c", "Bo", listOf(Handle.email("b@example.com")))
-            val at1 = today - 2.days
             recentContacts(
                 listOf(a, b, c),
-                listOf(MessageParties(at1, listOf(Handle.email("z@example.com"))), MessageParties(at1, listOf(Handle.email("a@example.com"))), MessageParties(today - 1.days, listOf(Handle.email("b@example.com")))),
+                listOf(received(2, Handle.email("z@example.com")), received(2, Handle.email("a@example.com")), received(1, Handle.email("b@example.com"))),
                 today,
             ).map { it.name } shouldBe listOf("Bo", "Amy", "Zed")
         }
+    }
+
+    test("automated addresses are recognised by their local part, never a person's") {
+        listOf("noreply@a.example", "No-Reply@a.example", "donotreply@a.example", "do-not-reply@a.example", "notifications@a.example", "mailer-daemon@a.example", "no_reply+x@a.example")
+            .forEach { isAutomatedAddress(it) shouldBe true }
+        listOf("sam@a.example", "reply.sam@a.example", "+15555550123").forEach { isAutomatedAddress(it) shouldBe false }
+    }
+
+    test("the weekly budget: the server refuses a third suggestion within seven days, and the scout counts a little less") {
+        val idea = SavedIdea("i1", "Jazz night", null, "live music", null, null, null, null, null, IdeaState.OPEN, now)
+        val offered = listOf(now - 2.days, now - 6.days)
+        suggestionRefusal(idea, offered, now)!! shouldContain "2 outings"
+        suggestionRefusal(idea, listOf(now - 2.days, now - 8.days), now) shouldBe null
+        suggestionRefusal(idea, emptyList(), now) shouldBe null
+        suggestionRefusal(null, emptyList(), now)!! shouldContain "save_outing_idea"
+        suggestionRefusal(idea.copy(state = IdeaState.DECLINED), emptyList(), now)!! shouldContain "declined"
+        // a Tuesday 15:03 post is under seven days old at the next Tuesday 15:00 run for the server but not for the scout
+        val post = at("2026-11-17T15:03")
+        val nextScout = at("2026-11-24T15:00")
+        (nextScout - post < SUGGESTION_WINDOW) shouldBe true
+        (nextScout - post < SCOUT_BUDGET_WINDOW) shouldBe false
+    }
+
+    test("a tap carries the prompt and ref of its card to the lead, and typed words carry nothing") {
+        net.robog.clarity.backend.agent.answeringNote("Jazz night at the Blue Room?", "outing:abc") shouldBe "(tapped on: Jazz night at the Blue Room? [ref outing:abc])"
+        net.robog.clarity.backend.agent.answeringNote(null, "outing:abc") shouldBe "(tapped on: [ref outing:abc])"
+        net.robog.clarity.backend.agent.answeringNote("  ", null) shouldBe null
+        val tap = net.robog.clarity.backend.agent.InboxItem.UserInput(
+            net.robog.clarity.shared.feed.ClientInputId("c1"), "Not this time", answering = net.robog.clarity.backend.agent.answeringNote("Hike?", "outing:b"),
+        )
+        val rendered = net.robog.clarity.backend.agent.renderDeliveries(
+            listOf(net.robog.clarity.backend.agent.PendingItem(1, tap, now)), now, ny,
+        ).single().message.content.filterIsInstance<net.robog.clarity.harness.Block.Text>().single().text
+        rendered shouldBe "Not this time (tapped on: Hike? [ref outing:b])"
+    }
+
+    test("the outing ref names the idea, and nothing else") {
+        outingIdeaOf("outing:abc-1") shouldBe "abc-1"
+        outingIdeaOf(" outing: abc-1 ") shouldBe "abc-1"
+        outingIdeaOf("outing:") shouldBe null
+        outingIdeaOf("task:abc") shouldBe null
+        outingIdeaOf(null) shouldBe null
+    }
+
+    test("the brief for a web search holds kinds only, and a name in an idea's text is found") {
+        fun idea(what: String, kind: String?, state: IdeaState, day: Int) =
+            SavedIdea("i$day", what, null, kind, null, null, null, null, null, state, now + day.days)
+        val (liked, declined) = kindsSummary(
+            listOf(
+                idea("Gig with Sam Example", "Live Music", IdeaState.USED, 1), idea("Dinner", "dinner", IdeaState.USED, 2),
+                idea("Opera", "opera", IdeaState.DECLINED, 3), idea("Another", "live music", IdeaState.DECLINED, 4), idea("Open one", "hike", IdeaState.OPEN, 5),
+            ),
+        )
+        liked shouldBe listOf("dinner", "live music")
+        declined shouldBe listOf("live music", "opera")
+        (liked + declined).none { "sam" in it.lowercase() } shouldBe true
+        namesIn("Dinner with Sam Example at Luigi's", listOf("Sam Example", "Pat Example")) shouldBe "Sam Example"
+        namesIn("Jazz at the Blue Room", listOf("Sam Example", "Blue")) shouldBe "Blue" // a saved contact called Blue would be found: whole words only
+        namesIn("Samurai exhibit", listOf("Sam")) shouldBe null
+        namesIn("jazz night", listOf("Sam Example", "Al")) shouldBe null
     }
 
     context("ideas") {
@@ -242,8 +334,10 @@ class OutingPlanTest : FunSpec({
         text shouldContain "Sam Example (contact c-sam)"
         text shouldContain "nobody else"
         text shouldContain "Saved ideas waiting: 2"
-        text shouldContain "only the city, the time window"
+        text shouldContain "built only from the city, the time window"
         text shouldContain "web_search"
+        text shouldContain "outing:<idea id>"
+        text shouldContain "only when it reports done"
         text shouldNotContain "@"
         outingInstruction(listOf(slot), emptyList(), 0, ny) shouldContain "the person alone"
     }

@@ -215,6 +215,8 @@ sealed interface Card {
         /** The [Choice.reply] the person tapped; null while unanswered. */
         val chosen: String? = null,
         val fallbackText: String = choicesFallback(prompt, options),
+        /** An opaque tag set by the poster and never shown ("outing:<idea id>"). A tap reaches the agent with it, so it knows which question was answered. */
+        val ref: String? = null,
     ) : Card
 
     /**

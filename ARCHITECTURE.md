@@ -544,34 +544,48 @@ pure code (`outings/OutingPlan.kt`), with no model call, whether to wake the lea
 
 - `freeSlots(events, protectedTimes, now, zone)`: in the next 7 local days, weekday evenings from
   18:00 and Saturday and Sunday from 09:00, all until 22:00, stretches of at least 2 h that start at
-  least 2 h from now. Taken: calendar events (an all-day event takes its whole days), overlaps with
-  the constitution's protected times, midnight-spanning events and blocks. DST follows the local clock.
-- `scoutPlan(slots, suggestedThisWeek)`: skips with no slot, or when 2 `look_forward` posts already
-  went out in the last 7 days; otherwise offers the 3 soonest slots. There is no cooldown after a
-  "no": only the count of suggestions matters.
-- `recentContacts(contacts, messages, now)`: the only people that may be named as company are saved
-  contacts who sent or received a message (email, SMS or chat) in the last 90 days.
+  least 2 h from now. Taken: calendar events, all-day events of two or more days (a trip; a single
+  all-day event such as a holiday or birthday takes nothing), overlaps with the constitution's
+  protected times, midnight-spanning events and blocks. DST follows the local clock. The calendar is
+  read for exactly that window, ordered; a read that hits the 500-event cap fails closed (the rest of
+  the window counts as taken).
+- `scoutPlan(slots, suggestedThisWeek)`: skips with no slot, or when 2 outings were offered in the
+  last 6 days 23 h (counted from `outing_idea.suggested_at`, a little under a week so a Tuesday
+  15:03 post does not make next Tuesday's run skip); otherwise offers the 3 soonest slots. No cooldown
+  after a "no".
+- `recentContacts(contacts, messages, now)`: company may only be a saved contact the person sent a
+  message to, or who sent the person one directly (at most 5 recipients, so lists are out), in the
+  last 90 days, over email, SMS or chat. The person's own addresses and automated senders (`noreply`,
+  `notifications`, `mailer-daemon`...) never count. The message query is newest first, bounded, and
+  drops lists in SQL.
 
 When it wakes the lead, the `job_due` item carries the slots, the number of saved ideas and those
 contacts (names and ids) and the steps to follow. Saved ideas live in `outing_idea` (`V53`: what,
-place, kind, window, contact, source record, url, `state` open, used or declined), through the
-lead-only tools `save_outing_idea`, `list_outing_ideas` (a record tool, so the ids in it can be cited
-on a sources card) and `update_outing_idea`. The periodic review asks the lead to save ideas it spots
-(a gig in a newsletter, "we should get dinner"). A declined idea stays declined: saving the same
-idea again (same wording or page) is refused, a yes cannot revive it, and nothing pauses the scout.
+place, kind, window, contact, source record, url, `state` open, used or declined, `suggested_at`),
+through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
+`list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
+a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
+(the sources-card rule), a contact outside the 90 days, and names in the idea's text (company goes in
+`withContactId`). A declined idea stays declined: saving it again (same wording or page) is refused
+and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
 
 If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
-tools, so its brief is all it knows: the city, the time window, the interests and the kinds of outing
-the person liked or declined, taken from the profile, memory and `list_outing_ideas`. When the city
-or interests are unknown the lead skips the web search and offers saved ideas only. The helper
-searches and fetches pages in its own run; only its short result (up to 3 events with title, time,
-place and page address) comes back to the lead. A suggestion is one `send_to_user` with kind
-`look_forward` (it pushes at the afternoon hour the scout runs, and counts toward the daily limit),
-a text, a sources card and a `Card.Choices` with "Add to calendar" and "Not this time". The sources
-rules hold as everywhere: a record id is citable once `list_outing_ideas` returned it, and a page
-address once the helper fetched it, in an earlier step. A tap on Add comes back as the person's own
-input (so `create_event` is their request, and the guard still applies); Not this time adds nothing.
-The lead then records the answer with `update_outing_idea` and in the journal.
+tools, so its brief is all it knows: the city (from the profile or memory), the time window, the
+interests, and the "kinds liked / kinds declined" lines of `list_outing_ideas` (a separate summary of
+categories only, no idea text and no names). When the city or interests are unknown the lead skips
+the web search and offers saved ideas only. The helper searches and fetches pages in its own run; only
+its short result (up to 3 events) returns to the lead, which saves the one it picks as an idea first.
+
+Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sources card and a
+`Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
+The server is the authority: `OutingTools.gateSuggestions` wraps the lead's `send_to_user` and refuses
+a look_forward post with no outing ref, an idea that is not open, or a third offer in 7 days; after a
+successful post it sets `suggested_at`. A tap on a choice arrives as the person's input with
+`(tapped on: <prompt> [ref outing:<id>])` appended (`InboxItem.UserInput.answering`), so two open
+suggestions are told apart. Add to calendar is the person's own request, so `create_event` runs (the
+guard still applies) and the idea is marked used only once `create_event` reports done; a held event
+leaves the idea open until it is approved (the lead does not mark it). Not this time adds nothing and
+marks the idea declined. The lead then journals the kind of outing and the answer.
 
 ### Reports (documents the agent writes)
 

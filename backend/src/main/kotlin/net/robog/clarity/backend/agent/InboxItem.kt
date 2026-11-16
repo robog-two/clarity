@@ -43,6 +43,8 @@ sealed interface InboxItem {
         val text: String,
         val source: InputSource = InputSource.TYPED,
         val sessionId: SessionId? = null,
+        /** The prompt and ref of the choices card a tap answered, as [answeringNote] writes them; null for typed words. */
+        val answering: String? = null,
     ) : InboxItem {
         override val priority get() = Priority.USER
         override val summary get() = text
@@ -249,7 +251,10 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
     val others = items.filter { it.item !is InboxItem.UserInput }
     // The person's words never pass for a client-side summary (which would cut the context there).
     fun spoken(text: String) = if (text.startsWith(net.robog.clarity.harness.SUMMARY_MARKER)) " $text" else text
-    val userDeliveries = users.map { Delivery(listOf(it.seq), Message.user(spoken((it.item as InboxItem.UserInput).text))) }
+    val userDeliveries = users.map {
+        val input = it.item as InboxItem.UserInput
+        Delivery(listOf(it.seq), Message.user(spoken(input.text + input.answering?.let { note -> " $note" }.orEmpty())))
+    }
     if (others.isEmpty()) {
         val clock = Delivery(emptyList(), Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text("[now ${LocalTimes.now(now, zone)}]"))))
         return if (statesClock && userDeliveries.isNotEmpty()) userDeliveries + clock else userDeliveries
@@ -262,6 +267,14 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
         }
     }
     return userDeliveries + Delivery(others.map { it.seq }, Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text(text))))
+}
+
+/** Pure: what the lead is told about the card a tap answered: "(tapped on: <prompt> [ref outing:<id>])"; null when the card has neither. */
+fun answeringNote(prompt: String?, ref: String?): String? {
+    val asked = prompt?.replace(Regex("\\s+"), " ")?.trim()?.take(120)?.takeIf { it.isNotEmpty() }
+    val tag = ref?.trim()?.take(80)?.takeIf { it.isNotEmpty() }
+    if (asked == null && tag == null) return null
+    return "(tapped on: " + listOfNotNull(asked, tag?.let { "[ref $it]" }).joinToString(" ") + ")"
 }
 
 private val UNTRUSTED_TAG = Regex("<(/?)\\s*untrusted", RegexOption.IGNORE_CASE)

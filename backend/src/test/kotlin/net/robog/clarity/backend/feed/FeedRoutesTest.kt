@@ -184,6 +184,24 @@ class FeedRoutesTest : FunSpec({
         }
     }
 
+    test("a tap reaches the lead with the prompt and the ref of the card it answered, so two open questions are told apart") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Add to calendar", "Add to calendar"), net.robog.clarity.shared.feed.Choice("Not this time", "Not this time"))
+            val first = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Jazz night?", options, ref = "outing:aaa")))).item
+            val second = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Hike?", options, ref = "outing:bbb")))).item
+            suspend fun tap(clientId: String, item: FeedItem) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), "Not this time", inReplyTo = item.id))
+            }
+            tap("ref-1", first).status shouldBe HttpStatusCode.OK
+            tap("ref-2", second).status shouldBe HttpStatusCode.OK
+            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("ref-") }.map { it.answering } shouldBe
+                listOf("(tapped on: Jazz night? [ref outing:aaa])", "(tapped on: Hike? [ref outing:bbb])")
+        }
+    }
+
     test("blank input is a bad request") {
         testApplication {
             val client = setup()

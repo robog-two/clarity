@@ -13,6 +13,8 @@ CREATE TABLE outing_idea (
     url          text,
     state        text        NOT NULL DEFAULT 'open',
     created_at   timestamptz NOT NULL,
-    decided_at   timestamptz
+    decided_at   timestamptz,
+    -- when its suggestion was posted: the weekly budget of two counts these
+    suggested_at timestamptz
 );
 CREATE INDEX outing_idea_state_idx ON outing_idea (state, created_at);

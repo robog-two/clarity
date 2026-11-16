@@ -23,7 +23,7 @@ import net.robog.clarity.shared.time.ScheduleClock
  * runs the lead at all, and who may be named as company. No clock, no SQL, no model.
  */
 
-/** A stretch of the person's calendar that is taken. All-day events cover their whole days (see [freeSlots]). */
+/** A stretch of the person's calendar that is taken. All-day events of two or more days cover those days (see [freeSlots]). */
 data class BusySpan(val start: Instant, val end: Instant, val allDay: Boolean = false)
 
 /** A free stretch: `[start, end)`. */
@@ -51,6 +51,12 @@ const val OUTING_DAYS_AHEAD = 7
 
 /** Suggestions per rolling week. */
 const val SUGGESTIONS_PER_WEEK = 2
+
+/** The server refuses a third suggestion within this long of the post. */
+val SUGGESTION_WINDOW: Duration = 7.days
+
+/** The scout counts over a little less, so a Tuesday 15:03 post does not make the next Tuesday 15:00 run skip. */
+val SCOUT_BUDGET_WINDOW: Duration = SUGGESTION_WINDOW - 1.hours
 
 /** Slots handed to the lead at most, so the brief stays short. */
 const val MAX_SLOTS_OFFERED = 3
@@ -88,18 +94,18 @@ private fun gaps(busy: List<Span>, from: Instant, to: Instant): List<Span> {
  * Pure: the free time worth an outing in the next [OUTING_DAYS_AHEAD] days (the person's days in
  * [zone], today included): on weekdays the evening from [EVENING_FROM], on Saturday and Sunday the day
  * from [WEEKEND_FROM], both until [OUTING_UNTIL], and only stretches of at least [MIN_SLOT]. Taken are
- * the calendar [events] (an all-day event takes its whole days: the person is away or booked, and it
- * is not the scout's call otherwise), anything that overlaps one of the constitution's [protectedTimes]
+ * the calendar [events] (an all-day event of two or more days takes those days: a trip. A single all-day
+ * event, a holiday or a birthday, takes nothing), anything that overlaps one of the constitution's [protectedTimes]
  * and the first [SLOT_LEAD] from [now]. Lengths are real elapsed time, so a day with a clock change
  * is as long as it truly is; an event that spans midnight takes both evenings it touches.
  */
 fun freeSlots(events: List<BusySpan>, protectedTimes: List<TimeBlock>, now: Instant, zone: TimeZone): List<Slot> {
     val today = ScheduleClock.homeDate(now, zone)
     val last = today.plus(DatePeriod(days = OUTING_DAYS_AHEAD - 1))
-    val taken = events.map { e ->
+    val taken = events.mapNotNull { e ->
         if (e.allDay) {
             val (first, lastDay) = LocalTimes.allDayDates(e.start, e.end)
-            Span(first.atStartOfDayIn(zone), lastDay.plus(DatePeriod(days = 1)).atStartOfDayIn(zone))
+            if (first == lastDay) null else Span(first.atStartOfDayIn(zone), lastDay.plus(DatePeriod(days = 1)).atStartOfDayIn(zone))
         } else {
             Span(e.start, e.end)
         }
@@ -112,6 +118,17 @@ fun freeSlots(events: List<BusySpan>, protectedTimes: List<TimeBlock>, now: Inst
         gaps(busy, from, to).filter { it.end - it.start >= MIN_SLOT }.map { Slot(it.start, it.end) }
     }.toList()
 }
+
+/** The most calendar events one scout read takes; more than this and the rest of the window counts as taken. */
+const val MAX_EVENTS_READ = 500
+
+/**
+ * Pure: [events] (the calendar's events overlapping the window, ordered by start, at most [cap] of them)
+ * as busy spans. A full read may have lost later events, so it fails closed: everything from the last
+ * start returned until [until] counts as taken.
+ */
+fun busyFrom(events: List<BusySpan>, until: Instant, cap: Int = MAX_EVENTS_READ): List<BusySpan> =
+    if (events.size < cap) events else events + BusySpan(events.maxOf { it.start }, until)
 
 /** Why the scout does not wake the lead. */
 enum class SkipReason { NO_FREE_SLOT, WEEK_BUDGET_USED }
@@ -127,7 +144,7 @@ sealed interface ScoutPlan {
 
 /**
  * Pure: whether to wake the lead. [suggestedThisWeek] is how many outing suggestions went out in the
- * last seven days. Nothing else counts: a "not this time" leaves no pause and no cooldown, and the
+ * last [SCOUT_BUDGET_WINDOW] (counted from `outing_idea.suggested_at`). Nothing else counts: a "not this time" leaves no pause and no cooldown, and the
  * idea it was about is simply never offered again (see [ideaRefusal]).
  */
 fun scoutPlan(slots: List<Slot>, suggestedThisWeek: Int, perWeek: Int = SUGGESTIONS_PER_WEEK): ScoutPlan = when {
@@ -139,23 +156,46 @@ fun scoutPlan(slots: List<Slot>, suggestedThisWeek: Int, perWeek: Int = SUGGESTI
 /** A saved contact, as the scout needs it. [id] is the contact record's id. */
 data class ContactRef(val id: String, val name: String, val handles: List<Handle>)
 
-/** One message's other parties (the person's own account left out) and when it was sent. */
-data class MessageParties(val sentAt: Instant, val parties: List<Handle>)
+/** One message as the company rule needs it: who sent it, to whom, and the person's own account it was seen on. */
+data class MessageParties(val sentAt: Instant, val sender: Handle, val recipients: List<Handle>, val account: Handle)
 
 /** A contact the person exchanged messages with lately, and when they last did. */
 data class RecentContact(val id: String, val name: String, val lastAt: Instant)
 
+/** A message with more recipients than this is a list, not a conversation. */
+const val MAX_DIRECT_RECIPIENTS = 5
+
+private val AUTOMATED_LOCAL = Regex(
+    "^(no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply|notifications?|notify|mailer-daemon|postmaster|bounces?|alerts?|newsletter|automated)([-_.+].*)?$",
+)
+
+/** Pure: whether [value] looks like an address that only sends automated mail. Phone numbers never do. */
+fun isAutomatedAddress(value: String): Boolean {
+    val v = value.trim().lowercase()
+    if ('@' !in v) return false
+    return AUTOMATED_LOCAL.matches(v.substringBefore('@'))
+}
+
 /**
- * Pure: the contacts that may be named as company. A contact qualifies when a message sent or received
- * in the last [COMPANY_WINDOW] (email, SMS or chat, the edge day included) has one of its handles
- * among its parties. A contact with no such message, or none at all, never does. Most recent first.
+ * Pure: the contacts that may be named as company. A contact qualifies when, in the last [COMPANY_WINDOW]
+ * (the edge day included), either the person sent it a message (it is among at most [MAX_DIRECT_RECIPIENTS]
+ * recipients) or it sent the person one directly (the person is among at most [MAX_DIRECT_RECIPIENTS]
+ * recipients; a direct text has one). Email, SMS and chat all count. The person's own addresses (every
+ * account the messages were seen on) and automated senders ([isAutomatedAddress]) never do, and a
+ * contact with no such message, or no handle, is never company. Most recent first.
  */
 fun recentContacts(contacts: List<ContactRef>, messages: List<MessageParties>, now: Instant, window: Duration = COMPANY_WINDOW): List<RecentContact> {
     val since = now - window
+    val own = messages.map { handleKey(it.account.value) }.toSet()
     val lastByKey = HashMap<String, Instant>()
+    fun see(h: Handle, at: Instant) {
+        val key = handleKey(h.value)
+        if (key !in own && !isAutomatedAddress(h.value)) lastByKey.merge(key, at) { a, b -> maxOf(a, b) }
+    }
     for (m in messages) {
-        if (m.sentAt < since || m.sentAt > now) continue
-        for (h in m.parties) lastByKey.merge(handleKey(h.value), m.sentAt) { a, b -> maxOf(a, b) }
+        if (m.sentAt < since || m.sentAt > now || m.recipients.isEmpty() || m.recipients.size > MAX_DIRECT_RECIPIENTS) continue
+        if (handleKey(m.sender.value) in own) m.recipients.forEach { see(it, m.sentAt) }
+        else if (m.recipients.any { handleKey(it.value) in own }) see(m.sender, m.sentAt)
     }
     return contacts.mapNotNull { c ->
         val last = c.handles.mapNotNull { lastByKey[handleKey(it.value)] }.maxOrNull() ?: return@mapNotNull null
@@ -202,12 +242,48 @@ data class SavedIdea(
     val url: String?,
     val state: IdeaState,
     val createdAt: Instant,
+    /** When it was offered to the person (the post of its suggestion); null while it never was. */
+    val suggestedAt: Instant? = null,
 ) {
     fun matches(otherWhat: String, otherUrl: String?): Boolean =
         what.normalized() == otherWhat.normalized() || (url != null && otherUrl != null && url.trimEnd('/').equals(otherUrl.trim().trimEnd('/'), ignoreCase = true))
 
     /** Whether the idea can still happen in [slot]: open and, when bound to a window, overlapping it. */
     fun fits(slot: Slot): Boolean = state == IdeaState.OPEN && (from == null || to == null || (from < slot.end && to > slot.start))
+}
+
+/** Pure: the kinds of outing the person liked (used ideas) and declined, each kind once, newest first, never more than [max]. Kinds only: no idea text, no names. */
+fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List<String>> {
+    fun kinds(state: IdeaState) = ideas.filter { it.state == state }.sortedByDescending { it.createdAt }
+        .mapNotNull { it.category?.trim()?.lowercase()?.takeIf(String::isNotEmpty) }.distinct().take(max)
+    return kinds(IdeaState.USED) to kinds(IdeaState.DECLINED)
+}
+
+/** Pure: the first of [names] that [text] mentions (whole words, any case), or null. Names belong in the company field, never in an idea's text. */
+fun namesIn(text: String, names: List<String>): String? {
+    val lower = text.lowercase()
+    return names.map { it.trim() }.filter { it.length >= 3 }.firstOrNull { n ->
+        Regex("(^|[^\\p{L}])" + Regex.escape(n.lowercase()) + "([^\\p{L}]|$)").containsMatchIn(lower)
+    }
+}
+
+/** The ref of the choices card of an outing suggestion: `outing:<idea id>`. */
+const val OUTING_REF_PREFIX = "outing:"
+
+/** Pure: the idea id in [ref] (`outing:<id>`), or null when it is not an outing ref. */
+fun outingIdeaOf(ref: String?): String? =
+    ref?.trim()?.takeIf { it.startsWith(OUTING_REF_PREFIX) }?.removePrefix(OUTING_REF_PREFIX)?.trim()?.takeIf { it.isNotEmpty() }
+
+/**
+ * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved
+ * idea, and fewer than [perWeek] other ideas may have been offered in the last [SUGGESTION_WINDOW]
+ * ([offered] are those other ideas' `suggestedAt`).
+ */
+fun suggestionRefusal(idea: SavedIdea?, offered: List<Instant>, now: Instant, perWeek: Int = SUGGESTIONS_PER_WEEK): String? = when {
+    idea == null -> "No saved idea has that id. Save the outing with save_outing_idea first, then suggest it."
+    idea.state != IdeaState.OPEN -> "\"${idea.what}\" is ${idea.state.wire}; only an open idea can be suggested."
+    offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
+    else -> null
 }
 
 /**
@@ -230,14 +306,17 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdea
     append(
         "\nSteps. 1. list_outing_ideas, and pick an open idea that fits a slot. " +
             "2. If none fits, and the profile or memory tell you the person's city and what they enjoy, delegate ONE helper with tools [\"web_search\"] " +
-            "to find up to 3 events in that window. Its brief holds only the city, the time window, their interests and the kinds of outing they liked or declined " +
-            "(search_memory, list_outing_ideas): never a name, mail, address or anything else private. Ask for title, time, place and page address of each. " +
-            "If the city or interests are unknown, skip the web search and use saved ideas only. " +
+            "to find up to 3 events in that window. Its brief is built only from the city, the time window, their interests and the " +
+            "\"kinds\" lines of list_outing_ideas (kinds the person liked or declined, no names): never a name, mail, address or anything else private. " +
+            "Ask for title, time, place and page address of each. If the city or interests are unknown, skip the web search and use saved ideas only. " +
             "3. Nothing fits: send nothing. " +
-            "4. Otherwise save_outing_idea for a found event (it keeps what the person answers), then send_to_user with kind look_forward: a short text " +
-            "(\"Thursday evening is free. Jazz at the Blue Room with Sam Example?\"), a sources card (the idea's record id from list_outing_ideas, and the event page once a helper fetched it), " +
-            "and a choices card with the options Add to calendar and Not this time. " +
-            "Add to calendar comes back as the person's reply: create_event, then update_outing_idea used. " +
+            "4. Every suggestion is a saved idea: save_outing_idea for a found event first (what with no names, a kind, company in withContactId). " +
+            "Then send_to_user with kind look_forward: a short text (\"Thursday evening is free. Jazz at the Blue Room with Sam Example?\"), " +
+            "a sources card (the idea's source record id from list_outing_ideas, and the event page once a helper fetched it), " +
+            "and a choices card with ref \"outing:<idea id>\" and the options Add to calendar and Not this time. " +
+            "The server refuses it when the idea is not open or 2 outings were already suggested this week. " +
+            "A tap comes back as \"(tapped on: ... [ref outing:<idea id>])\": that ref names the idea. " +
+            "Add to calendar: create_event, and only when it reports done (if it was held for the person's approval, leave the idea open and say nothing more) update_outing_idea used. " +
             "Not this time: add nothing, update_outing_idea declined, and make no other plan for it. " +
             "Either way write_journal what kind of outing it was and the answer, so later briefs improve.",
     )

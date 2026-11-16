@@ -10,10 +10,13 @@ import kotlinx.datetime.LocalTime
 import net.robog.clarity.backend.agent.InboxItem
 import net.robog.clarity.backend.agent.InboxStore
 import net.robog.clarity.backend.agent.Priority
-import net.robog.clarity.backend.feed.FeedStore
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.outings.BusySpan
+import net.robog.clarity.backend.agent.homeDay
 import net.robog.clarity.backend.outings.IdeaState
+import net.robog.clarity.backend.outings.MAX_EVENTS_READ
+import net.robog.clarity.backend.outings.SCOUT_BUDGET_WINDOW
+import net.robog.clarity.backend.outings.busyFrom
 import net.robog.clarity.backend.outings.OUTING_DAYS_AHEAD
 import net.robog.clarity.backend.outings.OutingPeople
 import net.robog.clarity.backend.outings.OutingStore
@@ -36,7 +39,7 @@ val OUTING_SCOUT_AT: LocalTime = LocalTime(15, 0)
 
 /**
  * Twice a week in the afternoon: looks at the person's next seven days ([freeSlots]) and, only when
- * there is free time and fewer than two suggestions went out this week ([scoutPlan]), wakes the lead
+ * there is free time and fewer than two suggestions were posted in the last 6 days 23 hours ([scoutPlan], from `outing_idea.suggested_at`), wakes the lead
  * with the slots, how many ideas are saved and the people the person may bring ([OutingPeople.recent]).
  * A skip costs no model call. Everything private (calendar, contacts, messages) stays on the server;
  * the lead gets slot times and contact names only, and a web search helper gets less (see ARCHITECTURE.md).
@@ -46,7 +49,6 @@ val OUTING_SCOUT_AT: LocalTime = LocalTime(15, 0)
 class OutingScoutJob(
     private val reader: NounReader,
     private val constitutions: ConstitutionStore,
-    private val feed: FeedStore,
     private val ideas: OutingStore,
     private val people: OutingPeople,
     private val inbox: InboxStore,
@@ -60,9 +62,12 @@ class OutingScoutJob(
     override suspend fun fire(context: FireContext) {
         val zone = zoneOrUtc(context.settings.homeZone)
         val now = context.now
-        val busy = busyBetween(now - 1.days, now + (OUTING_DAYS_AHEAD + 1).days)
+        val from = homeDay(now, zone).first
+        val until = from + OUTING_DAYS_AHEAD.days
+        val busy = busyFrom(busyBetween(from, until), until)
         val slots = freeSlots(busy, constitutions.current()?.protectedTimes.orEmpty(), now, zone)
-        val plan = scoutPlan(slots, feed.lookForwardSince(now - 7.days).size)
+        // Suggestions are counted by when they were posted; a little under a week, so the same weekday and hour next week is not skipped.
+        val plan = scoutPlan(slots, ideas.offeredSince(now - SCOUT_BUDGET_WINDOW).size)
         if (plan !is ScoutPlan.Offer) {
             log.info { "outing scout: $plan" }
             return
@@ -79,11 +84,8 @@ class OutingScoutJob(
     }
 
     private suspend fun busyBetween(from: Instant, until: Instant): List<BusySpan> =
-        reader.calendarEvents(TimeRange(from, until), limit = MAX_EVENTS).map { BusySpan(it.payload.start, it.payload.end, it.payload.allDay) }
+        reader.calendarEvents(TimeRange(from, until), limit = MAX_EVENTS_READ).map { BusySpan(it.payload.start, it.payload.end, it.payload.allDay) }
 
-    private companion object {
-        const val MAX_EVENTS = 500
-    }
 }
 
 const val OUTING_JOB = "outing-scout"
