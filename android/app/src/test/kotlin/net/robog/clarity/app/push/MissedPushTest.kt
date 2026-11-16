@@ -149,13 +149,13 @@ class MissedPushTest {
         // The app was open on Settings with the service dead: the items reached the cache, nobody claimed them.
         rig.front = Front.Showing(Place.Tab(MainTab.Settings))
         rig.sync.apply(FeedEvent.ItemFinal(loud(1, "your flight moved")))
-        rig.sync.apply(FeedEvent.ItemFinal(agentItem(2, "a quiet note").copy(notify = "in_app")))
+        rig.sync.apply(FeedEvent.ItemFinal(agentItem(2, "an answer").copy(notify = "reply")))
         rig.front = Front.Background
 
         // The server has nothing newer, so the catch-up itself brings nothing; the cache does.
-        rig.backend.all = listOf(loud(1, "your flight moved"), agentItem(2, "a quiet note").copy(notify = "in_app"))
+        rig.backend.all = listOf(loud(1, "your flight moved"), agentItem(2, "an answer").copy(notify = "reply"))
         assertEquals(2, rig.fallback().run().posted)
-        assertEquals(listOf("your flight moved", "a quiet note"), rig.notifier.posted.map { it.text })
+        assertEquals(listOf("your flight moved", "an answer"), rig.notifier.posted.map { it.text })
         assertEquals(0, rig.fallback().run().posted, "once")
     }
 

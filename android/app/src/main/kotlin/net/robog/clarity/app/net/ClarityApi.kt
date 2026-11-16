@@ -365,14 +365,33 @@ class KtorClarityApi(
     override suspend fun feed(after: Long): ApiResult<FeedPage> =
         get(ApiPaths.FEED) { parameter("after", after) }
 
-    override suspend fun sendInput(input: UserInput): ApiResult<InputAccepted> =
-        authed { base ->
-            client.post {
-                url(base + ApiPaths.INPUT)
-                contentType(ContentType.Application.Json)
-                setBody(input)
+    /**
+     * 409 is the server saying a tap on a choices card came second: the body is the card's item as it
+     * stands (answered), which the caller stores like any accepted input, so the card shows the answer
+     * and nothing is reported as an error.
+     */
+    override suspend fun sendInput(input: UserInput): ApiResult<InputAccepted> {
+        val session = sessions.session.first() ?: return ApiResult.Failure(ApiError.NotConfigured)
+        return withContext(io) {
+            try {
+                val response = client.post {
+                    url(session.instanceUrl + ApiPaths.INPUT)
+                    contentType(ContentType.Application.Json)
+                    setBody(input)
+                }
+                if (response.status.isSuccess() || response.status.value == 409) ApiResult.Success(response.body<InputAccepted>())
+                else ApiResult.Failure(response.toError())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: SerializationException) {
+                ApiResult.Failure(ApiError.Malformed(e.message))
+            } catch (e: ContentConvertException) {
+                ApiResult.Failure(ApiError.Malformed(e.message))
+            } catch (e: Exception) {
+                ApiResult.Failure(ApiError.Unreachable(e.message))
             }
         }
+    }
 
     override suspend fun startSession(request: StartSession): ApiResult<Session> =
         authed { base ->

@@ -23,6 +23,7 @@ import net.robog.clarity.shared.connector.GrantsUpdate
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.InputAccepted
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.TaskId
@@ -285,7 +286,7 @@ interface FeedRepository {
     val signals: Flow<SyncSignal>
 
     /** Sends the person's input; retries with the same [UserInput.clientId] never duplicate. */
-    suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId? = null): ApiResult<InputAccepted>
+    suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId? = null, inReplyTo: FeedItemId? = null): ApiResult<InputAccepted>
     suspend fun decideHeld(id: net.robog.clarity.shared.governance.HeldActionId, decision: HeldDecision): ApiResult<Unit>
 }
 
@@ -302,8 +303,8 @@ class DefaultFeedRepository(
     override val agentBusy = feedSync.agentBusy
     override val signals = feedSync.signals
 
-    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?): ApiResult<InputAccepted> {
-        val input = UserInput(clientId ?: ClientInputId(ids.newId()), text, source, sessionId)
+    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?, inReplyTo: FeedItemId?): ApiResult<InputAccepted> {
+        val input = UserInput(clientId ?: ClientInputId(ids.newId()), text, source, sessionId, inReplyTo)
         val result = api.sendInput(input)
         // Show the person's own words immediately; the SSE replay of the same seq is a no-op.
         if (result is ApiResult.Success) store.upsertItem(result.value.item)

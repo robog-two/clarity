@@ -45,6 +45,8 @@ import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.MicRationale
 import net.robog.clarity.app.voice.MicStateChip
 import net.robog.clarity.app.voice.rememberMicAccess
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
 
@@ -68,6 +70,7 @@ fun AskScreen(
         onDecision = viewModel::decide,
         onReview = onReview,
         onAlways = viewModel::approveAlways,
+        onChoose = viewModel::choose,
         modifier = modifier,
         onOpenReport = onOpenReport,
         onOpenSource = onOpenSource,
@@ -89,8 +92,9 @@ fun AskContent(
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
     onOpenReport: ((String) -> Unit)? = null,
     onOpenSource: ((String) -> Unit)? = null,
+    onChoose: ((FeedItemId, Choice) -> Unit)? = null,
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
+    val env = CardEnv(onChoose = onChoose, held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     ChatLayout(
         modifier = modifier,

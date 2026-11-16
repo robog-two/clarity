@@ -32,6 +32,7 @@ import kotlin.time.Instant
 import net.robog.clarity.harness.tool
 import net.robog.clarity.shared.ClarityJson
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.MessageKind
 import net.robog.clarity.shared.governance.Urgency
 import net.robog.clarity.shared.report.ReportKind
 import net.robog.clarity.shared.report.ReportStyle
@@ -329,7 +330,8 @@ class ReportTools(
             input.message?.trim()?.takeIf { it.isNotEmpty() }?.let { Card.Text(it) },
             Card.Report(report.id, report.title, formats.map { it.wireName }),
         )
-        own.post(cards, input.urgency, sessionId = null, about = emptyList())
+        // A report is something the person asked for, so handing it over is always an answer (a reply): never held for the evening, never counted.
+        own.post(cards, input.urgency, sessionId = null, about = emptyList(), kind = MessageKind.REPLY, personWrote = true)
     }
 
     fun citeSources(): Tool = tool<CiteInput>(

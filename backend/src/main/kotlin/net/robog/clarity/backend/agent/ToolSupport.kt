@@ -44,21 +44,33 @@ class RunScope(
 ) {
     private val untrustedFlag = AtomicBoolean(untrusted)
     private val requestedFlag = AtomicBoolean(false)
+    private val answeringFlag = AtomicBoolean(false)
 
     val untrusted: Boolean get() = untrustedFlag.get()
     val requestedByUser: Boolean get() = requestedFlag.get()
 
+    /**
+     * Whether this turn carries the person's own input, so what the lead posts in it is a reply (see
+     * `resolveKind`). Apart from [requestedByUser] on purpose: a turn resumed after a crash knows
+     * from the journal that the person wrote, but stays as untrusting as before for the guard.
+     */
+    val answeringPerson: Boolean get() = answeringFlag.get()
+
     fun taint() {
         if (!untrustedFlag.getAndSet(true)) onTaint()
     }
-    fun userAsked() = requestedFlag.set(true)
+    fun userAsked() {
+        requestedFlag.set(true)
+        answeringFlag.set(true)
+    }
 
     /** The lead's current turn: the tasks it touched and the helpers it started (for linking them). */
     val turn = TurnTasks()
 
-    fun startTurn(untrusted: Boolean, requestedByUser: Boolean) {
+    fun startTurn(untrusted: Boolean, requestedByUser: Boolean, answeringPerson: Boolean = requestedByUser) {
         untrustedFlag.set(untrusted)
         requestedFlag.set(requestedByUser)
+        answeringFlag.set(answeringPerson)
         turn.reset()
     }
 

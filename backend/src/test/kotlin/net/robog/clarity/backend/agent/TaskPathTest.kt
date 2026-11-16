@@ -270,7 +270,7 @@ class TaskPathTest : FunSpec({
     test("send_to_user refuses a card without a known type, so nothing blank reaches the feed") {
         val r = LeadRig(database).also { it.reset() }
         val send = r.own.sendToUser()
-        fun cards(vararg card: JsonObject) = buildJsonObject { put("cards", JsonArray(card.toList())) }
+        fun cards(vararg card: JsonObject) = buildJsonObject { put("cards", JsonArray(card.toList())); put("kind", "check_in") }
         // what the model sent: a text card without its `type`
         val missing = send.invoke(cards(buildJsonObject { put("text", "Tim is in your contacts with only a phone number.") }))
         missing.shouldBeInstanceOf<net.robog.clarity.harness.ToolResult.Error>().message shouldContain "Invalid input for send_to_user"

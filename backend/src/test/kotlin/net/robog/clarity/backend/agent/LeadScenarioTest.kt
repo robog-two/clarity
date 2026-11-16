@@ -361,7 +361,51 @@ class LeadScenarioTest : FunSpec({
         helperJob.cancelAndJoin()
     }
 
-    test("send_to_user: normal items show in the feed, batch items wait for the evening summary") {
+    test("send_to_user on its own initiative: a check-in pushes, a finding with no due time and a batch item wait for the evening summary") {
+        val r = rig()
+        var call = 0
+        r.model.handler = {
+            call++
+            when (call) {
+                1 -> callTool(
+                    "toolu_a", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Is the report done?") })))
+                        put("kind", "check_in")
+                    },
+                )
+                2 -> callTool(
+                    "toolu_b", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "note"); put("text", "Newsletter digest ready.") })))
+                        put("urgency", "batch")
+                    },
+                )
+                3 -> callTool(
+                    "toolu_c", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Dana replied.") })))
+                    },
+                )
+                else -> end("done")
+            }
+        }
+        r.inbox.enqueue(InboxItem.JobDue("periodic_review", "Look over the day."))
+        r.lead.start()
+        r.lead.step()
+
+        val page = r.feed.page(0, 50).items
+        page.map { it.author } shouldBe listOf(FeedItem.Author.AGENT)
+        page.single().cards shouldBe listOf(Card.Text("Is the report done?"))
+        page.single().kind shouldBe net.robog.clarity.shared.feed.MessageKind.CHECK_IN
+        r.feedStore.notifyOf(page.single().id) shouldBe "push_now"
+        val waiting = r.feedStore.pendingBatch()
+        waiting.map { it.cards } shouldBe listOf(listOf(Card.Note("Newsletter digest ready.")), listOf(Card.Text("Dana replied.")))
+        waiting.forEach { r.feedStore.notifyOf(it.id)!! shouldContain "evening_batch:" }
+        waiting.map { it.kind } shouldBe listOf(net.robog.clarity.shared.feed.MessageKind.FINDING, net.robog.clarity.shared.feed.MessageKind.FINDING)
+    }
+
+    test("send_to_user in a turn that carries the person's message is a reply, whatever kind the model passed") {
         val r = rig()
         var call = 0
         r.model.handler = {
@@ -371,12 +415,7 @@ class LeadScenarioTest : FunSpec({
                     "toolu_a", "send_to_user",
                     buildJsonObject {
                         put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Dana replied.") })))
-                    },
-                )
-                2 -> callTool(
-                    "toolu_b", "send_to_user",
-                    buildJsonObject {
-                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "note"); put("text", "Newsletter digest ready.") })))
+                        put("kind", "finding")
                         put("urgency", "batch")
                     },
                 )
@@ -387,13 +426,11 @@ class LeadScenarioTest : FunSpec({
         r.lead.start()
         r.lead.step()
 
-        val page = r.feed.page(0, 50).items
-        page.map { it.author } shouldBe listOf(FeedItem.Author.AGENT)
-        page.single().cards shouldBe listOf(Card.Text("Dana replied."))
-        r.feedStore.notifyOf(page.single().id) shouldBe "in_app"
-        val waiting = r.feedStore.pendingBatch().single()
-        waiting.cards shouldBe listOf(Card.Note("Newsletter digest ready."))
-        r.feedStore.notifyOf(waiting.id)!! shouldContain "evening_batch:"
+        val answer = r.feed.page(0, 50).items.single { it.author == FeedItem.Author.AGENT }
+        answer.cards shouldBe listOf(Card.Text("Dana replied."))
+        answer.kind shouldBe net.robog.clarity.shared.feed.MessageKind.REPLY
+        r.feedStore.notifyOf(answer.id) shouldBe "reply"
+        r.feedStore.pendingBatch().shouldBeEmpty()
     }
 
     test("a crash after the model asked for an external action does not repeat it on resume") {

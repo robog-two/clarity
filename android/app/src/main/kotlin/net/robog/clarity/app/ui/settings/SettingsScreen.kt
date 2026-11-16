@@ -77,6 +77,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import net.robog.clarity.app.ui.components.ToggleRow
+import net.robog.clarity.app.ui.components.StepperRow
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -135,6 +136,7 @@ data class SettingsActions(
     val onToggleMic: () -> Unit = {},
     val onToggleBatch: () -> Unit = {},
     val onTogglePush: () -> Unit = {},
+    val onPushesPerDay: (Int) -> Unit = {},
     val onTogglePushService: () -> Unit = {},
     val onAllowBattery: () -> Unit = {},
     val onEveningAt: (LocalTime) -> Unit = {},
@@ -198,6 +200,7 @@ fun SettingsTab(
             onToggleMic = viewModel::toggleMic,
             onToggleBatch = viewModel::toggleBatch,
             onTogglePush = viewModel::togglePushUrgent,
+            onPushesPerDay = viewModel::setPushesPerDay,
             onTogglePushService = viewModel::togglePushService,
             onAllowBattery = {
                 viewModel.batteryAsked()
@@ -533,6 +536,12 @@ private fun HeldActionsSettings(settings: Settings, actions: SettingsActions, on
         }
         if (settings.batchLowUrgency) {
             segment { SelectRow("evening summary", "when the batch arrives", formatTime(settings.eveningSummaryAt), onPickTime, shape = it) }
+        }
+        segment {
+            StepperRow(
+                "Notifications a day", "Replies and urgent excluded",
+                settings.pushesPerDay, Settings.PUSHES_PER_DAY_RANGE, actions.onPushesPerDay, shape = it,
+            )
         }
         segment {
             ToggleRow(

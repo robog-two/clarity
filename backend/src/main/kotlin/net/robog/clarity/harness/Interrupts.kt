@@ -7,6 +7,20 @@ package net.robog.clarity.harness
  * separate system messages, which keeps them valid under [systemPlacementViolations].
  */
 
+/**
+ * Every note the harness itself adds to the journal (the steps-left warning, the spend-cap and
+ * out-of-steps reports) goes through [harnessNote], which marks it; [isHarnessNote] recognizes it, so
+ * code that reads the journal never takes such text for the person's words. `HarnessNoteGuardTest`
+ * checks that no other place in the harness builds a text block.
+ */
+const val HARNESS_NOTE_MARK = "[harness] "
+
+/** A text block for a note the harness writes (see [HARNESS_NOTE_MARK]). */
+fun harnessNote(text: String): Block.Text = Block.Text(HARNESS_NOTE_MARK + text)
+
+/** Whether [text] is a note the harness wrote. */
+fun isHarnessNote(text: String): Boolean = text.startsWith(HARNESS_NOTE_MARK)
+
 /** The user message that carries operator updates when nobody said anything. */
 const val OPERATOR_UPDATE_PLACEHOLDER = "(operator update follows)"
 

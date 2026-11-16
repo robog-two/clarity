@@ -529,6 +529,18 @@ class AskViewModelTest {
         assertEquals(AskSuggestions[1], r.feed.sent.single().first)
     }
 
+    @Test fun tappingAChoiceSendsItsReplyAsTheItemsAnswer() = withMain {
+        val r = Rig()
+        val asked = net.robog.clarity.shared.feed.FeedItemId("item-9")
+        r.vm.choose(asked, net.robog.clarity.shared.feed.Choice("Make it smaller", "Make it smaller please"))
+        assertEquals("Make it smaller please", r.feed.sent.single().first)
+        assertEquals(InputSource.TYPED, r.feed.sent.single().second)
+        assertEquals(listOf<net.robog.clarity.shared.feed.FeedItemId?>(asked), r.feed.repliedTo)
+        // an ordinary message answers no item
+        r.vm.suggest(AskSuggestions[1])
+        assertNull(r.feed.repliedTo.last())
+    }
+
     @Test fun talkListensForOneUtteranceAndSendsItAsVoice() = withMain {
         val r = Rig()
         r.vm.talk()

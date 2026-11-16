@@ -3,6 +3,9 @@ package net.robog.clarity.backend.feed
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.ContributesIntoSet
 import dev.zacsweers.metro.Inject
+import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import io.ktor.server.application.Application
 import io.ktor.server.application.install
 import io.ktor.server.auth.authenticate
@@ -96,14 +99,49 @@ class FeedRoutes(
                 post(ApiPaths.INPUT) {
                     val input = call.receive<UserInput>()
                     if (input.text.isBlank()) return@post call.respondProblem(EdgeProblem.BadRequest("text must not be empty"))
-                    val appended = feed.append(
-                        FeedDraft(
-                            author = FeedItem.Author.USER,
-                            cards = listOf(Card.Said(input.text, input.source)),
-                            sessionId = input.sessionId,
-                            clientInputId = input.clientId,
-                        ),
-                    )
+                    // A tap on a choices card is checked first. A retry of the very same tap (same client id) skips the
+                    // check: it was accepted already, and the idempotent writes below heal whatever the first try left undone.
+                    if (input.inReplyTo != null && feed.byClientInput(input.clientId) == null) {
+                        when (val check = checkChoice(feed.get(input.inReplyTo!!), input.text)) {
+                            ChoiceCheck.NotChoices -> return@post call.respondProblem(EdgeProblem.BadRequest("inReplyTo is not a card with choices"))
+                            ChoiceCheck.NotAnOption -> return@post call.respondProblem(EdgeProblem.BadRequest("text is not one of the options"))
+                            // Answered already: only a retry of the very request that answered it (it crashed before queueing) goes on.
+                            // Any other tap, from any device and even with the same option, gets the conflict and the app shows the answer.
+                            is ChoiceCheck.Answered ->
+                                if (check.by != input.clientId.value) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(check.item))
+                            ChoiceCheck.Open -> Unit
+                        }
+                    }
+                    // A tap on a choices card: the answer is recorded on the card (once, first tap wins) and shown on every device.
+                    // Two taps at once can both pass the check; the second loses here and gets the conflict, nothing is queued for it.
+                    var marked = false
+                    if (input.inReplyTo != null) {
+                        if (feed.chooseOption(input.inReplyTo!!, input.text, input.clientId) != null) {
+                            marked = true
+                        } else {
+                            // Lost the race, or a retry of the request that won: only the latter goes on.
+                            val current = feed.get(input.inReplyTo!!)
+                            val mine = (checkChoice(current, input.text) as? ChoiceCheck.Answered)?.by == input.clientId.value
+                            if (!mine && current != null) return@post call.respond(HttpStatusCode.Conflict, InputAccepted(current))
+                        }
+                    }
+                    // The card, the person's message and the lead's inbox are separate stores with no shared transaction. If this
+                    // request marked the card but could not store the person's message, the mark is taken back so no card reads
+                    // answered without the answer being on record. Once the message is stored the card stays answered even if
+                    // queueing fails: the same client's retry heals it (the append is idempotent, the enqueue is deduplicated).
+                    val appended = try {
+                        feed.append(
+                            FeedDraft(
+                                author = FeedItem.Author.USER,
+                                cards = listOf(Card.Said(input.text, input.source)),
+                                sessionId = input.sessionId,
+                                clientInputId = input.clientId,
+                            ),
+                        )
+                    } catch (e: Exception) {
+                        if (marked) runCatching { withContext(NonCancellable) { feed.unchooseOption(input.inReplyTo!!, input.clientId) } }.onFailure { e.addSuppressed(it) }
+                        throw e
+                    }
                     // Always (the key makes it idempotent): heals a crash between the two writes of the first attempt.
                     inbox.enqueue(
                         InboxItem.UserInput(input.clientId, input.text, input.source, input.sessionId),
