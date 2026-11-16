@@ -88,6 +88,7 @@ private class MemoryFeedStore : FeedStore {
     override suspend fun releasedSince(since: Instant): List<FeedItem> = released.toList()
     override suspend fun countedPushes(from: Instant, to: Instant): Int = 0
     override suspend fun lookForwardSince(since: Instant): List<FeedItem> = emptyList()
+    override suspend fun byClientInput(id: ClientInputId): FeedItem? = items.firstOrNull { it.second.clientInputId == id }?.first
     override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? = synchronized(items) {
         val index = items.indexOfFirst { it.first.id == id }
         if (index < 0) return@synchronized null
@@ -177,10 +178,46 @@ class FeedRoutesTest : FunSpec({
             }
             tap("tap-1", "Starting now").body<InputAccepted>().item.cards shouldBe listOf(Card.Said("Starting now"))
             (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
-            // a second device tapping the other button: its words still reach the lead, the card keeps the first answer
-            tap("tap-2", "Later").status shouldBe HttpStatusCode.OK
+            // a second device tapping the other button: refused, the card keeps the first answer and only the first reaches the lead
+            tap("tap-2", "Later").status shouldBe HttpStatusCode.Conflict
             (store.get(asked.id)!!.cards.single() as Card.Choices).chosen shouldBe "Starting now"
-            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("tap-") }.map { it.text } shouldBe listOf("Starting now", "Later")
+            inbox.enqueued.map { it.first }.filterIsInstance<InboxItem.UserInput>().filter { it.clientId.value.startsWith("tap-") }.map { it.text } shouldBe listOf("Starting now")
+        }
+    }
+
+    test("a tap that does not answer the card is refused and queues nothing") {
+        testApplication {
+            val client = setup()
+            val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting now"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+            val asked = feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Choices("Ready?", options)))).item
+            val plain = feed.append(agentItem("just text")).item
+            val queuedBefore = inbox.enqueued.size
+            val seqBefore = feed.page(0, 1000).items.size
+            suspend fun tap(clientId: String, reply: String, to: net.robog.clarity.shared.feed.FeedItemId) = client.post("/api/v1/input") {
+                header(HttpHeaders.Authorization, TOKEN)
+                contentType(ContentType.Application.Json)
+                setBody(UserInput(ClientInputId(clientId), reply, inReplyTo = to))
+            }
+            tap("bad-1", "Whenever", asked.id).status shouldBe HttpStatusCode.BadRequest
+            tap("bad-2", "Later", plain.id).status shouldBe HttpStatusCode.BadRequest
+            tap("bad-3", "Later", net.robog.clarity.shared.feed.FeedItemId("nope")).status shouldBe HttpStatusCode.BadRequest
+            inbox.enqueued.size shouldBe queuedBefore
+            feed.page(0, 1000).items.size shouldBe seqBefore
+
+            // first tap wins; a second one from another device gets the conflict with the answered card and queues nothing
+            tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
+            val queuedAfterFirst = inbox.enqueued.size
+            val sizeAfterFirst = feed.page(0, 1000).items.size
+            val conflict = tap("ok-2", "Later", asked.id)
+            conflict.status shouldBe HttpStatusCode.Conflict
+            (conflict.body<InputAccepted>().item.cards.single() as Card.Choices).chosen shouldBe "Starting now"
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
+
+            // the same tap again (a retry with the same client id) is still accepted and is not a second message
+            tap("ok-1", "Starting now", asked.id).status shouldBe HttpStatusCode.OK
+            inbox.enqueued.size shouldBe queuedAfterFirst
+            feed.page(0, 1000).items.size shouldBe sizeAfterFirst
         }
     }
 

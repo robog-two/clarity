@@ -113,6 +113,9 @@ interface FeedStore {
      * so the first tap wins on every device.
      */
     suspend fun markChosen(id: FeedItemId, reply: String): FeedItem?
+
+    /** The item already stored for the person's input [id] (a retry of the same request), or null. */
+    suspend fun byClientInput(id: ClientInputId): FeedItem?
 }
 
 @Inject
@@ -229,6 +232,10 @@ class ExposedFeedStore(private val database: Database, private val clock: Clock)
             .orderBy(FeedItems.seq).map { it.toItem() }
     }
 
+    override suspend fun byClientInput(id: ClientInputId): FeedItem? = database.tx {
+        FeedItems.selectAll().where { FeedItems.clientInputId eq id.value }.singleOrNull()?.toItem()
+    }
+
     override suspend fun markChosen(id: FeedItemId, reply: String): FeedItem? {
         val uuid = runCatching { Uuid.parse(id.value) }.getOrNull() ?: return null
         return database.tx {
@@ -260,6 +267,32 @@ private fun ResultRow.toItem() = FeedItem(
     reaction = this[FeedItems.reaction],
     kind = MessageKind.fromWire(this[FeedItems.kind]),
 )
+
+/** What a tap on a choices card (`POST /input` with `inReplyTo`) amounts to, given the item it answers. */
+sealed interface ChoiceCheck {
+    /** The card is waiting for this answer. */
+    data object Open : ChoiceCheck
+
+    /** Answered already ([item] is the current state, for the app to show). */
+    data class Answered(val item: FeedItem, val chosen: String) : ChoiceCheck
+
+    /** No such item, or it holds no choices card. */
+    data object NotChoices : ChoiceCheck
+
+    /** The reply is not one of the card's options. */
+    data object NotAnOption : ChoiceCheck
+}
+
+/** Pure: whether [reply] may answer the first choices card of [item] (null: no such item). */
+fun checkChoice(item: FeedItem?, reply: String): ChoiceCheck {
+    val card = item?.cards?.filterIsInstance<Card.Choices>()?.let { all -> all.firstOrNull { it.chosen == null } ?: all.firstOrNull() }
+        ?: return ChoiceCheck.NotChoices
+    return when {
+        card.options.none { it.reply == reply } -> ChoiceCheck.NotAnOption
+        card.chosen != null -> ChoiceCheck.Answered(item, card.chosen!!)
+        else -> ChoiceCheck.Open
+    }
+}
 
 /**
  * Pure: [cards] with the first unanswered [Card.Choices] marked answered with [reply]; null when

@@ -75,6 +75,17 @@ fun needsResume(history: List<Message>): Boolean {
     }
 }
 
+/**
+ * Pure: whether the turn left open at the end of [history] carries the person's own input, so a
+ * lead resuming it after a crash still treats what it posts as a reply. The open turn is everything
+ * after the last assistant message that ends without tool calls; the person's words are user
+ * messages without tool results (not a summary).
+ */
+fun openTurnCarriesPerson(history: List<Message>): Boolean {
+    val turn = history.takeLastWhile { !(it.role == Role.ASSISTANT && it.content.none { b -> b is Block.ToolUse }) }
+    return turn.any { it.role == Role.USER && !it.isSummary && it.content.none { b -> b is Block.Result } }
+}
+
 /** Pure: whether [message] only closes calls a turn had no steps left for ([LEAD_OUT_OF_STEPS]). */
 fun closedOutOfSteps(message: Message): Boolean =
     message.content.isNotEmpty() && message.content.all { it is Block.Result && it.isError && it.content == LEAD_OUT_OF_STEPS.notRun }
@@ -264,10 +275,11 @@ class LeadAgent(
         val thread = threads.ensure()
         threadId = thread.id
         scope = RunScope(threadId, isLead = true)
-        if (needsResume(journal.load(threadId))) {
+        val saved = journal.load(threadId)
+        if (needsResume(saved)) {
             log.info { "resuming the lead thread from its journal" }
             turnLock.withLock {
-                scope.startTurn(untrusted = true, requestedByUser = false)
+                scope.startTurn(untrusted = true, requestedByUser = false, answeringPerson = openTurnCarriesPerson(saved))
                 replyOwed.set(false)
                 feed.publish(FeedEvent.Busy(true))
                 try {

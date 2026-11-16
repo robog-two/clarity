@@ -136,11 +136,28 @@ class MessageKindDbTest : FunSpec({
         rig.last().notify shouldBe "push_now"
     }
 
-    test("an approval or a login waiting on the person is never held for the evening") {
-        val rig = Rig(database, start)
+    test("an approval or a login waiting on the person is pushed by the urgent rules, never held for the evening, and not counted") {
+        val rig = Rig(database, start, Settings(pushesPerDay = 1))
         rig.send(cards = listOf(Card.Text("Needs your OK"), Card.Proposal(net.robog.clarity.shared.governance.HeldActionId("h1")))).shouldBeInstanceOf<ToolResult.Ok>()
-        rig.feed.page(0, 100).items.single().notify shouldBe "in_app"
+        rig.send(cards = listOf(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r1")))).shouldBeInstanceOf<ToolResult.Ok>()
+        rig.feed.page(0, 100).items.map { it.notify } shouldBe listOf("push_now", "push_now")
         rig.store.pendingBatch().shouldBeEmpty()
+        rig.store.countedPushes(start - 1.hours, start + 1.hours) shouldBe 0
+    }
+
+    test("a retried evening summary does not swallow a finding that arrived after it") {
+        val rig = Rig(database, start)
+        rig.send(cards = listOf(Card.Text("Newsletter ready")))
+        val job = EveningBatchJob(rig.store, rig.feed, rig.tasks)
+        val slot = Instant.parse("2026-03-04T18:00:00Z")
+        rig.clock.now = slot + kotlin.time.Duration.parse("5s")
+        val ctx = FireContext(slot, rig.clock.now, null, Settings())
+        job.fire(ctx)
+        // the crash happened after the post: the finding is still marked pending, and a newer one arrived
+        database.tx { exec("UPDATE feed_item SET batch_state = 'pending' WHERE batch_state = 'summarized'") }
+        rig.send(cards = listOf(Card.Text("Arrived after the summary")))
+        job.fire(ctx)
+        rig.store.pendingBatch().map { (it.cards.single() as Card.Text).text } shouldBe listOf("Arrived after the summary")
     }
 
     test("a due time that is not a time is refused, and a choices card needs options") {

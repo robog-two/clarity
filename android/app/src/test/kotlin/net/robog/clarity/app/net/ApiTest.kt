@@ -60,6 +60,18 @@ class KtorApiTest {
         assertIs<ApiError.Malformed>((malformed as ApiResult.Failure).error)
     }
 
+    @Test fun aSecondTapOnAChoiceComesBackAsTheAnsweredItemNotAnError() = runTest {
+        val answered = agentItem(4, "unused").copy(
+            cards = listOf(net.robog.clarity.shared.feed.Card.Choices("Ready?", listOf(net.robog.clarity.shared.feed.Choice("Later", "Later")), chosen = "Later")),
+        )
+        val body = ClarityJson.encodeToString(net.robog.clarity.shared.feed.InputAccepted.serializer(), net.robog.clarity.shared.feed.InputAccepted(answered))
+        val conflict = api { respond(body, HttpStatusCode.Conflict, JSON) }
+        val result = conflict.sendInput(net.robog.clarity.shared.feed.UserInput(net.robog.clarity.shared.feed.ClientInputId("c1"), "Later", inReplyTo = answered.id))
+        assertEquals(answered, (result as ApiResult.Success).value.item)
+        assertIs<ApiError.Http>((api { respond("", HttpStatusCode.BadRequest) }.sendInput(net.robog.clarity.shared.feed.UserInput(net.robog.clarity.shared.feed.ClientInputId("c2"), "x")) as ApiResult.Failure).error)
+        assertIs<ApiError.Unauthorized>((api { respond("", HttpStatusCode.Unauthorized) }.sendInput(net.robog.clarity.shared.feed.UserInput(net.robog.clarity.shared.feed.ClientInputId("c3"), "x")) as ApiResult.Failure).error)
+    }
+
     @Test fun feedSendsAfterAndABearerToken() = runTest {
         val body = ClarityJson.encodeToString(FeedPage.serializer(), FeedPage(listOf(agentItem(4, "hi")), hasMore = false))
         val api = api { respond(body, HttpStatusCode.OK, JSON) }

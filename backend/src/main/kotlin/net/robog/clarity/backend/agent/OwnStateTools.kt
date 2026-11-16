@@ -21,6 +21,7 @@ import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.governance.Delivery
 import net.robog.clarity.backend.governance.NotifyDecision
 import net.robog.clarity.backend.governance.deliveryOf
+import net.robog.clarity.backend.governance.sessionDelivery
 import net.robog.clarity.backend.governance.emptyConstitution
 import net.robog.clarity.backend.governance.notifyDecision
 import net.robog.clarity.backend.governance.zoneOrUtc
@@ -90,6 +91,9 @@ fun choicesProblem(card: Card.Choices): String? = when {
 
 /** Pure: a card that asks the person for something (an approval, a login, a pick), so its post must not wait for the evening. */
 fun needsAnswer(card: Card): Boolean = card is Card.Proposal || card is Card.CredentialRequest || card is Card.Choices
+
+/** Pure: a card only the person can act on (an approval, a login): its post must reach them, so it follows the urgent rules. */
+fun needsPerson(card: Card): Boolean = card is Card.Proposal || card is Card.CredentialRequest
 
 /** The most buttons one choices card shows. */
 const val MAX_CHOICES = 4
@@ -185,12 +189,10 @@ class OwnStateTools(
         val current = settings.current()
         val resolved = resolveKind(kind, personWrote)
         val delivery = if (sessionId != null) {
-            // A call or interview keeps its own flow: no budget, no batching. An answer to the person is a reply as anywhere; the phone's own call exception covers the rest.
-            if (resolved == MessageKind.REPLY && urgency != Urgency.URGENT) Delivery(NotifyDecision.Reply, counts = false)
-            else Delivery(notifyDecision(urgency, handles, constitution, current, now), counts = false)
+            sessionDelivery(resolved, urgency, handles, constitution, current, now)
         } else {
             val (dayStart, dayEnd) = homeDay(now, zoneOrUtc(current.homeZone))
-            deliveryOf(resolved, urgency, dueBy, handles, constitution, current, now, feed.countedPushes(dayStart, dayEnd), actionable = cards.any(::needsAnswer))
+            deliveryOf(resolved, urgency, dueBy, handles, constitution, current, now, feed.countedPushes(dayStart, dayEnd), actionable = cards.any(::needsAnswer), needsPerson = cards.any(::needsPerson))
         }
         val decision = delivery.decision
         // Keyed by the tool call, so a call re-run after a crash does not post twice.

@@ -44,6 +44,14 @@ fun eveningSummaryCards(held: List<FeedItem>, comingUp: List<FeedItem> = emptyLi
     return listOf(Card.Text(counts)) + sections.map { (label, chips) -> Card.Chips(label, chips) }
 }
 
+/**
+ * Pure: which of the [pending] findings the posted summary covered. When this call posted it, all of
+ * those it read. When the summary was already there (a retry after a crash), only the findings that
+ * arrived before it: anything newer was never in it and waits for the next one.
+ */
+fun summarizedBy(pending: List<FeedItem>, posted: Appended): List<FeedItem> =
+    if (posted.created) pending else pending.filter { it.seq < posted.item.seq }
+
 /** The lower-case phrase that follows a count in the summary's opening line. */
 private fun summaryCount(label: String): String = when (label) {
     "Coming up" -> "coming up"

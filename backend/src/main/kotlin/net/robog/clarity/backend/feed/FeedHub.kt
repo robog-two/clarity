@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.FeedItemId
@@ -54,6 +55,9 @@ class FeedService(private val store: FeedStore, private val hub: FeedHub) {
      */
     suspend fun chooseOption(id: FeedItemId, reply: String): FeedItem? =
         store.markChosen(id, reply)?.also { hub.publish(FeedEvent.ItemFinal(it)) }
+
+    /** The item stored for the person's input [id], when the same request came before. */
+    suspend fun byClientInput(id: ClientInputId) = store.byClientInput(id)
 
     /** Pushes that counted toward the daily limit in `[from, to)`. */
     suspend fun countedPushes(from: Instant, to: Instant) = store.countedPushes(from, to)
