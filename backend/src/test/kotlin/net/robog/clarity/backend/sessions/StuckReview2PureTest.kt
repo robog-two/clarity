@@ -147,7 +147,7 @@ class StuckReview2PureTest : FunSpec({
                 listOf(PlanCheckIn(at("09:30"), spec), PlanCheckIn(at("11:00", action = "other"), item("b", "call the dentist"))),
                 wed, zone, now, full, 0, existing = listOf(fired),
             )
-            out.skipped.shouldBeEmpty()
+            out.skipped.single() shouldContain "kept the earlier check-in" // said once; no cap was used up by it
             out.nudges.map { it.planItemId } shouldBe listOf("b")
         }
     }

@@ -555,4 +555,26 @@ class StuckScenarioTest : FunSpec({
             listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T16:00:00Z"), "ceiling", null, autoCheckIn = true)), dayOf,
         ).shouldBeEmpty()
     }
+
+    test("a check-in with no item that fired in between is not replaced either") {
+        val rig = rig(Instant.parse("2026-03-04T08:00:00Z"))
+        val r = rig.r
+        val dayOf = { at: Instant -> net.robog.clarity.backend.agent.homeDay(at, TimeZone.UTC) }
+        val loose = r.nudges.create(Instant.parse("2026-03-04T09:00:00Z"), "loose check-in", null, null, autoCheckIn = true)
+        r.nudges.resolveDue(Instant.parse("2026-03-04T09:00:30Z"), 5) { net.robog.clarity.backend.agent.NudgeResolution(Nudge.Status.FIRED) }
+        r.nudges.replaceCheckIns(
+            listOf(loose.id), "the plan was saved again",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T11:00:00Z"), "loose check-in", null, autoCheckIn = true)), dayOf,
+        ).shouldBeEmpty()
+        r.nudges.replaceCheckIns(
+            listOf(loose.id), "the plan was saved again",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T09:00:00Z"), "another note", null, autoCheckIn = true)), dayOf,
+        ).shouldBeEmpty()
+        // an unrelated check-in with no item, written in the same call, is still made
+        r.nudges.replaceCheckIns(
+            listOf(loose.id), "the plan was saved again",
+            listOf(net.robog.clarity.backend.agent.NewNudge(Instant.parse("2026-03-04T12:00:00Z"), "unrelated", null, autoCheckIn = true)), dayOf,
+        ).shouldHaveSize(1)
+        r.nudges.get(loose.id)!!.status shouldBe Nudge.Status.FIRED
+    }
 })

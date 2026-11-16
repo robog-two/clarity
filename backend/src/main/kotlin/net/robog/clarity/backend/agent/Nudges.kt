@@ -92,6 +92,9 @@ fun combinedRefusal(pendingAll: Int, dayAll: Int): String? = when {
 /** Why `cancel_nudge` cancels (the lead's own doing): a check-in cancelled so counts as settled and is not made again by a re-save. */
 const val AGENT_CANCEL_REASON = "cancelled by the agent"
 
+/** Serialises the writers of plan check-ins (see `replaceCheckIns`). */
+private const val PLAN_WRITE_LOCK = 0x706c616e63L
+
 /** A nudge to be stored. */
 data class NewNudge(val at: Instant, val note: String, val planItemId: String? = null, val followUp: Boolean = false, val autoCheckIn: Boolean = false)
 
@@ -214,9 +217,12 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
         val now = clock.now()
         val ids = cancel.mapNotNull { it.uuidOrNull() }
         return database.tx {
-            exec("SELECT pg_advisory_xact_lock(5202)")
+            exec("SELECT pg_advisory_xact_lock($PLAN_WRITE_LOCK)")
             val stillPending = NudgeTable.selectAll().where { (NudgeTable.id inList ids) and (NudgeTable.status eq PENDING) }.forUpdate().map { it[NudgeTable.id] }.toSet()
-            val lost = NudgeTable.selectAll().where { NudgeTable.id inList ids }.filter { it[NudgeTable.id] !in stillPending }.mapNotNull { it[NudgeTable.planItemId]?.toString() }.toSet()
+            val lostRows = NudgeTable.selectAll().where { NudgeTable.id inList ids }.filter { it[NudgeTable.id] !in stillPending }
+            val lost = lostRows.mapNotNull { it[NudgeTable.planItemId]?.toString() }.toSet()
+            // A check-in with no item that fired in between: its replacement (same note or same time) is not made either.
+            val lostLoose = lostRows.filter { it[NudgeTable.planItemId] == null }.map { it[NudgeTable.note] to it[NudgeTable.dueAt] }
             if (stillPending.isNotEmpty()) {
                 NudgeTable.update({ NudgeTable.id inList stillPending.toList() }) {
                     it[status] = Nudge.Status.CANCELLED.wire()
@@ -225,7 +231,9 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
                 }
             }
             val planRow = NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp
-            create.filter { it.planItemId == null || it.planItemId !in lost }.mapNotNull { n ->
+            create.filter { n ->
+                if (n.planItemId != null) n.planItemId !in lost else lostLoose.none { (note, at) -> note == n.note || at == n.at }
+            }.mapNotNull { n ->
                 val (dayStart, dayEnd) = dayOf(n.at)
                 val live = NudgeTable.status inList listOf(PENDING, FIRED)
                 val inDay = (NudgeTable.dueAt greaterEq dayStart) and (NudgeTable.dueAt less dayEnd)

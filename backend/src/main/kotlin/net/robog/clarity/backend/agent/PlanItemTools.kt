@@ -188,7 +188,11 @@ fun planAutoNudges(
     var waiting = pending
     var count = sameDay
     for (check in checkIns) {
-        val reported = previous.any { it.cue == check.ifThen.cue && it.action == check.ifThen.action && it.at == check.ifThen.at }
+        // Reported already: the same if-then (cue, action, start time, first step, item) was in the day's earlier save.
+        val reported = previous.any {
+            it.cue == check.ifThen.cue && it.action == check.ifThen.action && it.at == check.ifThen.at &&
+                it.firstStep == check.ifThen.firstStep && it.item == check.ifThen.item
+        }
         val at = when (val time = readCheckInTime(check.ifThen.at, date, zone, now)) {
             CheckInTime.Missing -> { if (!reported) unscheduled += check.ifThen.sentence(); continue }
             is CheckInTime.Malformed -> { if (!reported) skipped += "`at` \"${time.raw}\" of ${check.ifThen.sentence()} is not a time (use HH:MM, 24 hour)"; continue }
@@ -196,14 +200,17 @@ fun planAutoNudges(
             is CheckInTime.Valid -> time.at
         }
         val note = planCheckInNote(check.ifThen, check.item, date)
-        if (checkInBlocked(existing, check.item?.id, at, note, now)) continue
+        if (checkInBlocked(existing, check.item?.id, at, note, now)) {
+            if (!reported) skipped += "${agentTime(at, zone)}: kept the earlier check-in for it (it already had one today)"
+            continue
+        }
         val covered = waiting.any {
             (it.at - at).absoluteValue < NUDGE_DUPLICATE_WINDOW &&
                 if (check.item != null) it.planItemId == check.item.id else it.planItemId == null && it.note.sameNote(note)
         }
-        if (covered) { skipped += "${agentTime(at, zone)}: a check-in for it is already set around then"; continue }
+        if (covered) { if (!reported) skipped += "${agentTime(at, zone)}: a check-in for it is already set around then"; continue }
         val refusal = combinedRefusal(personPending + waiting.size, personDay + count) ?: nudgeRefusal(at, note, null, now, waiting, count, zone, check.item?.id)
-        if (refusal != null) { skipped += refusal; continue }
+        if (refusal != null) { if (!reported) skipped += refusal; continue }
         set += AutoNudge(at, note, check.item?.id)
         waiting = waiting + Nudge(NudgeId("planned-${set.size}"), at, note, null, Nudge.Status.PENDING, now, planItemId = check.item?.id, autoCheckIn = true)
         count++

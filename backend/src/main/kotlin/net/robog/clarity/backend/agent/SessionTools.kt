@@ -162,7 +162,8 @@ class SessionTools(
 
     private suspend fun live() = sessions.live()
 
-    private suspend fun today(): LocalDate = localDate(clock.now(), settings.current().homeZone)
+    /** The person's date, from the same zone source as the nudge tools (`settings.homeZone()`). */
+    private suspend fun today(): LocalDate = ScheduleClock.homeDate(clock.now(), settings.homeZone())
 
     /** Keyed by the tool call, so a call re-run after a crash does not post its card twice. */
     private suspend fun callKey(): String? =
@@ -297,9 +298,12 @@ class SessionTools(
         if (items.any { it.cue.isEmpty() || it.action.isEmpty() }) return@tool ToolResult.Error("Each plan needs a cue and an action.")
         val date = today()
         val previous = plans.get(date)?.plan.orEmpty()
-        plans.update(date) { it.copy(plan = items, sessionId = session.id.value) }
         val planned = linkableToday(planItems.open(), date)
-        val linked = items.zip(input.ifThens).map { (ifThen, raw) -> PlanCheckIn(ifThen, linkedItem(ifThen, raw.item, planned)) }
+        val linked = items.zip(input.ifThens).map { (ifThen, raw) ->
+            val item = linkedItem(ifThen, raw.item, planned)
+            PlanCheckIn(ifThen.copy(item = item?.id), item)
+        }
+        plans.update(date) { it.copy(plan = linked.map { c -> c.ifThen }, sessionId = session.id.value) }
         // The first step an if-then carries stays on its item (with the day it was agreed), so a later day can say it is an earlier one.
         linked.forEach { c -> if (c.item != null && c.ifThen.firstStep != null) planItems.update(c.item.id) { it.copy(firstStep = c.ifThen.firstStep, firstStepOn = date) } }
         val checkIns = linked.map { c -> c.item?.let { i -> c.copy(item = planItems.get(i.id)) } ?: c }

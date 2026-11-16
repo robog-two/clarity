@@ -267,6 +267,8 @@ data class IfThen(
     val firstStep: String? = null,
     /** The start time the person named for it, "HH:MM" (24 hour, their local time that day); null when none. A check-in is set at it. */
     val at: String? = null,
+    /** The id of the plan item (a priority) this plan is for, when the server linked it; its check-ins follow that item. */
+    val item: String? = null,
 ) {
     /** "If it’s 9:30, then spec at my desk until 12." */
     fun sentence(): String = "If $cue, then $action."
