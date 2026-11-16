@@ -52,8 +52,8 @@ class DeliveryPolicyTest : FunSpec({
         delivery(MessageKind.REPLY, pushedToday = 99, constitution = consti(listOf(deepWork))) shouldBe Delivery(NotifyDecision.Reply, counts = false)
     }
 
-    test("a check-in and a look-forward push, and count") {
-        delivery(MessageKind.CHECK_IN) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
+    test("a check-in pushes without counting, a look-forward pushes and counts") {
+        delivery(MessageKind.CHECK_IN) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
         delivery(MessageKind.LOOK_FORWARD) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
     }
 
@@ -83,16 +83,20 @@ class DeliveryPolicyTest : FunSpec({
             Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
     }
 
-    test("protected time holds a counted push unless the sender gets through") {
+    test("protected time holds a push unless the sender gets through") {
         val deepWork = block("deep work", setOf(3), "09:00", "18:00")
         val c = consti(listOf(deepWork), listOf(Person("Dana", listOf(dana))))
-        delivery(MessageKind.CHECK_IN, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = true)
+        delivery(MessageKind.CHECK_IN, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = false)
+        delivery(MessageKind.LOOK_FORWARD, constitution = c) shouldBe Delivery(NotifyDecision.HoldUntil(Instant.parse("2026-03-04T18:00:00Z")), counts = true)
         delivery(MessageKind.FINDING, people = listOf(dana), constitution = c) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
     }
 
     test("the budget: once the limit is reached a push is shown in the app without one") {
-        delivery(MessageKind.CHECK_IN, pushedToday = 4) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
-        delivery(MessageKind.CHECK_IN, pushedToday = 5) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
+        delivery(MessageKind.LOOK_FORWARD, pushedToday = 4) shouldBe Delivery(NotifyDecision.PushNow, counts = true)
+        delivery(MessageKind.LOOK_FORWARD, pushedToday = 5) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
+        // a check-in is never refused for the budget
+        delivery(MessageKind.CHECK_IN, pushedToday = 5) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
+        delivery(MessageKind.CHECK_IN, pushedToday = 99, s = settings.copy(pushesPerDay = 1)) shouldBe Delivery(NotifyDecision.PushNow, counts = false)
         delivery(MessageKind.FINDING, dueBy = now + 1.hours, pushedToday = 6) shouldBe Delivery(NotifyDecision.ShowInApp, counts = false, budgetSpent = true)
         delivery(MessageKind.LOOK_FORWARD, s = settings.copy(pushesPerDay = 1), pushedToday = 1).budgetSpent shouldBe true
         delivery(MessageKind.LOOK_FORWARD, s = settings.copy(pushesPerDay = 10), pushedToday = 9).counts shouldBe true
