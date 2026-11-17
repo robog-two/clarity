@@ -96,7 +96,7 @@ class NudgeDbTest : FunSpec({
         private val counting = client?.let { inner -> DecisionClient { s, q -> calls.incrementAndGet(); inner.decide(s, q) } }
         val config = AgentConfig(openRouterApiKey = "k", reviewInterval = 2.hours)
         val runner = NudgeRunner(store, tasks, PlanItemStore(database), inbox, activity, Decisions(config, { counting }, database, clock), { Settings() }, clock)
-        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock).all().associateBy { it.name }
+        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock, net.robog.clarity.backend.persistence.ExposedNounReader(database)).all().associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue(name).invoke(input)
         suspend fun nudgeItems() = inbox.pending().map { it.item }.filterIsInstance<InboxItem.NudgeDue>()
@@ -129,6 +129,16 @@ class NudgeDbTest : FunSpec({
 
         r.tasks.upsert(task.id, null, null, AgentTask.Status.DONE)
         r.call("nudge", input("at" to at, "note" to "ask", "taskId" to task.id.value)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already done"
+    }
+
+    test("freeSlot picks the next gap, and exactly one of at and freeSlot is required") {
+        val r = Rig(database)
+        val slot = buildJsonObject { put("minMinutes", 30) }
+        val ok = r.call("nudge", buildJsonObject { put("note", "ask how the walk went"); put("freeSlot", slot) }).shouldBeInstanceOf<ToolResult.Ok>()
+        ok.content shouldContain "free from"
+        r.store.pending().single().at.shouldNotBeNull()
+        r.call("nudge", buildJsonObject { put("note", "x"); put("at", "23:59"); put("freeSlot", slot) }).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "either"
+        r.call("nudge", buildJsonObject { put("note", "x") }).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "either"
     }
 
     test("at most 10 pending through the tool") {
