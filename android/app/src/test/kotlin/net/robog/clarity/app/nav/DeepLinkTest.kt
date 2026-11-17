@@ -47,6 +47,13 @@ class DeepLinkTest {
         assertEquals(listOf(Main), stackFor(targetFor(DeepLink.AskItem(FeedItemId("i9")))!!))
     }
 
+    @Test fun oddAskIdsAreJustAsk() {
+        for (uri in listOf("clarity://ask//", "clarity://ask/", "clarity://ask/%00", "clarity://ask/a/b", "clarity://ask/ ", "clarity://ask/%20", "clarity://ask/../held", "clarity://ask/?x=1")) {
+            assertEquals(DeepLink.Ask, parseDeepLink(uri), uri)
+        }
+        assertEquals(DeepLink.AskItem(FeedItemId("a-b_9")), parseDeepLink("clarity://ask/a-b_9?x=1"))
+    }
+
     @Test fun heldItemOpensTheReviewOnTopOfTheHeldTab() {
         val target = targetFor(DeepLink.HeldItem(HeldActionId("h1")))!!
         assertEquals(MainTab.Held, target.tab)

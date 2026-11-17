@@ -47,6 +47,12 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import net.robog.clarity.shared.feed.FeedItemId
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,6 +103,12 @@ sealed interface ChatEntry {
     data class Pill(override val key: String, val label: String) : ChatEntry
 }
 
+/** How long a linked item is waited for before the link is dropped. */
+private val FOCUS_WAIT = 3.seconds
+
+/** How far past the bottom edge a bottom-up row of [itemSize] is scrolled so that its top shows in a [viewport]; 0 when it fits. */
+fun topOffset(itemSize: Int, viewport: Int): Int = (itemSize - viewport).coerceAtLeast(0)
+
 /**
  * The row of the message holding [id] in the transcript, which lists [entries] newest first after
  * [leading] rows of its own; null when no message has it (yet).
@@ -134,10 +146,20 @@ fun ChatTranscript(
     newestRows: Int = 0,
 ) {
     val listState = rememberLazyListState()
-    FollowNewest(listState, entries.size)
-    LaunchedEffect(focus, entries.size) {
-        val index = focus?.let { chatEntryIndex(entries, it, leading = newestRows + if (live != null) 1 else 0) } ?: return@LaunchedEffect
-        listState.scrollToItem(index)
+    FollowNewest(listState, entries.size, paused = focus != null)
+    val rows by rememberUpdatedState(entries)
+    val leading by rememberUpdatedState(newestRows + if (live != null) 1 else 0)
+    LaunchedEffect(focus) {
+        if (focus == null) return@LaunchedEffect
+        // The feed may still be loading: wait for the item a while, then give up quietly.
+        val index = withTimeoutOrNull(FOCUS_WAIT) { snapshotFlow { chatEntryIndex(rows, focus, leading) }.filterNotNull().first() }
+        if (index != null) {
+            listState.scrollToItem(index)
+            // The list is bottom-up: a tall item sits with its bottom in view, so push its top into view too.
+            val info = listState.layoutInfo
+            val size = info.visibleItemsInfo.firstOrNull { it.index == index }?.size
+            if (size != null) listState.scrollToItem(index, topOffset(size, info.viewportSize.height - info.beforeContentPadding - info.afterContentPadding))
+        }
         onFocused()
     }
     LazyColumn(

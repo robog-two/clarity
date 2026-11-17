@@ -1,7 +1,10 @@
 package net.robog.clarity.app.ui.today
 
 import kotlin.time.Instant
+import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.atStartOfDayIn
+import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.app.push.NotifyKind
 import net.robog.clarity.app.push.parseNotify
@@ -15,6 +18,13 @@ data class Tonight(val itemId: FeedItemId, val counts: String, val comingUp: Str
 /** The label of the summary's first section, as the server writes it. */
 private const val COMING_UP = "Coming up"
 
+/** The labels the server gives the summary's sections. A held finding has none of them, so it is never mistaken for the summary. */
+private val SECTIONS = setOf(COMING_UP, "Done today", "Held for tonight")
+
+/** The instant the local day of [now] ends in [zone]: the next local midnight. */
+fun nextLocalMidnight(now: Instant, zone: TimeZone): Instant =
+    now.toLocalDateTime(zone).date.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone)
+
 /**
  * The evening summary Today shows at [now]: the newest evening-summary item posted on the same local
  * day (so it goes away at midnight, before the next morning), or null when there is none. The summary
@@ -25,7 +35,7 @@ fun tonightOf(items: List<FeedItem>, now: Instant, zone: TimeZone): Tonight? {
     val item = items
         .filter { it.author == FeedItem.Author.AGENT && !it.streaming && parseNotify(it.notify) == NotifyKind.EveningBatch }
         .filter { it.at.toLocalDateTime(zone).date == day }
-        .filter { item -> item.cards.any { it is Card.Text } }
+        .filter { item -> item.cards.any { it is Card.Text } && item.cards.any { it is Card.Chips && it.label in SECTIONS } }
         .maxByOrNull { it.seq } ?: return null
     val counts = item.cards.filterIsInstance<Card.Text>().first().text
     val comingUp = item.cards.filterIsInstance<Card.Chips>().firstOrNull { it.label == COMING_UP }?.items?.firstOrNull()?.text

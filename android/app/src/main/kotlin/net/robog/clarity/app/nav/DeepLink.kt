@@ -19,6 +19,8 @@ sealed interface DeepLink {
 
 const val LINK_SCHEME = "clarity"
 
+private val ITEM_ID = Regex("[A-Za-z0-9_-]+")
+
 /** `clarity://today`, `clarity://ask`, `clarity://ask/<item id>`, `clarity://held`, `clarity://held/<id>`, `clarity://call[?answer=1]`. */
 fun parseDeepLink(uri: String?): DeepLink? {
     if (uri == null || !uri.startsWith("$LINK_SCHEME://")) return null
@@ -28,7 +30,8 @@ fun parseDeepLink(uri: String?): DeepLink? {
     val parts = path.split('/').filter { it.isNotEmpty() }
     return when (parts.firstOrNull()) {
         "today" -> DeepLink.Today
-        "ask" -> parts.getOrNull(1)?.let { DeepLink.AskItem(FeedItemId(it)) } ?: DeepLink.Ask
+        // Only a plain id after ask/ names an item; anything else (empty, blank, odd characters, more segments) is plain Ask.
+        "ask" -> parts.takeIf { it.size == 2 }?.get(1)?.takeIf(ITEM_ID::matches)?.let { DeepLink.AskItem(FeedItemId(it)) } ?: DeepLink.Ask
         "held" -> parts.getOrNull(1)?.let { DeepLink.HeldItem(HeldActionId(it)) } ?: DeepLink.Held
         "call" -> DeepLink.Call(answer = query.split('&').contains("answer=1"))
         else -> null

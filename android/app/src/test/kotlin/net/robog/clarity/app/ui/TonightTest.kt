@@ -10,6 +10,8 @@ import net.robog.clarity.app.ui.components.ChatEntry
 import net.robog.clarity.app.ui.components.chatEntries
 import net.robog.clarity.app.ui.components.chatEntryIndex
 import net.robog.clarity.app.ui.today.Tonight
+import net.robog.clarity.app.ui.components.topOffset
+import net.robog.clarity.app.ui.today.nextLocalMidnight
 import net.robog.clarity.app.ui.today.tonightOf
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Chip
@@ -21,7 +23,7 @@ private val UTC = TimeZone.UTC
 
 private fun summary(seq: Long, at: Instant = POSTED, vararg extra: Card, counts: String = "2 done.") = FeedItem(
     FeedItemId("s$seq"), seq, at, FeedItem.Author.AGENT,
-    cards = listOf<Card>(Card.Text(counts)) + extra,
+    cards = listOf<Card>(Card.Text(counts)) + extra.ifEmpty { arrayOf(Card.Chips("Done today", listOf(Chip("File receipts")))) },
     notify = "evening_batch:2026-10-26T18:00:00Z",
 )
 
@@ -69,6 +71,27 @@ class TonightTest {
         assertNull(tonightOf(listOf(streaming, bare), POSTED, UTC))
     }
 
+    @Test fun aHeldFindingWithTheEveningDecisionIsNotTheSummary() {
+        val finding = plain(4).copy(notify = "evening_batch:2026-10-26T18:00:00Z")
+        assertNull(tonightOf(listOf(finding), POSTED, UTC))
+        assertEquals(FeedItemId("s2"), tonightOf(listOf(summary(2), finding), POSTED, UTC)?.itemId)
+    }
+
+    @Test fun releasedAndHeldItemsAreNotTheSummary() {
+        val chips = Card.Chips("Done today", listOf(Chip("a")))
+        for (notify in listOf("released:2026-10-26T18:00:00Z", "hold_until:2026-10-26T20:00:00Z", "push_now", "in_app")) {
+            assertNull(tonightOf(listOf(summary(2, POSTED, chips).copy(notify = notify)), POSTED, UTC), notify)
+        }
+    }
+
+    @Test fun theNextLocalMidnightEndsTheDay() {
+        assertEquals(Instant.parse("2026-10-27T00:00:00Z"), nextLocalMidnight(Instant.parse("2026-10-26T18:00:00Z"), UTC))
+        assertEquals(Instant.parse("2026-10-27T00:00:00Z"), nextLocalMidnight(Instant.parse("2026-10-26T23:59:59Z"), UTC))
+        assertEquals(Instant.parse("2026-10-28T00:00:00Z"), nextLocalMidnight(Instant.parse("2026-10-27T00:00:00Z"), UTC))
+        // Auckland is +13 in October: 18:00 UTC is 07:00 on the 27th, whose midnight is 11:00 UTC the same day
+        assertEquals(Instant.parse("2026-10-27T11:00:00Z"), nextLocalMidnight(Instant.parse("2026-10-26T18:00:00Z"), TimeZone.of("Pacific/Auckland")))
+    }
+
     @Test fun theUsersOwnItemNeverCounts() {
         assertNull(tonightOf(listOf(summary(2).copy(author = FeedItem.Author.USER)), POSTED, UTC))
     }
@@ -85,6 +108,12 @@ class ChatFocusTest {
 
     @Test fun rowsAboveTheMessagesShiftTheIndex() {
         assertEquals(3, chatEntryIndex(entries, FeedItemId("s2"), leading = 2))
+    }
+
+    @Test fun aTallItemIsScrolledBackToItsTop() {
+        assertEquals(0, topOffset(300, 800), "fits")
+        assertEquals(0, topOffset(800, 800))
+        assertEquals(450, topOffset(1250, 800))
     }
 
     @Test fun anItemNotThereYetHasNoRow() {

@@ -215,13 +215,13 @@ private fun Modifier.busySemantics(busy: Boolean): Modifier =
 /**
  * For a bottom-up chat list (`reverseLayout`, newest item first): when a new message arrives while
  * the person has scrolled up, glide back down to it. The first load needs nothing, since a reversed
- * list already starts at the bottom.
+ * list already starts at the bottom. [paused] holds it back (a scroll to a linked item is pending).
  */
 @Composable
-fun FollowNewest(listState: LazyListState, count: Int) {
+fun FollowNewest(listState: LazyListState, count: Int, paused: Boolean = false) {
     var seen by remember { mutableIntStateOf(count) }
     LaunchedEffect(count) {
-        if (count > seen && seen > 0 && listState.firstVisibleItemIndex > 0) listState.animateScrollToItem(0)
+        if (!paused && count > seen && seen > 0 && listState.firstVisibleItemIndex > 0) listState.animateScrollToItem(0)
         seen = count
     }
 }

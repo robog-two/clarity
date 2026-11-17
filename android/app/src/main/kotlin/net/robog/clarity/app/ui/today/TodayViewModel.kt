@@ -7,6 +7,7 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -250,6 +251,13 @@ class TodayViewModel(
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { fetch(quiet = true) }
+        }
+        // The Tonight card ends at local midnight even when nothing else changes: recompute then.
+        viewModelScope.launch {
+            while (true) {
+                delay(nextLocalMidnight(clock.now(), clock.zone()) - clock.now())
+                publish()
+            }
         }
         viewModelScope.launch { fetch(quiet = false) }
         viewModelScope.launch { calls.session.collect { offerCall() } }
