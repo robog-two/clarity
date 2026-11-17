@@ -4,11 +4,14 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.feed.Arrival
 import net.robog.clarity.app.data.feed.FeedStore
+import net.robog.clarity.app.data.feed.SyncSignal
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.Urgency
@@ -19,7 +22,13 @@ interface PushNotifier {
     fun post(plan: NotificationPlan)
 
     /** The person replied from the notification; [sent] says whether the server took it. */
-    fun replied(text: String, sent: Boolean) {}
+    fun replied(text: String, sent: Boolean, answered: FeedItemId? = null) {}
+
+    /** The question [item] asked was answered (on any device): its chips leave the notification. */
+    fun answered(item: FeedItemId) {}
+
+    /** Posts the conversation again as it stands (a reply that sent nothing leaves the reply box spinning). */
+    fun refresh() {}
 
     /** The app came to the front: the conversation is read there, so the notification goes. */
     fun clearConversation() {}
@@ -101,3 +110,14 @@ private fun arrivalKey(arrival: Arrival): Any = when (arrival) {
 suspend fun FeedStore.notifiable(limit: Int = SEEN_LIMIT): List<Arrival> =
     recentItems(limit).filter { it.author == FeedItem.Author.AGENT && !it.streaming && it.topic == null && it.reaction == null }.map { Arrival.Item(it) } +
         held.first().filter { it.status == HeldAction.Status.HELD && it.urgency == Urgency.URGENT }.map { Arrival.Held(it) }
+
+/**
+ * Takes the chips off the notification when a question is answered (on any device). It runs for the
+ * life of the process, not only while the push service holds the connection: an answer the sync
+ * stores with no holder would otherwise be missed.
+ */
+class AnswerRelay(private val signals: Flow<SyncSignal>, private val notifier: PushNotifier) {
+    suspend fun run() {
+        signals.filterIsInstance<SyncSignal.ChoicesAnswered>().collect { notifier.answered(it.item) }
+    }
+}

@@ -30,6 +30,10 @@ class FakePushPrefs(enabled: Boolean = true, asked: Boolean = false) : PushPrefs
 class RecordingPushNotifier : PushNotifier {
     val posted = mutableListOf<NotificationPlan>()
     override fun post(plan: NotificationPlan) { posted += plan }
+    val answered = mutableListOf<net.robog.clarity.shared.feed.FeedItemId>()
+    override fun answered(item: net.robog.clarity.shared.feed.FeedItemId) { answered += item }
+    var refreshed = 0
+    override fun refresh() { refreshed++ }
     var clearedAll = 0
     override fun clearAll() { clearedAll++ }
 }

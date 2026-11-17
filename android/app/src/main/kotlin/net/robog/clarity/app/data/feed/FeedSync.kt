@@ -25,6 +25,7 @@ import net.robog.clarity.app.net.FeedEventSource
 import net.robog.clarity.app.net.FeedStreamException
 import net.robog.clarity.shared.feed.FeedEvent
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.session.SessionId
 
@@ -57,6 +58,9 @@ enum class SyncState {
 sealed interface SyncSignal {
     data class ConstitutionChanged(val version: Int) : SyncSignal
     data class SessionChanged(val sessionId: SessionId) : SyncSignal
+
+    /** A choices card the cache held open now shows an answer (given on any device): its notification chips go. */
+    data class ChoicesAnswered(val item: FeedItemId) : SyncSignal
 }
 
 /**
@@ -258,6 +262,8 @@ class FeedSync(
             store.upsertItem(it)
             // A topic marker is a pill in the chat and a reaction a badge on a message, never a notification.
             if (it.topic == null && it.reaction == null && (becameComplete(existing, it) || holdReleased(existing, it))) arrive(Arrival.Item(it), onArrival)
+            // An answer lands on the cached item in place (no new seq), so it is no arrival; say so separately.
+            if (becameAnswered(existing, it)) _signals.tryEmit(SyncSignal.ChoicesAnswered(it.id))
         }
     }
 
@@ -294,6 +300,10 @@ class FeedSync(
 /** Whether storing [stored] over [existing] is the first time the cache holds that item complete. */
 fun becameComplete(existing: FeedItem?, stored: FeedItem): Boolean =
     !stored.streaming && (existing == null || existing.streaming)
+
+/** Whether storing [stored] over [existing] is the first time the cache shows the item's choices answered. */
+fun becameAnswered(existing: FeedItem?, stored: FeedItem): Boolean =
+    existing != null && !hasAnsweredChoices(existing) && hasAnsweredChoices(stored)
 
 /** How far back [FeedSync.fillGap] looks for items left streaming (a reply cut off by a dropped stream). */
 private const val STREAMING_LOOKBACK = 50

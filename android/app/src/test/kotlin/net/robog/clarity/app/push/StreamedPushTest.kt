@@ -132,6 +132,19 @@ class StreamedPushTest {
         assertEquals(8L, rig.backend.feedCalls.first(), "answered, so no longer fetched again")
     }
 
+    @Test fun anAnswerReachesTheNotifierWithNoPushHolderRunning() = runTest {
+        val rig = Rig()
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
+        // only the app-wide relay runs: no PushListener, as with the fallback job or the app open without the service
+        val relay = launch(Dispatchers.Unconfined) { AnswerRelay(rig.sync.signals, rig.notifier).run() }
+        rig.sync.apply(FeedEvent.ItemFinal(asked))
+        rig.sync.apply(FeedEvent.ItemFinal(asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))))
+        relay.cancel()
+        assertEquals(listOf(asked.id), rig.notifier.answered)
+        assertTrue(rig.notifier.posted.isEmpty())
+    }
+
     @Test fun anAnsweredChoicesItemNeverNotifies() {
         val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
         val item = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))
