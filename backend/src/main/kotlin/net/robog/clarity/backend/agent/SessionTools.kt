@@ -334,7 +334,7 @@ class SessionTools(
 
     private fun handOff(): Tool = tool<HandOffInput>(
         name = "hand_off",
-        description = "Morning call, HAND_OFF stage: create the tasks for what you will do (alone / for review) and park the rest. Shows \"I'll do\" and \"parked until tomorrow\". " +
+        description = "Morning call, HAND_OFF stage: create the tasks for what you will do (alone / for review) and park the rest. Shows \"Clarity will do\" and \"parked until tomorrow\". " +
             "Call it once. The actions themselves are carried out after the call with the usual tools.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,

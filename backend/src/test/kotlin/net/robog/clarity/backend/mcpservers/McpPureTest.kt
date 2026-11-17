@@ -295,7 +295,7 @@ class McpPureTest : FunSpec({
         verdict.rationale shouldBe "Clarity wants to use create_issue on GitHub. It changes something there, and what it sends was shaped by outside content (results from GitHub or a web page)."
         // another reason that matters is kept
         net.robog.clarity.backend.governance.deterministicVerdict(call, constitution(ActionKind.EXTERNAL_TOOL to AutonomyTier.NEVER_ALONE), tainted)
-            .rationale shouldContain "Also asking because you said \"external tool\" is never done alone."
+            .rationale shouldContain "Also needs your OK because you said \"external tool\" is never done alone."
         val step = call.copy(server = "browser", summary = "Click Submit")
         net.robog.clarity.backend.governance.deterministicVerdict(step, constitution(), tainted).rationale shouldContain "reaches other people"
         // not tainted: the usual ask-first wording

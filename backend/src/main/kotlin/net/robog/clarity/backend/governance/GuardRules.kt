@@ -144,14 +144,14 @@ fun deterministicVerdict(
     val kindName = bindingKind(action, constitution).label()
 
     when (tierOf(action, constitution)) {
-        AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you said never \"$kindName\"")
+        AutonomyTier.NEVER -> findings += Finding(Decision.DENY, "you set \"$kindName\" to never")
         AutonomyTier.NEVER_ALONE -> findings += Finding(
             Decision.ASK,
             if (kind in VAULT_KINDS) "$kindName always needs you on your phone (with your fingerprint or face)"
             else "you said \"$kindName\" is never done alone",
         )
         AutonomyTier.ASK_FIRST -> findings += Finding(Decision.ASK, askFirstReason(kindName))
-        AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you allow \"$kindName\" with a note after")
+        AutonomyTier.DO_THEN_TELL -> findings += Finding(Decision.ALLOW, "you set \"$kindName\" to do it and tell you after")
     }
     val recipients = recipientCount(action)
     if (recipients > 1) findings += Finding(Decision.ASK, "it goes out as you to $recipients people")
@@ -166,18 +166,18 @@ fun deterministicVerdict(
     }
     val text = textOf(action)
     constitution.neverStore.firstOrNull { it.isNotBlank() && text.contains(it.trim().lowercase()) }?.let { topic ->
-        findings += Finding(Decision.ASK, "it mentions \"$topic\", which you asked never to store")
+        findings += Finding(Decision.ASK, "it mentions \"$topic\", which you asked it never to store")
     }
 
     val strictest = findings.maxOf { it.decision }
     if (strictest == Decision.ALLOW) {
         return GuardVerdict(Decision.ALLOW, emptyList(), "Within what you allow without asking.")
     }
-    val lead = if (strictest == Decision.DENY) "Blocked because " else "Asking because "
+    val lead = if (strictest == Decision.DENY) "Blocked because " else "Needs your OK because "
     if (strictest == Decision.ASK && taint != null && action is ProposedAction.ExternalTool && isMcpCall(action)) {
         // A call to the person's own server reaches no one else: say what the taint means there.
         val others = findings.filter { it.decision == Decision.ASK && it !== taint && it.reason != askFirstReason(kindName) }
-        val also = if (others.isEmpty()) "" else " Also asking because ${others.joinToString(" and ") { it.reason }}."
+        val also = if (others.isEmpty()) "" else " Also needs your OK because ${others.joinToString(" and ") { it.reason }}."
         return GuardVerdict(Decision.ASK, emptyList<LineId>(), mcpTaintRationale(action) + also)
     }
     val reasons = findings.filter { it.decision == strictest }.joinToString(" and ") { it.reason }
@@ -211,13 +211,13 @@ fun hardLineVerdict(action: ProposedAction, constitution: Constitution): GuardVe
     val kind = effectiveKind(action)
     val name = bindingKind(action, constitution).label()
     return when (tierOf(action, constitution)) {
-        AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you said never \"$name\".")
-        AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "Asking because you said \"$name\" is never done alone.", phoneApproval = true)
+        AutonomyTier.NEVER -> GuardVerdict(Decision.DENY, emptyList(), "Blocked because you set \"$name\" to never.")
+        AutonomyTier.NEVER_ALONE -> GuardVerdict(Decision.ASK, emptyList(), "Needs your OK because you said \"$name\" is never done alone.", phoneApproval = true)
         else -> {
             val text = textOf(action)
             constitution.neverStore.firstOrNull { it.isNotBlank() && text.contains(it.trim().lowercase()) }
-                ?.let { GuardVerdict(Decision.ASK, emptyList(), "Asking because it mentions \"$it\", which you asked never to store.") }
-                ?: GuardVerdict(Decision.ALLOW, emptyList(), "A read, and none of your limits applies.")
+                ?.let { GuardVerdict(Decision.ASK, emptyList(), "Needs your OK because it mentions \"$it\", which you asked it never to store.") }
+                ?: GuardVerdict(Decision.ALLOW, emptyList(), "A read that none of your limits cover.")
         }
     }
 }
@@ -260,10 +260,10 @@ fun combine(deterministic: GuardVerdict, model: GuardVerdict): GuardVerdict {
  * decided. Returns the reason, or null when approving is fine.
  */
 fun hardLineViolation(action: ProposedAction, previous: GuardVerdict, constitution: Constitution): String? {
-    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${bindingKind(action, constitution).label()}\" is a hard line; change the line first"
+    if (tierOf(action, constitution) == AutonomyTier.NEVER) return "\"${bindingKind(action, constitution).label()}\" is a hard line, so change the line first"
     val cited = constitution.lines.filter { it.hard && it.id in previous.lines }
     if (previous.decision == Decision.DENY && cited.isNotEmpty()) {
-        return "it touches a hard line (${cited.joinToString { it.text }}); amend the line first"
+        return "it touches a hard line (${cited.joinToString { it.text }}), so amend the line first"
     }
     return null
 }

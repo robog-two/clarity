@@ -107,7 +107,7 @@ class GatewayBrowserTriage(
         } catch (e: Exception) {
             // A cut-off or unreadable answer must become a question for the person, never a failed step.
             null
-        } ?: return TriageVerdict(false, "Clarity could not double-check this step, so it asks you")
+        } ?: return TriageVerdict(false, "Clarity could not double-check this step, so it needs your OK")
         val verdict = json["verdict"]?.jsonPrimitive?.contentOrNull
         val reason = json["reason"]?.jsonPrimitive?.contentOrNull.orEmpty()
         return TriageVerdict(verdict == "ok", reason)
@@ -573,7 +573,7 @@ class BrowserGate(
             input = input,
         )
         val context = listOfNotNull(url?.let { ContextItem("page", it) }, ContextItem("reason", reason + if (neverAlone) " (payment or card details)" else ""))
-        return when (val hold = governance.browserStep(action, scope.provenance(), "Clarity wants to do this on the page: $description.", context)) {
+        return when (val hold = governance.browserStep(action, scope.provenance(), "Clarity wants to do this on the page. $description.", context)) {
             Hold.Proceed -> null
             is Hold.Wait -> Attempt(ToolResult.Ok(hold.text), hold.heldId)
         }
@@ -660,7 +660,7 @@ fun combineVerdict(rules: StepVerdict, check: JevCheck, signingIn: Boolean): Ste
     val sure = { s: JevStep -> jev.confident(s, check.threshold) }
     return when {
         rules is StepVerdict.Ask -> rules
-        jev.failed != null -> StepVerdict.Ask("Clarity could not double-check this step on the screen (${jev.failed}), so it asks you", neverAlone = false)
+        jev.failed != null -> StepVerdict.Ask("Clarity could not double-check this step on the screen (${jev.failed}), so it needs your OK", neverAlone = false)
         jev.step == JevStep.COMMIT && jev.p >= JEV_COMMIT_ASK -> StepVerdict.Ask("on the screen it looks like this step sends, buys or changes something", neverAlone = false)
         rules == StepVerdict.Pass -> if (sure(JevStep.BROWSE) || (signingIn && sure(JevStep.SIGN_IN))) StepVerdict.Pass else StepVerdict.Triage
         check.mayApprove && sure(JevStep.BROWSE) -> StepVerdict.Pass

@@ -253,7 +253,7 @@ class McpCalls(
         val outcome = when (how) {
             McpGate.ALWAYS_ASK -> gate.gateLocal(
                 action, agentView, context, scope.provenance(), Urgency.URGENT,
-                alwaysAsk = "Asking because you approve every call of ${tool.name} on ${server.label} (Settings → MCP servers can set it to Auto).",
+                alwaysAsk = "Needs your OK because you approve every call of ${tool.name} on ${server.label} (Settings → MCP servers can set it to Auto).",
             )
             McpGate.GUARD -> gate.gateLocal(action, agentView, context, scope.provenance(), Urgency.URGENT)
             McpGate.HARD_LINES -> gate.holdLocal(action, requireNotNull(limits), agentView, context, Urgency.URGENT)
