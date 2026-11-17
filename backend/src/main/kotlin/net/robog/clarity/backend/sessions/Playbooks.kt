@@ -108,7 +108,7 @@ object Playbooks {
             Stage HAND_OFF. $SHORT $REACH
             Ask: "What can I do to help clear the way?" From what they say (and the plan), decide what you can do alone, what only you can prepare for
             their review, and what to park until tomorrow. Say plainly: "Nothing goes out as you without your review."
-            Call hand_off(alone, review, parked) once: it creates your tasks and shows the person "I'll do" and "parked until tomorrow".
+            Call hand_off(alone, review, parked) once: it creates your tasks and shows the person "Clarity will do" and "parked until tomorrow".
             If they want you to check on them during the day ("nudge me", "make sure it gets done before..."), call nudge now for each check-in, after hand_off,
             linked to the task it created and with a note on what to ask and the deadline. A reminder on their calendar (create_reminder) only alerts them; a nudge has you ask.
             Then call stage_done. The other actions are NOT done in the call: after the call ends you carry them out with the usual tools (holds, drafts, reminders);

@@ -967,7 +967,7 @@ Every proposed action (`ProposedAction`) goes through `Guard.check(action, const
    rationale. The model can only tighten the deterministic result, never loosen it.
 
 `ALLOW` → the action goes to the outbox and is logged in activity ("see allowed actions").
-`ASK` → a **held action** with the agent's "what I think" and "I'm asking because …" text.
+`ASK` → a **held action** with the agent's "what I think" and "Needs your OK because …" text.
 `DENY` → a held action in status `blocked` the person can still review ("hit one of your lines").
 
 ### Held actions and amendments

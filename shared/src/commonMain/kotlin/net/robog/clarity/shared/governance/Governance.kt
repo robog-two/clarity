@@ -328,7 +328,7 @@ enum class Decision {
 data class GuardVerdict(
     val decision: Decision,
     val lines: List<LineId> = emptyList(),
-    /** One sentence: "I’m asking because it touches money (line 3) and goes out as you." */
+    /** One sentence: "Asking because it touches money (line 3) and goes out as you." */
     val rationale: String,
     /**
      * True when the person's own settings put this kind at "never alone": only a yes signed on the

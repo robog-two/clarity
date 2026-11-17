@@ -289,7 +289,7 @@ class GuardRulesTest : FunSpec({
 
             guard { error("boom") }.check(sample(ActionKind.SAVE_DRAFT), c, trusted()).also {
                 it.decision shouldBe Decision.ASK
-                it.rationale shouldContain "couldn't double-check"
+                it.rationale shouldContain "could not double-check"
             }
             calls shouldBe 1
 

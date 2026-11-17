@@ -42,7 +42,7 @@ import net.robog.clarity.shared.text.oneLine
 import net.robog.clarity.shared.time.LocalTimes
 
 /** The inputs every external tool shares: why, and what prompted it. */
-private const val WHY = "One or two sentences to the person, first person: what you think and why you want to do this. Shown on the held item."
+private const val WHY = "One or two sentences to the person, shown on the held item: what you think and why you want to do this. Write them as Clarity: never I, me or my, call the app Clarity or it, plain words, at most one comma per sentence, no colons, semicolons or em dashes."
 private const val CONTEXT = "What prompted this (e.g. the message being replied to), shown to the person."
 
 /** A time input on the person's clock ([zone]); a plain date is not enough here. */

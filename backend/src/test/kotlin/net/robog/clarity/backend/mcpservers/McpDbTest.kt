@@ -291,7 +291,7 @@ class McpDbTest : FunSpec({
         scope.untrusted shouldBe true
         ok(tools.first { it.name == "mcp_github__create_issue" }.call("title" to "From the list")) shouldContain "has not answered"
         r.heldStore.list(setOf(HeldAction.Status.HELD)).single().verdict.rationale shouldBe
-            "I want to use create_issue on GitHub. It changes something there, and what I'm sending was shaped by outside content (results from GitHub or a web page)."
+            "Clarity wants to use create_issue on GitHub. It changes something there, and what it sends was shaped by outside content (results from GitHub or a web page)."
     }
 
     test("an ask tool is held even when the person's rules would allow it; it runs once on approval, and the next call asks again") {

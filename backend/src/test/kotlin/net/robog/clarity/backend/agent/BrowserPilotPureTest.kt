@@ -33,7 +33,7 @@ class BrowserPilotPureTest : FunSpec({
         combineVerdict(StepVerdict.Triage, check(JevStep.BROWSE, 0.99), false) shouldBe StepVerdict.Triage
         combineVerdict(StepVerdict.Triage, check(JevStep.BROWSE, 0.99, mayApprove = true), false) shouldBe StepVerdict.Pass
         combineVerdict(StepVerdict.Triage, check(JevStep.BROWSE, 0.85, mayApprove = true), false) shouldBe StepVerdict.Triage
-        combineVerdict(StepVerdict.Pass, check(null, 0.0, failed = "timeout"), false).shouldBeInstanceOf<StepVerdict.Ask>().reason shouldContain "couldn't double-check"
+        combineVerdict(StepVerdict.Pass, check(null, 0.0, failed = "timeout"), false).shouldBeInstanceOf<StepVerdict.Ask>().reason shouldContain "could not double-check"
     }
 
     test("codeGuard: nothing before a code; resends refused for 10 minutes, then allowed, and never past two codes") {

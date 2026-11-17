@@ -249,11 +249,11 @@ class McpCalls(
             ContextItem("tool", listOfNotNull(tool.title ?: tool.name, firstSentence(tool.description).ifEmpty { null }).joinToString(", ")),
             ContextItem("input", ClarityJson.encodeToString(JsonObject.serializer(), action.input).let { if (it.length > 600) it.take(599) + "…" else it }),
         )
-        val agentView = "I want to call ${tool.name} on ${server.label}."
+        val agentView = "Clarity wants to call ${tool.name} on ${server.label}."
         val outcome = when (how) {
             McpGate.ALWAYS_ASK -> gate.gateLocal(
                 action, agentView, context, scope.provenance(), Urgency.URGENT,
-                alwaysAsk = "I'm asking because you approve every call of ${tool.name} on ${server.label} (Settings → MCP servers can set it to Auto).",
+                alwaysAsk = "Needs your OK because you approve every call of ${tool.name} on ${server.label} (Settings → MCP servers can set it to Auto).",
             )
             McpGate.GUARD -> gate.gateLocal(action, agentView, context, scope.provenance(), Urgency.URGENT)
             McpGate.HARD_LINES -> gate.holdLocal(action, requireNotNull(limits), agentView, context, Urgency.URGENT)
