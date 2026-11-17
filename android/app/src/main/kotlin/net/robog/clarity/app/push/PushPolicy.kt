@@ -291,7 +291,7 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
         NotifyKind.Hold -> return null
     }
     if (channel == PushChannel.Evening) {
-        return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.Today)
+        return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.AskItem(item.id))
     }
     item.cards.firstNotNullOfOrNull { it as? Card.Proposal }?.let { proposal ->
         // The same id as the held action's own notification, so the two never stack.

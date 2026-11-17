@@ -56,6 +56,9 @@ fun AskScreen(
     onReview: (HeldActionId) -> Unit = {},
     onOpenReport: ((String) -> Unit)? = null,
     onOpenSource: ((String) -> Unit)? = null,
+    /** An item to scroll to (the evening summary a notification linked), reported through [onFocused] once it has. */
+    focus: FeedItemId? = null,
+    onFocused: () -> Unit = {},
     viewModel: AskViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -74,6 +77,8 @@ fun AskScreen(
         modifier = modifier,
         onOpenReport = onOpenReport,
         onOpenSource = onOpenSource,
+        focus = focus,
+        onFocused = onFocused,
     )
 }
 
@@ -93,6 +98,8 @@ fun AskContent(
     onOpenReport: ((String) -> Unit)? = null,
     onOpenSource: ((String) -> Unit)? = null,
     onChoose: ((FeedItemId, Choice) -> Unit)? = null,
+    focus: FeedItemId? = null,
+    onFocused: () -> Unit = {},
 ) {
     val env = CardEnv(onChoose = onChoose, held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
@@ -140,6 +147,9 @@ fun AskContent(
             liveConfirmed = state.liveConfirmed,
             env = env,
             modifier = transcript,
+            focus = focus,
+            onFocused = onFocused,
+            newestRows = if (state.suggestions.isNotEmpty()) 1 else 0,
             newest = {
                 if (state.suggestions.isNotEmpty()) {
                     item(key = "suggestions") {

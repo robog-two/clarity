@@ -55,8 +55,8 @@ fun summarizedBy(pending: List<FeedItem>, posted: Appended): List<FeedItem> =
 /** The lower-case phrase that follows a count in the summary's opening line. */
 private fun summaryCount(label: String): String = when (label) {
     "Coming up" -> "coming up"
-    "Done today" -> "done today"
-    else -> "held"
+    "Done today" -> "done"
+    else -> "to look at"
 }
 
 /**

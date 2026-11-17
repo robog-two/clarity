@@ -7,6 +7,7 @@ import dev.zacsweers.metro.ContributesIntoMap
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metrox.viewmodel.ViewModelKey
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,6 +36,7 @@ import net.robog.clarity.app.ui.onboarding.dayName
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.shared.feed.AgentTask
+import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.session.Session
@@ -42,6 +44,7 @@ import net.robog.clarity.shared.session.Today
 import kotlinx.datetime.isoDayNumber
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -173,6 +176,8 @@ data class TodayUiState(
     val today: Today? = null,
     val doing: Doing = Doing(),
     val heldWaiting: Int = 0,
+    /** The evening summary of today, if one was posted ([tonightOf]). */
+    val tonight: Tonight? = null,
     /** The server has no `/today` yet. */
     val unavailable: Boolean = false,
     val error: String? = null,
@@ -225,6 +230,7 @@ class TodayViewModel(
     private var fetched: Today? = null
     private var liveTasks: List<AgentTask> = emptyList()
     private var liveHeld: List<HeldAction> = emptyList()
+    private var liveItems: List<FeedItem> = emptyList()
 
     init {
         viewModelScope.launch {
@@ -234,12 +240,26 @@ class TodayViewModel(
                 publish()
             }
         }
+        viewModelScope.launch {
+            feed.items.collect { items ->
+                liveItems = items
+                publish()
+            }
+        }
         // New server-side activity (a task appeared, an action was held) changes what Today lists: fetch again.
         viewModelScope.launch {
             combine(feed.tasks, feed.held) { tasks, held -> tasks.map { it.id to it.status } to held.map { it.id to it.status } }
                 .distinctUntilChanged()
                 .drop(1)
                 .collect { fetch(quiet = true) }
+        }
+        // The Tonight card ends at local midnight even when nothing else changes: recompute then.
+        viewModelScope.launch {
+            while (true) {
+                // At least a minute, so a fixed clock cannot make this spin.
+                delay(maxOf(nextLocalMidnight(clock.now(), clock.zone()) - clock.now(), 1.minutes))
+                publish()
+            }
         }
         viewModelScope.launch { fetch(quiet = false) }
         viewModelScope.launch { calls.session.collect { offerCall() } }
@@ -263,6 +283,9 @@ class TodayViewModel(
         }
     }
 
+    /** Today came to the foreground: the delay above stops while the phone sleeps, so look at the clock again. */
+    fun onForeground() = publish()
+
     /** Pull to refresh. */
     fun refresh() {
         viewModelScope.launch { fetch(quiet = false, pulled = true) }
@@ -275,6 +298,7 @@ class TodayViewModel(
         val since = fetched?.let { keptSince(now, clock.zone()) }
         s.copy(
             doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks, since), liveHeld.associateBy { it.id }, now, clock.zone()),
+            tonight = tonightOf(liveItems, now, clock.zone()),
             heldWaiting = if (liveHeld.isEmpty()) fetched?.heldCount ?: 0 else liveHeld.count { it.status == HeldAction.Status.HELD },
         )
     }
