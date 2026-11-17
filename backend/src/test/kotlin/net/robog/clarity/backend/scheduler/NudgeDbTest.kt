@@ -46,7 +46,10 @@ import net.robog.clarity.backend.feed.ExposedFeedStore
 import net.robog.clarity.backend.feed.FeedHub
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.integration.ContainerRuntimeAvailable
+import net.robog.clarity.backend.sessions.PlanItemState
 import net.robog.clarity.backend.sessions.PlanItemStore
+import net.robog.clarity.backend.sessions.Planned
+import net.robog.clarity.shared.time.ScheduleClock
 import net.robog.clarity.backend.persistence.DatabaseFactory
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.harness.ToolResult
@@ -96,7 +99,7 @@ class NudgeDbTest : FunSpec({
         database = Database.connect(dataSource)
     }
     afterSpec { postgres.stop() }
-    beforeTest { database.tx { exec("TRUNCATE nudge, agent_task, inbox_item, feed_item, model_call RESTART IDENTITY CASCADE") } }
+    beforeTest { database.tx { exec("TRUNCATE nudge, plan_item, agent_task, inbox_item, feed_item, model_call RESTART IDENTITY CASCADE") } }
 
     val settings = Settings()
     val zone = zoneOrUtc(settings.homeZone)
@@ -146,6 +149,30 @@ class NudgeDbTest : FunSpec({
 
         r.tasks.upsert(task.id, null, null, AgentTask.Status.DONE)
         r.call("nudge", input("at" to at, "note" to "ask", "taskId" to task.id.value)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already done"
+    }
+
+    test("a nudge the lead makes about a plan item is stored against it, and skipped once the item is done") {
+        val r = Rig(database)
+        val items = PlanItemStore(database)
+        val now = Clock.System.now()
+        val today = ScheduleClock.homeDate(now, zone)
+        val item = items.plan(today, listOf(Planned("write the onboarding spec"))).single()
+        val at = agentTime(now + 2.hours, zone)
+
+        r.call("nudge", input("at" to at, "note" to "ask how the spec is going", "planItemId" to item.id)).shouldBeInstanceOf<ToolResult.Ok>()
+        // an id that is no open plan item is not stored
+        r.call("nudge", input("at" to agentTime(now + 5.hours, zone), "note" to "ask about something else", "planItemId" to "00000000-0000-0000-0000-000000000000"))
+            .shouldBeInstanceOf<ToolResult.Ok>()
+        val stored = r.store.pending().associateBy { it.note }
+        stored.getValue("ask how the spec is going").planItemId shouldBe item.id
+        stored.getValue("ask about something else").planItemId shouldBe null
+
+        items.update(item.id) { it.copy(state = PlanItemState.DONE) }
+        r.runner.fireDue(now + 2.hours + 1.minutes, zone)
+        r.nudgeItems().shouldBeEmpty()
+        val after = r.store.get(stored.getValue("ask how the spec is going").id)!!
+        after.status shouldBe Nudge.Status.SKIPPED
+        after.reason.shouldNotBeNull() shouldContain "plan item"
     }
 
     test("freeSlot picks the next gap, and exactly one of at and freeSlot is required") {

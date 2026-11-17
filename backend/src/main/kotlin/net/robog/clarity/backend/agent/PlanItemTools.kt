@@ -261,6 +261,13 @@ fun coveringCheckIn(at: Instant, planItemId: String?, subjects: List<String>, pe
             (itemId == planItemId || items[itemId]?.text?.let { text -> subjects.any { sameWording(text, it) } } == true)
     }
 
+/**
+ * Pure: the plan item a lead-made nudge is stored against, or null. Only an id of an open item counts,
+ * so the nudge is skipped once the item is done or started, as an automatic check-in is.
+ */
+fun linkedPlanItem(planItemId: String?, open: Map<String, PlanItem>): String? =
+    planItemId?.trim()?.takeIf { it in open }
+
 /** Pure: how a plan item reads in the lead's wake-up: id, text, day, first step and the follow-ups left today. */
 fun planItemWakeText(item: PlanItem, date: LocalDate, followUpsLeft: Int): String =
     "id ${item.id}, \"${item.text}\", day ${item.dayOn(date)}" + (firstStepNote(item, date)?.let { ", $it" } ?: "") +

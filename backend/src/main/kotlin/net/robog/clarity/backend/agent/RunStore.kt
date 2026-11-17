@@ -65,6 +65,8 @@ data class HelperRun(
     val revisions: Int = 0,
     /** The automatic check of [doneWhen] against the result; empty when it did not run or was unavailable. */
     val check: List<CriterionCheck> = emptyList(),
+    /** The lead delegated it in a turn that was answering the person, so what it brings back is a reply (see `answersPerson`). */
+    val answeringPerson: Boolean = false,
 )
 
 interface RunStore {
@@ -78,6 +80,7 @@ interface RunStore {
         servers: List<String> = emptyList(),
         profile: String? = null,
         doneWhen: List<String> = emptyList(),
+        answeringPerson: Boolean = false,
     )
     suspend fun markRunning(id: String)
 
@@ -159,6 +162,7 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
         servers: List<String>,
         profile: String?,
         doneWhen: List<String>,
+        answeringPerson: Boolean,
     ) {
         database.tx {
             AgentRuns.insert {
@@ -172,6 +176,7 @@ class ExposedRunStore(private val database: Database, private val clock: Clock) 
                 it[AgentRuns.startedAt] = startedAt
                 it[AgentRuns.mcpServers] = servers.takeIf { s -> s.isNotEmpty() }?.let { s -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), s) }
                 it[AgentRuns.profile] = profile
+                it[AgentRuns.answeringPerson] = answeringPerson
                 it[AgentRuns.doneWhen] = doneWhen.takeIf { d -> d.isNotEmpty() }?.let { d -> ClarityJson.encodeToJsonElement(ListSerializer(String.serializer()), d) }
             }
         }
@@ -356,6 +361,7 @@ private fun ResultRow.toRun(): HelperRun {
         doneWhen = this[AgentRuns.doneWhen]?.takeIf { it !is JsonNull }
             ?.let { ClarityJson.decodeFromJsonElement(ListSerializer(String.serializer()), it) }.orEmpty(),
         revisions = this[AgentRuns.revisions],
+        answeringPerson = this[AgentRuns.answeringPerson],
         check = this[AgentRuns.criteriaCheck]?.takeIf { it !is JsonNull }
             ?.let { runCatching { ClarityJson.decodeFromJsonElement(ListSerializer(CriterionCheck.serializer()), it) }.getOrNull() }.orEmpty(),
     )

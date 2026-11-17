@@ -11,10 +11,11 @@ class ChoicesAndKindTest {
 
     @Test
     fun fallbackTextListsTheOptions() {
-        assertEquals("Ready? Reply with Starting, Later or Make it smaller.", choicesFallback("Ready?", options))
+        assertEquals("Ready? Reply with Starting or Later or Make it smaller.", choicesFallback("Ready?", options))
         assertEquals("Reply with Yes or No.", choicesFallback(null, listOf(Choice("Yes", "yes"), Choice("No", "no"))))
         assertEquals("Reply with Ok.", choicesFallback("  ", listOf(Choice("Ok", "ok"))))
         assertEquals("", choicesFallback(null, emptyList()))
+        assertEquals(0, choicesFallback(null, options + Choice("Never", "never")).count { it == ',' })
     }
 
     @Test
@@ -23,7 +24,7 @@ class ChoicesAndKindTest {
         val encoded = ClarityJson.encodeToString(Card.serializer(), card)
         assertEquals(card, ClarityJson.decodeFromString(Card.serializer(), encoded))
         val asOldApp = ClarityJson.decodeFromString(Card.serializer(), encoded.replace("\"type\":\"choices\"", "\"type\":\"choices_v9\""))
-        assertEquals(Card.Unknown("Ready? Reply with Starting, Later or Make it smaller."), asOldApp)
+        assertEquals(Card.Unknown("Ready? Reply with Starting or Later or Make it smaller."), asOldApp)
     }
 
     @Test
@@ -58,5 +59,21 @@ class ChoicesAndKindTest {
     fun userInputWithoutInReplyToDecodes() {
         val input = ClarityJson.decodeFromString(UserInput.serializer(), """{"clientId":"c1","text":"hi"}""")
         assertNull(input.inReplyTo)
+    }
+
+    @Test
+    fun anUnknownKindDecodesAsNullInsteadOfFailingTheItem() {
+        val item = FeedItem(FeedItemId("1"), 1, kotlin.time.Instant.fromEpochSeconds(0), FeedItem.Author.AGENT, cards = listOf(Card.Text("hi")), kind = MessageKind.CHECK_IN)
+        val encoded = ClarityJson.encodeToString(FeedItem.serializer(), item)
+        assertEquals(item, ClarityJson.decodeFromString(FeedItem.serializer(), encoded))
+        val future = ClarityJson.decodeFromString(FeedItem.serializer(), encoded.replace("\"check_in\"", "\"a_future_kind\""))
+        assertNull(future.kind)
+        assertEquals(listOf(Card.Text("hi")), future.cards)
+        assertNull(ClarityJson.decodeFromString(FeedItem.serializer(), encoded.replace(",\"kind\":\"check_in\"", "")).kind)
+        assertNull(ClarityJson.decodeFromString(FeedItem.serializer(), encoded.replace("\"check_in\"", "null")).kind)
+        for (kind in MessageKind.entries) {
+            val one = ClarityJson.encodeToString(FeedItem.serializer(), item.copy(kind = kind))
+            assertEquals(kind, ClarityJson.decodeFromString(FeedItem.serializer(), one).kind)
+        }
     }
 }

@@ -242,7 +242,7 @@ class LeadRig(
         helpers = HelperManager(config, runtime, runs, journal, inbox, lazy { toolbox }, large, clock, grants = grants, checker = criteriaChecker ?: ConfiguredCriteriaChecker(runtime), searchBrief = searchBrief)
         lead = LeadAgent(
             config, runtime, journal, inbox, signals, threads, constitutions, memory, collections, toolbox, large, feed, settingsProvider, clock,
-            effortOverride ?: CallEffortOverride(sessionService), mail, mcpCatalog,
+            effortOverride ?: CallEffortOverride(sessionService), mail, mcpCatalog, runs,
         )
     }
 

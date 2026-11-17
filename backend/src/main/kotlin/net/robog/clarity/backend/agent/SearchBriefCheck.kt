@@ -26,14 +26,25 @@ const val BRIEF_IDENTIFIERS = "identifiers"
 /** p(identifiers) at or above this refuses the brief. */
 const val BRIEF_IDENTIFIERS_THRESHOLD = 0.5
 
-/** A brief longer than this is not judged (and not sent): it is refused as too long, never cut. */
-const val SEARCH_BRIEF_MAX_CHARS = 8000
+/** The longest stretch judged in one decision call. Longer text is judged in chunks, never refused for its length. */
+const val SEARCH_BRIEF_CHUNK_CHARS = 8000
 
-const val SEARCH_BRIEF_TOO_LONG = "Not delegated: the brief for a web search helper is too long to check. Brief too long, shorten it to the " +
-    "goal, the city, the time window, venues and interests, and delegate again."
+/** How much of the previous chunk the next one repeats, so a number or address cannot be split across a boundary unseen. */
+const val SEARCH_BRIEF_CHUNK_OVERLAP = 200
 
-/** Pure: whether [brief] is too long to be judged. */
-fun searchBriefTooLong(brief: String): Boolean = brief.length > SEARCH_BRIEF_MAX_CHARS
+/**
+ * Pure: [text] as chunks of at most [max] characters, each repeating the last [overlap] of the one
+ * before. Text that fits is one chunk, unchanged. Together the chunks hold all of the text.
+ */
+fun searchBriefChunks(text: String, max: Int = SEARCH_BRIEF_CHUNK_CHARS, overlap: Int = SEARCH_BRIEF_CHUNK_OVERLAP): List<String> {
+    require(max > overlap && overlap >= 0) { "a chunk must be longer than its overlap" }
+    if (text.length <= max) return listOf(text)
+    val step = max - overlap
+    return generateSequence(0) { it + step }
+        .takeWhile { it == 0 || it - step + max < text.length }
+        .map { text.substring(it, minOf(it + max, text.length)) }
+        .toList()
+}
 
 val SEARCH_BRIEF_QUESTIONS: Map<String, DecisionQuestion> = mapOf(
     BRIEF_IDENTIFIERS to DecisionQuestion.Noul(
@@ -78,9 +89,13 @@ fun searchBriefRefusal(result: Either<DecisionError, DecisionResult>?, threshold
 class DecisionSearchBriefCheck(private val decisions: Decisions) : SearchBriefCheck {
     override suspend fun refusal(brief: String): String? {
         if (brief.isBlank() || !decisions.enabled) return null
-        if (searchBriefTooLong(brief)) return SEARCH_BRIEF_TOO_LONG
+        // Long text is judged chunk by chunk; it goes only if every chunk does.
+        return searchBriefChunks(brief).firstNotNullOfOrNull { judge(it) }
+    }
+
+    private suspend fun judge(chunk: String): String? {
         val result = try {
-            decisions.decide(searchBriefState(brief), SEARCH_BRIEF_QUESTIONS)
+            decisions.decide(searchBriefState(chunk), SEARCH_BRIEF_QUESTIONS)
         } catch (e: kotlin.coroutines.cancellation.CancellationException) {
             throw e
         } catch (e: Exception) {

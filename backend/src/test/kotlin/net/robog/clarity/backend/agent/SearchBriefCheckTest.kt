@@ -55,7 +55,7 @@ class SearchBriefPureTest : FunSpec({
     }
 
     test("the brief goes to the decision model as it is, as untrusted data: nothing redacted, nothing cut") {
-        val brief = "Find jazz near Ithaca. Booking ref ABCD1234EFGH5678 for 14 Elm Street, " + "x".repeat(SEARCH_BRIEF_MAX_CHARS - 100)
+        val brief = "Find jazz near Ithaca. Booking ref ABCD1234EFGH5678 for 14 Elm Street, " + "x".repeat(SEARCH_BRIEF_CHUNK_CHARS - 100)
         val state = searchBriefState(brief)
         state["untrusted"]!!.jsonPrimitive.content shouldBe brief
         state["untrusted"]!!.jsonPrimitive.content shouldContain "ABCD1234EFGH5678"
@@ -66,10 +66,18 @@ class SearchBriefPureTest : FunSpec({
         }
     }
 
-    test("a brief over the cap is too long, never cut") {
-        searchBriefTooLong("x".repeat(SEARCH_BRIEF_MAX_CHARS)) shouldBe false
-        searchBriefTooLong("x".repeat(SEARCH_BRIEF_MAX_CHARS + 1)) shouldBe true
-        SEARCH_BRIEF_TOO_LONG shouldContain "Brief too long, shorten it"
+    test("long text is judged in chunks of at most 8000 characters that overlap, and nothing is lost") {
+        searchBriefChunks("") shouldBe listOf("")
+        val fits = "x".repeat(SEARCH_BRIEF_CHUNK_CHARS)
+        searchBriefChunks(fits) shouldBe listOf(fits)
+        val text = (0 until 20_000).joinToString("") { (it % 10).toString() }
+        val chunks = searchBriefChunks(text)
+        chunks.size shouldBe 3
+        chunks.all { it.length <= SEARCH_BRIEF_CHUNK_CHARS } shouldBe true
+        chunks.zipWithNext().forEach { (a, b) -> a.takeLast(SEARCH_BRIEF_CHUNK_OVERLAP) shouldBe b.take(SEARCH_BRIEF_CHUNK_OVERLAP) }
+        chunks.first() + chunks.drop(1).joinToString("") { it.drop(SEARCH_BRIEF_CHUNK_OVERLAP) } shouldBe text
+        // one past the size makes a second chunk that carries the overlap and the extra character
+        searchBriefChunks(fits + "y").last() shouldBe fits.takeLast(SEARCH_BRIEF_CHUNK_OVERLAP) + "y"
     }
 })
 
@@ -117,12 +125,27 @@ class SearchBriefDbTest : FunSpec({
         asked.get() shouldBe 0
     }
 
-    test("too long is refused only when the decision model is on, and the model sees the raw brief") {
-        val long = "Find jazz near Ithaca. " + "y".repeat(SEARCH_BRIEF_MAX_CHARS)
+    test("a long brief is judged in chunks and goes only if every chunk does; an identifier on a boundary is still seen whole") {
+        val long = "Find jazz near Ithaca. " + "y".repeat(SEARCH_BRIEF_CHUNK_CHARS * 2)
         gateOf(null).refusal(long) shouldBe null // off: the behaviour is as before
         val asked = AtomicInteger()
-        gateOf { _, _ -> asked.incrementAndGet(); answer(0.0).right() }.refusal(long) shouldBe SEARCH_BRIEF_TOO_LONG
-        asked.get() shouldBe 0
+        gateOf { _, _ -> asked.incrementAndGet(); answer(0.0).right() }.refusal(long) shouldBe null
+        asked.get() shouldBe searchBriefChunks(long).size
+        // the second chunk is the only one with the identifier: the first answer is clean, the second refuses
+        val ref = "Booking ref ABCD1234EFGH5678"
+        val spliced = "z".repeat(SEARCH_BRIEF_CHUNK_CHARS - 10) + ref + "z".repeat(50)
+        val seen = mutableListOf<String>()
+        gateOf { state, _ ->
+            val text = (state as JsonObject)["untrusted"]!!.jsonPrimitive.content
+            seen += text
+            answer(if (ref in text) 0.9 else 0.0).right()
+        }.refusal(spliced) shouldBe SEARCH_BRIEF_REFUSAL
+        seen.size shouldBe 2
+        (ref in seen[0]) shouldBe false
+        (ref in seen[1]) shouldBe true
+    }
+
+    test("the brief goes to the decision model as it is") {
         val seen = mutableListOf<String>()
         val raw = "Find jazz. Booking ref ABCD1234EFGH5678, call 607 555 0100"
         gateOf { state, _ -> seen += (state as JsonObject)["untrusted"]!!.jsonPrimitive.content; answer(0.9).right() }.refusal(raw) shouldBe SEARCH_BRIEF_REFUSAL

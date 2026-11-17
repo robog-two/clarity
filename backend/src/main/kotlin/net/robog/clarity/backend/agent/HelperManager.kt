@@ -239,7 +239,7 @@ class HelperManager(
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
         val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
-        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, neutralizeMarkers(task), stored, clock.now(), servers = ids, doneWhen = normalizeDoneWhen(doneWhen))
+        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, neutralizeMarkers(task), stored, clock.now(), servers = ids, doneWhen = normalizeDoneWhen(doneWhen), answeringPerson = parent.answeringPerson)
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))

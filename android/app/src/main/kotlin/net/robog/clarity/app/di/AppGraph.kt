@@ -137,11 +137,8 @@ import net.robog.clarity.app.push.pushConditions
 import net.robog.clarity.app.push.SeenOnScreen
 import net.robog.clarity.app.push.notifiable
 import net.robog.clarity.app.data.perServerState
-import net.robog.clarity.app.data.feed.SyncSignal
 import net.robog.clarity.app.data.feed.SyncState
-import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 
 /**
  * The application graph. ViewModels are contributed with `@ContributesIntoMap(AppScope::class)`
@@ -467,9 +464,9 @@ interface AppGraph : ViewModelGraph {
         call = { call.live()?.id },
     )
 
-    /** The periodic catch-up for when the service is not running. */
     @Provides fun answerRelay(sync: FeedSync, notifier: PushNotifier): AnswerRelay = AnswerRelay(sync.signals, notifier)
 
+    /** The periodic catch-up for when the service is not running. */
     @Provides fun pushFallback(
         sessions: SessionStore,
         flag: OnboardingFlagStore,

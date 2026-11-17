@@ -500,9 +500,11 @@ class NudgeTools(
             taskTitle = task.title
         }
         val everything = nudges.pending()
+        val openItems = planItems.open().associateBy { it.id }
+        val planItemId = linkedPlanItem(input.planItemId, openItems)
         // A check-in on the SAME plan item was already set for this time (set_plan does it); a second one would ask twice.
         // A reminder about anything else is never swallowed by it.
-        coveringCheckIn(at, input.planItemId?.trim()?.takeIf { it.isNotEmpty() }, listOfNotNull(note, taskTitle), everything, planItems.open().associateBy { it.id })?.let {
+        coveringCheckIn(at, input.planItemId?.trim()?.takeIf { it.isNotEmpty() }, listOfNotNull(note, taskTitle), everything, openItems)?.let {
             return@tool ToolResult.Ok("Nudge ${it.id.value} at ${agentTime(it.at, zone)} already checks in on the plan then; no new one was made.")
         }
         // The person's own nudges have their limits; the plan flow's check-ins have theirs (see PlanNudger) and do not count here.
@@ -516,7 +518,7 @@ class NudgeTools(
         combinedRefusal(everything.size, personDay + nudges.countActivePlan(dayStart, dayEnd))?.let { return@tool ToolResult.Error(it) }
         nudgeRefusal(at, note, taskId, now, pending, personDay, zone)
             ?.let { return@tool ToolResult.Error(it) }
-        val created = nudges.create(at, note, taskId)
+        val created = nudges.create(at, note, taskId, planItemId)
         ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}$chosen. Nothing is sent now; when it fires you decide what to ask.")
     }
 

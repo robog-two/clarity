@@ -5,6 +5,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlin.time.Duration.Companion.minutes
@@ -34,6 +35,8 @@ import net.robog.clarity.harness.Role
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.MessageKind
+import net.robog.clarity.shared.feed.NOTIFY_REPLY
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.HeldAction
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -188,6 +191,74 @@ class LeadScenarioTest : FunSpec({
         val last = r.model.requests.last()
         allText(last) shouldContain "<untrusted source=\"helper:${finished.id}\">The contract is in Dana's mail from Tuesday.</untrusted>"
         helperJob.cancelAndJoin()
+    }
+
+    /** The agent's newest post, shown or held for the evening summary. */
+    suspend fun lastPost(r: LeadRig): FeedItem =
+        (r.feed.page(0, 100).items + r.feedStore.pendingBatch()).filter { it.author == FeedItem.Author.AGENT }.maxBy { it.seq }
+
+    suspend fun finishedHelperAnswer(r: LeadRig) {
+        r.model.handler = { request ->
+            if (lastResultFor(request, "toolu_post")) end("posted") else reply("toolu_post", "It is in Tuesday's mail.")
+        }
+        r.lead.step() shouldBe true
+    }
+
+    test("the person asks, the lead delegates, and the post made when the helper is done is a reply that notifies") {
+        val r = rig()
+        r.model.handler = { request ->
+            when {
+                request.model == HELPER_MODEL -> end("The contract is in Dana's mail from Tuesday.")
+                lastResultFor(request, "toolu_ack") -> end("told them")
+                isNudge(request) -> reply("toolu_ack", "Looking for it.")
+                request.messages.last().content.any { it is Block.Result } -> end("delegated")
+                allText(request).contains("find Dana's contract") -> callTool("toolu_d", "delegate", args("task" to "Find Dana's contract in the mail and report where it is."))
+                else -> end("noted")
+            }
+        }
+        val helperJob = scope.launch { r.helpers.run() }
+        r.inbox.enqueue(user("find Dana's contract"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        withTimeout(20.seconds) { while (r.runs.open().isNotEmpty() || r.runs.list(openOnly = false).isEmpty()) delay(50) }
+        r.helpers.joinAll()
+        r.runs.list(openOnly = false).single().answeringPerson shouldBe true
+
+        finishedHelperAnswer(r)
+        lastPost(r).kind shouldBe MessageKind.REPLY
+        lastPost(r).notify shouldBe NOTIFY_REPLY
+        helperJob.cancelAndJoin()
+    }
+
+    test("a helper a job started brings back a finding that keeps the normal rules, not a reply") {
+        val r = rig()
+        r.model.handler = { request -> if (request.model == HELPER_MODEL) end("Three jazz nights this week.") else end("noted") }
+        val helperJob = scope.launch { r.helpers.run() }
+        // a scope that never carried the person's input: what a job's lead turn starts with
+        r.helpers.delegate("Look for outings this week.", null, null, RunScope("lead", isLead = true)).isRight() shouldBe true
+        withTimeout(20.seconds) { while (r.runs.open().isNotEmpty() || r.runs.list(openOnly = false).isEmpty()) delay(50) }
+        r.helpers.joinAll()
+        r.runs.list(openOnly = false).single().answeringPerson shouldBe false
+        r.inbox.pending().single().item.shouldBeInstanceOf<InboxItem.HelperResult>()
+        r.lead.start()
+
+        finishedHelperAnswer(r)
+        lastPost(r).kind shouldBe MessageKind.FINDING
+        lastPost(r).notify shouldNotBe NOTIFY_REPLY
+        helperJob.cancelAndJoin()
+    }
+
+    test("a question a helper from a person-started chain asks is relayed as a reply, one from a job helper is not") {
+        for ((fromPerson, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING)) {
+            val r = rig()
+            val id = java.util.UUID.randomUUID().toString()
+            r.runs.create(id, null, "helper", "Find plumbers", null, kotlin.time.Clock.System.now(), answeringPerson = fromPerson)
+            r.inbox.enqueue(InboxItem.HelperAsks(id, 1, "Find plumbers", "Which part of town?"))
+            r.lead.start()
+            finishedHelperAnswer(r)
+            lastPost(r).kind shouldBe kind
+            (lastPost(r).notify == NOTIFY_REPLY) shouldBe fromPerson
+        }
     }
 
     test("an external tool never acts: the guard holds it, the tool returns the held text, and the held action exists") {

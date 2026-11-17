@@ -30,7 +30,7 @@ import kotlinx.coroutines.withContext
 import net.robog.clarity.backend.config.AgentConfig
 import net.robog.clarity.backend.config.AgentRole
 
-import net.robog.clarity.backend.feed.FeedDraft
+import net.robog.clarity.backend.feed.turnNote
 import net.robog.clarity.backend.feed.FeedService
 import net.robog.clarity.backend.governance.ConstitutionStore
 import net.robog.clarity.backend.governance.zoneOrUtc
@@ -206,6 +206,7 @@ class LeadAgent(
     private val mailAccounts: MailAccounts,
     /** The index of the person's MCP servers. */
     private val mcpIndex: McpIndex,
+    private val runs: RunStore,
 ) : BackgroundService {
     override val name = "lead-agent"
 
@@ -265,10 +266,11 @@ class LeadAgent(
     }
 
     private suspend fun noticeDisabled() {
+        // It answers whatever the person wrote, so it is a reply the phone notifies for.
         feed.append(
-            FeedDraft(
-                author = FeedItem.Author.AGENT,
-                cards = listOf(Card.Note("I can't work yet: the server has no OpenRouter API key. Once it is set there and the server restarts, I'll start.")),
+            turnNote(
+                "I can't work yet: the server has no OpenRouter API key. Once it is set there and the server restarts, I'll start.",
+                answeringPerson = true,
                 clientInputId = ClientInputId("system:no-api-key"),
             ),
         )
@@ -316,7 +318,8 @@ class LeadAgent(
 
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
-        scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
+        val answering = answersPerson(userTurn, items.map { it.item }, personRuns(items.map { it.item }))
+        scope.startTurn(untrusted = untrusted, requestedByUser = userTurn, answeringPerson = answering)
         replyOwed.set(userTurn)
         val history = journal.load(threadId)
         val visible = contextSince(history)
@@ -358,6 +361,10 @@ class LeadAgent(
         }
         if (failures > 0) delay(minOf(60.seconds, 5.seconds * (1 shl (failures - 1).coerceAtMost(4))))
     }
+
+    /** The helper runs among [items] that were delegated in a turn answering the person. */
+    private suspend fun personRuns(items: List<InboxItem>): Set<String> =
+        helperRunIds(items).filterTo(mutableSetOf()) { runs.get(it)?.answeringPerson == true }
 
     /**
      * The memory context and the collection index, each only when it differs from the last one the
@@ -499,7 +506,7 @@ class LeadAgent(
                 if (terminal.reason == FinishReason.SPEND_LIMIT) log.warn { "lead turn reached its spend limit (${"$"}${config.leadTurnMaxCostUsd}) and stopped" }
                 if (terminal.reason == FinishReason.MAX_TURNS) log.warn { "lead turn ran out of steps (${config.maxTurns})" }
                 if (terminal.reason == FinishReason.REFUSAL) {
-                    note("The model declined to continue with that. If you meant it, say it another way.")
+                    note("The model declined to continue with that. If you meant it, say it another way.", scope.answeringPerson)
                 }
             }
             is HarnessEvent.Failed -> if (terminal.message.startsWith(SPEND_LIMIT_PREFIX)) {
@@ -508,7 +515,7 @@ class LeadAgent(
             } else {
                 failures++
                 log.error { "lead turn failed: ${terminal.message}" }
-                if (failures == 1) note("I couldn't reach the model just now (${terminal.message.take(120)}). I'll try again shortly.")
+                if (failures == 1) note("I couldn't reach the model just now (${terminal.message.take(120)}). I'll try again shortly.", scope.answeringPerson)
             }
             null -> Unit
         }
@@ -523,8 +530,8 @@ class LeadAgent(
         }
     }
 
-    private suspend fun note(text: String) {
-        feed.append(FeedDraft(author = FeedItem.Author.AGENT, cards = listOf(Card.Note(text))))
+    private suspend fun note(text: String, answeringPerson: Boolean) {
+        feed.append(turnNote(text, answeringPerson))
     }
 
     /** While a turn runs: hand the person's new input to the harness, which pre-empts the model call. */

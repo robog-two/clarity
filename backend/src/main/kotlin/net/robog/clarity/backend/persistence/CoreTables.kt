@@ -111,6 +111,9 @@ object AgentRuns : Table("agent_run") {
     val doneWhen = jsonb<JsonElement>("done_when", ClarityJson).nullable()
     val revisions = integer("revisions").default(0)
     val criteriaCheck = jsonb<JsonElement>("criteria_check", ClarityJson).nullable()
+
+    // V53: the helper was delegated in a turn answering the person, so its result and questions are replies
+    val answeringPerson = bool("answering_person").default(false)
     override val primaryKey = PrimaryKey(id)
 }
 

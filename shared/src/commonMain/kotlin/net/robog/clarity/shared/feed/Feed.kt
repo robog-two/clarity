@@ -2,8 +2,15 @@ package net.robog.clarity.shared.feed
 
 import kotlin.jvm.JvmInline
 import kotlin.time.Instant
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.nullable
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.session.SessionId
@@ -62,7 +69,9 @@ data class FeedItem(
      * What the agent meant by an agent message (see [MessageKind]); null on the person's own items,
      * on items from before kinds existed, and on notes the server posts itself. The notification
      * policy decides from it; the app only needs it to tell a reply from an interruption.
+     * A kind this build does not know decodes as null ([LenientMessageKind]), so a newer server never breaks the feed.
      */
+    @Serializable(with = LenientMessageKind::class)
     val kind: MessageKind? = null,
 ) {
     @Serializable
@@ -96,6 +105,18 @@ enum class MessageKind(val wire: String) {
     companion object {
         fun fromWire(value: String?): MessageKind? = entries.firstOrNull { it.wire == value }
     }
+}
+
+/** [MessageKind] on the wire as its string; a spelling this build does not know reads as null instead of failing the whole item. */
+object LenientMessageKind : KSerializer<MessageKind?> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("MessageKind", PrimitiveKind.STRING).nullable
+
+    override fun serialize(encoder: Encoder, value: MessageKind?) {
+        if (value == null) encoder.encodeNull() else encoder.encodeString(value.wire)
+    }
+
+    override fun deserialize(decoder: Decoder): MessageKind? =
+        if (decoder.decodeNotNullMark()) MessageKind.fromWire(decoder.decodeString()) else decoder.decodeNull()
 }
 
 /**
@@ -239,14 +260,11 @@ sealed interface Card {
 @Serializable
 data class Choice(val label: String, val reply: String, val declines: Boolean = false)
 
-/** Pure: the text an app that does not know [Card.Choices] shows ("Starting now? Reply with Starting, Later or Make it smaller."). */
+/** Pure: the text an app that does not know [Card.Choices] shows ("Starting now? Reply with Starting or Later or Make it smaller."). */
 fun choicesFallback(prompt: String?, options: List<Choice>): String {
     val labels = options.map { it.label }
-    val list = when (labels.size) {
-        0 -> ""
-        1 -> labels.single()
-        else -> labels.dropLast(1).joinToString(", ") + " or " + labels.last()
-    }
+    // "A or B or C": no commas however many options there are (the voice allows one comma in all).
+    val list = labels.joinToString(" or ")
     return listOfNotNull(prompt?.trim()?.takeIf { it.isNotEmpty() }, list.takeIf { it.isNotEmpty() }?.let { "Reply with $it." }).joinToString(" ")
 }
 
