@@ -10,6 +10,7 @@ import dev.zacsweers.metro.SingleIn
 import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 import kotlin.uuid.Uuid
@@ -18,6 +19,8 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.plus
 import kotlinx.serialization.Serializable
+import net.robog.clarity.backend.persistence.NounReader
+import net.robog.clarity.backend.persistence.TimeRange
 import net.robog.clarity.backend.persistence.parseWire
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
@@ -364,6 +367,12 @@ private fun ResultRow.toNudge() = Nudge(
     followUp = this[NudgeTable.followUp],
 )
 
+private const val DEFAULT_GAP_MINUTES = 15
+private const val MAX_GAP_MINUTES = 240
+private const val DEFAULT_WITHIN_HOURS = 8
+private const val MAX_WITHIN_HOURS = 24
+private const val MAX_FREE_SLOT_EVENTS = 300
+
 /** Pure: the start and end of the person's day that holds [moment]. */
 fun homeDay(moment: Instant, zone: TimeZone): Pair<Instant, Instant> {
     val date = ScheduleClock.homeDate(moment, zone)
@@ -376,13 +385,13 @@ private val CLOCK_ONLY = Regex("""^\d{1,2}:\d{2}$""")
  * Pure: a nudge's `at`: a local date-time like the other tools take, or "HH:MM" for that time
  * today on the person's clock. Left is the message for the model.
  */
-fun readNudgeTime(raw: String, zone: TimeZone, now: Instant): Either<String, Instant> {
+fun readNudgeTime(raw: String, zone: TimeZone, now: Instant, label: String = "at"): Either<String, Instant> {
     val text = raw.trim()
     if (CLOCK_ONLY.matches(text)) {
-        val time = parseClock(text) ?: return "`at` is not a time of day: \"$raw\".".left()
+        val time = parseClock(text) ?: return "`$label` is not a time of day: \"$raw\".".left()
         return ScheduleClock.occurrence(ScheduleClock.homeDate(now, zone), time, zone).right()
     }
-    return readToolTime("at", text, zone)
+    return readToolTime(label, text, zone)
 }
 
 /**
@@ -430,12 +439,15 @@ class NudgeTools(
     private val planItems: PlanItemStore,
     private val settings: SettingsProvider,
     private val clock: Clock,
+    private val reader: NounReader,
 ) {
     fun all(): List<Tool> = listOf(nudge(), listNudges(), cancelNudge())
 
     @Serializable
     class NudgeInput(
-        @Description("When to wake up, the person's local time: 2026-10-27T13:30, or 13:30 for today.") val at: String,
+        @Description("When to wake up, the person's local time: 2026-10-27T13:30, or 13:30 for today. Give this or freeSlot, not both.") val at: String? = null,
+        @Description("Instead of at: wake up at the next time the person has nothing on their calendar. Use it for check-ins that can wait for a gap.")
+        val freeSlot: FreeSlotInput? = null,
         @Description("What to check when it fires, specific enough to ask from: \"ask how the ML report is going; it's due before The Devils at 20:30\".")
         val note: String,
         @Description("The task this check-in is about, if any. A nudge about a task that is done or cancelled by then is skipped.")
@@ -444,17 +456,41 @@ class NudgeTools(
         val planItemId: String? = null,
     )
 
+    @Serializable
+    class FreeSlotInput(
+        @Description("Look for a gap from this time on (like at); default now.") val after: String? = null,
+        @Description("How long the gap must be, in minutes; default $DEFAULT_GAP_MINUTES, at most $MAX_GAP_MINUTES.") val minMinutes: Int? = null,
+        @Description("How many hours ahead to look; default $DEFAULT_WITHIN_HOURS, at most $MAX_WITHIN_HOURS.") val within: Int? = null,
+    )
+
+    /** The time [slot] asks for: the first gap in the calendar. Left is the message for the model. */
+    private suspend fun freeSlotTime(slot: FreeSlotInput, zone: TimeZone, now: Instant): Either<String, Instant> {
+        val earliest = now + 1.minutes
+        val after = slot.after?.takeIf { it.isNotBlank() }
+            ?.let { readNudgeTime(it, zone, now, "freeSlot.after").fold({ msg -> return msg.left() }, { t -> t }) }?.let { maxOf(it, earliest) } ?: earliest
+        val gap = (slot.minMinutes ?: DEFAULT_GAP_MINUTES).coerceIn(1, MAX_GAP_MINUTES).minutes
+        val until = after + (slot.within ?: DEFAULT_WITHIN_HOURS).coerceIn(1, MAX_WITHIN_HOURS).hours
+        val events = reader.calendarEvents(TimeRange(after, until + gap), MAX_FREE_SLOT_EVENTS)
+        if (events.size >= MAX_FREE_SLOT_EVENTS) return "The calendar is too full in that window to find a gap. Give an exact time with at.".left()
+        return nextFreeStart(events.map { busyOf(it.payload) }, after, gap, until)?.right()
+            ?: "No ${gap.inWholeMinutes}-minute gap in the calendar between ${agentTime(after, zone)} and ${agentTime(until, zone)}. Give an exact time with at, or look further ahead.".left()
+    }
+
     private fun nudge(): Tool = tool<NudgeInput>(
         name = "nudge",
         description = "Schedule yourself to wake up at a time and check in with the person (\"nudge me\", \"check in on me\", \"make sure I...\"). " +
             "When it fires you get the note in your inbox and decide what to ask. It sends nothing by itself. " +
+            "Give `at` for an exact time, or `freeSlot` for the next gap in the person's calendar (it is only a way to pick the time; check-ins during events are fine). " +
             "For an alert the person wants on their own calendar or phone, use create_reminder instead.",
         effect = ToolEffect.WRITE,
         json = ClarityJson,
     ) { input ->
         val zone = settings.homeZone()
         val now = clock.now()
-        val at = readNudgeTime(input.at, zone, now).fold({ return@tool ToolResult.Error(it) }, { it })
+        val slot = input.freeSlot
+        if ((input.at == null) == (slot == null)) return@tool ToolResult.Error("Give either `at` (an exact time) or `freeSlot`, not both and not neither.")
+        val at = (if (slot != null) freeSlotTime(slot, zone, now) else readNudgeTime(input.at!!, zone, now)).fold({ return@tool ToolResult.Error(it) }, { it })
+        val chosen = if (slot != null) " (free from ${agentTime(at, zone)})" else ""
         val note = input.note.trim()
         val taskId = input.taskId?.trim()?.takeIf { it.isNotEmpty() }?.let(::TaskId)
         var taskTitle: String? = null
@@ -481,7 +517,7 @@ class NudgeTools(
         nudgeRefusal(at, note, taskId, now, pending, personDay, zone)
             ?.let { return@tool ToolResult.Error(it) }
         val created = nudges.create(at, note, taskId)
-        ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}. Nothing is sent now; when it fires you decide what to ask.")
+        ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}$chosen. Nothing is sent now; when it fires you decide what to ask.")
     }
 
     @Serializable

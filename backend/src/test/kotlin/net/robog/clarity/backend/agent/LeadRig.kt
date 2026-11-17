@@ -212,7 +212,7 @@ class LeadRig(
     val browserPilot = BrowserPilot(browserGate, FakeBrowserModels(null, null), MemoryBrowserAudit(), vaultStore, vaultHolds, config, clock, UtcPersonZone())
 
     val nudges = ExposedNudgeStore(database, clock)
-    val nudgeTools = NudgeTools(nudges, tasks, planItems, settingsProvider, clock)
+    val nudgeTools = NudgeTools(nudges, tasks, planItems, settingsProvider, clock, reader)
     val planItemTools = PlanItemTools(planItems, nudges, settingsProvider, clock)
     val planNudger = PlanNudger(nudges, settingsProvider, clock)
     val sessionTools = SessionTools(sessionService, feed, dayPlans, planItems, planNudger, tasks, constitutions, settingsProvider, clock)

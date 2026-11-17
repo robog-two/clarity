@@ -50,6 +50,14 @@ import net.robog.clarity.backend.sessions.PlanItemStore
 import net.robog.clarity.backend.persistence.DatabaseFactory
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.harness.ToolResult
+import net.robog.clarity.backend.persistence.NounReader
+import net.robog.clarity.backend.persistence.Stored
+import net.robog.clarity.backend.persistence.TimeRange
+import net.robog.clarity.shared.EntityId
+import net.robog.clarity.shared.noun.CalendarEventPayload
+import net.robog.clarity.shared.noun.ContactPayload
+import net.robog.clarity.shared.noun.MessagePayload
+import net.robog.clarity.shared.noun.Payload
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Nudge
 import net.robog.clarity.shared.feed.TaskId
@@ -69,6 +77,14 @@ private class FakeActivity(var lastMessage: Instant? = null, var live: Boolean =
 private fun answer(p: Double) = DecisionResult(mapOf(ALREADY_UPDATED to DecisionAnswer.Noul(p)), "m", "p", DecisionUsage(10, 1, 2)).right()
 
 @EnabledIf(ContainerRuntimeAvailable::class)
+private class FakeCalendar : NounReader {
+    val events = mutableListOf<Stored<CalendarEventPayload>>()
+    override suspend fun calendarEvents(range: TimeRange, limit: Int) = events.filter { it.payload.start < range.until && it.payload.end > range.from }.take(limit)
+    override suspend fun searchContacts(query: String, limit: Int) = emptyList<Stored<ContactPayload>>()
+    override suspend fun changedSince(since: Instant, limit: Int) = emptyList<Stored<Payload>>()
+    override suspend fun messages(range: TimeRange, participant: String?, limit: Int, folder: String?) = emptyList<Stored<MessagePayload>>()
+}
+
 class NudgeDbTest : FunSpec({
     val postgres = PostgreSQLContainer("postgres:18-alpine").withStartupAttempts(3)
     lateinit var database: Database
@@ -89,6 +105,7 @@ class NudgeDbTest : FunSpec({
         val clock: Clock = Clock.System
         val feed = FeedService(ExposedFeedStore(database, clock), FeedHub())
         val tasks = ExposedTaskStore(database, clock, feed)
+        val calendar = FakeCalendar()
         val store = ExposedNudgeStore(database, clock)
         val inbox = ExposedInboxStore(database, clock, InboxSignals())
         val activity = FakeActivity()
@@ -96,7 +113,7 @@ class NudgeDbTest : FunSpec({
         private val counting = client?.let { inner -> DecisionClient { s, q -> calls.incrementAndGet(); inner.decide(s, q) } }
         val config = AgentConfig(openRouterApiKey = "k", reviewInterval = 2.hours)
         val runner = NudgeRunner(store, tasks, PlanItemStore(database), inbox, activity, Decisions(config, { counting }, database, clock), { Settings() }, clock)
-        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock).all().associateBy { it.name }
+        val tools = NudgeTools(store, tasks, PlanItemStore(database), { Settings() }, clock, calendar).all().associateBy { it.name }
 
         suspend fun call(name: String, input: JsonObject): ToolResult = tools.getValue(name).invoke(input)
         suspend fun nudgeItems() = inbox.pending().map { it.item }.filterIsInstance<InboxItem.NudgeDue>()
@@ -129,6 +146,53 @@ class NudgeDbTest : FunSpec({
 
         r.tasks.upsert(task.id, null, null, AgentTask.Status.DONE)
         r.call("nudge", input("at" to at, "note" to "ask", "taskId" to task.id.value)).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already done"
+    }
+
+    test("freeSlot picks the next gap, and exactly one of at and freeSlot is required") {
+        val r = Rig(database)
+        val slot = buildJsonObject { put("minMinutes", 30) }
+        val ok = r.call("nudge", buildJsonObject { put("note", "ask how the walk went"); put("freeSlot", slot) }).shouldBeInstanceOf<ToolResult.Ok>()
+        ok.content shouldContain "free from"
+        r.store.pending().single().at.shouldNotBeNull()
+        r.call("nudge", buildJsonObject { put("note", "x"); put("at", "23:59"); put("freeSlot", slot) }).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "either"
+        r.call("nudge", buildJsonObject { put("note", "x") }).shouldBeInstanceOf<ToolResult.Error>().message shouldContain "either"
+    }
+
+    test("freeSlot reads a malformed after by its own name") {
+        val r = Rig(database)
+        r.call("nudge", buildJsonObject { put("note", "x"); put("freeSlot", buildJsonObject { put("after", "soonish") }) })
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "freeSlot.after"
+    }
+
+    test("freeSlot with a populated calendar") {
+        val r = Rig(database)
+        val now = Instant.fromEpochSeconds(Clock.System.now().epochSeconds)
+        fun event(from: Instant, to: Instant, allDay: Boolean = false) = Stored(
+            EntityId("e${r.calendar.events.size}"), CalendarEventPayload(calendar = "c", title = "t", start = from, end = to, allDay = allDay), now, now,
+        )
+        fun slot(vararg pairs: Pair<String, Int>) = buildJsonObject {
+            put("note", "ask how it went" + r.calendar.events.size)
+            put("freeSlot", buildJsonObject { pairs.forEach { (k, v) -> put(k, v) } })
+        }
+        // Back-to-back meetings from now to +90 min, a 6h event and an all-day event around them: only the meetings block.
+        r.calendar.events += event(now - 30.minutes, now + 30.minutes)
+        r.calendar.events += event(now + 30.minutes, now + 90.minutes)
+        r.calendar.events += event(now - 1.hours, now + 5.hours + 1.minutes)
+        r.calendar.events += event(now - 12.hours, now + 36.hours, allDay = true)
+        val ok = r.call("nudge", slot()).shouldBeInstanceOf<ToolResult.Ok>()
+        ok.content shouldContain "free from ${agentTime(now + 90.minutes, zone)}"
+        r.store.pending().single().at.shouldNotBeNull() shouldBe (now + 90.minutes)
+
+        // A calendar with a meeting every 10 minutes for the whole window has no 15-minute gap in a short look.
+        val r2 = Rig(database)
+        (0 until 12).forEach { i -> r2.calendar.events += Stored(EntityId("b$i"), CalendarEventPayload(calendar = "c", title = "t", start = now + (i * 10 - 5).minutes, end = now + (i * 10 + 10).minutes), now, now) }
+        r2.call("nudge", buildJsonObject { put("note", "x"); put("freeSlot", buildJsonObject { put("within", 1) }) })
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "No 15-minute gap"
+
+        val r3 = Rig(database)
+        repeat(310) { i -> r3.calendar.events += Stored(EntityId("m$i"), CalendarEventPayload(calendar = "c", title = "t", start = now + i.minutes, end = now + (i + 1).minutes), now, now) }
+        r3.call("nudge", buildJsonObject { put("note", "x"); put("freeSlot", buildJsonObject { }) })
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "too full"
     }
 
     test("at most 10 pending through the tool") {
