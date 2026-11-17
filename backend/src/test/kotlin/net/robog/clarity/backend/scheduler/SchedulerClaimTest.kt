@@ -273,7 +273,7 @@ class SchedulerClaimTest : FunSpec({
         job.fire(ctx) // a replay after a crash finds nothing pending and posts nothing
         val visible = feed.page(0, 10).items
         visible shouldHaveSize 1
-        (visible.single().cards[0] as Card.Text).text shouldBe "2 held."
+        (visible.single().cards[0] as Card.Text).text shouldBe "2 to look at."
         visible.single().notify shouldBe "evening_batch:2026-10-25T18:00:00Z" // the phone posts it on the low-importance channel
         feedStore.pendingBatch().shouldBeEmpty()
     }

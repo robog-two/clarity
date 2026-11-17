@@ -46,6 +46,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import net.robog.clarity.shared.feed.FeedItemId
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -95,6 +97,15 @@ sealed interface ChatEntry {
     data class Pill(override val key: String, val label: String) : ChatEntry
 }
 
+/**
+ * The row of the message holding [id] in the transcript, which lists [entries] newest first after
+ * [leading] rows of its own; null when no message has it (yet).
+ */
+fun chatEntryIndex(entries: List<ChatEntry>, id: FeedItemId, leading: Int = 0): Int? {
+    val at = entries.indexOfFirst { it is ChatEntry.Message && it.item.id == id }
+    return if (at < 0) null else entries.size - 1 - at + leading
+}
+
 /** Items as plain messages, no dividers; reactions go onto the messages they react to. */
 fun chatEntries(items: List<FeedItem>): List<ChatEntry> {
     val reactions = latestReactions(items)
@@ -116,9 +127,19 @@ fun ChatTranscript(
     liveConfirmed: Int = 0,
     newest: LazyListScope.() -> Unit = {},
     oldest: LazyListScope.() -> Unit = {},
+    /** An item to scroll to (the one a notification linked), reported through [onFocused] once it has. */
+    focus: FeedItemId? = null,
+    onFocused: () -> Unit = {},
+    /** How many rows [newest] adds, so the scroll lands on the right row. */
+    newestRows: Int = 0,
 ) {
     val listState = rememberLazyListState()
     FollowNewest(listState, entries.size)
+    LaunchedEffect(focus, entries.size) {
+        val index = focus?.let { chatEntryIndex(entries, it, leading = newestRows + if (live != null) 1 else 0) } ?: return@LaunchedEffect
+        listState.scrollToItem(index)
+        onFocused()
+    }
     LazyColumn(
         modifier.fillMaxWidth(),
         state = listState,

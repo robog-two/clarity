@@ -35,6 +35,7 @@ import net.robog.clarity.app.ui.onboarding.dayName
 import net.robog.clarity.app.ui.onboarding.formatTime
 import net.robog.clarity.app.ui.sentence
 import net.robog.clarity.shared.feed.AgentTask
+import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.session.Session
@@ -173,6 +174,8 @@ data class TodayUiState(
     val today: Today? = null,
     val doing: Doing = Doing(),
     val heldWaiting: Int = 0,
+    /** The evening summary of today, if one was posted ([tonightOf]). */
+    val tonight: Tonight? = null,
     /** The server has no `/today` yet. */
     val unavailable: Boolean = false,
     val error: String? = null,
@@ -225,12 +228,19 @@ class TodayViewModel(
     private var fetched: Today? = null
     private var liveTasks: List<AgentTask> = emptyList()
     private var liveHeld: List<HeldAction> = emptyList()
+    private var liveItems: List<FeedItem> = emptyList()
 
     init {
         viewModelScope.launch {
             combine(feed.tasks, feed.held) { tasks, held -> tasks to held }.collect { (tasks, held) ->
                 liveTasks = tasks
                 liveHeld = held
+                publish()
+            }
+        }
+        viewModelScope.launch {
+            feed.items.collect { items ->
+                liveItems = items
                 publish()
             }
         }
@@ -275,6 +285,7 @@ class TodayViewModel(
         val since = fetched?.let { keptSince(now, clock.zone()) }
         s.copy(
             doing = doingRows(mergeTasks(fetched?.doing.orEmpty(), liveTasks, since), liveHeld.associateBy { it.id }, now, clock.zone()),
+            tonight = tonightOf(liveItems, now, clock.zone()),
             heldWaiting = if (liveHeld.isEmpty()) fetched?.heldCount ?: 0 else liveHeld.count { it.status == HeldAction.Status.HELD },
         )
     }

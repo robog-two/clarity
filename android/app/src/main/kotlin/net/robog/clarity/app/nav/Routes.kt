@@ -2,6 +2,7 @@ package net.robog.clarity.app.nav
 
 import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldActionId
 
 @Serializable data object Onboarding : NavKey
@@ -65,12 +66,18 @@ fun reconcileBackStack(current: List<NavKey>, ready: Boolean): List<NavKey> = wh
 }
 
 /** Where a deep link lands: a tab, and optionally a screen on top of it. */
-data class NavTarget(val tab: MainTab, val push: NavKey? = null)
+data class NavTarget(
+    val tab: MainTab,
+    val push: NavKey? = null,
+    /** Ask only: the item to scroll to. */
+    val focus: FeedItemId? = null,
+)
 
 /** Null for links the main activity does not handle (the call has its own activity). */
 fun targetFor(link: DeepLink): NavTarget? = when (link) {
     DeepLink.Today -> NavTarget(MainTab.Today)
     DeepLink.Ask -> NavTarget(MainTab.Ask)
+    is DeepLink.AskItem -> NavTarget(MainTab.Ask, focus = link.id)
     DeepLink.Held -> NavTarget(MainTab.Held)
     is DeepLink.HeldItem -> NavTarget(MainTab.Held, DraftReview(link.id.value))
     is DeepLink.Call -> null

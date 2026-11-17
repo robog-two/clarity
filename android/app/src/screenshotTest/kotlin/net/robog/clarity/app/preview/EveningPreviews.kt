@@ -13,6 +13,11 @@ import net.robog.clarity.app.ui.ask.askEntries
 import net.robog.clarity.app.ui.ask.askItems
 import net.robog.clarity.app.ui.cards.AttachmentPager
 import net.robog.clarity.app.ui.theme.ClarityTheme
+import net.robog.clarity.app.ui.today.Tonight
+import net.robog.clarity.app.ui.today.TodayContent
+import net.robog.clarity.app.ui.today.TodayUiState
+import net.robog.clarity.shared.feed.IfThen
+import net.robog.clarity.shared.session.Today
 import net.robog.clarity.app.voice.MicAccess
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Chip
@@ -31,7 +36,7 @@ private val fullSummary = listOf(
     agent(1, Card.Text("Sam Example confirmed the dentist for Tuesday.")),
     agent(
         2,
-        Card.Text("2 coming up. 3 done today. 4 held."),
+        Card.Text("2 coming up. 3 done. 4 to look at."),
         Card.Chips("Coming up", listOf(Chip("Jazz at the Blue Room, Thursday 19:00"), Chip("Dinner with Sam Example, Saturday 18:30"))),
         Card.Chips("Done today", listOf(Chip("Reply to Sam Example about the contract"), Chip("Book the dentist for Tuesday"), Chip("File the expense report"))),
         Card.Chips(
@@ -50,7 +55,7 @@ private val doneOnly = listOf(
     agent(1, Card.Text("Sam Example confirmed the dentist for Tuesday.")),
     agent(
         2,
-        Card.Text("2 done today."),
+        Card.Text("2 done."),
         Card.Chips("Done today", listOf(Chip("Reply to Sam Example about the contract"), Chip("File the expense report"))),
     ),
 )
@@ -109,3 +114,45 @@ fun EveningSheetComingUpDark() = Sheet(dark = true, fullChips)
 @PartPreview
 @Composable
 fun EveningSheetHeldLight() = Sheet(dark = false, fullChips.reversed())
+
+// ---------- Today: the Tonight card above the day ----------
+
+private val todayWithSummary = TodayUiState(
+    loading = false,
+    kicker = "Monday, October 26th.",
+    today = Today(
+        date = LocalDate(2026, 10, 26),
+        plan = listOf(IfThen("it’s 9:30", "spec at my desk until 12"), IfThen("it’s 4:00", "walk before the school pickup")),
+        parked = listOf("expense report"),
+        called = true,
+    ),
+    heldWaiting = 2,
+)
+
+@Composable
+private fun TodayTonight(tonight: Tonight, dark: Boolean) = ClarityTheme(darkTheme = dark) {
+    Surface(color = MaterialTheme.colorScheme.surface) { TodayContent(todayWithSummary.copy(tonight = tonight), {}, {}, {}) }
+}
+
+private val tonightFull = Tonight(FeedItemId("e2"), "2 coming up. 3 done. 4 to look at.", "Jazz at the Blue Room, Thursday 19:00")
+private val tonightDoneOnly = Tonight(FeedItemId("e2"), "2 done.")
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun TodayTonightLight() = TodayTonight(tonightFull, dark = false)
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun TodayTonightDark() = TodayTonight(tonightFull, dark = true)
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun TodayTonightNoComingUpLight() = TodayTonight(tonightDoneOnly, dark = false)
+
+@PreviewTest
+@PhonePreview
+@Composable
+fun TodayTonightNoComingUpDark() = TodayTonight(tonightDoneOnly, dark = true)

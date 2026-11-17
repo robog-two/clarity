@@ -22,6 +22,7 @@ import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.app.testutil.heldAction
 import net.robog.clarity.app.testutil.userItem
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.Choice
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
@@ -170,6 +171,12 @@ class NotificationDecisionTest {
 
     @Test fun anItemWithTheEveningSpellingUsesTheLowChannel() {
         assertEquals(PushChannel.Evening, plan(Arrival.Item(item("evening_batch:2026-10-26T18:00:00Z")))!!.channel)
+    }
+
+    @Test fun theEveningSummaryOpensAskAtItsOwnItem() {
+        val p = plan(Arrival.Item(item("evening_batch:2026-10-26T18:00:00Z", seq = 9)))!!
+        assertEquals("Your evening summary", p.title)
+        assertEquals(DeepLink.AskItem(FeedItemId("i9")), p.link)
     }
 
     @Test fun pushNowItemsUseTheAgentChannelAndOpenToday() {

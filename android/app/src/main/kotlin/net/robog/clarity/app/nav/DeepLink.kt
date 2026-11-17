@@ -1,11 +1,14 @@
 package net.robog.clarity.app.nav
 
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldActionId
 
 /** Where a notification (or a link) sends the person. */
 sealed interface DeepLink {
     data object Today : DeepLink
     data object Ask : DeepLink
+    /** Ask, scrolled to one feed item (the evening summary). */
+    data class AskItem(val id: FeedItemId) : DeepLink
     /** The held list. */
     data object Held : DeepLink
     /** One held item: opens its draft review. */
@@ -16,7 +19,7 @@ sealed interface DeepLink {
 
 const val LINK_SCHEME = "clarity"
 
-/** `clarity://today`, `clarity://ask`, `clarity://held`, `clarity://held/<id>`, `clarity://call[?answer=1]`. */
+/** `clarity://today`, `clarity://ask`, `clarity://ask/<item id>`, `clarity://held`, `clarity://held/<id>`, `clarity://call[?answer=1]`. */
 fun parseDeepLink(uri: String?): DeepLink? {
     if (uri == null || !uri.startsWith("$LINK_SCHEME://")) return null
     val rest = uri.removePrefix("$LINK_SCHEME://")
@@ -25,7 +28,7 @@ fun parseDeepLink(uri: String?): DeepLink? {
     val parts = path.split('/').filter { it.isNotEmpty() }
     return when (parts.firstOrNull()) {
         "today" -> DeepLink.Today
-        "ask" -> DeepLink.Ask
+        "ask" -> parts.getOrNull(1)?.let { DeepLink.AskItem(FeedItemId(it)) } ?: DeepLink.Ask
         "held" -> parts.getOrNull(1)?.let { DeepLink.HeldItem(HeldActionId(it)) } ?: DeepLink.Held
         "call" -> DeepLink.Call(answer = query.split('&').contains("answer=1"))
         else -> null
@@ -35,6 +38,7 @@ fun parseDeepLink(uri: String?): DeepLink? {
 fun DeepLink.toUri(): String = when (this) {
     DeepLink.Today -> "$LINK_SCHEME://today"
     DeepLink.Ask -> "$LINK_SCHEME://ask"
+    is DeepLink.AskItem -> "$LINK_SCHEME://ask/${id.value}"
     DeepLink.Held -> "$LINK_SCHEME://held"
     is DeepLink.HeldItem -> "$LINK_SCHEME://held/${id.value}"
     is DeepLink.Call -> "$LINK_SCHEME://call" + if (answer) "?answer=1" else ""
