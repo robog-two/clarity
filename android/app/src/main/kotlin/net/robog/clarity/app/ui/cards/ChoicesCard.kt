@@ -38,8 +38,11 @@ fun ChoicesView(card: Card.Choices, onChoose: ((Choice) -> Unit)?, modifier: Mod
     }
     val chosen = card.chosen
     val waiting = chosen == null && tapped != null
+    val prompt = card.prompt?.takeIf { it.isNotBlank() }
+    // Answered with nothing to say: no empty column and no gap in the thread.
+    if (chosen != null && prompt == null) return
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Space.Small)) {
-        card.prompt?.takeIf { it.isNotBlank() }?.let { AgentBubble(it) }
+        prompt?.let { AgentBubble(it) }
         // Answered (on any device, a 409 included): the person's answer is their own bubble, so no buttons stay.
         if (chosen == null) {
             FlowRow(horizontalArrangement = Arrangement.spacedBy(Space.Small), verticalArrangement = Arrangement.spacedBy(Space.Small)) {

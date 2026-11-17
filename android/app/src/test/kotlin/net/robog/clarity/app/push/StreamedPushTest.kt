@@ -9,6 +9,8 @@ import kotlin.time.Duration.Companion.minutes
 import net.robog.clarity.shared.feed.Card
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.filterIsInstance
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import net.robog.clarity.app.data.feed.Arrival
@@ -130,6 +132,31 @@ class StreamedPushTest {
         rig.backend.feedCalls.clear()
         rig.sync.fillGap()
         assertEquals(8L, rig.backend.feedCalls.first(), "answered, so no longer fetched again")
+    }
+
+    @Test fun anAnswerSignalReachesTheNotifier() = runTest {
+        val rig = Rig()
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
+        val answers = kotlinx.coroutines.flow.MutableSharedFlow<net.robog.clarity.shared.feed.FeedItemId>(extraBufferCapacity = 4)
+        val listener = PushListener(rig.sync.arrivals, { Front.Background }, { true }, FixedClock(T0), rig.notifier, rig.ledger, answers = answers)
+        val live = launch(Dispatchers.Unconfined) { listener.run() }
+        answers.tryEmit(asked.id)
+        live.cancel()
+        assertEquals(listOf(asked.id), rig.notifier.answered)
+    }
+
+    @Test fun anAnswerOnAnotherDeviceReachesTheNotifierThroughTheSync() = runTest {
+        val rig = Rig()
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
+        val answers = rig.sync.signals.filterIsInstance<net.robog.clarity.app.data.feed.SyncSignal.ChoicesAnswered>().map { it.item }
+        val listener = PushListener(rig.sync.arrivals, { Front.Background }, { true }, FixedClock(T0), rig.notifier, rig.ledger, answers = answers)
+        val live = launch(Dispatchers.Unconfined) { listener.run() }
+        rig.sync.apply(FeedEvent.ItemFinal(asked))
+        rig.sync.apply(FeedEvent.ItemFinal(asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))))
+        live.cancel()
+        assertEquals(listOf(asked.id), rig.notifier.answered)
     }
 
     @Test fun anAnsweredChoicesItemNeverNotifies() {

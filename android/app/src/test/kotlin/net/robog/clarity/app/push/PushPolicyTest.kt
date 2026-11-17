@@ -167,6 +167,12 @@ class NotificationDecisionTest {
         assertEquals(NotificationReply("Starting now", id), replyOf("  STARTING \n", ready, id))
     }
 
+    @Test fun labelsThatMatchOnlyByCaseResolveToTheFirstOption() {
+        val twins = listOf(Choice("Ok", "first"), Choice("OK", "second"))
+        assertEquals(NotificationReply("first", FeedItemId("f1")), replyOf("ok", twins, FeedItemId("f1")))
+        assertEquals(NotificationReply("second", FeedItemId("f1")), replyOf("OK", listOf(twins[1], twins[0]), FeedItemId("f1")))
+    }
+
     @Test fun anythingElseIsTypedWordsWithNoReplyTo() {
         val id = FeedItemId("f1")
         assertEquals(NotificationReply("Starting soon", null), replyOf("Starting soon", ready, id))

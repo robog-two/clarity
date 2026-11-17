@@ -234,15 +234,17 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
     }
 
     override fun answered(item: FeedItemId) {
-        val had = synchronized(conversation) { lastMessage?.choicesItem == item }
-        if (!had) return
-        synchronized(conversation) { dropChips(item) }
-        postConversation(alert = false)
+        val had = synchronized(conversation) {
+            (lastMessage?.choicesItem == item).also { if (it) dropChips(item) }
+        }
+        if (had) postConversation(alert = false)
     }
 
     private fun dropChips(item: FeedItemId) {
         lastMessage?.takeIf { it.choicesItem == item }?.let { lastMessage = it.withoutChoices() }
     }
+
+    override fun refresh() = postConversation(alert = false)
 
     override fun clearConversation() {
         synchronized(conversation) {
@@ -325,10 +327,16 @@ class NotificationReplyReceiver : android.content.BroadcastReceiver() {
         val labels = intent.getStringArrayExtra(EXTRA_LABELS).orEmpty()
         val replies = intent.getStringArrayExtra(EXTRA_REPLIES).orEmpty()
         val choices = labels.zip(replies).map { (label, reply) -> Choice(label, reply) }
-        val reply = replyOf(typed, choices, item) ?: return
-        val session = intent.getStringExtra(EXTRA_SESSION)?.let { net.robog.clarity.shared.session.SessionId(it) }
         val graph = (context.applicationContext as ClarityApp).graph
         val pending = goAsync()
+        val reply = replyOf(typed, choices, item)
+        if (reply == null) {
+            // Nothing to send: repost so the reply spinner clears.
+            graph.pushNotifier.refresh()
+            pending.finish()
+            return
+        }
+        val session = intent.getStringExtra(EXTRA_SESSION)?.let { net.robog.clarity.shared.session.SessionId(it) }
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
                 // A second tap (409) comes back as the card as it stands, so it counts as sent.

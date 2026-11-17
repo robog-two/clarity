@@ -9,7 +9,6 @@ import kotlinx.coroutines.launch
 import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.feed.Arrival
 import net.robog.clarity.app.data.feed.FeedStore
-import net.robog.clarity.app.data.feed.hasAnsweredChoices
 import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
@@ -25,6 +24,9 @@ interface PushNotifier {
 
     /** The question [item] asked was answered (on any device): its chips leave the notification. */
     fun answered(item: FeedItemId) {}
+
+    /** Posts the conversation again as it stands (a reply that sent nothing leaves the reply box spinning). */
+    fun refresh() {}
 
     /** The app came to the front: the conversation is read there, so the notification goes. */
     fun clearConversation() {}
@@ -58,6 +60,8 @@ class PushListener(
     private val cached: suspend () -> List<Arrival> = { emptyList() },
     /** The morning call still running, whose messages lead back to it (see [decideNotification]). */
     private val call: () -> SessionId? = { null },
+    /** Items whose choices were answered (on any device): their chips leave the notification. */
+    private val answers: Flow<FeedItemId> = emptyFlow(),
 ) {
     /** Runs until cancelled. On start it posts what was missed while nothing was running. */
     suspend fun run() {
@@ -65,13 +69,13 @@ class PushListener(
             // Listen before looking back, so that nothing arriving in between falls through.
             launch(start = CoroutineStart.UNDISPATCHED) { batches.collect { deliverMissed(it) } }
             launch(start = CoroutineStart.UNDISPATCHED) { arrivals.collect { deliver(it) } }
+            launch(start = CoroutineStart.UNDISPATCHED) { answers.collect(notifier::answered) }
             deliverMissed(emptyList())
         }
     }
 
     /** Posts what [arrival] earns, unless either path already handled it. Returns whether it posted. */
     suspend fun deliver(arrival: Arrival): Boolean {
-        if (arrival is Arrival.Item && hasAnsweredChoices(arrival.item)) notifier.answered(arrival.item.id)
         if (!ledger.claim(arrival)) return false
         val plan = decideNotification(arrival, front(), canPost(), clock.now(), call = call()) ?: return false
         notifier.post(plan)
