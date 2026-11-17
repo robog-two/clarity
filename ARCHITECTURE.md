@@ -288,9 +288,7 @@ person managing a to-do list with a few assistants.
   `look_forward` or `finding` (the model's default). **`reply` is decided by the server**: a post
   made during a lead turn that answers the person (their input is in its batch, or arrived while it
   ran; a message, or a tap on a choice: `RunScope.answeringPerson`) is a reply whatever the model said,
-  and a model-supplied `reply` outside such a turn is stored as `finding`. That flag is about the
-  kind of the message only. The outing gate asks something narrower, `RunScope.startedByPerson` (see
-  Outings): the person typed or spoke to start the turn. A `reply` is checked first and wins over urgency:
+  and a model-supplied `reply` outside such a turn is stored as `finding`. A `reply` is checked first and wins over urgency:
   it shows in the app and the phone notifies only when the app is closed (`notify = reply`), uncounted.
   A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
   apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
@@ -574,80 +572,41 @@ an ISO instant, default the last 7 days), and Today carries the pending ones as 
 
 ### Outings (something to look forward to)
 
-For a person who rarely gets out, Clarity offers one outing at a time. The `outing-scout` job
-(`scheduler/OutingScoutJob.kt`) runs Tuesday and Friday at 15:00 on the home clock and decides in
-pure code (`outings/OutingPlan.kt`), with no model call, whether to wake the lead:
+For a person who rarely gets out, the `outing-scout` job (`scheduler/OutingScoutJob.kt`) runs Tuesday
+and Friday at 15:00 on the home clock and decides in pure code (`outings/OutingPlan.kt`), with no model
+call, whether to wake the lead:
 
-- `freeSlots(events, protectedTimes, now, zone)`: in the next 7 local days, weekday evenings from
-  18:00 and Saturday and Sunday from 09:00, all until 22:00, stretches of at least 2 h that start at
-  least 2 h from now. Taken: calendar events, all-day events of two or more days (a trip; a single
-  all-day event such as a holiday or birthday takes nothing), overlaps with the constitution's
-  protected times, midnight-spanning events and blocks. DST follows the local clock. The calendar is
-  read for exactly that window, ordered; a read that hits the 500-event cap fails closed (the rest of
-  the window counts as taken).
-- `scoutPlan(slots, suggestedThisWeek)`: skips with no slot, or when 2 outings were offered in the
-  last 6 days 23 h (counted from `outing_idea.suggested_at`, a little under a week so a Tuesday
-  15:03 post does not make next Tuesday's run skip); otherwise offers the 3 soonest slots. No cooldown
-  after a "no".
-- `recentContacts(contacts, messages, now)`: company may only be a saved contact the person sent a
-  message to, or who sent the person one directly (at most 5 recipients, so lists are out), in the
-  last 90 days, over email, SMS or chat. The person's own addresses and automated senders (`noreply`,
-  `notifications`, `mailer-daemon`...) never count. The message query is newest first, bounded, and
-  drops lists in SQL.
+- `freeSlots`: in the next 7 local days, weekday evenings from 18:00 and Saturday and Sunday from
+  09:00, all until 22:00, stretches of at least 2 h that start at least 2 h from now. Only timed
+  events of at most 5 h (`LONG_EVENT`) and the constitution's protected times take time: an all-day
+  event never does, and neither does a timed event longer than 5 h (a course, a trip). The calendar is
+  read for exactly that window, ordered; a read that hits the 500-event cap fails closed.
+- `scoutPlan`: skips with no slot, or when 2 `look_forward` posts already went out in the last 7 days
+  (a plain feed count, not a gate on posting); otherwise offers the 3 soonest slots.
+- `recentContacts`: company may only be a saved contact the person sent a message to, or who sent the
+  person one directly (at most 5 recipients), in the last 90 days, over email, SMS or chat; the
+  person's own addresses and automated senders never count.
 
-When it wakes the lead, the `job_due` item carries the slots, the number of saved ideas and those
-contacts (names and ids) and the steps to follow. Saved ideas live in `outing_idea` (`V53`: what,
-place, kind, window, contact, source record, url, `state` open, used or declined, `suggested_at`),
-through the lead-only tools `save_outing_idea`, `list_outing_ideas` and `update_outing_idea`.
-`list_outing_ideas` holds mail-derived text, so it is an untrusted source tool (it taints the turn) and
-a record tool (its ids can be cited). `save_outing_idea` refuses a source record the run has not read
-(the sources-card rule) and a contact outside the 90 days. Company goes in `withContactId` and never in the idea's
-text (a prompt rule). The kind (`category`) is short free text, at most 40 characters. A declined idea stays declined: saving it again (same wording or page) is refused
-and a yes cannot revive it. The periodic review asks the lead to save ideas it spots.
+The wake-up (`job_due`) carries the slots and those contacts (names and ids) and tells the lead to find
+ONE concrete thing the way it finds anything: memory (what they enjoy, what they said yes or no to
+before), mail and calendar (an invitation, a newsletter), and a research helper through `delegate`
+as usual (`web_search` or the browser; the identifier check on web search briefs below applies). The
+lead posts one `send_to_user` with kind `look_forward` (it pushes and counts toward the daily limit), a
+short text, a sources card and a `Card.Choices` with two options, the one that turns it down marked
+`declines: true` (`Choice.declines`, default false); labels may name the outing so two open suggestions
+stay distinguishable, and each reply is text that stands on its own, since it is all the lead sees later. Company
+comes only from that contact list (a prompt rule). A yes arrives as the person's own words, so
+`create_event` is their request and the usual guard applies; on either answer the lead writes what it
+learned to memory. Any risk from what research reads is handled where it always is: the guard holds
+actions with effects. The periodic review is asked to remember outing ideas it spots (a gig in a
+newsletter, "we should get dinner"). The evening summary's "Coming up" lists `look_forward` items
+unless their choices card was answered with an option marked `declines` (`withoutTurnedDown`).
 
-If no saved idea fits, the lead delegates one helper with `web_search`. The helper has no private
-tools, so its brief is all it knows: the city (from the profile or memory), the time window, the
-interests, and the "kinds liked / kinds declined" lines of `list_outing_ideas` (a separate summary of
-the kinds only, never idea text); names, venues and the city are fine in a brief, identifiers are not
-(see the web search section: the brief is checked before the helper starts). When the city or interests are unknown the lead skips
-the web search and offers saved ideas only. The helper searches and fetches pages in its own run; only
-its short result (up to 3 events) returns to the lead, which saves the one it picks as an idea first.
-
-Every suggestion is one `send_to_user` with kind `look_forward`, a text, a sources card and a
-`Card.Choices` whose `ref` is `outing:<idea id>` (`ref` is an opaque tag on the card, never shown).
-`look_forward` means outing suggestions only, so the evening summary's "Coming up" section holds
-outing suggestions, minus those turned down (their idea is declined, or the card was answered with
-"Not this time"); unanswered and accepted ones stay. The server is the authority: `OutingTools.gateSuggestions` wraps the lead's
-`send_to_user`, and any post with a choices ref starting `outing:` goes through it whatever its kind; a
-malformed ref (anything but `outing:` plus a lower-case uuid, prefix in any case) is refused, and the gate fails
-closed: cards that cannot be read in a look_forward, or anywhere mentioning `outing:`, are refused. A reserved offer is
-released when the post fails, but only if no feed item exists for the call or carries the idea's ref, and also on
-cancellation (`NonCancellable`). A ref is checked when posting, for every `send_to_user` (`CardRefGate`): absent, or exactly that
-grammar; an unknown prefix or a malformed ref is refused, and a `plan:<id>` must name an open plan
-item. The idea must be saved, open
-and not offered before (a re-run of the same tool call is let through; the feed dedups it), and at most
-2 other ideas may have been offered unprompted in 7 days. The reservation is atomic
-(`OutingStore.reserve`: one advisory lock, the budget count and the conditional `suggested_at` update
-in one transaction) and is released if the post fails, so two offers racing past the budget cannot both
-win. A `look_forward` post with no outing ref is refused in every turn, and the idea must be saved and
-open, and a declined idea never comes back, in every turn. In a turn the person started
-(`RunScope.startedByPerson`: not a job turn they interrupted, and not a turn made only of taps on
-choices cards, since a tap such as "Not this time" or a plan check-in's "Later" answers a question and
-asks for nothing: `InboxItem.UserInput.tap`, `turnStartedByPerson`) the weekly budget never applies, tainted
-or not (reading `list_outing_ideas` taints a turn), since they asked; such an offer is recorded but
-flagged `suggested_unprompted = false` and not counted. Such a turn may make at most 2 offers. Only in such a turn that has read nothing
-untrusted may an open idea already offered be shown again.
-
-A tap on a choice arrives as the person's words, unchanged, followed by a separate operator system note
-"Tap answers card ref outing:<id>". Only the card's `ref` is passed on, and only when it fits the one
-ref grammar (`agent/CardRefs.kt`: exactly `outing:<uuid>` or `plan:<uuid>`, the uuid strict lower-case
-8-4-4-4-12, no spaces; the same parser serves the tap note, the outing gate and the post check below);
-the card's prompt is model-written (often from mail) and never reaches
-the lead as the person's own words. Two open suggestions are told apart by the ref. Add to calendar is
-the person's own request, so `create_event` runs (the guard still applies) and the idea is marked used
-only once `create_event` reports done; a held event leaves the idea open until it is approved (the lead
-does not mark it). Not this time adds nothing and marks the idea declined. The lead then journals the
-kind of outing and the answer.
+**Card refs.** A `Card.Choices` may carry an opaque `ref` (never shown), used by plan check-ins: absent, or exactly
+`plan:<uuid>` (strict lower-case 8-4-4-4-12; `agent/CardRefs.kt`). `CardRefGate` checks it when the lead posts: a
+malformed ref or another prefix is refused, and a `plan:<id>` must name an open plan item. A tap on such a card reaches the
+lead as the person's words followed by a separate operator note "Tap answers card ref plan:<id>" built from the validated
+ref only; the card's prompt (model-written) is never passed on.
 
 ### Reports (documents the agent writes)
 

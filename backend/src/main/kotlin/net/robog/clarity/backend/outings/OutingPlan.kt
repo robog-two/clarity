@@ -7,18 +7,13 @@ import kotlin.time.Instant
 import kotlinx.datetime.DatePeriod
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.atStartOfDayIn
 import kotlinx.datetime.isoDayNumber
 import kotlinx.datetime.plus
-import net.robog.clarity.backend.agent.CardRefs
 import net.robog.clarity.backend.agent.agentTime
 import net.robog.clarity.backend.governance.occurrences
 import net.robog.clarity.backend.persistence.handleKey
-import net.robog.clarity.shared.feed.Card
-import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.TimeBlock
 import net.robog.clarity.shared.noun.Handle
-import net.robog.clarity.shared.time.LocalTimes
 import net.robog.clarity.shared.time.ScheduleClock
 
 /*
@@ -26,8 +21,14 @@ import net.robog.clarity.shared.time.ScheduleClock
  * runs the lead at all, and who may be named as company. No clock, no SQL, no model.
  */
 
-/** A stretch of the person's calendar that is taken. All-day events of two or more days cover those days (see [freeSlots]). */
-data class BusySpan(val start: Instant, val end: Instant, val allDay: Boolean = false)
+/**
+ * An event of the person's calendar (see [freeSlots] for which ones take time). [always] marks a span that is taken whatever
+ * its kind or length: what a truncated calendar read stands in for ([busyFrom]).
+ */
+data class BusySpan(val start: Instant, val end: Instant, val allDay: Boolean = false, val always: Boolean = false)
+
+/** A timed event longer than this does not take the time it spans: a day-long course, a trip, a stay. */
+val LONG_EVENT: Duration = 5.hours
 
 /** A free stretch: `[start, end)`. */
 data class Slot(val start: Instant, val end: Instant) {
@@ -55,14 +56,8 @@ const val OUTING_DAYS_AHEAD = 7
 /** Suggestions per rolling week. */
 const val SUGGESTIONS_PER_WEEK = 2
 
-/** The server refuses a third suggestion within this long of the post. */
+/** The scout looks back this far for suggestions already made. */
 val SUGGESTION_WINDOW: Duration = 7.days
-
-/** The scout counts over a little less, so a Tuesday 15:03 post does not make the next Tuesday 15:00 run skip. */
-val SCOUT_BUDGET_WINDOW: Duration = SUGGESTION_WINDOW - 1.hours
-
-/** The most outings one turn the person started may offer. */
-const val MAX_OFFERS_PER_PERSON_TURN = 2
 
 /** Slots handed to the lead at most, so the brief stays short. */
 const val MAX_SLOTS_OFFERED = 3
@@ -100,22 +95,16 @@ private fun gaps(busy: List<Span>, from: Instant, to: Instant): List<Span> {
  * Pure: the free time worth an outing in the next [OUTING_DAYS_AHEAD] days (the person's days in
  * [zone], today included): on weekdays the evening from [EVENING_FROM], on Saturday and Sunday the day
  * from [WEEKEND_FROM], both until [OUTING_UNTIL], and only stretches of at least [MIN_SLOT]. Taken are
- * the calendar [events] (an all-day event of two or more days takes those days: a trip. A single all-day
- * event, a holiday or a birthday, takes nothing), anything that overlaps one of the constitution's [protectedTimes]
+ * the timed calendar [events] of at most [LONG_EVENT] (an all-day event never takes time, and neither does a timed
+ * event longer than that: a course, a trip), anything that overlaps one of the constitution's [protectedTimes]
  * and the first [SLOT_LEAD] from [now]. Lengths are real elapsed time, so a day with a clock change
- * is as long as it truly is; an event that spans midnight takes both evenings it touches.
+ * is as long as it truly is; a short event that spans midnight takes both evenings it touches.
  */
 fun freeSlots(events: List<BusySpan>, protectedTimes: List<TimeBlock>, now: Instant, zone: TimeZone): List<Slot> {
     val today = ScheduleClock.homeDate(now, zone)
     val last = today.plus(DatePeriod(days = OUTING_DAYS_AHEAD - 1))
-    val taken = events.mapNotNull { e ->
-        if (e.allDay) {
-            val (first, lastDay) = LocalTimes.allDayDates(e.start, e.end)
-            if (first == lastDay) null else Span(first.atStartOfDayIn(zone), lastDay.plus(DatePeriod(days = 1)).atStartOfDayIn(zone))
-        } else {
-            Span(e.start, e.end)
-        }
-    } + occurrences(protectedTimes, today.plus(DatePeriod(days = -1)), last.plus(DatePeriod(days = 1)), zone).map { Span(it.start, it.end) }
+    // Only a timed event of at most LONG_EVENT takes time; an all-day event never does.
+    val taken = events.filter { it.always || (!it.allDay && it.end - it.start <= LONG_EVENT) }.map { Span(it.start, it.end) } + occurrences(protectedTimes, today.plus(DatePeriod(days = -1)), last.plus(DatePeriod(days = 1)), zone).map { Span(it.start, it.end) }
     val busy = merged(taken)
     return generateSequence(today) { it.plus(DatePeriod(days = 1)) }.takeWhile { it <= last }.flatMap { date ->
         val weekend = date.dayOfWeek.isoDayNumber >= 6
@@ -134,7 +123,7 @@ const val MAX_EVENTS_READ = 500
  * start returned until [until] counts as taken.
  */
 fun busyFrom(events: List<BusySpan>, until: Instant, cap: Int = MAX_EVENTS_READ): List<BusySpan> =
-    if (events.size < cap) events else events + BusySpan(events.maxOf { it.start }, until)
+    if (events.size < cap) events else events + BusySpan(events.maxOf { it.start }, until, always = true)
 
 /** Why the scout does not wake the lead. */
 enum class SkipReason { NO_FREE_SLOT, WEEK_BUDGET_USED }
@@ -149,9 +138,8 @@ sealed interface ScoutPlan {
 }
 
 /**
- * Pure: whether to wake the lead. [suggestedThisWeek] is how many outing suggestions went out in the
- * last [SCOUT_BUDGET_WINDOW] (counted from `outing_idea.suggested_at`). Nothing else counts: a "not this time" leaves no pause and no cooldown, and the
- * idea it was about is simply never offered again (see [ideaRefusal]).
+ * Pure: whether to wake the lead. [suggestedThisWeek] is how many `look_forward` posts went out in the last 7 days; nothing else
+ * counts, so a "not this time" leaves no pause.
  */
 fun scoutPlan(slots: List<Slot>, suggestedThisWeek: Int, perWeek: Int = SUGGESTIONS_PER_WEEK): ScoutPlan = when {
     suggestedThisWeek >= perWeek -> ScoutPlan.Skip(SkipReason.WEEK_BUDGET_USED)
@@ -209,104 +197,12 @@ fun recentContacts(contacts: List<ContactRef>, messages: List<MessageParties>, n
     }.sortedWith(compareByDescending<RecentContact> { it.lastAt }.thenBy { it.name.lowercase() })
 }
 
-/** The state of a saved idea. */
-enum class IdeaState(val wire: String) {
-    OPEN("open"), USED("used"), DECLINED("declined");
-
-    companion object {
-        fun of(wire: String): IdeaState? = entries.firstOrNull { it.wire == wire.trim().lowercase() }
-    }
-}
-
-private fun String.normalized() = lowercase().filter { it.isLetterOrDigit() || it == ' ' }.trim().replace(Regex("\\s+"), " ")
-
 /**
- * Pure: why a new idea [what] (with its [url], if any) cannot be saved given the [existing] ones, or
- * null. An idea the person already declined is never offered again, so saving it again is refused; one
- * that is still open or was used is simply the same idea.
+ * Pure: the lead's brief for one scout run: when the person is free, who they may bring (only those messaged in the last 90
+ * days), and how to find one thing to look forward to the way it finds anything else.
  */
-fun ideaRefusal(what: String, url: String?, existing: List<SavedIdea>): String? {
-    if (what.isBlank()) return "`what` must say what the outing is."
-    val same = existing.firstOrNull { it.matches(what, url) } ?: return null
-    return when (same.state) {
-        IdeaState.DECLINED -> "The person said no to \"${same.what}\" (${same.id}). It is never suggested again."
-        IdeaState.OPEN -> "\"${same.what}\" is already saved (${same.id})."
-        IdeaState.USED -> "\"${same.what}\" was already put on the calendar (${same.id})."
-    }
-}
-
-/** A saved outing idea. [window] is when it can happen, if it is bound to a time. */
-data class SavedIdea(
-    val id: String,
-    val what: String,
-    val place: String?,
-    val category: String?,
-    val from: Instant?,
-    val to: Instant?,
-    val withContact: String?,
-    val sourceId: String?,
-    val url: String?,
-    val state: IdeaState,
-    val createdAt: Instant,
-    /** When it was offered to the person (the post of its suggestion); null while it never was. */
-    val suggestedAt: Instant? = null,
-    /** The tool call (`run:toolUse`) that offered it, so a re-run of that call is let through. */
-    val suggestedCall: String? = null,
-) {
-    fun matches(otherWhat: String, otherUrl: String?): Boolean =
-        what.normalized() == otherWhat.normalized() || (url != null && otherUrl != null && url.trimEnd('/').equals(otherUrl.trim().trimEnd('/'), ignoreCase = true))
-
-    /** Whether the idea can still happen in [slot]: open and, when bound to a window, overlapping it. */
-    fun fits(slot: Slot): Boolean = state == IdeaState.OPEN && (from == null || to == null || (from < slot.end && to > slot.start))
-}
-
-/** The longest kind of outing the tool takes. */
-const val MAX_KIND_CHARS = 40
-
-/** Pure: the kinds of outing the person liked (used ideas) and declined, each kind once, newest first. Kinds only: no idea text. */
-fun kindsSummary(ideas: List<SavedIdea>, max: Int = 10): Pair<List<String>, List<String>> {
-    fun kinds(state: IdeaState) = ideas.filter { it.state == state }.sortedByDescending { it.createdAt }
-        .mapNotNull { it.category?.trim()?.lowercase()?.take(MAX_KIND_CHARS)?.takeIf(String::isNotEmpty) }.distinct().take(max)
-    return kinds(IdeaState.USED) to kinds(IdeaState.DECLINED)
-}
-
-/** The ref of the choices card of an outing suggestion: `outing:<idea id>`. */
-const val OUTING_REF_PREFIX = "outing:"
-
-/** Pure: the idea id in [ref] (`outing:<id>`, read by the one grammar in [CardRefs]), or null when it is not an outing ref. */
-fun outingIdeaOf(ref: String?): String? = CardRefs.parse(ref)?.takeIf { it.kind == CardRefs.Kind.OUTING }?.id
-
-/**
- * Pure: why an outing suggestion for [idea] cannot be posted now, or null. It must be an open, saved idea in every turn
- * (a declined idea never comes back). It must not have been offered before, except by a re-run of the same call [call],
- * or when [reshow] (the person's own untainted turn: they asked, and may see an open idea again). Unless it is
- * a [personTurn] (the person started the turn and asked for something to do, tainted or not), fewer than [perWeek] other
- * ideas may have been offered unprompted in the last [SUGGESTION_WINDOW] ([offered]).
- */
-fun suggestionRefusal(
-    idea: SavedIdea?,
-    offered: List<Instant>,
-    now: Instant,
-    call: String? = null,
-    personTurn: Boolean = false,
-    reshow: Boolean = false,
-    perWeek: Int = SUGGESTIONS_PER_WEEK,
-): String? = when {
-    idea == null -> "No saved idea has that id. Save the outing with save_outing_idea first, then suggest it."
-    idea.state != IdeaState.OPEN -> "\"${idea.what}\" is ${idea.state.wire}; only an open idea can be suggested."
-    idea.suggestedAt != null -> if (reshow || (call != null && idea.suggestedCall == call)) null else
-        "\"${idea.what}\" was already offered and is waiting for the person's answer. Suggest another idea or send nothing."
-    !personTurn && offered.count { it >= now - SUGGESTION_WINDOW } >= perWeek -> "$perWeek outings were already suggested in the last 7 days. Send nothing more about outings now."
-    else -> null
-}
-
-/**
- * Pure: the lead's brief for one scout run. Slots on the person's clock, the people they may bring
- * (only those messaged in the last 90 days) and how many ideas are waiting (the lead reads them with
- * `list_outing_ideas`, which is also what lets it cite their records).
- */
-fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdeas: Int, zone: TimeZone): String = buildString {
-    append("Outing scout: offer the person ONE thing to look forward to, or nothing. Free time in the next week (their local time):")
+fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, zone: TimeZone): String = buildString {
+    append("Outing scout: find ONE concrete thing for the person to look forward to in their free time, or nothing. Free time in the next week (their local time):")
     slots.forEach { append("\n- ").append(agentTime(it.start, zone)).append(" until ").append(agentTime(it.end, zone)) }
     append("\nCompany: only ")
     if (contacts.isEmpty()) append("the person alone, no contact was messaged in the last 90 days.")
@@ -315,40 +211,18 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, openIdea
         append(contacts.take(MAX_CONTACTS_SHOWN).joinToString("; ") { "${it.name.replace(Regex("\\s+"), " ").take(60)} (contact ${it.id})" })
         append('.')
     }
-    append("\nSaved ideas waiting: $openIdeas")
-    append(if (openIdeas > 0) " (list_outing_ideas)." else ".")
     append(
-        "\nSteps. 1. list_outing_ideas, and pick an open idea that fits a slot. " +
-            "2. If none fits, and the profile or memory tell you the person's city and what they enjoy, delegate ONE helper with tools [\"web_search\"] " +
-            "to find up to 3 events in that window. Its brief is built only from the city, the time window, their interests and the " +
-            "\"kinds\" lines of list_outing_ideas (kinds the person liked or declined); names, the city, venues and interests are fine, but never a phone number, email address, street address, account or booking number or any other identifier (the server checks the brief). " +
-            "Ask for title, time, place and page address of each. If the city or interests are unknown, skip the web search and use saved ideas only. " +
-            "3. Nothing fits: send nothing. " +
-            "4. Every suggestion is a saved idea: save_outing_idea for a found event first (what with no names, a kind, company in withContactId). " +
-            "Then send_to_user with kind look_forward: a short text (\"Thursday evening is free. Jazz at the Blue Room with Sam Example?\"), " +
-            "a sources card (the idea's source record id from list_outing_ideas, and the event page once a helper fetched it), " +
-            "and a choices card with ref \"outing:<idea id>\" and the options Add to calendar and Not this time. " +
-            "The server refuses it when the idea is not open or 2 outings were already suggested this week. " +
-            "A tap comes back as the person's words plus an operator note \"Tap answers card ref outing:<idea id>\": that ref names the idea. " +
-            "Add to calendar: create_event, and only when it reports done (if it was held for the person's approval, leave the idea open and say nothing more) update_outing_idea used. " +
-            "Not this time: add nothing, update_outing_idea declined, and make no other plan for it. " +
-            "Either way write_journal what kind of outing it was and the answer, so later briefs improve.",
+        "\nFind it the way you find anything: memory (what they enjoy, what they said yes or no to before), their mail and calendar " +
+            "(an invitation, a newsletter, a friend saying \"we should get dinner\"), and a research helper with delegate as usual " +
+            "(web_search or the browser, whichever fits; its brief carries no phone numbers, addresses or account numbers). " +
+            "Weigh it against the slots and what is already on the calendar. Nothing good: send nothing. " +
+            "Otherwise one send_to_user with kind look_forward: a short text (\"Thursday evening is free. Jazz at the Blue Room with Sam Example?\"), " +
+            "a sources card for what it rests on, and a choices card with two options, one to add it to the calendar and one to turn it down with declines: true " +
+            "(labels like \"Add Jazz to calendar\" and \"Not this time\", naming the outing when another suggestion may be open). " +
+            "Give each option reply text that stands on its own, since later you see only that text: \"Add it to my calendar\", \"Not this time\". " +
+            "A yes is the person's own request: create_event through the usual guard. On either answer, remember it " +
+            "(what kind of outing, who with, yes or no) with the memory tools so later suggestions improve.",
     )
 }
 
 private const val MAX_CONTACTS_SHOWN = 15
-
-/**
- * Pure: the evening summary's "Coming up" without the outing suggestions the person turned down: those whose idea is
- * declined, or whose choices card was answered with its "Not this time" option. Unanswered and accepted ones stay.
- */
-fun withoutDeclinedOutings(comingUp: List<FeedItem>, ideas: List<SavedIdea>): List<FeedItem> = comingUp.filterNot { item ->
-    item.cards.filterIsInstance<Card.Choices>().any { card ->
-        val idea = outingIdeaOf(card.ref)?.let { id -> ideas.firstOrNull { it.id.equals(id, ignoreCase = true) } }
-        val declinedByAnswer = card.chosen != null && card.options.any { it.reply == card.chosen && it.label.trim().equals(DECLINE_LABEL, ignoreCase = true) }
-        idea?.state == IdeaState.DECLINED || (card.ref != null && outingIdeaOf(card.ref) != null && declinedByAnswer)
-    }
-}
-
-/** The label of the option that turns an outing down. */
-const val DECLINE_LABEL = "Not this time"

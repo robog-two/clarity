@@ -215,7 +215,7 @@ sealed interface Card {
         /** The [Choice.reply] the person tapped; null while unanswered. */
         val chosen: String? = null,
         val fallbackText: String = choicesFallback(prompt, options),
-        /** An opaque tag set by the poster and never shown ("outing:<idea id>"). A tap reaches the agent with it, so it knows which question was answered. */
+        /** An opaque tag set by the poster and never shown ("plan:<plan item id>"). A tap reaches the agent with it, so it knows which question was answered. */
         val ref: String? = null,
         /** Server bookkeeping: the client id of the input that answered, so only a retry of that same request passes for the answer. Apps ignore it. */
         val answeredBy: String? = null,
@@ -231,9 +231,13 @@ sealed interface Card {
     data class Unknown(val fallbackText: String? = null) : Card
 }
 
-/** One button of a [Card.Choices]: [label] is what it says, [reply] what is sent as the person's words when tapped. */
+/**
+ * One button of a [Card.Choices]: [label] is what it says, [reply] what is sent as the person's words when tapped. [declines]
+ * marks the button that turns the question down ("Not this time"), so the server can tell without reading words; old cards and
+ * apps do not have it and read false.
+ */
 @Serializable
-data class Choice(val label: String, val reply: String)
+data class Choice(val label: String, val reply: String, val declines: Boolean = false)
 
 /** Pure: the text an app that does not know [Card.Choices] shows ("Starting now? Reply with Starting, Later or Make it smaller."). */
 fun choicesFallback(prompt: String?, options: List<Choice>): String {
