@@ -30,6 +30,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.LaunchedEffect
 import net.robog.clarity.shared.feed.FeedItemId
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material.icons.outlined.NightsStay
@@ -122,6 +126,8 @@ fun TodayScreen(
     viewModel: TodayViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.onForeground() } }
     TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain, onOpenTask = onOpenTask, onOpenSummary = onOpenSummary)
 }
 

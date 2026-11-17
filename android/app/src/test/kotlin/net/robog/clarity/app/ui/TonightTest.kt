@@ -93,6 +93,21 @@ class TonightTest {
         assertEquals(Instant.parse("2026-10-27T11:00:00Z"), nextLocalMidnight(Instant.parse("2026-10-26T18:00:00Z"), TimeZone.of("Pacific/Auckland")))
     }
 
+    @Test fun theNextLocalMidnightOnADaylightSavingChangeoverDay() {
+        val newYork = TimeZone.of("America/New_York")
+        // clocks go back on Nov 1 2026: that day has 25 hours
+        assertEquals(Instant.parse("2026-11-01T04:00:00Z"), nextLocalMidnight(Instant.parse("2026-11-01T03:00:00Z"), newYork))
+        assertEquals(Instant.parse("2026-11-02T05:00:00Z"), nextLocalMidnight(Instant.parse("2026-11-01T12:00:00Z"), newYork))
+        // clocks go forward on Mar 8 2026: 23 hours
+        assertEquals(Instant.parse("2026-03-09T04:00:00Z"), nextLocalMidnight(Instant.parse("2026-03-08T12:00:00Z"), newYork))
+        val auckland = TimeZone.of("Pacific/Auckland")
+        // forward on Sep 27 2026
+        assertEquals(Instant.parse("2026-09-26T12:00:00Z"), nextLocalMidnight(Instant.parse("2026-09-26T05:00:00Z"), auckland))
+        assertEquals(Instant.parse("2026-09-27T11:00:00Z"), nextLocalMidnight(Instant.parse("2026-09-26T20:00:00Z"), auckland))
+        // back on Apr 5 2026
+        assertEquals(Instant.parse("2026-04-05T12:00:00Z"), nextLocalMidnight(Instant.parse("2026-04-04T20:00:00Z"), auckland))
+    }
+
     @Test fun theUsersOwnItemNeverCounts() {
         assertNull(tonightOf(listOf(summary(2).copy(author = FeedItem.Author.USER)), POSTED, UTC))
     }

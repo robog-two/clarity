@@ -44,6 +44,7 @@ import net.robog.clarity.shared.session.Today
 import kotlinx.datetime.isoDayNumber
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Instant
 
 /**
@@ -255,7 +256,8 @@ class TodayViewModel(
         // The Tonight card ends at local midnight even when nothing else changes: recompute then.
         viewModelScope.launch {
             while (true) {
-                delay(nextLocalMidnight(clock.now(), clock.zone()) - clock.now())
+                // At least a minute, so a fixed clock cannot make this spin.
+                delay(maxOf(nextLocalMidnight(clock.now(), clock.zone()) - clock.now(), 1.minutes))
                 publish()
             }
         }
@@ -280,6 +282,9 @@ class TodayViewModel(
             _state.update { it.copy(callAgainProblem = if (rang) null else "Turn on notifications for Clarity.") }
         }
     }
+
+    /** Today came to the foreground: the delay above stops while the phone sleeps, so look at the clock again. */
+    fun onForeground() = publish()
 
     /** Pull to refresh. */
     fun refresh() {

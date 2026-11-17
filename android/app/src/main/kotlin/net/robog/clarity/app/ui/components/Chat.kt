@@ -103,6 +103,9 @@ sealed interface ChatEntry {
     data class Pill(override val key: String, val label: String) : ChatEntry
 }
 
+/** Stands for "the person scrolled by hand" where a row index is expected. */
+private const val HAND_SCROLLED = -1
+
 /** How long a linked item is waited for before the link is dropped. */
 private val FOCUS_WAIT = 3.seconds
 
@@ -152,8 +155,9 @@ fun ChatTranscript(
     LaunchedEffect(focus) {
         if (focus == null) return@LaunchedEffect
         // The feed may still be loading: wait for the item a while, then give up quietly.
-        val index = withTimeoutOrNull(FOCUS_WAIT) { snapshotFlow { chatEntryIndex(rows, focus, leading) }.filterNotNull().first() }
-        if (index != null) {
+        val index = withTimeoutOrNull(FOCUS_WAIT) { snapshotFlow { if (listState.isScrollInProgress) HAND_SCROLLED else chatEntryIndex(rows, focus, leading) }.filterNotNull().first() }
+        // A hand scroll while waiting drops the link instead of yanking the view.
+        if (index != null && index != HAND_SCROLLED) {
             listState.scrollToItem(index)
             // The list is bottom-up: a tall item sits with its bottom in view, so push its top into view too.
             val info = listState.layoutInfo
