@@ -1,34 +1,30 @@
 sequenceDiagram
   autonumber
-  participant Review as PeriodicReviewJob
-  participant Ideas as outing_idea
   participant Scout as OutingScoutJob + pure checks
   participant Lead as Lead agent (memories, preferences)
-  participant Helper as web_search helper (no private tools)
+  participant Helper as delegate helper
+  participant Guard as Guard
   participant App as Android app
 
-  Review->>Lead: look over new mail and messages
-  Lead->>Ideas: save_outing_idea(what, when, where, with, source id)
-  Note over Lead,Ideas: a gig in a newsletter, a friend saying "we should get dinner"
-
-  Scout->>Scout: freeSlots(next 7 days), recentContacts(messaged in last 90 days), weekly budget
-  alt no free slot, or budget used
+  Scout->>Scout: freeSlots(next 7 days), recentContacts(messaged in last 90 days)
+  alt no free slot, or 2 look_forward posts this week
     Note over Scout: stop here, no model call
   else Thursday 18:00 to 22:00 free
-    Scout->>Lead: JobDue with slot, saved ideas, recent contacts (compact)
-    opt no saved idea fits the slot
-      Lead->>Helper: delegate(brief: city, window, interests, kinds liked and declined)
-      Note over Helper: searches and reads pages in its own run, kept out of the lead's context
-      Helper-->>Lead: up to 3 events (title, time, place, url)
+    Scout->>Lead: JobDue with slots and recent contacts
+    Lead->>Lead: search memory, mail and calendar as usual
+    opt needs research
+      Lead->>Helper: delegate(brief, checked for phone numbers and similar)
+      Helper-->>Lead: options (title, time, place, url)
     end
-    Lead->>App: send_to_user(kind = look_forward, outing card + sources)
+    Lead->>App: send_to_user(kind = look_forward, sources + choices)
     Note over App: "Thursday evening is free. Jazz at the Blue Room with Sam Example?"
     alt Add to calendar
-      App-->>Lead: yes
-      Lead->>Lead: create_event, mark idea used
-    else Not this time
-      App-->>Lead: no
-      Lead->>Ideas: mark declined (nothing added, no pause)
+      App-->>Lead: "Add it to my calendar"
+      Lead->>Guard: create_event
+      Guard-->>Lead: allowed or asks for approval
+    else Not this time (declines = true)
+      App-->>Lead: "Not this time"
+      Note over Lead: nothing added, no pause
     end
-    Lead->>Lead: remember what kind of outing it was and the answer
+    Lead->>Lead: remember the kind of outing and the answer
   end

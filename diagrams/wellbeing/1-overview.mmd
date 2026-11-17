@@ -7,15 +7,15 @@ flowchart LR
   end
 
   subgraph Outings["Feature 1: something to look forward to"]
-    REVIEW["PeriodicReviewJob (changed)<br/>lead files ideas it spots"]
-    IDEAS[("outing_idea (new, V51)<br/>what, when, where, with, source id")]
+    REVIEW["PeriodicReviewJob (changed)<br/>lead remembers ideas it spots"]
+    MEM[("memory (existing)")]
     SCOUT["OutingScoutJob (new)<br/>twice a week, afternoon"]
-    FREE["freeSlots() + scoutPlan() (new, pure)<br/>free evenings and weekends,<br/>weekly budget"]
+    FREE["freeSlots() + scoutPlan() (new, pure)<br/>free evenings and weekends,<br/>all-day and over 5 h not busy,<br/>at most 2 a week"]
     SEEN["recentContacts() (new, pure)<br/>contacts messaged<br/>in the last 90 days"]
   end
 
   subgraph Stuck["Feature 2: stuck tasks"]
-    ITEMS[("plan_item (new, V51)<br/>first planned, days carried")]
+    ITEMS[("plan_item (new, V52)<br/>first planned, days carried")]
     CARRY["carryOver() (new, pure)"]
     PREP["MorningCallPrepJob (changed)"]
     PLAYBOOK["Playbooks COMMIT (changed)<br/>smallest first step"]
@@ -29,14 +29,15 @@ flowchart LR
     PHONE["PushPolicy on phone (changed)<br/>replies still notify,<br/>other in-app items stop"]
   end
 
-  MSG --> REVIEW --> IDEAS
+  MSG --> REVIEW --> MEM
   CAL --> FREE
   CON --> FREE
   MSG --> SEEN
-  IDEAS --> SCOUT
   FREE --> SCOUT
   SEEN --> SCOUT
-  SCOUT -->|"look_forward"| SEND
+  SCOUT -->|"JobDue"| LEAD["Lead agent (existing)<br/>researches with memory, mail,<br/>a delegate helper"]
+  MEM --> LEAD
+  LEAD -->|"look_forward"| SEND
 
   PLAN --> CARRY --> ITEMS
   ITEMS --> PREP --> PLAYBOOK
