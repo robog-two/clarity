@@ -261,25 +261,38 @@ class LeadScenarioTest : FunSpec({
         }
     }
 
-    test("a helper-result turn resumed after a crash answers exactly like the original: a reply for a person's helper, a finding for a job's") {
-        for ((fromPerson, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING)) {
+    test("a helper-result turn resumed after a crash answers as stored: a reply for a person's chain, a finding for a job's, the journal for an old thread") {
+        // (stored flag, kind of the post) ; null is a thread from before the flag was stored, and the journal has no words of the person
+        for ((stored, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING, null to MessageKind.FINDING)) {
             val r = rig()
             val id = java.util.UUID.randomUUID().toString()
             val now = kotlin.time.Clock.System.now()
-            r.runs.create(id, null, "helper", "Find the contract", null, now, answeringPerson = fromPerson)
+            val threadId = r.threads.ensure().id
             // what the journal holds when the process died mid-turn: the rendered inbox message, nothing after it
-            val delivered = renderDeliveries(
+            renderDeliveries(
                 listOf(PendingItem(1, InboxItem.HelperResult(id, "Find the contract", ok = true, result = "In Tuesday's mail."), now)),
                 now, kotlinx.datetime.TimeZone.UTC,
-            )
-            delivered.forEach { r.journal.append(r.threads.ensure().id, it.message) }
+            ).forEach { r.journal.append(threadId, it.message) }
+            stored?.let { r.threads.setOpenTurnAnswering(it) }
             r.model.handler = { request ->
                 if (lastResultFor(request, "toolu_post")) end("posted") else reply("toolu_post", "It is in Tuesday's mail.")
             }
             r.lead.start()
             lastPost(r).kind shouldBe kind
-            (lastPost(r).notify == NOTIFY_REPLY) shouldBe fromPerson
+            (lastPost(r).notify == NOTIFY_REPLY) shouldBe (stored == true)
         }
+    }
+
+    test("a turn records whether it is answering the person, for the helper chain too") {
+        val r = rig()
+        r.model.handler = { end("ok") }
+        r.inbox.enqueue(user("hello"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.threads.ensure().openTurnAnswering shouldBe true
+        r.inbox.enqueue(InboxItem.System("a note"))
+        r.lead.step() shouldBe true
+        r.threads.ensure().openTurnAnswering shouldBe false
     }
 
     test("an external tool never acts: the guard holds it, the tool returns the held text, and the held action exists") {

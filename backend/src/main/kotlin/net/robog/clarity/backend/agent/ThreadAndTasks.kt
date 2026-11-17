@@ -34,7 +34,14 @@ import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.update
 
 /** The one lead thread (`agent_thread`). Its journal is stored under its id. */
-data class LeadThread(val id: String, val compactedAt: Instant?, val lastTurnAt: Instant?, val lastUserInputAt: Instant?)
+data class LeadThread(
+    val id: String,
+    val compactedAt: Instant?,
+    val lastTurnAt: Instant?,
+    val lastUserInputAt: Instant?,
+    /** Whether the latest turn was answering the person (what its posts count as); null in a thread from before it was stored. */
+    val openTurnAnswering: Boolean? = null,
+)
 
 interface ThreadStore {
     /** The lead thread, created on first use. */
@@ -42,6 +49,9 @@ interface ThreadStore {
     suspend fun touchTurn(at: Instant)
     suspend fun touchUserInput(at: Instant)
     suspend fun markCompacted(at: Instant)
+
+    /** Records whether the turn now running is answering the person; a resume after a crash reads it back. */
+    suspend fun setOpenTurnAnswering(answering: Boolean)
 }
 
 @Inject
@@ -60,6 +70,7 @@ class ExposedThreadStore(private val database: Database, private val clock: Cloc
         }
         LeadThread(
             row[AgentThreads.id].toString(), row[AgentThreads.compactedAt], row[AgentThreads.lastTurnAt], row[AgentThreads.lastUserInputAt],
+            row[AgentThreads.openTurnAnswering],
         )
     }
 
@@ -73,6 +84,10 @@ class ExposedThreadStore(private val database: Database, private val clock: Cloc
 
     override suspend fun markCompacted(at: Instant) {
         database.tx { AgentThreads.update { it[compactedAt] = at } }
+    }
+
+    override suspend fun setOpenTurnAnswering(answering: Boolean) {
+        database.tx { AgentThreads.update { it[openTurnAnswering] = answering } }
     }
 }
 

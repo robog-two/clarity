@@ -48,7 +48,6 @@ object CheckInChoices {
     const val SMALLER = "Make it smaller"
 }
 
-/** Pure: whether a nudge belongs to the plan flow (a check-in an if-then set, a follow-up, or anything linked to a plan item); these have caps of their own. */
 /** The plan flow's own nudge (an auto check-in or a follow-up). A nudge the lead links to an item with `nudge` is an ordinary one. */
 val Nudge.isPlan: Boolean get() = autoCheckIn || followUp
 

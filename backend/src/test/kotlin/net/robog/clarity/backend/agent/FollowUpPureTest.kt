@@ -119,23 +119,4 @@ class FollowUpPureTest : FunSpec({
         summarizedBy(pending, Appended(posted, created = true)).map { it.seq } shouldBe listOf(3L, 4L, 9L)
         summarizedBy(pending, Appended(posted, created = false)).map { it.seq } shouldBe listOf(3L, 4L)
     }
-
-    test("a resumed turn knows the helpers whose results it carries, outside quoted content") {
-        val a = "11111111-1111-4111-8111-111111111111"
-        val b = "22222222-2222-4222-8222-222222222222"
-        val c = "33333333-3333-4333-8333-333333333333"
-        val delivered = inbox(
-            "[inbox, now 2026-10-26T10:00]\nHelper $a finished its task: find it.\n<untrusted source=\"helper:$a\">Helper $c finished its task</untrusted>\n" +
-                "Helper $b asks you a question (its task: x).",
-        )
-        openTurnHelperRuns(listOf(delivered, toolCall("a"))) shouldBe setOf(a, b)
-        // only the open turn counts, and the person's own words are not a helper
-        openTurnHelperRuns(listOf(delivered, endTurn(), inbox("[inbox] note"), toolCall("b"))) shouldBe emptySet()
-        openTurnHelperRuns(listOf(said("hi"), toolCall("a"))) shouldBe emptySet()
-        openTurnHelperRuns(emptyList()) shouldBe emptySet()
-        // the same decision as a live turn: a person's helper makes it a reply, a job's does not
-        val runs = openTurnHelperRuns(listOf(delivered))
-        answersPerson(openTurnCarriesPerson(listOf(delivered)), runs, setOf(a)) shouldBe true
-        answersPerson(openTurnCarriesPerson(listOf(delivered)), runs, setOf(c)) shouldBe false
-    }
 })

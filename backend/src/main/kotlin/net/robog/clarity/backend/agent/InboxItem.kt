@@ -246,9 +246,10 @@ fun helperRunIds(items: List<InboxItem>): Set<String> = items.mapNotNullTo(mutab
 
 /**
  * Pure: whether a turn is answering the person, so what the lead posts in it is a reply. True when it
- * carries their own input ([userTurn]), or a helper's result or question ([helperRuns]: [helperRunIds] of
- * its items, or [openTurnHelperRuns] of a resumed turn) where the helper was delegated in a turn that
- * was answering them ([personRuns]). Helpers a job started stay out.
+ * carries their own input ([userTurn]), or a helper's result or question ([helperRuns], see [helperRunIds])
+ * where the helper was delegated in a turn that was answering them ([personRuns]). Helpers a job
+ * started stay out. The answer is stored with the turn (`ThreadStore.setOpenTurnAnswering`), so a
+ * resume after a crash reads it back.
  */
 fun answersPerson(userTurn: Boolean, helperRuns: Set<String>, personRuns: Set<String>): Boolean =
     userTurn || helperRuns.any { it in personRuns }

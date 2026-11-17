@@ -20,6 +20,7 @@ object AgentThreads : Table("agent_thread") {
     val compactedAt = timestamp("compacted_at").nullable()
     val lastTurnAt = timestamp("last_turn_at").nullable()
     val lastUserInputAt = timestamp("last_user_input_at").nullable()
+    val openTurnAnswering = bool("open_turn_answering").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
