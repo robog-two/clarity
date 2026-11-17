@@ -234,17 +234,29 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
     }
 
     override fun answered(item: FeedItemId) {
-        val had = synchronized(conversation) {
-            (lastMessage?.choicesItem == item).also { if (it) dropChips(item) }
+        val shown = active()
+        val action = synchronized(conversation) {
+            answeredAction(shown != null, lastMessage, item, shown?.extras?.getString(CHIPS_ITEM_EXTRA))
+                .also { dropChips(item) }
         }
-        if (had) postConversation(alert = false)
+        apply(action)
+    }
+
+    /** The conversation notification as it is showing now (null once swiped away). */
+    private fun active(): Notification? = manager.activeNotifications.firstOrNull { it.id == MESSAGE_ID }?.notification
+
+    /** Never alerts: these updates only take chips away or clear a spinner. */
+    private fun apply(action: ChipsAction) = when (action) {
+        ChipsAction.Repost -> postConversation(alert = false)
+        ChipsAction.Cancel -> manager.cancel(MESSAGE_ID)
+        ChipsAction.Nothing -> Unit
     }
 
     private fun dropChips(item: FeedItemId) {
         lastMessage?.takeIf { it.choicesItem == item }?.let { lastMessage = it.withoutChoices() }
     }
 
-    override fun refresh() = postConversation(alert = false)
+    override fun refresh() = apply(refreshAction(active() != null, synchronized(conversation) { lastMessage }))
 
     override fun clearConversation() {
         synchronized(conversation) {
@@ -296,6 +308,7 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(style)
             .addAction(reply)
+            .addExtras(android.os.Bundle().apply { putString(CHIPS_ITEM_EXTRA, plan.choicesItem?.value) })
             .setContentIntent(openIntent(plan))
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
@@ -316,6 +329,8 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
 
     private companion object {
         const val MAX_LINES = 8
+        /** The notification's own record of which question its chips belong to (read back after a restart). */
+        const val CHIPS_ITEM_EXTRA = "clarity.choices_item"
     }
 }
 

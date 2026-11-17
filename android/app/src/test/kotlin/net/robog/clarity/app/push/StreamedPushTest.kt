@@ -9,8 +9,6 @@ import kotlin.time.Duration.Companion.minutes
 import net.robog.clarity.shared.feed.Card
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
 import net.robog.clarity.app.data.feed.Arrival
@@ -134,29 +132,17 @@ class StreamedPushTest {
         assertEquals(8L, rig.backend.feedCalls.first(), "answered, so no longer fetched again")
     }
 
-    @Test fun anAnswerSignalReachesTheNotifier() = runTest {
+    @Test fun anAnswerReachesTheNotifierWithNoPushHolderRunning() = runTest {
         val rig = Rig()
         val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
         val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
-        val answers = kotlinx.coroutines.flow.MutableSharedFlow<net.robog.clarity.shared.feed.FeedItemId>(extraBufferCapacity = 4)
-        val listener = PushListener(rig.sync.arrivals, { Front.Background }, { true }, FixedClock(T0), rig.notifier, rig.ledger, answers = answers)
-        val live = launch(Dispatchers.Unconfined) { listener.run() }
-        answers.tryEmit(asked.id)
-        live.cancel()
-        assertEquals(listOf(asked.id), rig.notifier.answered)
-    }
-
-    @Test fun anAnswerOnAnotherDeviceReachesTheNotifierThroughTheSync() = runTest {
-        val rig = Rig()
-        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
-        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
-        val answers = rig.sync.signals.filterIsInstance<net.robog.clarity.app.data.feed.SyncSignal.ChoicesAnswered>().map { it.item }
-        val listener = PushListener(rig.sync.arrivals, { Front.Background }, { true }, FixedClock(T0), rig.notifier, rig.ledger, answers = answers)
-        val live = launch(Dispatchers.Unconfined) { listener.run() }
+        // only the app-wide relay runs: no PushListener, as with the fallback job or the app open without the service
+        val relay = launch(Dispatchers.Unconfined) { AnswerRelay(rig.sync.signals, rig.notifier).run() }
         rig.sync.apply(FeedEvent.ItemFinal(asked))
         rig.sync.apply(FeedEvent.ItemFinal(asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))))
-        live.cancel()
+        relay.cancel()
         assertEquals(listOf(asked.id), rig.notifier.answered)
+        assertTrue(rig.notifier.posted.isEmpty())
     }
 
     @Test fun anAnsweredChoicesItemNeverNotifies() {

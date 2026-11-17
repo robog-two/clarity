@@ -22,5 +22,7 @@ class ClarityApp : Application() {
         coil3.SingletonImageLoader.setSafe { graph.imageLoader }
         // A call going on shows as a call (the ongoing notification) whatever its screen does.
         processScope.launch { graph.ongoingCallStarter.run() }
+        // A question answered anywhere takes its chips off the notification, whatever holds the connection.
+        processScope.launch { graph.answerRelay.run() }
     }
 }

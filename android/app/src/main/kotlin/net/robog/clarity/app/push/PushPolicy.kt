@@ -188,6 +188,28 @@ fun NotificationPlan.withoutChoices(): NotificationPlan = copy(choicesItem = nul
 /** What a reply from the notification sends: [text], as a tap on the card [inReplyTo] or as plain typing. */
 data class NotificationReply(val text: String, val inReplyTo: FeedItemId?)
 
+/** What to do with the conversation notification when chips may have to go. */
+enum class ChipsAction { Repost, Cancel, Nothing }
+
+/**
+ * The question [item] was answered. A notification the person swiped away stays away. One this
+ * process posted ([state]) is posted again without its chips; one left by an earlier process
+ * (no [state]) that still shows [item] ([shownItem], from its extras) is simply removed.
+ */
+fun answeredAction(active: Boolean, state: NotificationPlan?, item: FeedItemId, shownItem: String?): ChipsAction = when {
+    !active -> ChipsAction.Nothing
+    state != null -> if (state.choicesItem == item) ChipsAction.Repost else ChipsAction.Nothing
+    shownItem == item.value -> ChipsAction.Cancel
+    else -> ChipsAction.Nothing
+}
+
+/** A reply that sent nothing leaves the reply box spinning: post again, or remove what an earlier process left. */
+fun refreshAction(active: Boolean, state: NotificationPlan?): ChipsAction = when {
+    !active -> ChipsAction.Nothing
+    state != null -> ChipsAction.Repost
+    else -> ChipsAction.Cancel
+}
+
 /**
  * What the reply box result means. Text that is exactly one option's label (any case, any padding)
  * is a tap on that option: its reply, answering [item]. Anything else is typed words, sent as they are.

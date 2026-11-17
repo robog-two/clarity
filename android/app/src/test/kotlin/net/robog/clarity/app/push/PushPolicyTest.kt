@@ -173,6 +173,30 @@ class NotificationDecisionTest {
         assertEquals(NotificationReply("second", FeedItemId("f1")), replyOf("OK", listOf(twins[1], twins[0]), FeedItemId("f1")))
     }
 
+    private val chipsPlan = plan(Arrival.Item(agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready)))))!!
+    private val chipsItem = chipsPlan.choicesItem!!
+
+    @Test fun answeredRepostsOnlyWhatThisProcessPostedAndIsStillShowing() {
+        assertEquals(ChipsAction.Repost, answeredAction(true, chipsPlan, chipsItem, chipsItem.value))
+        assertEquals(ChipsAction.Nothing, answeredAction(false, chipsPlan, chipsItem, null), "swiped away stays away")
+        assertEquals(ChipsAction.Nothing, answeredAction(true, chipsPlan, FeedItemId("other"), chipsItem.value), "another question")
+        assertEquals(ChipsAction.Nothing, answeredAction(true, chipsPlan.withoutChoices(), chipsItem, null), "no chips already")
+    }
+
+    @Test fun answeredAfterARestartCancelsOnlyANotificationShowingThatQuestion() {
+        assertEquals(ChipsAction.Cancel, answeredAction(true, null, chipsItem, chipsItem.value))
+        assertEquals(ChipsAction.Nothing, answeredAction(true, null, chipsItem, "other"))
+        assertEquals(ChipsAction.Nothing, answeredAction(true, null, chipsItem, null))
+        assertEquals(ChipsAction.Nothing, answeredAction(false, null, chipsItem, chipsItem.value))
+    }
+
+    @Test fun refreshRepostsCancelsOrLeavesAlone() {
+        assertEquals(ChipsAction.Repost, refreshAction(true, chipsPlan))
+        assertEquals(ChipsAction.Cancel, refreshAction(true, null))
+        assertEquals(ChipsAction.Nothing, refreshAction(false, chipsPlan))
+        assertEquals(ChipsAction.Nothing, refreshAction(false, null))
+    }
+
     @Test fun anythingElseIsTypedWordsWithNoReplyTo() {
         val id = FeedItemId("f1")
         assertEquals(NotificationReply("Starting soon", null), replyOf("Starting soon", ready, id))
