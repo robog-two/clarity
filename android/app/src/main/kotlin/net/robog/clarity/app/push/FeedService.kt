@@ -230,7 +230,7 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
             conversation.addLast((if (sent) text else "Not sent, $text. Try again in Clarity.") to true)
             if (sent && answered != null) dropChips(answered)
         }
-        postConversation(alert = false)
+        refresh()
     }
 
     override fun answered(item: FeedItemId) {
@@ -242,8 +242,8 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         apply(action)
     }
 
-    /** The conversation notification as it is showing now (null once swiped away). */
-    private fun active(): Notification? = manager.activeNotifications.firstOrNull { it.id == MESSAGE_ID }?.notification
+    /** The conversation notification as it is showing now (null once swiped away, or when the system cannot say). */
+    private fun active(): Notification? = runCatching { manager.activeNotifications.firstOrNull { it.id == MESSAGE_ID }?.notification }.getOrNull()
 
     /** Never alerts: these updates only take chips away or clear a spinner. */
     private fun apply(action: ChipsAction) = when (action) {

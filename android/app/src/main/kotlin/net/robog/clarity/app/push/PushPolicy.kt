@@ -203,7 +203,10 @@ fun answeredAction(active: Boolean, state: NotificationPlan?, item: FeedItemId, 
     else -> ChipsAction.Nothing
 }
 
-/** A reply that sent nothing leaves the reply box spinning: post again, or remove what an earlier process left. */
+/**
+ * A reply from the notification (sent or not) leaves its reply box spinning: post again, or remove what an
+ * earlier process left. A notification swiped away meanwhile stays away.
+ */
 fun refreshAction(active: Boolean, state: NotificationPlan?): ChipsAction = when {
     !active -> ChipsAction.Nothing
     state != null -> ChipsAction.Repost

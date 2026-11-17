@@ -190,7 +190,7 @@ class NotificationDecisionTest {
         assertEquals(ChipsAction.Nothing, answeredAction(false, null, chipsItem, chipsItem.value))
     }
 
-    @Test fun refreshRepostsCancelsOrLeavesAlone() {
+    @Test fun aReplyOrRefreshRepostsCancelsOrLeavesAlone() {
         assertEquals(ChipsAction.Repost, refreshAction(true, chipsPlan))
         assertEquals(ChipsAction.Cancel, refreshAction(true, null))
         assertEquals(ChipsAction.Nothing, refreshAction(false, chipsPlan))
