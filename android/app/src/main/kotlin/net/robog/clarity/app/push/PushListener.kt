@@ -9,6 +9,8 @@ import kotlinx.coroutines.launch
 import net.robog.clarity.app.data.AppClock
 import net.robog.clarity.app.data.feed.Arrival
 import net.robog.clarity.app.data.feed.FeedStore
+import net.robog.clarity.app.data.feed.hasAnsweredChoices
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.Urgency
@@ -19,7 +21,10 @@ interface PushNotifier {
     fun post(plan: NotificationPlan)
 
     /** The person replied from the notification; [sent] says whether the server took it. */
-    fun replied(text: String, sent: Boolean) {}
+    fun replied(text: String, sent: Boolean, answered: FeedItemId? = null) {}
+
+    /** The question [item] asked was answered (on any device): its chips leave the notification. */
+    fun answered(item: FeedItemId) {}
 
     /** The app came to the front: the conversation is read there, so the notification goes. */
     fun clearConversation() {}
@@ -66,6 +71,7 @@ class PushListener(
 
     /** Posts what [arrival] earns, unless either path already handled it. Returns whether it posted. */
     suspend fun deliver(arrival: Arrival): Boolean {
+        if (arrival is Arrival.Item && hasAnsweredChoices(arrival.item)) notifier.answered(arrival.item.id)
         if (!ledger.claim(arrival)) return false
         val plan = decideNotification(arrival, front(), canPost(), clock.now(), call = call()) ?: return false
         notifier.post(plan)

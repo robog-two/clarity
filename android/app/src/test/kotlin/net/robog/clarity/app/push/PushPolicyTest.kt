@@ -23,6 +23,7 @@ import net.robog.clarity.app.testutil.heldAction
 import net.robog.clarity.app.testutil.userItem
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Urgency
@@ -135,6 +136,44 @@ class NotificationDecisionTest {
             cards = listOf(Card.Choices("Ready to start the report?", listOf(Choice("Starting", "Starting"), Choice("Later", "Later")))),
         )
         assertEquals("Ready to start the report?", plan(Arrival.Item(asked))!!.text)
+    }
+
+    private val ready = listOf(Choice("Starting", "Starting now"), Choice("Later", "Later"))
+
+    @Test fun anUnansweredChoicesCardCarriesItsItemAndOptionsOnThePlan() {
+        val asked = agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready)))
+        val p = plan(Arrival.Item(asked))!!
+        assertEquals(asked.id, p.choicesItem)
+        assertEquals(ready, p.choices)
+        assertTrue(p.withoutChoices().choices.isEmpty())
+        assertNull(p.withoutChoices().choicesItem)
+    }
+
+    @Test fun anAnsweredChoicesCardNeverNotifiesSoNoChips() {
+        val asked = agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready, chosen = "Later")))
+        assertNull(plan(Arrival.Item(asked)))
+    }
+
+    @Test fun aPlainMessageHasNoChips() {
+        val p = plan(Arrival.Item(item("push_now")))!!
+        assertNull(p.choicesItem)
+        assertTrue(p.choices.isEmpty())
+    }
+
+    @Test fun anExactLabelIsATapOnItsOption() {
+        val id = FeedItemId("f1")
+        assertEquals(NotificationReply("Starting now", id), replyOf("Starting", ready, id))
+        assertEquals(NotificationReply("Later", id), replyOf("later", ready, id))
+        assertEquals(NotificationReply("Starting now", id), replyOf("  STARTING \n", ready, id))
+    }
+
+    @Test fun anythingElseIsTypedWordsWithNoReplyTo() {
+        val id = FeedItemId("f1")
+        assertEquals(NotificationReply("Starting soon", null), replyOf("Starting soon", ready, id))
+        assertEquals(NotificationReply("Starting", null), replyOf("Starting", ready, null))
+        assertEquals(NotificationReply("hello", null), replyOf(" hello ", emptyList(), id))
+        assertNull(replyOf("   ", ready, id))
+        assertNull(replyOf(null, ready, id))
     }
 
     @Test fun aMessageOfTheRunningCallStillNotifiesWhileQuiet() {

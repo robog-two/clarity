@@ -12,6 +12,8 @@ import net.robog.clarity.app.nav.DraftReview
 import net.robog.clarity.app.nav.Main
 import net.robog.clarity.app.nav.MainTab
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
@@ -175,7 +177,28 @@ data class NotificationPlan(
     val style: PlanStyle = PlanStyle.OpenApp,
     /** For a [PlanStyle.Message]: the session a reply belongs to. */
     val sessionId: SessionId? = null,
+    /** For a [PlanStyle.Message]: the item whose unanswered choices the reply box offers as chips (null when none). */
+    val choicesItem: FeedItemId? = null,
+    val choices: List<Choice> = emptyList(),
 )
+
+/** The plan without its chips: the question was answered (here or on another device). */
+fun NotificationPlan.withoutChoices(): NotificationPlan = copy(choicesItem = null, choices = emptyList())
+
+/** What a reply from the notification sends: [text], as a tap on the card [inReplyTo] or as plain typing. */
+data class NotificationReply(val text: String, val inReplyTo: FeedItemId?)
+
+/**
+ * What the reply box result means. Text that is exactly one option's label (any case, any padding)
+ * is a tap on that option: its reply, answering [item]. Anything else is typed words, sent as they are.
+ * Null when nothing was typed.
+ */
+fun replyOf(typed: String?, choices: List<Choice>, item: FeedItemId?): NotificationReply? {
+    val text = typed?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    val tapped = if (item == null) null else choices.firstOrNull { it.label.trim().equals(text, ignoreCase = true) }
+    return if (tapped != null) NotificationReply(tapped.reply, item) else NotificationReply(text, null)
+}
 
 /** Anything older than this when it reaches the phone (a long offline spell) is not worth a buzz. */
 val MAX_PUSH_AGE: Duration = 2.hours
@@ -233,6 +256,7 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
     // The feed (or the call) shows it right now.
     if (onScreen) return null
     val ofCall = call != null && item.sessionId == call
+    val open = item.cards.firstNotNullOfOrNull { it as? Card.Choices }?.takeIf { it.chosen == null }
     val channel = when (kind) {
         NotifyKind.PushNow, is NotifyKind.Released -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
@@ -269,6 +293,8 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
         },
         style = PlanStyle.Message,
         sessionId = item.sessionId,
+        choicesItem = open?.let { item.id },
+        choices = open?.options?.filter { it.label.isNotBlank() }.orEmpty(),
     )
 }
 
