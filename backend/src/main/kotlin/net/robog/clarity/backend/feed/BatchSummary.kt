@@ -60,8 +60,8 @@ private fun summaryCount(label: String): String = when (label) {
 }
 
 /**
- * Pure: the "Coming up" items without the ones the person turned down: a choices card answered with an option whose label starts
- * with an option marked `declines`. Unanswered and accepted ones stay.
+ * Pure: the "Coming up" items without the ones the person turned down: a choices card answered with an option marked
+ * `declines`. Unanswered and accepted ones stay.
  */
 fun withoutTurnedDown(items: List<FeedItem>): List<FeedItem> = items.filterNot { item ->
     item.cards.filterIsInstance<Card.Choices>().any { card ->
