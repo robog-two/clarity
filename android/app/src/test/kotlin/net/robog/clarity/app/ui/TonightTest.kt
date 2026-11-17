@@ -71,9 +71,10 @@ class TonightTest {
         assertNull(tonightOf(listOf(streaming, bare), POSTED, UTC))
     }
 
-    @Test fun aHeldFindingWithTheEveningDecisionIsNotTheSummary() {
-        val finding = plain(4).copy(notify = "evening_batch:2026-10-26T18:00:00Z")
-        assertNull(tonightOf(listOf(finding), POSTED, UTC))
+    @Test fun theEveningDecisionMarksTheSummaryItself() {
+        // Held findings never reach the phone (see tonightOf), so an evening_batch item here is a summary.
+        val finding = plain(4)
+        assertNull(tonightOf(listOf(finding), POSTED, UTC), "an ordinary item is not one")
         assertEquals(FeedItemId("s2"), tonightOf(listOf(summary(2), finding), POSTED, UTC)?.itemId)
     }
 

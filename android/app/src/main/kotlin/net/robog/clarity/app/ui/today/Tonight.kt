@@ -18,9 +18,6 @@ data class Tonight(val itemId: FeedItemId, val counts: String, val comingUp: Str
 /** The label of the summary's first section, as the server writes it. */
 private const val COMING_UP = "Coming up"
 
-/** The labels the server gives the summary's sections. A held finding has none of them, so it is never mistaken for the summary. */
-private val SECTIONS = setOf(COMING_UP, "Done today", "Held for tonight")
-
 /** The instant the local day of [now] ends in [zone]: the next local midnight. */
 fun nextLocalMidnight(now: Instant, zone: TimeZone): Instant =
     now.toLocalDateTime(zone).date.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone)
@@ -28,14 +25,16 @@ fun nextLocalMidnight(now: Instant, zone: TimeZone): Instant =
 /**
  * The evening summary Today shows at [now]: the newest evening-summary item posted on the same local
  * day (so it goes away at midnight, before the next morning), or null when there is none. The summary
- * is found by its notify decision, so nothing new is stored. An item with no counts line is skipped.
+ * is found by its notify decision, so nothing new is stored. That is safe because findings held for
+ * the summary never reach the phone (the server's feed sync only sends items with no batch state,
+ * `FeedStore` `batchState IS NULL`), so the only `evening_batch` item the phone holds is a summary. An item with no counts line is skipped.
  */
 fun tonightOf(items: List<FeedItem>, now: Instant, zone: TimeZone): Tonight? {
     val day = now.toLocalDateTime(zone).date
     val item = items
         .filter { it.author == FeedItem.Author.AGENT && !it.streaming && parseNotify(it.notify) == NotifyKind.EveningBatch }
         .filter { it.at.toLocalDateTime(zone).date == day }
-        .filter { item -> item.cards.any { it is Card.Text } && item.cards.any { it is Card.Chips && it.label in SECTIONS } }
+        .filter { item -> item.cards.any { it is Card.Text } }
         .maxByOrNull { it.seq } ?: return null
     val counts = item.cards.filterIsInstance<Card.Text>().first().text
     val comingUp = item.cards.filterIsInstance<Card.Chips>().firstOrNull { it.label == COMING_UP }?.items?.firstOrNull()?.text
