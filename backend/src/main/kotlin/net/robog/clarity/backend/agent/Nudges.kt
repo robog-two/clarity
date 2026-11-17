@@ -385,13 +385,13 @@ private val CLOCK_ONLY = Regex("""^\d{1,2}:\d{2}$""")
  * Pure: a nudge's `at`: a local date-time like the other tools take, or "HH:MM" for that time
  * today on the person's clock. Left is the message for the model.
  */
-fun readNudgeTime(raw: String, zone: TimeZone, now: Instant): Either<String, Instant> {
+fun readNudgeTime(raw: String, zone: TimeZone, now: Instant, label: String = "at"): Either<String, Instant> {
     val text = raw.trim()
     if (CLOCK_ONLY.matches(text)) {
-        val time = parseClock(text) ?: return "`at` is not a time of day: \"$raw\".".left()
+        val time = parseClock(text) ?: return "`$label` is not a time of day: \"$raw\".".left()
         return ScheduleClock.occurrence(ScheduleClock.homeDate(now, zone), time, zone).right()
     }
-    return readToolTime("at", text, zone)
+    return readToolTime(label, text, zone)
 }
 
 /**
@@ -467,7 +467,7 @@ class NudgeTools(
     private suspend fun freeSlotTime(slot: FreeSlotInput, zone: TimeZone, now: Instant): Either<String, Instant> {
         val earliest = now + 1.minutes
         val after = slot.after?.takeIf { it.isNotBlank() }
-            ?.let { readNudgeTime(it, zone, now).fold({ msg -> return msg.left() }, { t -> t }) }?.let { maxOf(it, earliest) } ?: earliest
+            ?.let { readNudgeTime(it, zone, now, "freeSlot.after").fold({ msg -> return msg.left() }, { t -> t }) }?.let { maxOf(it, earliest) } ?: earliest
         val gap = (slot.minMinutes ?: DEFAULT_GAP_MINUTES).coerceIn(1, MAX_GAP_MINUTES).minutes
         val until = after + (slot.within ?: DEFAULT_WITHIN_HOURS).coerceIn(1, MAX_WITHIN_HOURS).hours
         val events = reader.calendarEvents(TimeRange(after, until + gap), MAX_FREE_SLOT_EVENTS)
