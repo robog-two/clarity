@@ -64,7 +64,7 @@ class OutingScoutJob(
         val until = from + OUTING_DAYS_AHEAD.days
         val busy = busyFrom(busyBetween(from, until), until)
         val slots = freeSlots(busy, constitutions.current()?.protectedTimes.orEmpty(), now, zone)
-        // Suggestions already made: the look_forward posts of the last week (a plain count, not a gate on posting).
+        // Suggestions already made: the look_forward posts of the last week (a plain count).
         val plan = scoutPlan(slots, feed.lookForwardSince(now - SUGGESTION_WINDOW).size)
         if (plan !is ScoutPlan.Offer) {
             log.info { "outing scout: $plan" }

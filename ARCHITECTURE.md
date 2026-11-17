@@ -592,14 +592,15 @@ ONE concrete thing the way it finds anything: memory (what they enjoy, what they
 before), mail and calendar (an invitation, a newsletter), and a research helper through `delegate`
 as usual (`web_search` or the browser; the identifier check on web search briefs below applies). The
 lead posts one `send_to_user` with kind `look_forward` (it pushes and counts toward the daily limit), a
-short text, a sources card and a `Card.Choices` with two options, the second starting "Not"
-("Not this time"); labels may name the outing so two open suggestions stay distinguishable. Company
+short text, a sources card and a `Card.Choices` with two options, the one that turns it down marked
+`declines: true` (`Choice.declines`, default false); labels may name the outing so two open suggestions
+stay distinguishable, and each reply is text that stands on its own, since it is all the lead sees later. Company
 comes only from that contact list (a prompt rule). A yes arrives as the person's own words, so
 `create_event` is their request and the usual guard applies; on either answer the lead writes what it
 learned to memory. Any risk from what research reads is handled where it always is: the guard holds
 actions with effects. The periodic review is asked to remember outing ideas it spots (a gig in a
 newsletter, "we should get dinner"). The evening summary's "Coming up" lists `look_forward` items
-unless their choices card was answered with a "Not" option (`withoutTurnedDown`).
+unless their choices card was answered with an option marked `declines` (`withoutTurnedDown`).
 
 **Card refs.** A `Card.Choices` may carry an opaque `ref` (never shown), used by plan check-ins: absent, or exactly
 `plan:<uuid>` (strict lower-case 8-4-4-4-12; `agent/CardRefs.kt`). `CardRefGate` checks it when the lead posts: a

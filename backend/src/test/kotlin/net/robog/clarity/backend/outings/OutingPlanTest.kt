@@ -278,24 +278,41 @@ class OutingPlanTest : FunSpec({
         text shouldContain "delegate"
         text shouldContain "kind look_forward"
         text shouldContain "Not this time"
+        text shouldContain "declines: true"
+        text shouldContain "stands on its own"
+        text shouldContain "Add it to my calendar"
         text shouldContain "create_event"
         text shouldContain "remember it"
         text shouldNotContain "@"
         outingInstruction(listOf(slot), emptyList(), ny) shouldContain "the person alone"
     }
 
-    test("Coming up lists look_forward items unless the choices card was answered with a Not option") {
-        fun offer(id: String, chosen: String? = null, no: String = "Not this time") = net.robog.clarity.shared.feed.FeedItem(
+    test("Coming up lists look_forward items unless the choices card was answered with an option marked declines") {
+        fun offer(id: String, chosen: String? = null, noLabel: String = "Not this time", noDeclines: Boolean = true) = net.robog.clarity.shared.feed.FeedItem(
             id = net.robog.clarity.shared.feed.FeedItemId(id), seq = 1, at = now, author = net.robog.clarity.shared.feed.FeedItem.Author.AGENT,
             cards = listOf(
                 net.robog.clarity.shared.feed.Card.Text("Offer $id"),
                 net.robog.clarity.shared.feed.Card.Choices(
-                    "Add it?", listOf(net.robog.clarity.shared.feed.Choice("Add Jazz to calendar", "Add Jazz to calendar"), net.robog.clarity.shared.feed.Choice(no, "No $id")), chosen = chosen,
+                    "Add it?",
+                    listOf(
+                        net.robog.clarity.shared.feed.Choice("Add Jazz to calendar", "Add it to my calendar"),
+                        net.robog.clarity.shared.feed.Choice(noLabel, "No $id", declines = noDeclines),
+                    ),
+                    chosen = chosen,
                 ),
             ),
         )
-        val items = listOf(offer("open"), offer("yes", chosen = "Add Jazz to calendar"), offer("no", chosen = "No no"), offer("named", chosen = "No named", no = "Not the hike"))
-        withoutTurnedDown(items).map { it.id.value } shouldBe listOf("open", "yes")
+        val items = listOf(
+            offer("open"), offer("yes", chosen = "Add it to my calendar"), offer("no", chosen = "No no"),
+            offer("named", chosen = "No named", noLabel = "Skip the hike"),
+            // a label that merely starts with "Not" is no decline: the flag says so
+            offer("notify", chosen = "No notify", noLabel = "Notify me", noDeclines = false),
+        )
+        withoutTurnedDown(items).map { it.id.value } shouldBe listOf("open", "yes", "notify")
+        // the flag is part of the card on the wire, and absent on older cards
+        val json = net.robog.clarity.shared.ClarityJson
+        json.decodeFromString<net.robog.clarity.shared.feed.Choice>("""{"label":"Not this time","reply":"No"}""").declines shouldBe false
+        json.decodeFromString<net.robog.clarity.shared.feed.Choice>(json.encodeToString(net.robog.clarity.shared.feed.Choice("Not now", "No", declines = true))).declines shouldBe true
         val plain = net.robog.clarity.shared.feed.FeedItem(
             id = net.robog.clarity.shared.feed.FeedItemId("plain"), seq = 2, at = now, author = net.robog.clarity.shared.feed.FeedItem.Author.AGENT,
             cards = listOf(net.robog.clarity.shared.feed.Card.Text("Hi")),

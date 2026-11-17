@@ -217,8 +217,9 @@ fun outingInstruction(slots: List<Slot>, contacts: List<RecentContact>, zone: Ti
             "(web_search or the browser, whichever fits; its brief carries no phone numbers, addresses or account numbers). " +
             "Weigh it against the slots and what is already on the calendar. Nothing good: send nothing. " +
             "Otherwise one send_to_user with kind look_forward: a short text (\"Thursday evening is free. Jazz at the Blue Room with Sam Example?\"), " +
-            "a sources card for what it rests on, and a choices card with two options, one to add it to the calendar and one starting \"Not\" " +
-            "(\"Not this time\"); name the outing in the labels when another suggestion may be open. " +
+            "a sources card for what it rests on, and a choices card with two options, one to add it to the calendar and one to turn it down with declines: true " +
+            "(labels like \"Add Jazz to calendar\" and \"Not this time\", naming the outing when another suggestion may be open). " +
+            "Give each option reply text that stands on its own, since later you see only that text: \"Add it to my calendar\", \"Not this time\". " +
             "A yes is the person's own request: create_event through the usual guard. On either answer, remember it " +
             "(what kind of outing, who with, yes or no) with the memory tools so later suggestions improve.",
     )

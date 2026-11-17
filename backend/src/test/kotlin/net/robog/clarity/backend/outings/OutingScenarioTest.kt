@@ -67,8 +67,8 @@ class OutingScenarioTest : FunSpec({
                                             put("type", "choices")
                                             put("prompt", "Add Jazz at the Blue Room?")
                                             putJsonArray("options") {
-                                                addJsonObject { put("label", "Add Jazz to calendar"); put("reply", "Add Jazz to calendar") }
-                                                addJsonObject { put("label", "Not this time"); put("reply", "Not this time") }
+                                                addJsonObject { put("label", "Add Jazz to calendar"); put("reply", "Add it to my calendar") }
+                                                addJsonObject { put("label", "Not this time"); put("reply", "Not this time"); put("declines", true) }
                                             }
                                         },
                                     ),
@@ -77,7 +77,7 @@ class OutingScenarioTest : FunSpec({
                         },
                     )
                 // the tap: acknowledge it in a reply
-                request.messages.any { text(it) == "Add Jazz to calendar" } && request.messages.none { m -> m.content.any { it is Block.ToolUse && it.id == "t2" } } ->
+                request.messages.any { text(it) == "Add it to my calendar" } && request.messages.none { m -> m.content.any { it is Block.ToolUse && it.id == "t2" } } ->
                     callTool("t2", "send_to_user", buildJsonObject { put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Added.") }))) })
                 else -> end("done")
             }
@@ -90,17 +90,18 @@ class OutingScenarioTest : FunSpec({
         val offered = r.feed.page(0, 20).items.single { it.kind == MessageKind.LOOK_FORWARD }
         val choices = offered.cards.filterIsInstance<Card.Choices>().single()
         choices.options.map { it.label } shouldBe listOf("Add Jazz to calendar", "Not this time")
+        choices.options.map { it.declines } shouldBe listOf(false, true)
         seen.first() shouldContain "Outing scout"
         seen.first() shouldContain "Sam Example (contact c-sam)"
 
         // the person taps "Add Jazz to calendar": it is their input, and the lead's answer is a reply
-        r.feed.chooseOption(offered.id, "Add Jazz to calendar", ClientInputId("tap-1"))
-        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("tap-1"), "Add Jazz to calendar"), dedupKey = "user:tap-1")
+        r.feed.chooseOption(offered.id, "Add it to my calendar", ClientInputId("tap-1"))
+        r.inbox.enqueue(InboxItem.UserInput(ClientInputId("tap-1"), "Add it to my calendar"), dedupKey = "user:tap-1")
         r.lead.step()
         val items = r.feed.page(0, 20).items
-        (items.first { it.id == offered.id }.cards.filterIsInstance<Card.Choices>().single().chosen) shouldBe "Add Jazz to calendar"
+        (items.first { it.id == offered.id }.cards.filterIsInstance<Card.Choices>().single().chosen) shouldBe "Add it to my calendar"
         items.filter { it.kind == MessageKind.REPLY } shouldHaveSize 1
-        seen.last() shouldContain "Add Jazz to calendar"
+        seen.last() shouldContain "Add it to my calendar"
     }
 })
 
