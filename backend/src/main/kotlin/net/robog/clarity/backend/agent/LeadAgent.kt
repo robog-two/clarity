@@ -316,7 +316,7 @@ class LeadAgent(
 
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
-        scope.startTurn(untrusted = untrusted, requestedByUser = userTurn, startedByPerson = userTurn && turnStartedByPerson(items))
+        scope.startTurn(untrusted = untrusted, requestedByUser = userTurn)
         replyOwed.set(userTurn)
         val history = journal.load(threadId)
         val visible = contextSince(history)

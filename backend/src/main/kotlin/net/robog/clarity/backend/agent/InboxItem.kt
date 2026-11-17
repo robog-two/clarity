@@ -45,8 +45,6 @@ sealed interface InboxItem {
         val sessionId: SessionId? = null,
         /** The server's note on which card a tap answered ([answeringNote], from its ref only); null for typed words. */
         val answering: String? = null,
-        /** A tap on a choices card (the input has `inReplyTo`): an answer, not a request. */
-        val tap: Boolean = false,
     ) : InboxItem {
         override val priority get() = Priority.USER
         override val summary get() = text
@@ -295,13 +293,7 @@ fun renderDeliveries(items: List<PendingItem>, now: Instant, zone: TimeZone, sta
 }
 
 /**
- * Pure: whether the person started a turn made of [items]: some input of theirs is typed or spoken. A turn of only taps on
- * choices cards (an outing's "Not this time", a plan check-in's "Later") answers a question; it is no request to suggest anything.
- */
-fun turnStartedByPerson(items: List<PendingItem>): Boolean = items.any { (it.item as? InboxItem.UserInput)?.tap == false }
-
-/**
- * Pure: the operator's note for a tap, "Tap answers card ref outing:<id>", from the card's [ref] only and only when
+ * Pure: the operator's note for a tap, "Tap answers card ref plan:<id>", from the card's [ref] only and only when
  * it has the shape of one the server makes. The card's prompt is model-written (often from mail) and never
  * reaches the lead as the person's words; null when there is no valid ref.
  */
