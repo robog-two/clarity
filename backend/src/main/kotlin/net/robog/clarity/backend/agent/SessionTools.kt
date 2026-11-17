@@ -362,7 +362,7 @@ class SessionTools(
         val parkedItems = if (parked.isEmpty()) emptyList() else planItems.plan(date, parkedPlanned, PlanSource.PARKED)
         plans.update(date) { it.copy(parked = parked, called = true, sessionId = session.id.value) }
         val cards = buildList<Card> {
-            if (created.isNotEmpty()) add(Card.Chips("I’ll do", created.map { (task, sub) -> Chip(task.title, sub) }))
+            if (created.isNotEmpty()) add(Card.Chips("Clarity will do", created.map { (task, sub) -> Chip(task.title, sub) }))
             if (parked.isNotEmpty()) add(Card.Chips("parked until tomorrow", parked.map { Chip(it) }))
             if (created.isNotEmpty()) add(Card.Tasks("setting up", created.map { (task, _) -> task.id }))
         }

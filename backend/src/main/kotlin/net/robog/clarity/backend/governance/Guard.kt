@@ -78,7 +78,7 @@ class Guard(private val model: GuardModel) {
             throw e
         } catch (e: Exception) {
             log.warn(e) { "guard model check failed; asking the person instead" }
-            GuardVerdict(Decision.ASK, emptyList(), "I couldn't double-check this against your rules, so I'm asking.")
+            GuardVerdict(Decision.ASK, emptyList(), "Clarity could not double-check this against your rules, so it asks.")
         }
         return combine(deterministic, review)
     }
