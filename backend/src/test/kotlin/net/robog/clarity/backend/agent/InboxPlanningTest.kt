@@ -157,13 +157,13 @@ class InboxPlanningTest : FunSpec({
         val asks = InboxItem.HelperAsks("run-b", 1, "find it", "which one?")
         val other = InboxItem.HelperResult("run-c", "scout", ok = true, result = "found")
         val personRuns = setOf("run-a", "run-b")
-        answersPerson(userTurn = true, emptyList(), emptySet()) shouldBe true
-        answersPerson(userTurn = false, listOf(result), personRuns) shouldBe true
-        answersPerson(userTurn = false, listOf(asks), personRuns) shouldBe true
+        answersPerson(userTurn = true, emptySet(), emptySet()) shouldBe true
+        answersPerson(userTurn = false, helperRunIds(listOf(result)), personRuns) shouldBe true
+        answersPerson(userTurn = false, helperRunIds(listOf(asks)), personRuns) shouldBe true
         // a helper a job started stays out, and so does anything else in a background turn
-        answersPerson(userTurn = false, listOf(other), personRuns) shouldBe false
-        answersPerson(userTurn = false, listOf(InboxItem.System("note")), personRuns) shouldBe false
-        answersPerson(userTurn = false, listOf(other, result), personRuns) shouldBe true
+        answersPerson(userTurn = false, helperRunIds(listOf(other)), personRuns) shouldBe false
+        answersPerson(userTurn = false, helperRunIds(listOf(InboxItem.System("note"))), personRuns) shouldBe false
+        answersPerson(userTurn = false, helperRunIds(listOf(other, result)), personRuns) shouldBe true
         helperRunIds(listOf(result, asks, InboxItem.System("note"))) shouldBe setOf("run-a", "run-b")
     }
 })

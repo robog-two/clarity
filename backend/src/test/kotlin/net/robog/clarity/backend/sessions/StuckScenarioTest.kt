@@ -341,11 +341,11 @@ class StuckScenarioTest : FunSpec({
         r.nudges.pending().shouldBeEmpty()
 
         // --- a check-in already waiting is cancelled by Starting, and a nudge due after it is skipped, not asked
-        val extra = r.nudges.create(rig.clock.now() + 1.hours, "$PLAN_CHECK_IN: again", null, item.id)
+        val extra = r.nudges.create(rig.clock.now() + 1.hours, "$PLAN_CHECK_IN: again", null, item.id, autoCheckIn = true)
         r.planItems.update(item.id) { it.copy(startedOn = null) } // as if the start were another day's
         rig.call("plan_item", buildJsonObject { put("id", item.id); put("outcome", "started") }).text() shouldContain "1 waiting one cancelled"
         r.nudges.get(extra.id)!!.status shouldBe Nudge.Status.CANCELLED
-        val late = r.nudges.create(rig.clock.now() + 1.hours, "$PLAN_CHECK_IN: stray", null, item.id)
+        val late = r.nudges.create(rig.clock.now() + 1.hours, "$PLAN_CHECK_IN: stray", null, item.id, autoCheckIn = true)
         rig.clock.now = rig.clock.now() + 2.hours
         rig.runner.fireDue(rig.clock.now(), TimeZone.UTC).single().let { (n, outcome) ->
             n.id shouldBe late.id

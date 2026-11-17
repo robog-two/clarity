@@ -83,7 +83,7 @@ class LeadPureTest : FunSpec({
             week.text.startsWith(SPEND_LIMIT_PREFIX) shouldBe true
             val day = spendStop(limits, AgentRole.HELPER, spentWeek = 5_000_000, spentToday = 3_000_000, now = now)!!
             day.periodKey shouldBe "day:helper:2026-10-29"
-            day.text shouldContain "the helper spent $3.00"
+            day.text shouldContain "The helper spent $3.00"
             spendStop(limits, null, spentWeek = 5_000_000, spentToday = 99_000_000, now = now) shouldBe null
             usd(1_234_567) shouldBe "$1.23"
         }

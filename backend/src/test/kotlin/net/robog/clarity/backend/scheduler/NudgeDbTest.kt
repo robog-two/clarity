@@ -37,6 +37,8 @@ import net.robog.clarity.backend.agent.InboxSignals
 import net.robog.clarity.backend.agent.MAX_NUDGES_PER_DAY
 import net.robog.clarity.backend.agent.MAX_PENDING_NUDGES
 import net.robog.clarity.backend.agent.NudgeTools
+import net.robog.clarity.backend.agent.homeDay
+import net.robog.clarity.backend.agent.isPlan
 import net.robog.clarity.backend.agent.SettingsProvider
 import net.robog.clarity.backend.agent.agentTime
 import net.robog.clarity.backend.config.AgentConfig
@@ -173,6 +175,36 @@ class NudgeDbTest : FunSpec({
         val after = r.store.get(stored.getValue("ask how the spec is going").id)!!
         after.status shouldBe Nudge.Status.SKIPPED
         after.reason.shouldNotBeNull() shouldContain "plan item"
+    }
+
+    test("a nudge the lead links to a plan item stays an ordinary nudge: it counts, dedupes, and a redone plan leaves it alone") {
+        val r = Rig(database)
+        val items = PlanItemStore(database)
+        val now = Clock.System.now()
+        val today = ScheduleClock.homeDate(now, zone)
+        val item = items.plan(today, listOf(Planned("write the onboarding spec"))).single()
+        val at = now + 2.hours
+
+        r.call("nudge", input("at" to agentTime(at, zone), "note" to "ask how the spec is going", "planItemId" to item.id)).shouldBeInstanceOf<ToolResult.Ok>()
+        val linked = r.store.pending().single()
+        linked.planItemId shouldBe item.id
+        linked.isPlan shouldBe false
+
+        // it counts as the person's own nudge, not as one of the plan flow's slots
+        val (from, until) = homeDay(at, zone)
+        r.store.countActive(from, until) shouldBe 1
+        r.store.countActivePlan(from, until) shouldBe 0
+        // and it dedupes like one: the same thing again a few minutes later is refused
+        r.call("nudge", input("at" to agentTime(at + 5.minutes, zone), "note" to "check on the spec", "planItemId" to item.id))
+            .shouldBeInstanceOf<ToolResult.Error>().message shouldContain "already covers"
+
+        // the plan flow's own check-ins are the plan's slots, and redoing the plan cancels only those
+        val auto = r.store.create(now + 4.hours, "ask about the spec", null, item.id, autoCheckIn = true)
+        auto.isPlan shouldBe true
+        r.store.countActivePlan(from, homeDay(now + 4.hours, zone).second) shouldBe 1
+        r.store.cancelForPlanItem(item.id, "plan saved again") shouldBe 1
+        r.store.get(auto.id)!!.status shouldBe Nudge.Status.CANCELLED
+        r.store.get(linked.id)!!.status shouldBe Nudge.Status.PENDING
     }
 
     test("freeSlot picks the next gap, and exactly one of at and freeSlot is required") {

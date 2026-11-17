@@ -261,6 +261,27 @@ class LeadScenarioTest : FunSpec({
         }
     }
 
+    test("a helper-result turn resumed after a crash answers exactly like the original: a reply for a person's helper, a finding for a job's") {
+        for ((fromPerson, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING)) {
+            val r = rig()
+            val id = java.util.UUID.randomUUID().toString()
+            val now = kotlin.time.Clock.System.now()
+            r.runs.create(id, null, "helper", "Find the contract", null, now, answeringPerson = fromPerson)
+            // what the journal holds when the process died mid-turn: the rendered inbox message, nothing after it
+            val delivered = renderDeliveries(
+                listOf(PendingItem(1, InboxItem.HelperResult(id, "Find the contract", ok = true, result = "In Tuesday's mail."), now)),
+                now, kotlinx.datetime.TimeZone.UTC,
+            )
+            delivered.forEach { r.journal.append(r.threads.ensure().id, it.message) }
+            r.model.handler = { request ->
+                if (lastResultFor(request, "toolu_post")) end("posted") else reply("toolu_post", "It is in Tuesday's mail.")
+            }
+            r.lead.start()
+            lastPost(r).kind shouldBe kind
+            (lastPost(r).notify == NOTIFY_REPLY) shouldBe fromPerson
+        }
+    }
+
     test("an external tool never acts: the guard holds it, the tool returns the held text, and the held action exists") {
         val r = rig()
         r.model.handler = { request ->

@@ -59,7 +59,7 @@ fun spendStop(limits: SpendLimits, role: AgentRole?, spentWeek: Long, spentToday
     if (weekly != null && spentWeek >= weekly) {
         return SpendStop(
             "week:$date",
-            "Spend limit reached: model calls cost ${usd(spentWeek)} in the last 7 days (the limit is ${usd(weekly)}). " +
+            "Spend limit reached. Model calls cost ${usd(spentWeek)} in the last 7 days (the limit is ${usd(weekly)}). " +
                 "No model is called until older calls age out.",
         )
     }
@@ -67,7 +67,7 @@ fun spendStop(limits: SpendLimits, role: AgentRole?, spentWeek: Long, spentToday
     if (spentToday < daily) return null
     return SpendStop(
         "day:${role.wireName}:$date",
-        "Spend limit reached: the ${role.wireName} spent ${usd(spentToday)} in the last 24 hours (the limit is ${usd(daily)}). " +
+        "Spend limit reached. The ${role.wireName} spent ${usd(spentToday)} in the last 24 hours (the limit is ${usd(daily)}). " +
             "Its model calls stop until older calls age out.",
     )
 }

@@ -145,7 +145,7 @@ interface NudgeStore {
     /** Follow-up nudges for the plan item [planItemId] due in [from, until) that are pending or fired. */
     suspend fun countFollowUps(planItemId: String, from: Instant, until: Instant): Int
 
-    /** Cancels the pending nudges of the plan item [planItemId] due in [from, until) (all of them when both are null); returns how many. */
+    /** Cancels the pending auto check-ins and follow-ups (never a nudge the lead or the person set) of the plan item [planItemId] due in [from, until) (all of them when both are null); returns how many. */
     suspend fun cancelForPlanItem(planItemId: String, reason: String, from: Instant? = null, until: Instant? = null): Int
 
     /** Nudges that fired in [from, until). */
@@ -201,7 +201,7 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
     override suspend fun countActive(from: Instant, until: Instant): Int = database.tx {
         NudgeTable.selectAll().where {
             (NudgeTable.status inList listOf(PENDING, FIRED)) and (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until) and
-                NudgeTable.planItemId.isNull() and not(NudgeTable.autoCheckIn) and not(NudgeTable.followUp)
+                not(NudgeTable.autoCheckIn) and not(NudgeTable.followUp)
         }.count().toInt()
     }
 
@@ -233,7 +233,7 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
                     it[resolvedAt] = now
                 }
             }
-            val planRow = NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp
+            val planRow = NudgeTable.autoCheckIn or NudgeTable.followUp
             create.filter { n ->
                 if (n.planItemId != null) n.planItemId !in lost else lostLoose.none { (note, at) -> note == n.note || at == n.at }
             }.mapNotNull { n ->
@@ -264,14 +264,14 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
     override suspend fun countFiredPlan(from: Instant, until: Instant): Int = database.tx {
         NudgeTable.selectAll().where {
             (NudgeTable.status eq FIRED) and (NudgeTable.resolvedAt greaterEq from) and (NudgeTable.resolvedAt less until) and
-                (NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp)
+                (NudgeTable.autoCheckIn or NudgeTable.followUp)
         }.count().toInt()
     }
 
     override suspend fun countActivePlan(from: Instant, until: Instant): Int = database.tx {
         NudgeTable.selectAll().where {
             (NudgeTable.status inList listOf(PENDING, FIRED)) and (NudgeTable.dueAt greaterEq from) and (NudgeTable.dueAt less until) and
-                (NudgeTable.planItemId.isNotNull() or NudgeTable.autoCheckIn or NudgeTable.followUp)
+                (NudgeTable.autoCheckIn or NudgeTable.followUp)
         }.count().toInt()
     }
 
@@ -290,7 +290,7 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
         val now = clock.now()
         return database.tx {
             NudgeTable.update({
-                (NudgeTable.planItemId eq item) and (NudgeTable.status eq PENDING) and
+                (NudgeTable.planItemId eq item) and (NudgeTable.autoCheckIn or NudgeTable.followUp) and (NudgeTable.status eq PENDING) and
                     (if (from != null) NudgeTable.dueAt greaterEq from else Op.TRUE) and (if (until != null) NudgeTable.dueAt less until else Op.TRUE)
             }) {
                 it[status] = Nudge.Status.CANCELLED.wire()
@@ -303,7 +303,7 @@ class ExposedNudgeStore(private val database: Database, private val clock: Clock
     override suspend fun countFired(from: Instant, until: Instant): Int = database.tx {
         NudgeTable.selectAll().where {
             (NudgeTable.status eq FIRED) and (NudgeTable.resolvedAt greaterEq from) and (NudgeTable.resolvedAt less until) and
-                NudgeTable.planItemId.isNull() and not(NudgeTable.autoCheckIn) and not(NudgeTable.followUp)
+                not(NudgeTable.autoCheckIn) and not(NudgeTable.followUp)
         }.count().toInt()
     }
 
@@ -516,7 +516,7 @@ class NudgeTools(
         val (dayStart, dayEnd) = homeDay(at, zone)
         val personDay = nudges.countActive(dayStart, dayEnd)
         combinedRefusal(everything.size, personDay + nudges.countActivePlan(dayStart, dayEnd))?.let { return@tool ToolResult.Error(it) }
-        nudgeRefusal(at, note, taskId, now, pending, personDay, zone)
+        nudgeRefusal(at, note, taskId, now, pending, personDay, zone, planItemId)
             ?.let { return@tool ToolResult.Error(it) }
         val created = nudges.create(at, note, taskId, planItemId)
         ToolResult.Ok("Nudge ${created.id.value} set for ${agentTime(at, zone)}$chosen. Nothing is sent now; when it fires you decide what to ask.")

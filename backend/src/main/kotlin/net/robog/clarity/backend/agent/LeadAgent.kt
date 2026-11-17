@@ -82,13 +82,30 @@ fun needsResume(history: List<Message>): Boolean {
  * last assistant message); it runs to the end, so words folded in mid-turn count and a reply nudge
  * or operator placeholder at the end does not cut it. Only [carriesPersonWords] counts as the person.
  */
-fun openTurnCarriesPerson(history: List<Message>): Boolean {
+fun openTurnCarriesPerson(history: List<Message>): Boolean = openTurn(history).any(::carriesPersonWords)
+
+/** Pure: the messages of the turn left open at the end of [history] (see [openTurnCarriesPerson]). */
+private fun openTurn(history: List<Message>): List<Message> {
     val opens = history.indexOfLast(::opensLeadTurn)
-    if (opens < 0) return false
+    if (opens < 0) return emptyList()
     var start = opens
     while (start > 0 && history[start - 1].role != Role.ASSISTANT) start--
-    return history.subList(start, history.size).any(::carriesPersonWords)
+    return history.subList(start, history.size)
 }
+
+private val HELPER_RUN_IN_INBOX = Regex("""Helper ([0-9a-fA-F-]{36}) (?:finished|failed|could not finish|asks)""")
+private val UNTRUSTED_QUOTE = Regex("""<untrusted[^>]*>.*?</untrusted>""", RegexOption.DOT_MATCHES_ALL)
+
+/**
+ * Pure: the helper runs whose result or question the turn left open at the end of [history] carries.
+ * The inbox rows are consumed once journaled, so a resumed turn reads them from the inbox messages
+ * (the summaries of a helper's result or question), outside the quoted untrusted parts.
+ */
+fun openTurnHelperRuns(history: List<Message>): Set<String> = openTurn(history)
+    .filter { it.role == Role.SYSTEM }
+    .flatMap { m -> m.content.filterIsInstance<Block.Text>() }
+    .flatMap { HELPER_RUN_IN_INBOX.findAll(it.text.replace(UNTRUSTED_QUOTE, "")).map { r -> r.groupValues[1] }.toList() }
+    .toSet()
 
 /** Pure: whether [message] only closes calls a turn had no steps left for ([LEAD_OUT_OF_STEPS]). */
 fun closedOutOfSteps(message: Message): Boolean =
@@ -269,7 +286,7 @@ class LeadAgent(
         // It answers whatever the person wrote, so it is a reply the phone notifies for.
         feed.append(
             turnNote(
-                "I can't work yet: the server has no OpenRouter API key. Once it is set there and the server restarts, I'll start.",
+                "Clarity can't work yet. The server has no OpenRouter API key. It starts once one is set and the server restarts.",
                 answeringPerson = true,
                 clientInputId = ClientInputId("system:no-api-key"),
             ),
@@ -285,7 +302,7 @@ class LeadAgent(
         if (needsResume(saved)) {
             log.info { "resuming the lead thread from its journal" }
             turnLock.withLock {
-                scope.startTurn(untrusted = true, requestedByUser = false, answeringPerson = openTurnCarriesPerson(saved))
+                scope.startTurn(untrusted = true, requestedByUser = false, answeringPerson = resumedAnswersPerson(saved))
                 replyOwed.set(false)
                 feed.publish(FeedEvent.Busy(true))
                 try {
@@ -318,7 +335,8 @@ class LeadAgent(
 
     private suspend fun turn(items: List<PendingItem>, userTurn: Boolean, untrusted: Boolean) = turnLock.withLock {
         val now = clock.now()
-        val answering = answersPerson(userTurn, items.map { it.item }, personRuns(items.map { it.item }))
+        val helperRuns = helperRunIds(items.map { it.item })
+        val answering = answersPerson(userTurn, helperRuns, personRuns(helperRuns))
         scope.startTurn(untrusted = untrusted, requestedByUser = userTurn, answeringPerson = answering)
         replyOwed.set(userTurn)
         val history = journal.load(threadId)
@@ -362,9 +380,15 @@ class LeadAgent(
         if (failures > 0) delay(minOf(60.seconds, 5.seconds * (1 shl (failures - 1).coerceAtMost(4))))
     }
 
-    /** The helper runs among [items] that were delegated in a turn answering the person. */
-    private suspend fun personRuns(items: List<InboxItem>): Set<String> =
-        helperRunIds(items).filterTo(mutableSetOf()) { runs.get(it)?.answeringPerson == true }
+    /** A resumed turn answers exactly as the original would have: the person's words in it, or a result from a chain they started. */
+    private suspend fun resumedAnswersPerson(saved: List<Message>): Boolean {
+        val helperRuns = openTurnHelperRuns(saved)
+        return answersPerson(openTurnCarriesPerson(saved), helperRuns, personRuns(helperRuns))
+    }
+
+    /** The helper runs among [helperRuns] that were delegated in a turn answering the person. */
+    private suspend fun personRuns(helperRuns: Set<String>): Set<String> =
+        helperRuns.filterTo(mutableSetOf()) { runs.get(it)?.answeringPerson == true }
 
     /**
      * The memory context and the collection index, each only when it differs from the last one the
@@ -515,7 +539,7 @@ class LeadAgent(
             } else {
                 failures++
                 log.error { "lead turn failed: ${terminal.message}" }
-                if (failures == 1) note("I couldn't reach the model just now (${terminal.message.take(120)}). I'll try again shortly.", scope.answeringPerson)
+                if (failures == 1) note("Couldn't reach the model just now (${terminal.message.take(120)}). Trying again shortly.", scope.answeringPerson)
             }
             null -> Unit
         }

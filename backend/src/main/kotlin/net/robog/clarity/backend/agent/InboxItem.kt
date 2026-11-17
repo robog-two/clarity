@@ -245,12 +245,13 @@ fun helperRunIds(items: List<InboxItem>): Set<String> = items.mapNotNullTo(mutab
 }
 
 /**
- * Pure: whether a turn over [items] is answering the person, so what the lead posts in it is a reply.
- * True when it carries their own input ([userTurn]), or a helper's result or question where the helper
- * was delegated in a turn that was answering them ([personRuns]). Helpers a job started stay out.
+ * Pure: whether a turn is answering the person, so what the lead posts in it is a reply. True when it
+ * carries their own input ([userTurn]), or a helper's result or question ([helperRuns]: [helperRunIds] of
+ * its items, or [openTurnHelperRuns] of a resumed turn) where the helper was delegated in a turn that
+ * was answering them ([personRuns]). Helpers a job started stay out.
  */
-fun answersPerson(userTurn: Boolean, items: List<InboxItem>, personRuns: Set<String>): Boolean =
-    userTurn || helperRunIds(items).any { it in personRuns }
+fun answersPerson(userTurn: Boolean, helperRuns: Set<String>, personRuns: Set<String>): Boolean =
+    userTurn || helperRuns.any { it in personRuns }
 
 /** How long a stated current time stays good enough before a turn of the person's words states it again. */
 val CLOCK_RESTATE_AFTER = 10.minutes
