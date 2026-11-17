@@ -157,6 +157,12 @@ class HelperManager(
     private val grants: GrantStore = GrantStore(clock),
     /** Checks a finished helper's done criteria against its result; the default gives no verdict. */
     private val checker: CriteriaChecker = CriteriaChecker { _, _, _ -> null },
+    /**
+     * Asks the decision model whether a brief for a helper with web search carries identifiers (phone numbers, addresses,
+     * account numbers). Everything the lead sends such a helper passes it: the first brief, a message or an answer, a revision.
+     * Helpers cannot send each other text: `delegate`, `message_helper` and `revise_helper` are the lead's tools only.
+     */
+    private val searchBrief: SearchBriefCheck = SearchBriefCheck.OFF,
 ) : BackgroundService {
     override val name = "helpers"
 
@@ -228,10 +234,12 @@ class HelperManager(
         // Pages are read only from our side: research without the sandbox's fetch_page does not start.
         if (search && FETCH_PAGE in granted.unknown) return RESEARCH_NEEDS_SANDBOX.left()
         if (granted.unknown.isNotEmpty()) return "Unknown or not allowed for helpers: ${granted.unknown.joinToString()}.".left()
+        // The last check, after every cheap one: a brief that goes to the open web carries no identifiers.
+        if (search) searchBrief.refusal((listOf(task) + doneWhen).joinToString("\n"))?.let { return it.left() }
         val roleName = agentRole.name.lowercase()
         // The stored list keeps `web_search`, so a resumed run gets its search back.
         val stored = if (search) chosen.orEmpty() + WEB_SEARCH else chosen
-        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, neutralizeMarkers(task), stored, clock.now(), servers = ids, doneWhen = normalizeDoneWhen(doneWhen))
+        runs.create(id, parent.runId.takeIf { runCatching { Uuid.parse(it) }.isSuccess }, roleName, neutralizeMarkers(task), stored, clock.now(), servers = ids, doneWhen = normalizeDoneWhen(doneWhen), answeringPerson = parent.answeringPerson)
         // The helper inherits the taint of the context that wrote its task.
         taint[id] = parent.untrusted
         start(requireNotNull(runs.get(id)))
@@ -313,11 +321,17 @@ class HelperManager(
     suspend fun message(id: String, text: String, untrusted: Boolean = false): Either<String, String> {
         val run = runs.get(id) ?: return "No helper with id $id.".left()
         if (run.status !in RunStatus.OPEN) return finishedRefusal(id, run.status, closing = false).left()
+        // A message or an answer to a helper's question is more brief: a web search helper's goes through the same check.
+        searchRefusalFor(run, text)?.let { return it.left() }
         val state = states[id] ?: return deliver(id, text, untrusted, null)
         return state.lock.withLock {
             if (state.closing) finishedRefusal(id, run.status, closing = true).left() else deliver(id, text, untrusted, state)
         }
     }
+
+    /** The refusal for [text] sent to [run] when it is a web search helper (its stored tools name `web_search`); null otherwise. */
+    private suspend fun searchRefusalFor(run: HelperRun, text: String): String? =
+        if (run.tools?.contains(WEB_SEARCH) == true) searchBrief.refusal(text) else null
 
     private suspend fun deliver(id: String, text: String, untrusted: Boolean, state: RunState?): Either<String, String> {
         taintFrom(id, untrusted)
@@ -338,6 +352,7 @@ class HelperManager(
      */
     suspend fun revise(id: String, feedback: String, untrusted: Boolean = false): Either<String, String> {
         revisionRefusal(runs.get(id), id, runs.costUsed(id), dollarsToMicros(config.helperMaxCostUsd), config.helperMaxRevisions)?.let { return it.left() }
+        runs.get(id)?.let { searchRefusalFor(it, feedback) }?.let { return it.left() }
         // The run's job may still be closing; a revision starts a new one.
         jobs[id]?.join()
         return lifecycle.withLock {

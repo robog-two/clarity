@@ -57,7 +57,7 @@ private class Flag(done: Boolean) : OnboardingFlagStore {
     override suspend fun markDone() { state.value = true }
 }
 
-private fun item(seq: Long) = Arrival.Item(agentItem(seq, "hello $seq"))
+private fun item(seq: Long) = Arrival.Item(agentItem(seq, "hello $seq").copy(notify = "reply"))
 private fun urgent(id: String) = Arrival.Held(heldAction(id).copy(urgency = Urgency.URGENT))
 
 class NotifiedTest {
@@ -194,7 +194,7 @@ class PushFallbackTest {
 
     @Test fun withTheServiceGoneItCatchesUpPostsAndRestartsIt() = runTest {
         val rig = Rig(on)
-        rig.backend.all = listOf(agentItem(1, "while you were away").copy(notify = "push_now"), agentItem(2, "and this"))
+        rig.backend.all = listOf(agentItem(1, "while you were away").copy(notify = "push_now"), agentItem(2, "and this").copy(notify = "reply"))
         rig.backend.held = listOf(heldAction("h1").copy(urgency = Urgency.URGENT))
 
         val outcome = rig.fallback.run()

@@ -103,7 +103,7 @@ class PushListenerTest {
         val job = launch(Dispatchers.Unconfined) { listener.run() }
 
         arrivals.emit(Arrival.Item(agentItem(1, "held for later").copy(notify = "hold_until:2026-10-26T12:00:00Z")))
-        arrivals.emit(Arrival.Item(agentItem(2, "quiet one, but the app is closed")))
+        arrivals.emit(Arrival.Item(agentItem(2, "an answer, and the app is closed").copy(notify = "reply")))
         arrivals.emit(Arrival.Item(agentItem(3, "loud one").copy(notify = "push_now")))
         arrivals.emit(Arrival.Held(heldAction("h1").copy(urgency = Urgency.URGENT)))
         assertEquals(listOf(PushChannel.Agent, PushChannel.Agent, PushChannel.Urgent), notifier.posted.map { it.channel })

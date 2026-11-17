@@ -30,6 +30,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.compose.runtime.LaunchedEffect
+import net.robog.clarity.shared.feed.FeedItemId
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.material.icons.outlined.NightsStay
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -114,10 +121,14 @@ fun TodayScreen(
     modifier: Modifier = Modifier,
     /** A task tapped: its thread (the Agent's Path). */
     onOpenTask: (TaskId) -> Unit = {},
+    /** The Tonight card tapped: the evening summary, in Ask. */
+    onOpenSummary: (FeedItemId) -> Unit = {},
     viewModel: TodayViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain, onOpenTask = onOpenTask)
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) { lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.onForeground() } }
+    TodayContent(state, viewModel::refresh, onReview, onOpenHeld, modifier, onCallAgain = viewModel::callAgain, onOpenTask = onOpenTask, onOpenSummary = onOpenSummary)
 }
 
 /**
@@ -139,6 +150,7 @@ fun TodayContent(
     onCallAgain: () -> Unit = {},
     /** A task tapped: its thread (the Agent's Path). */
     onOpenTask: (TaskId) -> Unit = {},
+    onOpenSummary: (FeedItemId) -> Unit = {},
 ) {
     val phase = when {
         state.loading -> Phase.Loading
@@ -165,7 +177,7 @@ fun TodayContent(
             Phase.Loading -> LoadingSpinner(Modifier.padding(top = Space.Large))
             Phase.Unavailable -> Hint("Server isn’t ready for Today.")
             Phase.Nothing -> Unit
-            Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, inactiveExpanded, onOpenTask, onCallAgain) }
+            Phase.Ready -> state.today?.let { DayBody(it, state, onReview, onOpenHeld, inactiveExpanded, onOpenTask, onCallAgain, onOpenSummary) }
         }
     }
 }
@@ -181,7 +193,10 @@ private fun DayBody(
     inactiveExpanded: Boolean,
     onOpenTask: (TaskId) -> Unit,
     onCall: () -> Unit,
+    onOpenSummary: (FeedItemId) -> Unit,
 ) {
+    // The evening summary, until midnight: right under the call offer, above the plan.
+    state.tonight?.let { TonightCard(it, onOpen = { onOpenSummary(it.itemId) }, Modifier.padding(bottom = Space.Medium)) }
     when {
         today.plan.isNotEmpty() -> PlanHero(today.plan)
         !today.called -> NoPlanYet(state.callOffer, state.callAgainProblem, onCall)
@@ -477,38 +492,76 @@ internal fun StatusGlyph(task: AgentTask, needsYou: Boolean) {
 
 // ---------- Held and parked ----------
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun HeldCard(waiting: Int, onOpenHeld: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    TodayLinkCard(
+        title = "Held for you",
+        lines = listOf(sentenceCase(heldLine(waiting))),
+        description = "Held for you, ${heldLine(waiting)}",
+        onClick = onOpenHeld,
+        modifier = modifier,
+        badgeColor = if (waiting > 0) colors.tertiaryContainer else colors.surfaceContainerHighest,
+    ) {
+        Text(
+            "$waiting",
+            Modifier.clearAndSetSemantics {},
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            color = if (waiting > 0) colors.onTertiaryContainer else colors.onSurfaceVariant,
+        )
+    }
+}
+
+/** The evening summary, a compact card above the day. Tapping it opens the summary in Ask. */
+@Composable
+internal fun TonightCard(tonight: Tonight, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    TodayLinkCard(
+        title = "Tonight",
+        lines = listOfNotNull(tonight.counts, tonight.comingUp),
+        description = "Tonight, ${tonight.counts}",
+        onClick = onOpen,
+        modifier = modifier,
+        badgeColor = colors.secondaryContainer,
+    ) {
+        Icon(Icons.Outlined.NightsStay, contentDescription = null, tint = colors.onSecondaryContainer)
+    }
+}
+
+/**
+ * A card on Today that opens another screen: a shaped [badge] (its fill is [badgeColor]), a [title]
+ * and quiet [lines] under it, and an arrow. Held and Tonight both use it, so they stay alike.
+ */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun TodayLinkCard(
+    title: String,
+    lines: List<String>,
+    description: String,
+    onClick: () -> Unit,
+    badgeColor: Color,
+    modifier: Modifier = Modifier,
+    badge: @Composable () -> Unit,
+) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     // A springy squish on press.
-    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "held press")
+    val scale by animateFloatAsState(if (pressed) 0.97f else 1f, MaterialTheme.motionScheme.fastSpatialSpec(), label = "card press")
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .semantics(mergeDescendants = true) { contentDescription = "Held for you, ${heldLine(waiting)}" }
-            .clickable(interaction, indication = null, role = Role.Button, onClick = onOpenHeld),
+            .semantics(mergeDescendants = true) { contentDescription = description }
+            .clickable(interaction, indication = null, role = Role.Button, onClick = onClick),
         color = colors.surfaceContainerHigh,
         shape = RoundedCornerShape(24.dp),
     ) {
         Row(Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), horizontalArrangement = Arrangement.spacedBy(Space.Medium), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.size(40.dp).background(if (waiting > 0) colors.tertiaryContainer else colors.surfaceContainerHighest, MaterialShapes.Cookie9Sided.toShape()),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    "$waiting",
-                    Modifier.clearAndSetSemantics {},
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    color = if (waiting > 0) colors.onTertiaryContainer else colors.onSurfaceVariant,
-                )
-            }
+            Box(Modifier.size(40.dp).background(badgeColor, MaterialShapes.Cookie9Sided.toShape()), contentAlignment = Alignment.Center) { badge() }
             Column(Modifier.weight(1f)) {
-                Text("Held for you", style = MaterialTheme.clarityText.chat)
-                Text(sentenceCase(heldLine(waiting)), style = MaterialTheme.clarityText.chatSmall, color = colors.onSurfaceVariant)
+                Text(title, style = MaterialTheme.clarityText.chat)
+                lines.forEach { Text(it, style = MaterialTheme.clarityText.chatSmall, color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis) }
             }
             Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = colors.onSurfaceVariant)
         }

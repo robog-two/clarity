@@ -267,13 +267,13 @@ class SchedulerClaimTest : FunSpec({
         val feed = FeedService(feedStore, FeedHub())
         feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Text("Newsletter ready")), batchPending = true))
         feed.append(FeedDraft(FeedItem.Author.AGENT, listOf(Card.Note("Receipt filed")), batchPending = true))
-        val job = EveningBatchJob(feedStore, feed)
+        val job = EveningBatchJob(feedStore, feed, net.robog.clarity.backend.agent.ExposedTaskStore(database, Clock.System, feed))
         val ctx = FireContext(Instant.parse("2026-10-25T18:00:00Z"), Instant.parse("2026-10-25T18:00:05Z"), null, Settings())
         job.fire(ctx)
         job.fire(ctx) // a replay after a crash finds nothing pending and posts nothing
         val visible = feed.page(0, 10).items
         visible shouldHaveSize 1
-        (visible.single().cards[0] as Card.Text).text shouldBe "2 things waited for tonight."
+        (visible.single().cards[0] as Card.Text).text shouldBe "2 to look at."
         visible.single().notify shouldBe "evening_batch:2026-10-25T18:00:00Z" // the phone posts it on the low-importance channel
         feedStore.pendingBatch().shouldBeEmpty()
     }

@@ -28,6 +28,12 @@ data class Nudge(
     val resolvedAt: Instant? = null,
     /** Why it was skipped, missed or cancelled, in plain words; null while pending and when it fired. */
     val reason: String? = null,
+    /** The plan item (a stuck priority) this check-in follows, if any. */
+    val planItemId: String? = null,
+    /** Set by the server for the check-in an if-then plan earns (replaced when the plan is saved again). */
+    val autoCheckIn: Boolean = false,
+    /** A check-in the person asked for with Later or Make it smaller. */
+    val followUp: Boolean = false,
 ) {
     @Serializable
     enum class Status {

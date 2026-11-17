@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -29,6 +30,7 @@ import net.robog.clarity.app.ui.path.RunPathScreen
 import net.robog.clarity.app.ui.path.TaskThreadScreen
 import net.robog.clarity.app.ui.goods.ReportScreen
 import net.robog.clarity.app.ui.sources.SourceScreen
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.TaskId
 import androidx.navigation3.scene.Scene
 import net.robog.clarity.app.ui.components.springSwap
@@ -54,6 +56,9 @@ fun ClarityNavHost(
 private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHandled: () -> Unit) {
     val backStack = rememberNavBackStack(if (ready) Main else Onboarding)
     var tab by rememberSaveable { mutableStateOf(MainTab.Today) }
+    // The Ask item a link or the Tonight card asked to show; Ask clears it once it has scrolled there.
+    var askFocus by remember { mutableStateOf<FeedItemId?>(null) }
+    LaunchedEffect(tab) { if (tab != MainTab.Ask) askFocus = null }
 
     // Finishing onboarding / forgetting the instance changes the root state; keep the stack consistent.
     LaunchedEffect(ready) {
@@ -69,6 +74,7 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
         if (!ready || deepLink == null) return@LaunchedEffect
         targetFor(deepLink)?.let { target ->
             tab = target.tab
+            askFocus = target.focus
             backStack.clear()
             backStack.addAll(stackFor(target))
         }
@@ -102,6 +108,9 @@ private fun ClarityNavDisplay(ready: Boolean, deepLink: DeepLink?, onDeepLinkHan
                 MainScaffold(
                     tab = tab,
                     onTab = { tab = it },
+                    askFocus = askFocus,
+                    onAskFocused = { askFocus = null },
+                    onOpenSummary = { askFocus = it; tab = MainTab.Ask },
                     onReview = { push(DraftReview(it.value)) },
                     onOpenTask = { push(TaskThread(it.value)) },
                     onOpenHeldItem = { push(DraftReview(it.value)) },

@@ -12,6 +12,8 @@ import net.robog.clarity.app.nav.DraftReview
 import net.robog.clarity.app.nav.Main
 import net.robog.clarity.app.nav.MainTab
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
@@ -96,7 +98,12 @@ fun statusText(state: SyncState, host: String): String = when (state) {
 /** The stored notify decision (`feed_item.notify`), parsed. Unknown spellings are treated as in-app. */
 sealed interface NotifyKind {
     data object PushNow : NotifyKind
+
+    /** Shown in the app and quiet: it never notifies, except as part of a call. */
     data object InApp : NotifyKind
+
+    /** An answer to the person (`reply`): notifies only while the app is not on screen. */
+    data object Reply : NotifyKind
     data object Hold : NotifyKind
     data object EveningBatch : NotifyKind
 
@@ -107,6 +114,7 @@ sealed interface NotifyKind {
 fun parseNotify(value: String?): NotifyKind = when {
     value == null || value == "in_app" -> NotifyKind.InApp
     value == "push_now" -> NotifyKind.PushNow
+    value == "reply" -> NotifyKind.Reply
     value.startsWith("hold_until") -> NotifyKind.Hold
     value.startsWith(RELEASED) -> NotifyKind.Released(runCatching { Instant.parse(value.removePrefix(RELEASED)) }.getOrNull())
     value.startsWith("evening_batch") -> NotifyKind.EveningBatch
@@ -169,7 +177,53 @@ data class NotificationPlan(
     val style: PlanStyle = PlanStyle.OpenApp,
     /** For a [PlanStyle.Message]: the session a reply belongs to. */
     val sessionId: SessionId? = null,
+    /** For a [PlanStyle.Message]: the item whose unanswered choices the reply box offers as chips (null when none). */
+    val choicesItem: FeedItemId? = null,
+    val choices: List<Choice> = emptyList(),
 )
+
+/** The plan without its chips: the question was answered (here or on another device). */
+fun NotificationPlan.withoutChoices(): NotificationPlan = copy(choicesItem = null, choices = emptyList())
+
+/** What a reply from the notification sends: [text], as a tap on the card [inReplyTo] or as plain typing. */
+data class NotificationReply(val text: String, val inReplyTo: FeedItemId?)
+
+/** What to do with the conversation notification when chips may have to go. */
+enum class ChipsAction { Repost, Cancel, Nothing }
+
+/**
+ * The question [item] was answered. A notification the person swiped away stays away. One this
+ * process posted ([state]) is posted again without its chips; one left by an earlier process
+ * (no [state]) that still shows [item] ([shownItem], from its extras) is simply removed.
+ */
+fun answeredAction(active: Boolean, state: NotificationPlan?, item: FeedItemId, shownItem: String?): ChipsAction = when {
+    !active -> ChipsAction.Nothing
+    state != null -> if (state.choicesItem == item) ChipsAction.Repost else ChipsAction.Nothing
+    shownItem == item.value -> ChipsAction.Cancel
+    else -> ChipsAction.Nothing
+}
+
+/**
+ * A reply from the notification (sent or not) leaves its reply box spinning: post again, or remove what an
+ * earlier process left. A notification swiped away meanwhile stays away.
+ */
+fun refreshAction(active: Boolean, state: NotificationPlan?): ChipsAction = when {
+    !active -> ChipsAction.Nothing
+    state != null -> ChipsAction.Repost
+    else -> ChipsAction.Cancel
+}
+
+/**
+ * What the reply box result means. Text that is exactly one option's label (any case, any padding)
+ * is a tap on that option: its reply, answering [item]. Anything else is typed words, sent as they are.
+ * Null when nothing was typed.
+ */
+fun replyOf(typed: String?, choices: List<Choice>, item: FeedItemId?): NotificationReply? {
+    val text = typed?.trim().orEmpty()
+    if (text.isEmpty()) return null
+    val tapped = if (item == null) null else choices.firstOrNull { it.label.trim().equals(text, ignoreCase = true) }
+    return if (tapped != null) NotificationReply(tapped.reply, item) else NotificationReply(text, null)
+}
 
 /** Anything older than this when it reaches the phone (a long offline spell) is not worth a buzz. */
 val MAX_PUSH_AGE: Duration = 2.hours
@@ -186,8 +240,10 @@ fun showsItem(where: Place, item: FeedItem): Boolean = when (where) {
 
 /**
  * Whether [arrival] earns a notification, and which. Push-now agent items, released holds, the
- * evening summary and urgent held actions always do; any other agent message does while the app is
- * not on screen ("hold until" waits for its release, whose age counts from the release). Never when
+ * evening summary and urgent held actions always do; a reply to the person does while the app is
+ * not on screen; a quiet in-app item never does (the server decided it was not worth an
+ * interruption), except a message of the running call ("hold until" waits for its release, whose age
+ * counts from the release). Never when
  * notifications are off, when the item is stale, or when the person is looking at the very place
  * it shows up (the feed on Today or Ask, the call screen, the Held list, or that held action).
  * Messages become one conversation with a reply box; something to approve or a login to enter only
@@ -216,6 +272,8 @@ fun decideNotification(
 private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duration, call: SessionId?): NotificationPlan? {
     // A reaction is a quiet tapback on the person's own message: never a notification.
     if (item.author != FeedItem.Author.AGENT || item.streaming || item.reaction != null) return null
+    // Answered already (on another device, or while this phone was away): nothing left to ask.
+    if (net.robog.clarity.app.data.feed.hasAnsweredChoices(item)) return null
     val kind = parseNotify(item.notify)
     val since = (kind as? NotifyKind.Released)?.at ?: item.at
     if (now - since > maxAge) return null
@@ -223,14 +281,17 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
     // The feed (or the call) shows it right now.
     if (onScreen) return null
     val ofCall = call != null && item.sessionId == call
+    val open = item.cards.firstNotNullOfOrNull { it as? Card.Choices }?.takeIf { it.chosen == null }
     val channel = when (kind) {
         NotifyKind.PushNow, is NotifyKind.Released -> PushChannel.Agent
         NotifyKind.EveningBatch -> PushChannel.Evening
-        NotifyKind.InApp -> if (front == Front.Background || ofCall) PushChannel.Agent else return null
+        NotifyKind.Reply -> if (front == Front.Background || ofCall) PushChannel.Agent else return null
+        // Quiet items never notify (the server pushes what is worth it as push-now); only a call's messages do.
+        NotifyKind.InApp -> if (ofCall) PushChannel.Agent else return null
         NotifyKind.Hold -> return null
     }
     if (channel == PushChannel.Evening) {
-        return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.Today)
+        return NotificationPlan(ITEM_ID_BASE + (item.seq % ID_SPAN).toInt(), channel, "Your evening summary", itemText(item), DeepLink.AskItem(item.id))
     }
     item.cards.firstNotNullOfOrNull { it as? Card.Proposal }?.let { proposal ->
         // The same id as the held action's own notification, so the two never stack.
@@ -257,6 +318,8 @@ private fun itemPlan(item: FeedItem, front: Front, now: Instant, maxAge: Duratio
         },
         style = PlanStyle.Message,
         sessionId = item.sessionId,
+        choicesItem = open?.let { item.id },
+        choices = open?.options?.filter { it.label.isNotBlank() }.orEmpty(),
     )
 }
 
@@ -372,6 +435,7 @@ fun itemText(item: FeedItem, limit: Int = 140, fallback: String = "New from Clar
         when (card) {
             is Card.Text -> card.text
             is Card.Note -> card.text
+            is Card.Choices -> card.prompt
             else -> null
         }
     }

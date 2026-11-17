@@ -18,13 +18,12 @@ import kotlinx.datetime.TimeZone
 import kotlinx.datetime.minus
 import kotlinx.datetime.toLocalDateTime
 import net.robog.clarity.backend.agent.SettingsProvider
-import net.robog.clarity.backend.feed.FeedDraft
+import net.robog.clarity.backend.feed.NOTIFY_PUSH_NOW
 import net.robog.clarity.backend.feed.FeedService
+import net.robog.clarity.backend.feed.serverNote
 import net.robog.clarity.backend.lifecycle.BackgroundService
 import net.robog.clarity.backend.scheduler.Schedule
 import net.robog.clarity.backend.scheduler.nextAfter
-import net.robog.clarity.shared.feed.Card
-import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.time.zoneOrUtc
 
 private val log = KotlinLogging.logger {}
@@ -102,16 +101,12 @@ class NightlyBackup(
 
     private suspend fun tell() {
         runCatching {
-            feed.append(
-                FeedDraft(
-                    author = FeedItem.Author.AGENT,
-                    cards = listOf(Card.Note("Last night's backup did not work. It will try again. Check Settings, then Backups.")),
-                ),
-            )
+            feed.append(serverNote(BACKUP_FAILED_NOTE, NOTIFY_PUSH_NOW))
         }.onFailure { log.warn(it) { "could not post the backup notice" } }
     }
 
     companion object {
+        const val BACKUP_FAILED_NOTE = "Last night's backup did not work. It will try again. Check Settings, then Backups."
         val RETRY: Duration = 1.hours
         private val CHECK_EVERY = 5.minutes
 

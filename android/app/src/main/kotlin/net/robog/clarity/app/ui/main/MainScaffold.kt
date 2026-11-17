@@ -57,6 +57,11 @@ private fun MainTab.icon(): ImageVector = when (this) {
 fun MainScaffold(
     tab: MainTab,
     onTab: (MainTab) -> Unit,
+    /** Ask scrolls to this item (a linked evening summary), then calls [onAskFocused]. */
+    askFocus: net.robog.clarity.shared.feed.FeedItemId? = null,
+    onAskFocused: () -> Unit = {},
+    /** The Tonight card on Today tapped: the summary, in Ask. */
+    onOpenSummary: (net.robog.clarity.shared.feed.FeedItemId) -> Unit = {},
     onReview: (HeldActionId) -> Unit,
     /** A task on Today tapped: its thread. */
     onOpenTask: (net.robog.clarity.shared.feed.TaskId) -> Unit = {},
@@ -111,8 +116,8 @@ fun MainScaffold(
         val content = Modifier.padding(padding).consumeWindowInsets(padding)
         PhaseSwap(tab, label = "tab") { shown ->
             when (shown) {
-                MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content, onOpenTask = onOpenTask)
-                MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") }, onOpenSource = { onOpenSource(it, "Ask") })
+                MainTab.Today -> TodayScreen(onReview = onReview, onOpenHeld = { onTab(MainTab.Held) }, modifier = content, onOpenTask = onOpenTask, onOpenSummary = onOpenSummary)
+                MainTab.Ask -> AskScreen(content, onReview = onReview, onOpenReport = { onOpenReport(it, "Ask") }, onOpenSource = { onOpenSource(it, "Ask") }, focus = askFocus, onFocused = onAskFocused)
                 MainTab.Goods -> GoodsScreen(onOpen = { onOpenReport(it, "Goods") }, modifier = content)
                 MainTab.Held -> HeldScreen(onOpen = onOpenHeldItem, modifier = content, onReview = onReview)
                 MainTab.Settings -> SettingsTab(onOpenConstitution, onOpenConnector, content, onOpenMcp = onOpenMcp)

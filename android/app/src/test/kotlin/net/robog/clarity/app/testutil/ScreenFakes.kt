@@ -65,6 +65,8 @@ class ScreenFeed : FeedRepository {
     val busyFlow = MutableStateFlow(false)
     val signalFlow = MutableSharedFlow<SyncSignal>(extraBufferCapacity = 8)
     val sent = mutableListOf<Triple<String, InputSource, SessionId?>>()
+    /** The item each send answered (a tap on a choice), parallel to [sent]. */
+    val repliedTo = mutableListOf<net.robog.clarity.shared.feed.FeedItemId?>()
     val decisions = mutableListOf<Pair<HeldActionId, HeldDecision>>()
     var sendResult: ApiResult<Unit> = ApiResult.Success(Unit)
     var decideResult: ApiResult<Unit> = ApiResult.Success(Unit)
@@ -77,8 +79,9 @@ class ScreenFeed : FeedRepository {
     override val agentBusy: Flow<Boolean> = busyFlow
     override val signals: Flow<SyncSignal> = signalFlow
 
-    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?): ApiResult<InputAccepted> {
+    override suspend fun send(text: String, source: InputSource, sessionId: SessionId?, clientId: ClientInputId?, inReplyTo: net.robog.clarity.shared.feed.FeedItemId?): ApiResult<InputAccepted> {
         sent += Triple(text, source, sessionId)
+        repliedTo += inReplyTo
         val failed = (sendResult as? ApiResult.Failure) ?: run {
             val item = userItem(1000L + sent.size, text, sessionId)
             itemsFlow.value = itemsFlow.value + item

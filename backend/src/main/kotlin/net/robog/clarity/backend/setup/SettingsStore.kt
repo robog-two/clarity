@@ -40,6 +40,7 @@ fun validateSettings(settings: Settings): Either<String, Settings> {
         call.days.any { it !in 1..7 } -> "call days are ISO weekdays 1 (Monday) to 7 (Sunday)".left()
         call.enabled && call.days.isEmpty() -> "pick at least one day for the morning call".left()
         call.headsUpMinutes != null && call.headsUpMinutes !in 1..120 -> "the heads-up is 1 to 120 minutes before the call, or off".left()
+        settings.pushesPerDay !in Settings.PUSHES_PER_DAY_RANGE -> "notifications a day is 1 to 10".left()
         else -> settings.right()
     }
 }

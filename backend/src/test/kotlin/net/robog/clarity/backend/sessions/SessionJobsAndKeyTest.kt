@@ -97,7 +97,7 @@ class SessionJobsAndKeyTest : FunSpec({
         val r = rig()
         val store = SettingsStore(database, Clock.System)
         store.current() shouldBe Settings()
-        val prep = MorningCallPrepJob(r.inbox, r.dayPlans)
+        val prep = MorningCallPrepJob(r.inbox, r.dayPlans, r.planItems)
         val scheduler = Scheduler(database, setOf(prep), store, Clock.System)
         scheduler.ensureRows()
 
@@ -121,7 +121,7 @@ class SessionJobsAndKeyTest : FunSpec({
 
     test("the prep job asks for a quiet low-priority preparation with yesterday's plan, once per slot") {
         val r = rig()
-        val prep = MorningCallPrepJob(r.inbox, r.dayPlans)
+        val prep = MorningCallPrepJob(r.inbox, r.dayPlans, r.planItems)
         val scheduledFor = Instant.parse("2026-10-26T08:50:00Z") // ten minutes before a 09:00 UTC call
         val settings = Settings()
         r.dayPlans.update(LocalDate(2026, 10, 25)) { it.copy(priorities = listOf(Chip("onboarding spec")), plan = listOf(IfThen("it's 9:30", "spec")), parked = listOf("expense report"), called = true) }

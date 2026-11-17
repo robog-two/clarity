@@ -237,6 +237,7 @@ class SettingsViewModel(
         viewModelScope.launch { push.markBatteryAsked() }
     }
 
+    fun setPushesPerDay(count: Int) = edit { it.copy(pushesPerDay = count.coerceIn(Settings.PUSHES_PER_DAY_RANGE)) }
     fun setEveningAt(time: LocalTime) = edit { it.copy(eveningSummaryAt = time) }
 
     /** Clears the session and device key; the root navigation returns to onboarding. */

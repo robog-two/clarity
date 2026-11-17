@@ -173,6 +173,35 @@ class FeedSyncTest {
         assertEquals(listOf(SyncSignal.SessionChanged(SessionId("s1")), SyncSignal.ConstitutionChanged(2)), signals)
     }
 
+    @Test fun anAnswerLandingOnACachedChoicesCardSignalsOnceAndIsNoArrival() = runTest {
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(cards = listOf(Card.Choices("Ready?", options)))
+        val answered = asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))
+        val store = InMemoryFeedStore()
+        val fs = sync(FakeBackend(), FakeEventSource(emptyList()), store)
+        fs.apply(FeedEvent.ItemFinal(asked))
+        val signals = mutableListOf<SyncSignal>()
+        val arrivals = mutableListOf<net.robog.clarity.app.data.feed.Arrival>()
+        val job = launch(Dispatchers.Unconfined) { fs.signals.collect { signals += it } }
+        val job2 = launch(Dispatchers.Unconfined) { fs.arrivals.collect { arrivals += it } }
+        fs.apply(FeedEvent.ItemFinal(answered))
+        fs.apply(FeedEvent.ItemFinal(answered))
+        job.cancel()
+        job2.cancel()
+        assertEquals(listOf<SyncSignal>(SyncSignal.ChoicesAnswered(asked.id)), signals)
+        assertTrue(arrivals.isEmpty())
+    }
+
+    @Test fun becameAnsweredOnlyForTheFirstAnswerOverACachedCopy() {
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val open = agentItem(7, "unused").copy(cards = listOf(Card.Choices("Ready?", options)))
+        val done = open.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))
+        assertTrue(net.robog.clarity.app.data.feed.becameAnswered(open, done))
+        assertTrue(!net.robog.clarity.app.data.feed.becameAnswered(done, done))
+        assertTrue(!net.robog.clarity.app.data.feed.becameAnswered(null, done))
+        assertTrue(!net.robog.clarity.app.data.feed.becameAnswered(open, open))
+    }
+
     @Test fun stateReflectsRejectionAndMissingRoutes() = runTest {
         suspend fun stateAfter(fail: Throwable?, backendError: ApiError?): SyncState {
             val backend = FakeBackend().apply { failure = backendError }

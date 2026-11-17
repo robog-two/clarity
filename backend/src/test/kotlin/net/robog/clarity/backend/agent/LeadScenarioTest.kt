@@ -5,6 +5,7 @@ import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldBeEmpty
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlin.time.Duration.Companion.minutes
@@ -34,6 +35,8 @@ import net.robog.clarity.harness.Role
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.ClientInputId
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.MessageKind
+import net.robog.clarity.shared.feed.NOTIFY_REPLY
 import net.robog.clarity.shared.governance.Constitution
 import net.robog.clarity.shared.governance.HeldAction
 import org.jetbrains.exposed.v1.jdbc.Database
@@ -188,6 +191,108 @@ class LeadScenarioTest : FunSpec({
         val last = r.model.requests.last()
         allText(last) shouldContain "<untrusted source=\"helper:${finished.id}\">The contract is in Dana's mail from Tuesday.</untrusted>"
         helperJob.cancelAndJoin()
+    }
+
+    /** The agent's newest post, shown or held for the evening summary. */
+    suspend fun lastPost(r: LeadRig): FeedItem =
+        (r.feed.page(0, 100).items + r.feedStore.pendingBatch()).filter { it.author == FeedItem.Author.AGENT }.maxBy { it.seq }
+
+    suspend fun finishedHelperAnswer(r: LeadRig) {
+        r.model.handler = { request ->
+            if (lastResultFor(request, "toolu_post")) end("posted") else reply("toolu_post", "It is in Tuesday's mail.")
+        }
+        r.lead.step() shouldBe true
+    }
+
+    test("the person asks, the lead delegates, and the post made when the helper is done is a reply that notifies") {
+        val r = rig()
+        r.model.handler = { request ->
+            when {
+                request.model == HELPER_MODEL -> end("The contract is in Dana's mail from Tuesday.")
+                lastResultFor(request, "toolu_ack") -> end("told them")
+                isNudge(request) -> reply("toolu_ack", "Looking for it.")
+                request.messages.last().content.any { it is Block.Result } -> end("delegated")
+                allText(request).contains("find Dana's contract") -> callTool("toolu_d", "delegate", args("task" to "Find Dana's contract in the mail and report where it is."))
+                else -> end("noted")
+            }
+        }
+        val helperJob = scope.launch { r.helpers.run() }
+        r.inbox.enqueue(user("find Dana's contract"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        withTimeout(20.seconds) { while (r.runs.open().isNotEmpty() || r.runs.list(openOnly = false).isEmpty()) delay(50) }
+        r.helpers.joinAll()
+        r.runs.list(openOnly = false).single().answeringPerson shouldBe true
+
+        finishedHelperAnswer(r)
+        lastPost(r).kind shouldBe MessageKind.REPLY
+        lastPost(r).notify shouldBe NOTIFY_REPLY
+        helperJob.cancelAndJoin()
+    }
+
+    test("a helper a job started brings back a finding that keeps the normal rules, not a reply") {
+        val r = rig()
+        r.model.handler = { request -> if (request.model == HELPER_MODEL) end("Three jazz nights this week.") else end("noted") }
+        val helperJob = scope.launch { r.helpers.run() }
+        // a scope that never carried the person's input: what a job's lead turn starts with
+        r.helpers.delegate("Look for outings this week.", null, null, RunScope("lead", isLead = true)).isRight() shouldBe true
+        withTimeout(20.seconds) { while (r.runs.open().isNotEmpty() || r.runs.list(openOnly = false).isEmpty()) delay(50) }
+        r.helpers.joinAll()
+        r.runs.list(openOnly = false).single().answeringPerson shouldBe false
+        r.inbox.pending().single().item.shouldBeInstanceOf<InboxItem.HelperResult>()
+        r.lead.start()
+
+        finishedHelperAnswer(r)
+        lastPost(r).kind shouldBe MessageKind.FINDING
+        lastPost(r).notify shouldNotBe NOTIFY_REPLY
+        helperJob.cancelAndJoin()
+    }
+
+    test("a question a helper from a person-started chain asks is relayed as a reply, one from a job helper is not") {
+        for ((fromPerson, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING)) {
+            val r = rig()
+            val id = java.util.UUID.randomUUID().toString()
+            r.runs.create(id, null, "helper", "Find plumbers", null, kotlin.time.Clock.System.now(), answeringPerson = fromPerson)
+            r.inbox.enqueue(InboxItem.HelperAsks(id, 1, "Find plumbers", "Which part of town?"))
+            r.lead.start()
+            finishedHelperAnswer(r)
+            lastPost(r).kind shouldBe kind
+            (lastPost(r).notify == NOTIFY_REPLY) shouldBe fromPerson
+        }
+    }
+
+    test("a helper-result turn resumed after a crash answers as stored: a reply for a person's chain, a finding for a job's, the journal for an old thread") {
+        // (stored flag, kind of the post) ; null is a thread from before the flag was stored, and the journal has no words of the person
+        for ((stored, kind) in listOf(true to MessageKind.REPLY, false to MessageKind.FINDING, null to MessageKind.FINDING)) {
+            val r = rig()
+            val id = java.util.UUID.randomUUID().toString()
+            val now = kotlin.time.Clock.System.now()
+            val threadId = r.threads.ensure().id
+            // what the journal holds when the process died mid-turn: the rendered inbox message, nothing after it
+            renderDeliveries(
+                listOf(PendingItem(1, InboxItem.HelperResult(id, "Find the contract", ok = true, result = "In Tuesday's mail."), now)),
+                now, kotlinx.datetime.TimeZone.UTC,
+            ).forEach { r.journal.append(threadId, it.message) }
+            stored?.let { r.threads.setOpenTurnAnswering(it) }
+            r.model.handler = { request ->
+                if (lastResultFor(request, "toolu_post")) end("posted") else reply("toolu_post", "It is in Tuesday's mail.")
+            }
+            r.lead.start()
+            lastPost(r).kind shouldBe kind
+            (lastPost(r).notify == NOTIFY_REPLY) shouldBe (stored == true)
+        }
+    }
+
+    test("a turn records whether it is answering the person, for the helper chain too") {
+        val r = rig()
+        r.model.handler = { end("ok") }
+        r.inbox.enqueue(user("hello"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.threads.ensure().openTurnAnswering shouldBe true
+        r.inbox.enqueue(InboxItem.System("a note"))
+        r.lead.step() shouldBe true
+        r.threads.ensure().openTurnAnswering shouldBe false
     }
 
     test("an external tool never acts: the guard holds it, the tool returns the held text, and the held action exists") {
@@ -361,7 +466,51 @@ class LeadScenarioTest : FunSpec({
         helperJob.cancelAndJoin()
     }
 
-    test("send_to_user: normal items show in the feed, batch items wait for the evening summary") {
+    test("send_to_user on its own initiative: a check-in pushes, a finding with no due time and a batch item wait for the evening summary") {
+        val r = rig()
+        var call = 0
+        r.model.handler = {
+            call++
+            when (call) {
+                1 -> callTool(
+                    "toolu_a", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Is the report done?") })))
+                        put("kind", "check_in")
+                    },
+                )
+                2 -> callTool(
+                    "toolu_b", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "note"); put("text", "Newsletter digest ready.") })))
+                        put("urgency", "batch")
+                    },
+                )
+                3 -> callTool(
+                    "toolu_c", "send_to_user",
+                    buildJsonObject {
+                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Dana replied.") })))
+                    },
+                )
+                else -> end("done")
+            }
+        }
+        r.inbox.enqueue(InboxItem.JobDue("periodic_review", "Look over the day."))
+        r.lead.start()
+        r.lead.step()
+
+        val page = r.feed.page(0, 50).items
+        page.map { it.author } shouldBe listOf(FeedItem.Author.AGENT)
+        page.single().cards shouldBe listOf(Card.Text("Is the report done?"))
+        page.single().kind shouldBe net.robog.clarity.shared.feed.MessageKind.CHECK_IN
+        r.feedStore.notifyOf(page.single().id) shouldBe "push_now"
+        val waiting = r.feedStore.pendingBatch()
+        waiting.map { it.cards } shouldBe listOf(listOf(Card.Note("Newsletter digest ready.")), listOf(Card.Text("Dana replied.")))
+        waiting.forEach { r.feedStore.notifyOf(it.id)!! shouldContain "evening_batch:" }
+        waiting.map { it.kind } shouldBe listOf(net.robog.clarity.shared.feed.MessageKind.FINDING, net.robog.clarity.shared.feed.MessageKind.FINDING)
+    }
+
+    test("send_to_user in a turn that carries the person's message is a reply, whatever kind the model passed") {
         val r = rig()
         var call = 0
         r.model.handler = {
@@ -371,12 +520,7 @@ class LeadScenarioTest : FunSpec({
                     "toolu_a", "send_to_user",
                     buildJsonObject {
                         put("cards", JsonArray(listOf(buildJsonObject { put("type", "text"); put("text", "Dana replied.") })))
-                    },
-                )
-                2 -> callTool(
-                    "toolu_b", "send_to_user",
-                    buildJsonObject {
-                        put("cards", JsonArray(listOf(buildJsonObject { put("type", "note"); put("text", "Newsletter digest ready.") })))
+                        put("kind", "finding")
                         put("urgency", "batch")
                     },
                 )
@@ -387,13 +531,11 @@ class LeadScenarioTest : FunSpec({
         r.lead.start()
         r.lead.step()
 
-        val page = r.feed.page(0, 50).items
-        page.map { it.author } shouldBe listOf(FeedItem.Author.AGENT)
-        page.single().cards shouldBe listOf(Card.Text("Dana replied."))
-        r.feedStore.notifyOf(page.single().id) shouldBe "in_app"
-        val waiting = r.feedStore.pendingBatch().single()
-        waiting.cards shouldBe listOf(Card.Note("Newsletter digest ready."))
-        r.feedStore.notifyOf(waiting.id)!! shouldContain "evening_batch:"
+        val answer = r.feed.page(0, 50).items.single { it.author == FeedItem.Author.AGENT }
+        answer.cards shouldBe listOf(Card.Text("Dana replied."))
+        answer.kind shouldBe net.robog.clarity.shared.feed.MessageKind.REPLY
+        r.feedStore.notifyOf(answer.id) shouldBe "reply"
+        r.feedStore.pendingBatch().shouldBeEmpty()
     }
 
     test("a crash after the model asked for an external action does not repeat it on resume") {

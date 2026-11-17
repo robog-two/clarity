@@ -125,7 +125,7 @@ class HarnessTest : FunSpec({
         // the last request answers the unrun calls and asks for the report
         val last = gateway.requests.last().messages.last().content
         last.filterIsInstance<Block.Result>().single().let { it.toolUseId shouldBe "5"; it.isError shouldBe true }
-        last.filterIsInstance<Block.Text>().single().text shouldBe steps.report
+        last.filterIsInstance<Block.Text>().single().text shouldBe harnessNote(steps.report).text
         // the journal never ends on unanswered calls
         finished.transcript.last().content.filterIsInstance<Block.Result>().single().toolUseId shouldBe "6"
     }

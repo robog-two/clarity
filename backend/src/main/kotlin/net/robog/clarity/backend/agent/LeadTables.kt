@@ -20,6 +20,7 @@ object AgentThreads : Table("agent_thread") {
     val compactedAt = timestamp("compacted_at").nullable()
     val lastTurnAt = timestamp("last_turn_at").nullable()
     val lastUserInputAt = timestamp("last_user_input_at").nullable()
+    val openTurnAnswering = bool("open_turn_answering").nullable()
     override val primaryKey = PrimaryKey(id)
 }
 
@@ -57,6 +58,10 @@ object FeedItems : Table("feed_item") {
     val notifyAbout = jsonb<List<Handle>>("notify_about", ClarityJson).nullable()
     val topic = text("topic").nullable()
     val reaction = jsonb<ItemReaction>("reaction", ClarityJson).nullable()
+    /** V51: the [net.robog.clarity.shared.feed.MessageKind] wire name of an agent message. */
+    val kind = text("kind").nullable()
+    /** V51: this item's push counts toward the day's limit. */
+    val pushCounted = bool("push_counted").default(false)
     override val primaryKey = PrimaryKey(seq)
 }
 

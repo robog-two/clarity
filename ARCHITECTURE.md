@@ -282,10 +282,38 @@ person managing a to-do list with a few assistants.
   cites: the device is trusted but this keeps the route from being a second way to browse mail) and a
   page in the browser. A message's attachments download through the device route
   `GET /api/v1/messages/{id}/attachments/{part}` and open in another app through a cache `FileProvider`.
-- **Should I bother them?** `send_to_user(urgency = …)` is filtered by the pure notification
-  policy: `URGENT` respects "who gets through" and protected times from the constitution
-  (push now or hold until the block ends); `NORMAL` shows in the feed without a push; `BATCH`
-  goes to the evening summary.
+- **Should I bother them?** `send_to_user(kind, urgency, dueBy)` is decided by the pure
+  `deliveryOf` (governance/NotifyPolicy.kt), which runs before `notifyDecision`. Each agent message
+  has a `MessageKind` stored on the feed item (`feed_item.kind`): `reply`, `check_in`,
+  `look_forward` or `finding` (the model's default). **`reply` is decided by the server**: a post
+  made during a lead turn that answers the person (their input is in its batch, or arrived while it
+  ran; a message, or a tap on a choice: `RunScope.answeringPerson`) is a reply whatever the model said,
+  and a model-supplied `reply` outside such a turn is stored as `finding`. A `reply` is checked first and wins over urgency:
+  it shows in the app and the phone notifies only when the app is closed (`notify = reply`), uncounted.
+  A turn resumed after a crash recovers the flag from the journal (`openTurnCarriesPerson`, `RunScope.answeringPerson`,
+  apart from the guard's `requestedByUser`). `URGENT` keeps the old behaviour (protected times,
+  who gets through) and never counts; so does a post carrying a proposal or a credential request (it
+  needs the person, so it follows the urgent rules whatever its kind). A `check_in` pushes by the urgent rules but is never counted or refused for the budget (the person
+  asked to be checked on); a `look_forward` pushes; a `finding` pushes only when `dueBy` is within 24 hours or the sender gets through, otherwise it
+  waits for the evening summary (`BATCH`). A `look_forward` or finding push follows the urgent rules for protected time and
+  counts toward `Settings.pushesPerDay` (1 to 10, default 5, per local day: `feed_item.push_counted`,
+  `pushBudget`); once the day's pushes are used the item is shown in the app without one. A post
+  with a choices card is never held for the evening, and posts inside a session keep the old rules
+  (`sessionDelivery`; a reply there is still a `reply`). The evening summary
+  lists "Coming up" (`look_forward` items since the last summary), "Done today" (tasks finished on the
+  person's local day) and the held findings, each only when non-empty; with nothing at all there is
+  no summary.
+- **One-tap answers.** `Card.Choices(prompt, options[label, reply], chosen)` renders as buttons. A tap
+  sends `reply` through the ordinary `POST /api/v1/input` with `inReplyTo` set to the item that holds
+  the card, so it counts as the person writing (the lead's answer is a reply). The server records
+  the tapped reply in `chosen` (first tap wins, row locked) and publishes the item as `ItemFinal`,
+  so the buttons turn off on every device. A tap that cannot answer the card is refused and queues
+  nothing: 400 when the item is not a choices card or the text is not an option, 409 (body: the item as
+  it stands) when another tap answered first; a retry with the same client id still succeeds. A phone that
+  missed the update (offline) learns it because `FeedSync.fillGap` resumes from just before the oldest
+  recent item that is streaming, held or holds an unanswered choices card, and the refetched copy
+  replaces the cached one; an answered choices item never notifies. The summary job marks as summarized only
+  the findings the posted summary covered (a retry after a crash does not swallow newer ones). The card's `fallbackText` lists the options for older apps.
 
 ### Helpers (subagents)
 
@@ -513,9 +541,72 @@ the lead "Nudge you set at <time>: <note>" plus the task's title and status. A f
 nothing by itself; the lead decides whether to ask one short question through `send_to_user`, so
 the notify policy and protected-time holds apply as for anything else.
 
+**Stuck tasks.** `plan_item` (`V52`) follows what the person puts on a day's plan (the priorities and parked
+items of the morning call) from day to day. Pure `carryOver` (`sessions/PlanItems.kt`) matches today's items to
+open ones by the id the model passes (`continues` on `set_priorities` and `hand_off`), else by close wording
+(lower case, no filler words, same numbers; up to three words all must match, longer wordings four in five; the
+best score wins, ties go to the lower id), at most once each, for items last planned within 3 days. Each new day
+adds one to `days_carried`; planning twice in a day changes nothing, and a plan redone the same day puts the items
+it dropped back where they were (`replaceUnplanned`). An item on its third day or later is stuck: the prep job
+lists it ("stuck: <text>, day 3") for the lead to bring up without blame, and the COMMIT playbook offers a
+two-minute first step (`firstStep` on the if-then, stored with the day it was agreed and called "earlier first
+step" on later days), help, or dropping it. After `set_plan` the server sets one nudge at each if-then that has an
+`at`: the start time the person named, which the lead fills in as HH:MM (24 hour, their local time that day); the
+cue text is never parsed. Leaving `at` empty is right for deadlines, event cues and anything vague (the lead asks
+when unsure). The server validates it (`readCheckInTime`): malformed or already passed is skipped and reported once,
+never moved to another time, and an if-then with no `at` is listed back so the lead can nudge itself; an if-then that
+the day's earlier save already reported is not reported again. Check-ins are marked `auto_check_in` and linked to a
+priority by explicit id or by repeating its wording. Saving the plan again replaces them (`reconcileCheckIns`, over the
+day's check-ins of any status): one that fired, was skipped or missed, or was ended by Starting or by the agent's
+`cancel_nudge` is not asked again, a waiting one whose time has come is left to fire, and the write is one transaction
+that re-checks the limits under a lock and cancels only rows still waiting. Plan nudges (check-ins and follow-ups) have their own caps (10 waiting, 12 a
+day), apart from the person's own nudges, with one ceiling of 20 waiting and 20 a day over both. The lead's own `nudge` is "already covered" only when it is about the same plan item. When a
+check-in fires, the lead posts a `check_in` with a `Card.Choices` (Starting, Later, Make it smaller) and records
+the tap with `plan_item`: started (no more check-ins on it that day, today's waiting ones cancelled, a due one
+skipped), later (at the time the person picks) or smaller (a new first step, back in 10 minutes). Follow-ups are
+capped at 2 per item per day by the server.
+
 Every resolved row is a timeline entry for the app (the Agent's Path): `GET /api/v1/nudges`
 returns `Nudges(pending, history)` (shared `feed/Nudges.kt`; `history` newest first, `?since=`
 an ISO instant, default the last 7 days), and Today carries the pending ones as `nudges`.
+
+### Outings (something to look forward to)
+
+For a person who rarely gets out, the `outing-scout` job (`scheduler/OutingScoutJob.kt`) runs Tuesday
+and Friday at 15:00 on the home clock and decides in pure code (`outings/OutingPlan.kt`), with no model
+call, whether to wake the lead:
+
+- `freeSlots`: in the next 7 local days, weekday evenings from 18:00 and Saturday and Sunday from
+  09:00, all until 22:00, stretches of at least 2 h that start at least 2 h from now. Only timed
+  events of at most 5 h (`LONG_EVENT`) and the constitution's protected times take time: an all-day
+  event never does, and neither does a timed event longer than 5 h (a course, a trip). The calendar is
+  read for exactly that window, ordered; a read that hits the 500-event cap fails closed.
+- `scoutPlan`: skips with no slot, or when 2 `look_forward` posts already went out in the last 7 days
+  (a plain feed count, not a gate on posting); otherwise offers the 3 soonest slots.
+- `recentContacts`: company may only be a saved contact the person sent a message to, or who sent the
+  person one directly (at most 5 recipients), in the last 90 days, over email, SMS or chat; the
+  person's own addresses and automated senders never count.
+
+The wake-up (`job_due`) carries the slots and those contacts (names and ids) and tells the lead to find
+ONE concrete thing the way it finds anything: memory (what they enjoy, what they said yes or no to
+before), mail and calendar (an invitation, a newsletter), and a research helper through `delegate`
+as usual (`web_search` or the browser; the identifier check on web search briefs below applies). The
+lead posts one `send_to_user` with kind `look_forward` (it pushes and counts toward the daily limit), a
+short text, a sources card and a `Card.Choices` with two options, the one that turns it down marked
+`declines: true` (`Choice.declines`, default false); labels may name the outing so two open suggestions
+stay distinguishable, and each reply is text that stands on its own, since it is all the lead sees later. Company
+comes only from that contact list (a prompt rule). A yes arrives as the person's own words, so
+`create_event` is their request and the usual guard applies; on either answer the lead writes what it
+learned to memory. Any risk from what research reads is handled where it always is: the guard holds
+actions with effects. The periodic review is asked to remember outing ideas it spots (a gig in a
+newsletter, "we should get dinner"). The evening summary's "Coming up" lists `look_forward` items
+unless their choices card was answered with an option marked `declines` (`withoutTurnedDown`).
+
+**Card refs.** A `Card.Choices` may carry an opaque `ref` (never shown), used by plan check-ins: absent, or exactly
+`plan:<uuid>` (strict lower-case 8-4-4-4-12; `agent/CardRefs.kt`). `CardRefGate` checks it when the lead posts: a
+malformed ref or another prefix is refused, and a `plan:<id>` must name an open plan item. A tap on such a card reaches the
+lead as the person's words followed by a separate operator note "Tap answers card ref plan:<id>" built from the validated
+ref only; the card's prompt (model-written) is never passed on.
 
 ### Reports (documents the agent writes)
 
@@ -615,6 +706,20 @@ under ZDR) is not offered.
   every guarded action, the browser, the vault and credentials and saved results are dropped (and
   named in the `delegate` answer), so a query can only carry what the task says. The stored tool list
   keeps `web_search`, so a resumed run gets it back.
+- **No identifiers in the brief.** Names, the city, venues and interests may go to the open web; phone
+  numbers, email addresses, street addresses, account or booking numbers and similar identifiers may
+  not. The lead's prompt and the `delegate` description say so, and `HelperManager` asks the decision
+  model (Decision-1, `agent/SearchBriefCheck.kt`) one question over the text, quoted as untrusted data
+  and sent raw (nothing redacted, nothing cut, since it is what the helper gets): "does this contain a
+  phone number, email address, street address, account or booking number, or other personal
+  identifier?" At p >= 0.5 it is refused with an error telling the lead to remove the identifiers and
+  retry. It covers everything the lead sends a helper whose stored tools include `web_search`: the
+  first brief and done criteria (checked last in `start`, after the cheap refusals, and not for a
+  resumed call), `message_helper` (which is also how a helper's question is answered) and
+  `revise_helper`. Helpers cannot send each other text: `delegate`, `message_helper` and
+  `revise_helper` are lead-only tools. A text over 8000 characters is refused as too long ("shorten
+  it"), only when the decision model is on. It fails open: no decision model, a failed call or no
+  answer lets the text go, logged. The pure `searchBriefRefusal` maps the verdict to the refusal.
 - **Caps**: `CLARITY_WEB_SEARCH_MAX_SEARCHES` (10) per helper run: each request carries what is left
   as `max_tool_calls` and `max_total_results` (`searchFor`), and none once it is spent. The count is
   per run, not per resume: before a run starts or resumes (after a restart, or the result nudge),
@@ -1109,7 +1214,10 @@ teal/cream Material 3 palette defined in the `.app` CSS variables there).
 - Push without Google or extra containers: the app keeps the `GET /api/v1/events` SSE stream
   open from a foreground service (type `remoteMessaging`, asks for the battery-optimization
   exemption), reconnects with backoff on network changes and resumes from its last `seq`.
-  Urgent items arrive as `FeedEvent`s the service turns into notifications. If the person
+  The service turns `FeedEvent`s into notifications by the item's recorded decision only (`PushPolicy.kt`):
+  `push_now` and released holds always notify, a `reply` notifies while the app is not on screen, and a
+  quiet `in_app` item never notifies (except a message of the running call). The evening summary
+  uses the low-importance channel. If the person
   turns this off, the app syncs on open and on a periodic WorkManager job. (UnifiedPush can be
   added later as a second transport without backend changes beyond one POST.)
 - `vault/`: the phone-held vault key (Android Keystore, per-use biometric), credential forms,

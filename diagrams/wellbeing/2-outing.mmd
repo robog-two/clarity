@@ -1,0 +1,30 @@
+sequenceDiagram
+  autonumber
+  participant Scout as OutingScoutJob + pure checks
+  participant Lead as Lead agent (memories, preferences)
+  participant Helper as delegate helper
+  participant Guard as Guard
+  participant App as Android app
+
+  Scout->>Scout: freeSlots(next 7 days), recentContacts(messaged in last 90 days)
+  alt no free slot, or 2 look_forward posts this week
+    Note over Scout: stop here, no model call
+  else Thursday 18:00 to 22:00 free
+    Scout->>Lead: JobDue with slots and recent contacts
+    Lead->>Lead: search memory, mail and calendar as usual
+    opt needs research
+      Lead->>Helper: delegate(brief, checked for phone numbers and similar)
+      Helper-->>Lead: options (title, time, place, url)
+    end
+    Lead->>App: send_to_user(kind = look_forward, sources + choices)
+    Note over App: "Thursday evening is free. Jazz at the Blue Room with Sam Example?"
+    alt Add to calendar
+      App-->>Lead: "Add it to my calendar"
+      Lead->>Guard: create_event
+      Guard-->>Lead: allowed or asks for approval
+    else Not this time (declines = true)
+      App-->>Lead: "Not this time"
+      Note over Lead: nothing added, no pause
+    end
+    Lead->>Lead: remember the kind of outing and the answer
+  end

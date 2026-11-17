@@ -3,6 +3,7 @@ package net.robog.clarity.app.nav
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldActionId
 
 class DeepLinkTest {
@@ -30,13 +31,27 @@ class DeepLinkTest {
     }
 
     @Test fun uriRoundTrips() {
-        listOf(DeepLink.Today, DeepLink.Ask, DeepLink.Held, DeepLink.HeldItem(HeldActionId("h1")), DeepLink.Call(false), DeepLink.Call(true))
+        listOf(DeepLink.Today, DeepLink.Ask, DeepLink.AskItem(FeedItemId("i9")), DeepLink.Held, DeepLink.HeldItem(HeldActionId("h1")), DeepLink.Call(false), DeepLink.Call(true))
             .forEach { assertEquals(it, parseDeepLink(it.toUri())) }
     }
 
     @Test fun tabLinksSelectTheTabOnTheMainScreen() {
         assertEquals(NavTarget(MainTab.Held), targetFor(DeepLink.Held))
         assertEquals(listOf(Main), stackFor(targetFor(DeepLink.Today)!!))
+    }
+
+    @Test fun askItemSelectsAskAndFocusesTheItem() {
+        assertEquals(DeepLink.AskItem(FeedItemId("i9")), parseDeepLink("clarity://ask/i9"))
+        assertEquals(DeepLink.Ask, parseDeepLink("clarity://ask"))
+        assertEquals(NavTarget(MainTab.Ask, focus = FeedItemId("i9")), targetFor(DeepLink.AskItem(FeedItemId("i9"))))
+        assertEquals(listOf(Main), stackFor(targetFor(DeepLink.AskItem(FeedItemId("i9")))!!))
+    }
+
+    @Test fun oddAskIdsAreJustAsk() {
+        for (uri in listOf("clarity://ask//", "clarity://ask/", "clarity://ask/%00", "clarity://ask/a/b", "clarity://ask/ ", "clarity://ask/%20", "clarity://ask/../held", "clarity://ask/?x=1")) {
+            assertEquals(DeepLink.Ask, parseDeepLink(uri), uri)
+        }
+        assertEquals(DeepLink.AskItem(FeedItemId("a-b_9")), parseDeepLink("clarity://ask/a-b_9?x=1"))
     }
 
     @Test fun heldItemOpensTheReviewOnTopOfTheHeldTab() {

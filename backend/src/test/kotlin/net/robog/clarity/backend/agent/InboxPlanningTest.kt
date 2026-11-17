@@ -151,4 +151,19 @@ class InboxPlanningTest : FunSpec({
         InboxItem.ConstitutionChanged(2).priority shouldBe Priority.NORMAL
         (t0 + 1.hours).let { PendingItem(1, InboxItem.System("x", Priority.LOW), t0).at shouldBe t0 }
     }
+
+    test("a turn answers the person when it carries their input, or a result or question of a helper started while answering them") {
+        val result = InboxItem.HelperResult("run-a", "find it", ok = true, result = "found")
+        val asks = InboxItem.HelperAsks("run-b", 1, "find it", "which one?")
+        val other = InboxItem.HelperResult("run-c", "scout", ok = true, result = "found")
+        val personRuns = setOf("run-a", "run-b")
+        answersPerson(userTurn = true, emptySet(), emptySet()) shouldBe true
+        answersPerson(userTurn = false, helperRunIds(listOf(result)), personRuns) shouldBe true
+        answersPerson(userTurn = false, helperRunIds(listOf(asks)), personRuns) shouldBe true
+        // a helper a job started stays out, and so does anything else in a background turn
+        answersPerson(userTurn = false, helperRunIds(listOf(other)), personRuns) shouldBe false
+        answersPerson(userTurn = false, helperRunIds(listOf(InboxItem.System("note"))), personRuns) shouldBe false
+        answersPerson(userTurn = false, helperRunIds(listOf(other, result)), personRuns) shouldBe true
+        helperRunIds(listOf(result, asks, InboxItem.System("note"))) shouldBe setOf("run-a", "run-b")
+    }
 })

@@ -78,7 +78,7 @@ class HelperTools(
     class DelegateInput(
         @Description("What to do and what to report back. Self-contained: the helper has no other context. Say what a good result looks like and how long it should be.")
         val task: String,
-        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named (plus ask_lead, which every helper has), so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task.")
+        @Description("Omit this to give the helper the default tools: reads, the browser, the sandbox, the guarded actions, the vault tools (ask_code, list_credentials) and the report tools. A list REPLACES the defaults: only the tools named (plus ask_lead, which every helper has), so a browsing helper needs every browser__ tool it uses. Never includes send_to_user. Name web_search to let it search the web: such a helper gets only the sandbox and report tools (no mail, contacts, calendar, memory, browser or vault), so put everything it needs to know in the task, but never a phone number, email address, street address, account or booking number or other identifier (the brief is checked).")
         val tools: List<String>? = null,
         @Description("helper (default) for real work, triage for a cheap quick classification.") val role: String? = null,
         @Description("The id of the task on the person's list (update_task) this helper works on. Pass it whenever there is one, so the person can follow the helper's steps from that task.")
@@ -273,9 +273,11 @@ class AgentToolbox(
     private val vault: VaultTools,
     private val browser: BrowserPilot,
     private val nudges: NudgeTools,
+    private val planItemTools: PlanItemTools,
     private val reports: ReportTools,
     private val thirdParty: McpToolKit,
     private val attachmentTools: AttachmentTools,
+    private val refGate: CardRefGate,
 ) {
     private fun guarded(scope: RunScope, tools: List<Tool>): List<Tool> =
         tools.map { if (it.name in UNTRUSTED_SOURCE_TOOLS) it.taintingScope(scope) else it }
@@ -295,14 +297,14 @@ class AgentToolbox(
         }
         with(own) {
             addAll(listOf(readJournal(), readProfile()))
-            if (forLead) addAll(listOf(sendToUser(), react(), rememberFact(), writeJournal(), setScratch(), updateTask(scope), listTasks()))
+            if (forLead) addAll(listOf(sendToUser(scope), react(), rememberFact(), writeJournal(), setScratch(), updateTask(scope), listTasks()))
         }
         addAll(if (forLead) reports.leadTools(scope) else reports.helperTools(scope))
         if (forLead) addAll(helperTools.all(scope))
         if (forLead) addAll(session.all())
-        if (forLead) addAll(nudges.all())
+        if (forLead) addAll(nudges.all() + planItemTools.all())
         if (forLead) add(thirdParty.suggestTool())
-    }.let { guarded(scope, it) }
+    }.map { if (forLead && it.name == "send_to_user") refGate.wrap(it) else it }.let { guarded(scope, it) }
 
     /**
      * The lead's tools, all sent with every request. The lead gets no MCP tools (the browser, the

@@ -44,7 +44,16 @@ import net.robog.clarity.backend.agent.homeZone
 import net.robog.clarity.backend.agent.nudgeTaskFinished
 import net.robog.clarity.backend.persistence.tx
 import net.robog.clarity.backend.persistence.wire
+import net.robog.clarity.backend.agent.MAX_FOLLOW_UPS_PER_DAY
+import net.robog.clarity.backend.agent.MAX_NUDGES_ALL_PER_DAY
+import net.robog.clarity.backend.agent.isPlan
+import net.robog.clarity.backend.agent.planItemWakeText
+import net.robog.clarity.backend.sessions.PlanItem
+import net.robog.clarity.backend.sessions.PlanItemState
+import net.robog.clarity.backend.sessions.PlanItemStore
 import net.robog.clarity.backend.sessions.SessionService
+import net.robog.clarity.shared.time.ScheduleClock
+import kotlinx.datetime.LocalDate
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedItem
@@ -145,6 +154,9 @@ fun planNudge(
     firedToday: Int,
     lastPersonMessageAt: Instant?,
     sessionLive: Boolean,
+    planItem: PlanItem? = null,
+    today: LocalDate? = null,
+    firedAll: Int = 0,
 ): NudgePlan {
     val late = now - nudge.at
     return when {
@@ -152,8 +164,13 @@ fun planNudge(
             NudgeResolution(Nudge.Status.MISSED, "missed: Clarity was offline when it was due and came back ${late.inWholeMinutes} minutes late"),
         )
         nudgeTaskFinished(task) -> NudgePlan.Resolve(NudgeResolution(Nudge.Status.SKIPPED, "the task was already ${task!!.status.wire()}"))
+        planItem != null && planItem.state != PlanItemState.OPEN -> NudgePlan.Resolve(NudgeResolution(Nudge.Status.SKIPPED, "the plan item was already ${planItem.state.wire()}"))
+        planItem != null && today != null && planItem.startedOn == today -> NudgePlan.Resolve(NudgeResolution(Nudge.Status.SKIPPED, "the person already said they are starting it today"))
         firedToday >= MAX_NUDGES_PER_DAY -> NudgePlan.Resolve(
             NudgeResolution(Nudge.Status.SKIPPED, "$MAX_NUDGES_PER_DAY nudges already fired today, the daily limit"),
+        )
+        firedAll >= MAX_NUDGES_ALL_PER_DAY -> NudgePlan.Resolve(
+            NudgeResolution(Nudge.Status.SKIPPED, "$MAX_NUDGES_ALL_PER_DAY nudges and check-ins already fired today in all, the daily limit"),
         )
         sessionLive || (lastPersonMessageAt != null && now - lastPersonMessageAt < NUDGE_RECENT_ACTIVITY) -> NudgePlan.Ask
         else -> NudgePlan.Fire
@@ -239,6 +256,7 @@ fun nudgeVerdictOf(result: Either<DecisionError, DecisionResult>?): NudgeGateVer
 class NudgeRunner(
     private val store: NudgeStore,
     private val tasks: TaskStore,
+    private val planItems: PlanItemStore,
     private val inbox: InboxStore,
     private val activity: NudgeActivity,
     private val decisions: Decisions,
@@ -260,9 +278,13 @@ class NudgeRunner(
     /** Resolves every nudge due by [now]; [zone] is the person's home zone (their day, for the cap). */
     suspend fun fireDue(now: Instant, zone: TimeZone): List<Pair<Nudge, NudgeResolution>> {
         val (dayStart, dayEnd) = homeDay(now, zone)
-        var firedToday = store.countFired(dayStart, dayEnd)
+        var firedPerson = store.countFired(dayStart, dayEnd)
+        var firedPlan = store.countFiredPlan(dayStart, dayEnd)
         val resolved = store.resolveDue(now, NUDGES_PER_TICK) { nudge ->
-            resolve(nudge, now, zone, firedToday).also { if (it.status == Nudge.Status.FIRED) firedToday++ }
+            // Each side has its own day-cap, and one ceiling holds over both.
+            resolve(nudge, now, zone, if (nudge.isPlan) firedPlan else firedPerson, firedPerson + firedPlan).also {
+                if (it.status == Nudge.Status.FIRED) { if (nudge.isPlan) firedPlan++ else firedPerson++ }
+            }
         }
         resolved.forEach { (nudge, outcome) ->
             log.info { "nudge ${nudge.id.value} due ${nudge.at}: ${outcome.status.wire()}" + (outcome.reason?.let { " ($it)" } ?: "") }
@@ -270,12 +292,13 @@ class NudgeRunner(
         return resolved
     }
 
-    private suspend fun resolve(nudge: Nudge, now: Instant, zone: TimeZone, firedToday: Int): NudgeResolution {
+    private suspend fun resolve(nudge: Nudge, now: Instant, zone: TimeZone, firedToday: Int, firedAll: Int): NudgeResolution {
         val task = nudge.taskId?.let { tasks.get(it) }
-        val plan = planNudge(nudge, task, now, firedToday, activity.lastPersonMessageAt(), activity.sessionLive())
+        val item = nudge.planItemId?.let { planItems.get(it) }
+        val plan = planNudge(nudge, task, now, firedToday, activity.lastPersonMessageAt(), activity.sessionLive(), item, ScheduleClock.homeDate(now, zone), firedAll)
         return when (plan) {
             is NudgePlan.Resolve -> plan.resolution
-            NudgePlan.Fire -> wake(nudge, task, zone)
+            NudgePlan.Fire -> wake(nudge, task, item, now, zone)
             NudgePlan.Ask -> {
                 val verdict = gate(nudge, task, now, zone)
                 log.info {
@@ -285,7 +308,7 @@ class NudgeRunner(
                 if (verdict.skip) {
                     NudgeResolution(Nudge.Status.SKIPPED, verdict.reason + (verdict.probability?.let { " (p=${"%.2f".format(it)})" } ?: ""))
                 } else {
-                    wake(nudge, task, zone)
+                    wake(nudge, task, item, now, zone)
                 }
             }
         }
@@ -302,13 +325,19 @@ class NudgeRunner(
         NudgeGateVerdict(false, "gate failed")
     }
 
-    private suspend fun wake(nudge: Nudge, task: AgentTask?, zone: TimeZone): NudgeResolution {
+    private suspend fun wake(nudge: Nudge, task: AgentTask?, item: PlanItem?, now: Instant, zone: TimeZone): NudgeResolution {
+        val itemText = item?.let {
+            val (dayStart, dayEnd) = homeDay(now, zone)
+            val left = (MAX_FOLLOW_UPS_PER_DAY - store.countFollowUps(it.id, dayStart, dayEnd)).coerceAtLeast(0)
+            planItemWakeText(it, ScheduleClock.homeDate(now, zone), left)
+        }
         inbox.enqueue(
             InboxItem.NudgeDue(
                 nudgeId = nudge.id.value,
                 at = agentTime(nudge.at, zone),
                 note = nudge.note,
                 task = task?.let { "${it.title} (${it.status.wire()}, id ${it.id.value})" },
+                planItem = itemText,
             ),
             dedupKey = "nudge:${nudge.id.value}",
         )

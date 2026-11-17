@@ -2,8 +2,15 @@ package net.robog.clarity.shared.feed
 
 import kotlin.jvm.JvmInline
 import kotlin.time.Instant
+import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.descriptors.PrimitiveKind
+import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
+import kotlinx.serialization.descriptors.SerialDescriptor
+import kotlinx.serialization.descriptors.nullable
+import kotlinx.serialization.encoding.Decoder
+import kotlinx.serialization.encoding.Encoder
 import net.robog.clarity.shared.EntityId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.session.SessionId
@@ -23,6 +30,9 @@ value class ClientInputId(val value: String) { override fun toString(): String =
 
 /** The default [FeedItem.notify]: visible in the app, no interruption. */
 const val NOTIFY_IN_APP: String = "in_app"
+
+/** [FeedItem.notify] of an answer to the person: shown in the app, and the phone notifies only while the app is closed. */
+const val NOTIFY_REPLY: String = "reply"
 
 @Serializable
 data class FeedItem(
@@ -55,12 +65,58 @@ data class FeedItem(
      * comes as an item of its own so that a phone holding the target already gets it by seq.
      */
     val reaction: ItemReaction? = null,
+    /**
+     * What the agent meant by an agent message (see [MessageKind]); null on the person's own items,
+     * on items from before kinds existed, and on notes the server posts itself. The notification
+     * policy decides from it; the app only needs it to tell a reply from an interruption.
+     * A kind this build does not know decodes as null ([LenientMessageKind]), so a newer server never breaks the feed.
+     */
+    @Serializable(with = LenientMessageKind::class)
+    val kind: MessageKind? = null,
 ) {
     @Serializable
     enum class Author {
         @SerialName("agent") AGENT,
         @SerialName("user") USER,
     }
+}
+
+/**
+ * Why the agent is talking to the person. It decides whether the message may interrupt (see the
+ * notification policy in the backend, `deliveryOf`):
+ *  - [REPLY] answers something the person just said or tapped. Decided by the SERVER, never by the
+ *    model: a post made during a turn whose input included the person's message (or a tap on a
+ *    [Card.Choices] option) is a reply, and a model-supplied reply outside such a turn becomes a
+ *    [FINDING]. The phone notifies for it only while the app is closed, and it never counts against
+ *    the daily push budget.
+ *  - [CHECK_IN] asks how something is going, at the time a nudge was set for. Pushes, never counted.
+ *  - [LOOK_FORWARD] offers something pleasant to plan (an outing). Pushes, and counts.
+ *  - [FINDING] is anything the agent noticed on its own (mail, calendar). Pushes only when it is due
+ *    within a day or the sender gets through; otherwise it waits for the evening summary.
+ */
+@Serializable
+enum class MessageKind(val wire: String) {
+    @SerialName("reply") REPLY("reply"),
+    @SerialName("check_in") CHECK_IN("check_in"),
+    @SerialName("look_forward") LOOK_FORWARD("look_forward"),
+    @SerialName("finding") FINDING("finding"),
+    ;
+
+    companion object {
+        fun fromWire(value: String?): MessageKind? = entries.firstOrNull { it.wire == value }
+    }
+}
+
+/** [MessageKind] on the wire as its string; a spelling this build does not know reads as null instead of failing the whole item. */
+object LenientMessageKind : KSerializer<MessageKind?> {
+    override val descriptor: SerialDescriptor = PrimitiveSerialDescriptor("MessageKind", PrimitiveKind.STRING).nullable
+
+    override fun serialize(encoder: Encoder, value: MessageKind?) {
+        if (value == null) encoder.encodeNull() else encoder.encodeString(value.wire)
+    }
+
+    override fun deserialize(decoder: Decoder): MessageKind? =
+        if (decoder.decodeNotNullMark()) MessageKind.fromWire(decoder.decodeString()) else decoder.decodeNull()
 }
 
 /**
@@ -166,6 +222,27 @@ sealed interface Card {
     ) : Card
 
     /**
+     * A question with one-tap answers. The app draws [options] as buttons; a tap sends the option's
+     * [Choice.reply] as the person's own input (`POST /api/v1/input` with `inReplyTo` set to this
+     * item), which counts as the person writing (so the agent's answer is a reply). The server then
+     * records the tapped reply in [chosen], and every device shows the buttons disabled with that one
+     * marked. [fallbackText] is for apps that do not know this card: it lists the options so the
+     * person can type one.
+     */
+    @Serializable @SerialName("choices")
+    data class Choices(
+        val prompt: String? = null,
+        val options: List<Choice>,
+        /** The [Choice.reply] the person tapped; null while unanswered. */
+        val chosen: String? = null,
+        val fallbackText: String = choicesFallback(prompt, options),
+        /** An opaque tag set by the poster and never shown ("plan:<plan item id>"). A tap reaches the agent with it, so it knows which question was answered. */
+        val ref: String? = null,
+        /** Server bookkeeping: the client id of the input that answered, so only a retry of that same request passes for the answer. Apps ignore it. */
+        val answeredBy: String? = null,
+    ) : Card
+
+    /**
      * A card of a type this build does not know (a newer server's): [ClarityJson] decodes any
      * unknown `type` to this instead of failing the whole feed. Card types added from now on carry
      * a `fallbackText` string on the wire for it; without one the card is not shown. (Apps built
@@ -173,6 +250,22 @@ sealed interface Card {
      */
     @Serializable @SerialName("unknown")
     data class Unknown(val fallbackText: String? = null) : Card
+}
+
+/**
+ * One button of a [Card.Choices]: [label] is what it says, [reply] what is sent as the person's words when tapped. [declines]
+ * marks the button that turns the question down ("Not this time"), so the server can tell without reading words; old cards and
+ * apps do not have it and read false.
+ */
+@Serializable
+data class Choice(val label: String, val reply: String, val declines: Boolean = false)
+
+/** Pure: the text an app that does not know [Card.Choices] shows ("Starting now? Reply with Starting or Later or Make it smaller."). */
+fun choicesFallback(prompt: String?, options: List<Choice>): String {
+    val labels = options.map { it.label }
+    // "A or B or C": no commas however many options there are (the voice allows one comma in all).
+    val list = labels.joinToString(" or ")
+    return listOfNotNull(prompt?.trim()?.takeIf { it.isNotEmpty() }, list.takeIf { it.isNotEmpty() }?.let { "Reply with $it." }).joinToString(" ")
 }
 
 @Serializable
@@ -193,7 +286,16 @@ data class ContextItem(
 data class Chip(val text: String, val sub: String = "")
 
 @Serializable
-data class IfThen(val cue: String, val action: String) {
+data class IfThen(
+    val cue: String,
+    val action: String,
+    /** The two-minute first move for a task that keeps coming back; null when none was agreed. */
+    val firstStep: String? = null,
+    /** The start time the person named for it, "HH:MM" (24 hour, their local time that day); null when none. A check-in is set at it. */
+    val at: String? = null,
+    /** The id of the plan item (a priority) this plan is for, when the server linked it; its check-ins follow that item. */
+    val item: String? = null,
+) {
     /** "If it’s 9:30, then spec at my desk until 12." */
     fun sentence(): String = "If $cue, then $action."
 }
@@ -233,6 +335,8 @@ data class UserInput(
     val text: String,
     val source: InputSource = InputSource.TYPED,
     val sessionId: SessionId? = null,
+    /** Set when the input is a tap on a [Card.Choices] option: the item that holds the card. The server marks the option chosen. */
+    val inReplyTo: FeedItemId? = null,
 )
 
 @Serializable

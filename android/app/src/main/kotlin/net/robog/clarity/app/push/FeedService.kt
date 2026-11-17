@@ -41,6 +41,8 @@ import net.robog.clarity.app.data.SessionStore
 import net.robog.clarity.app.device.DeviceCapabilities
 import net.robog.clarity.app.di.AppGraph
 import net.robog.clarity.app.call.CallActivity
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.app.nav.DeepLink
 import net.robog.clarity.app.nav.toUri
 
@@ -223,12 +225,38 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         manager.notify(plan.id, builder.build())
     }
 
-    override fun replied(text: String, sent: Boolean) {
+    override fun replied(text: String, sent: Boolean, answered: FeedItemId?) {
         synchronized(conversation) {
             conversation.addLast((if (sent) text else "Not sent, $text. Try again in Clarity.") to true)
+            if (sent && answered != null) dropChips(answered)
         }
-        postConversation(alert = false)
+        refresh()
     }
+
+    override fun answered(item: FeedItemId) {
+        val shown = active()
+        val action = synchronized(conversation) {
+            answeredAction(shown != null, lastMessage, item, shown?.extras?.getString(CHIPS_ITEM_EXTRA))
+                .also { dropChips(item) }
+        }
+        apply(action)
+    }
+
+    /** The conversation notification as it is showing now (null once swiped away, or when the system cannot say). */
+    private fun active(): Notification? = runCatching { manager.activeNotifications.firstOrNull { it.id == MESSAGE_ID }?.notification }.getOrNull()
+
+    /** Never alerts: these updates only take chips away or clear a spinner. */
+    private fun apply(action: ChipsAction) = when (action) {
+        ChipsAction.Repost -> postConversation(alert = false)
+        ChipsAction.Cancel -> manager.cancel(MESSAGE_ID)
+        ChipsAction.Nothing -> Unit
+    }
+
+    private fun dropChips(item: FeedItemId) {
+        lastMessage?.takeIf { it.choicesItem == item }?.let { lastMessage = it.withoutChoices() }
+    }
+
+    override fun refresh() = apply(refreshAction(active() != null, synchronized(conversation) { lastMessage }))
 
     override fun clearConversation() {
         synchronized(conversation) {
@@ -254,23 +282,33 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
         }
         val style = NotificationCompat.MessagingStyle(me)
         lines.forEach { (text, mine) -> style.addMessage(text, System.currentTimeMillis(), if (mine) null else agent) }
+        val chips = plan.choices
         val replyIntent = PendingIntent.getBroadcast(
             context, MESSAGE_ID,
             Intent(context, NotificationReplyReceiver::class.java)
-                .putExtra(NotificationReplyReceiver.EXTRA_SESSION, plan.sessionId?.value),
+                .putExtra(NotificationReplyReceiver.EXTRA_SESSION, plan.sessionId?.value)
+                .putExtra(NotificationReplyReceiver.EXTRA_ITEM, plan.choicesItem?.value)
+                .putExtra(NotificationReplyReceiver.EXTRA_LABELS, chips.map { it.label }.toTypedArray())
+                .putExtra(NotificationReplyReceiver.EXTRA_REPLIES, chips.map { it.reply }.toTypedArray()),
             // A reply box needs a mutable intent: the system adds the typed text to it.
             PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val reply = NotificationCompat.Action.Builder(R.drawable.ic_notification, "Reply", replyIntent)
-            .addRemoteInput(RemoteInput.Builder(NotificationReplyReceiver.KEY_TEXT).setLabel("Reply to Clarity").build())
+            .addRemoteInput(
+                RemoteInput.Builder(NotificationReplyReceiver.KEY_TEXT).setLabel("Reply to Clarity")
+                    .setAllowFreeFormInput(true)
+                    .apply { if (chips.isNotEmpty()) setChoices(chips.map { it.label }.toTypedArray()) }
+                    .build(),
+            )
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
             .setShowsUserInterface(false)
-            .setAllowGeneratedReplies(true)
+            .setAllowGeneratedReplies(chips.isEmpty())
             .build()
         val builder = NotificationCompat.Builder(context, plan.channel.id)
             .setSmallIcon(R.drawable.ic_notification)
             .setStyle(style)
             .addAction(reply)
+            .addExtras(android.os.Bundle().apply { putString(CHIPS_ITEM_EXTRA, plan.choicesItem?.value) })
             .setContentIntent(openIntent(plan))
             .setAutoCancel(true)
             .setOnlyAlertOnce(!alert)
@@ -291,21 +329,35 @@ class AndroidPushNotifier(private val context: Context) : PushNotifier {
 
     private companion object {
         const val MAX_LINES = 8
+        /** The notification's own record of which question its chips belong to (read back after a restart). */
+        const val CHIPS_ITEM_EXTRA = "clarity.choices_item"
     }
 }
 
 /** The reply box on the message notification: sends the text as the person's input. */
 class NotificationReplyReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        val text = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()?.trim()
-        if (text.isNullOrEmpty()) return
-        val session = intent.getStringExtra(EXTRA_SESSION)?.let { net.robog.clarity.shared.session.SessionId(it) }
+        val typed = RemoteInput.getResultsFromIntent(intent)?.getCharSequence(KEY_TEXT)?.toString()
+        val item = intent.getStringExtra(EXTRA_ITEM)?.let { FeedItemId(it) }
+        val labels = intent.getStringArrayExtra(EXTRA_LABELS).orEmpty()
+        val replies = intent.getStringArrayExtra(EXTRA_REPLIES).orEmpty()
+        val choices = labels.zip(replies).map { (label, reply) -> Choice(label, reply) }
         val graph = (context.applicationContext as ClarityApp).graph
         val pending = goAsync()
+        val reply = replyOf(typed, choices, item)
+        if (reply == null) {
+            // Nothing to send: repost so the reply spinner clears.
+            graph.pushNotifier.refresh()
+            pending.finish()
+            return
+        }
+        val session = intent.getStringExtra(EXTRA_SESSION)?.let { net.robog.clarity.shared.session.SessionId(it) }
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
-                val result = graph.feedRepository.send(text, net.robog.clarity.shared.feed.InputSource.TYPED, session, null)
-                graph.pushNotifier.replied(text, result is net.robog.clarity.app.data.ApiResult.Success)
+                // A second tap (409) comes back as the card as it stands, so it counts as sent.
+                val result = graph.feedRepository.send(reply.text, net.robog.clarity.shared.feed.InputSource.TYPED, session, null, reply.inReplyTo)
+                val sent = result is net.robog.clarity.app.data.ApiResult.Success
+                graph.pushNotifier.replied(typed?.trim().orEmpty(), sent, reply.inReplyTo)
             } finally {
                 pending.finish()
             }
@@ -315,6 +367,9 @@ class NotificationReplyReceiver : android.content.BroadcastReceiver() {
     companion object {
         const val KEY_TEXT = "reply"
         const val EXTRA_SESSION = "session"
+        const val EXTRA_ITEM = "item"
+        const val EXTRA_LABELS = "labels"
+        const val EXTRA_REPLIES = "replies"
     }
 }
 

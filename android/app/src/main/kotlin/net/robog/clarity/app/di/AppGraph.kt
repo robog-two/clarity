@@ -118,6 +118,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import net.robog.clarity.app.push.AndroidPushController
 import net.robog.clarity.app.push.AndroidPushNotifier
+import net.robog.clarity.app.push.AnswerRelay
 import net.robog.clarity.app.push.ConnectionHolder
 import net.robog.clarity.app.push.DataStorePushPrefs
 import net.robog.clarity.app.push.FrontScreen
@@ -463,6 +464,8 @@ interface AppGraph : ViewModelGraph {
         call = { call.live()?.id },
     )
 
+    @Provides fun answerRelay(sync: FeedSync, notifier: PushNotifier): AnswerRelay = AnswerRelay(sync.signals, notifier)
+
     /** The periodic catch-up for when the service is not running. */
     @Provides fun pushFallback(
         sessions: SessionStore,
@@ -507,6 +510,7 @@ interface AppGraph : ViewModelGraph {
     val frontScreen: FrontScreen
     val connection: ConnectionHolder
     val pushListener: PushListener
+    val answerRelay: AnswerRelay
     val pushNotifier: PushNotifier
     val pushFallback: PushFallback
     val feedRepository: net.robog.clarity.app.data.FeedRepository

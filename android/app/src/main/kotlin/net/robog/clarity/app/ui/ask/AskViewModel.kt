@@ -40,6 +40,8 @@ import net.robog.clarity.app.voice.micChipState
 import net.robog.clarity.shared.feed.AgentTask
 import net.robog.clarity.shared.feed.FeedItem
 import net.robog.clarity.shared.feed.latestReactions
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.feed.InputSource
 import net.robog.clarity.shared.feed.TaskId
 import net.robog.clarity.shared.governance.HeldAction
@@ -206,6 +208,11 @@ class AskViewModel(
         viewModelScope.launch { deliver(text, InputSource.TYPED) }
     }
 
+    /** A tap on a button of a choices card in item [item]: its reply goes to the agent as the person's own words. */
+    fun choose(item: FeedItemId, choice: Choice) {
+        viewModelScope.launch { deliver(choice.reply, InputSource.TYPED, inReplyTo = item) }
+    }
+
     /** A "try saying" suggestion. */
     fun suggest(text: String) {
         viewModelScope.launch { deliver(text, InputSource.TYPED) }
@@ -255,8 +262,8 @@ class AskViewModel(
 
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
-    private suspend fun deliver(text: String, source: InputSource) {
-        when (val r = feed.send(text, source, null)) {
+    private suspend fun deliver(text: String, source: InputSource, inReplyTo: FeedItemId? = null) {
+        when (val r = feed.send(text, source, null, inReplyTo = inReplyTo)) {
             is ApiResult.Success -> _state.update { it.copy(message = null) }
             is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence(), draft = if (source == InputSource.TYPED && it.draft.isEmpty()) text else it.draft) }
         }

@@ -22,6 +22,8 @@ import net.robog.clarity.app.testutil.agentItem
 import net.robog.clarity.app.testutil.heldAction
 import net.robog.clarity.app.testutil.userItem
 import net.robog.clarity.shared.feed.Card
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldAction
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.Urgency
@@ -106,18 +108,112 @@ class ReconnectPolicyTest {
 }
 
 class NotificationDecisionTest {
-    @Test fun pushNowAlwaysNotifiesInAppOnlyWhileTheAppIsClosedAndHoldWaits() {
+    @Test fun pushNowAlwaysNotifiesAReplyOnlyWhileTheAppIsClosedAndQuietItemsAndHoldsNever() {
         val elsewhere = Front.Showing(Place.Tab(MainTab.Settings))
         assertNotNull(plan(Arrival.Item(item("push_now")), elsewhere))
         assertNull(plan(Arrival.Item(item("in_app")), elsewhere))
         assertNull(plan(Arrival.Item(agentItem(7, "old client item")), elsewhere), "an item without a stored decision is in-app")
-        assertNotNull(plan(Arrival.Item(item("in_app"))))
-        assertNotNull(plan(Arrival.Item(agentItem(7, "old client item"))))
+        assertNull(plan(Arrival.Item(item("in_app"))), "a quiet item does not notify even with the app closed")
+        assertNull(plan(Arrival.Item(agentItem(7, "old client item"))), "an old server's item without a decision is quiet too")
         assertNull(plan(Arrival.Item(item("hold_until:2026-10-26T12:00:00Z"))))
+        assertNull(plan(Arrival.Item(item("reply")), elsewhere), "a reply waits for the app to be closed")
+        assertNull(plan(Arrival.Item(item("reply")), Front.Showing(Place.Tab(MainTab.Ask))), "the feed shows it")
+        assertNotNull(plan(Arrival.Item(item("reply"))), "a reply notifies while the app is closed")
+    }
+
+    @Test fun aRepliesNotificationIsAMessageThatLeadsToTheFeed() {
+        val p = plan(Arrival.Item(item("reply")))!!
+        assertEquals(PushChannel.Agent, p.channel)
+        assertEquals(PlanStyle.Message, p.style)
+        assertEquals(DeepLink.Today, p.link)
+        // old enough to be stale: not worth a buzz
+        assertNull(decideNotification(Arrival.Item(item("reply")), Front.Background, true, T0 + 3.hours))
+    }
+
+    @Test fun aChoicesCardNotifiesWithItsPrompt() {
+        val asked = agentItem(11, "unused").copy(
+            notify = "push_now",
+            cards = listOf(Card.Choices("Ready to start the report?", listOf(Choice("Starting", "Starting"), Choice("Later", "Later")))),
+        )
+        assertEquals("Ready to start the report?", plan(Arrival.Item(asked))!!.text)
+    }
+
+    private val ready = listOf(Choice("Starting", "Starting now"), Choice("Later", "Later"))
+
+    @Test fun anUnansweredChoicesCardCarriesItsItemAndOptionsOnThePlan() {
+        val asked = agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready)))
+        val p = plan(Arrival.Item(asked))!!
+        assertEquals(asked.id, p.choicesItem)
+        assertEquals(ready, p.choices)
+        assertTrue(p.withoutChoices().choices.isEmpty())
+        assertNull(p.withoutChoices().choicesItem)
+    }
+
+    @Test fun anAnsweredChoicesCardNeverNotifiesSoNoChips() {
+        val asked = agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready, chosen = "Later")))
+        assertNull(plan(Arrival.Item(asked)))
+    }
+
+    @Test fun aPlainMessageHasNoChips() {
+        val p = plan(Arrival.Item(item("push_now")))!!
+        assertNull(p.choicesItem)
+        assertTrue(p.choices.isEmpty())
+    }
+
+    @Test fun anExactLabelIsATapOnItsOption() {
+        val id = FeedItemId("f1")
+        assertEquals(NotificationReply("Starting now", id), replyOf("Starting", ready, id))
+        assertEquals(NotificationReply("Later", id), replyOf("later", ready, id))
+        assertEquals(NotificationReply("Starting now", id), replyOf("  STARTING \n", ready, id))
+    }
+
+    @Test fun labelsThatMatchOnlyByCaseResolveToTheFirstOption() {
+        val twins = listOf(Choice("Ok", "first"), Choice("OK", "second"))
+        assertEquals(NotificationReply("first", FeedItemId("f1")), replyOf("ok", twins, FeedItemId("f1")))
+        assertEquals(NotificationReply("second", FeedItemId("f1")), replyOf("OK", listOf(twins[1], twins[0]), FeedItemId("f1")))
+    }
+
+    private val chipsPlan = plan(Arrival.Item(agentItem(11, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", ready)))))!!
+    private val chipsItem = chipsPlan.choicesItem!!
+
+    @Test fun answeredRepostsOnlyWhatThisProcessPostedAndIsStillShowing() {
+        assertEquals(ChipsAction.Repost, answeredAction(true, chipsPlan, chipsItem, chipsItem.value))
+        assertEquals(ChipsAction.Nothing, answeredAction(false, chipsPlan, chipsItem, null), "swiped away stays away")
+        assertEquals(ChipsAction.Nothing, answeredAction(true, chipsPlan, FeedItemId("other"), chipsItem.value), "another question")
+        assertEquals(ChipsAction.Nothing, answeredAction(true, chipsPlan.withoutChoices(), chipsItem, null), "no chips already")
+    }
+
+    @Test fun answeredAfterARestartCancelsOnlyANotificationShowingThatQuestion() {
+        assertEquals(ChipsAction.Cancel, answeredAction(true, null, chipsItem, chipsItem.value))
+        assertEquals(ChipsAction.Nothing, answeredAction(true, null, chipsItem, "other"))
+        assertEquals(ChipsAction.Nothing, answeredAction(true, null, chipsItem, null))
+        assertEquals(ChipsAction.Nothing, answeredAction(false, null, chipsItem, chipsItem.value))
+    }
+
+    @Test fun aReplyOrRefreshRepostsCancelsOrLeavesAlone() {
+        assertEquals(ChipsAction.Repost, refreshAction(true, chipsPlan))
+        assertEquals(ChipsAction.Cancel, refreshAction(true, null))
+        assertEquals(ChipsAction.Nothing, refreshAction(false, chipsPlan))
+        assertEquals(ChipsAction.Nothing, refreshAction(false, null))
+    }
+
+    @Test fun anythingElseIsTypedWordsWithNoReplyTo() {
+        val id = FeedItemId("f1")
+        assertEquals(NotificationReply("Starting soon", null), replyOf("Starting soon", ready, id))
+        assertEquals(NotificationReply("Starting", null), replyOf("Starting", ready, null))
+        assertEquals(NotificationReply("hello", null), replyOf(" hello ", emptyList(), id))
+        assertNull(replyOf("   ", ready, id))
+        assertNull(replyOf(null, ready, id))
+    }
+
+    @Test fun aMessageOfTheRunningCallStillNotifiesWhileQuiet() {
+        val p = decideNotification(Arrival.Item(item("in_app").copy(sessionId = SessionId("s1"))), Front.Showing(Place.Tab(MainTab.Settings)), true, T0, call = SessionId("s1"))
+        assertNotNull(p)
+        assertEquals(DeepLink.Call(), p.link)
     }
 
     @Test fun aMessageWhileClosedIsOneConversationWithAReplyForItsSession() {
-        val p = plan(Arrival.Item(item("in_app").copy(sessionId = SessionId("s1"))))!!
+        val p = plan(Arrival.Item(item("reply").copy(sessionId = SessionId("s1"))))!!
         assertEquals(PlanStyle.Message, p.style)
         assertEquals(MESSAGE_ID, p.id)
         assertEquals(SessionId("s1"), p.sessionId)
@@ -133,6 +229,7 @@ class NotificationDecisionTest {
         // the same notification as the urgent held action itself
         assertEquals(plan(Arrival.Held(urgentHeld("h1")))!!.id, p.id)
         val login = agentItem(10, "I need your Ulta login").copy(
+            notify = "reply",
             cards = listOf(Card.CredentialRequest(net.robog.clarity.shared.vault.CredentialRequestId("r1")), Card.Text("I need your Ulta login")),
         )
         val q = plan(Arrival.Item(login))!!
@@ -142,6 +239,12 @@ class NotificationDecisionTest {
 
     @Test fun anItemWithTheEveningSpellingUsesTheLowChannel() {
         assertEquals(PushChannel.Evening, plan(Arrival.Item(item("evening_batch:2026-10-26T18:00:00Z")))!!.channel)
+    }
+
+    @Test fun theEveningSummaryOpensAskAtItsOwnItem() {
+        val p = plan(Arrival.Item(item("evening_batch:2026-10-26T18:00:00Z", seq = 9)))!!
+        assertEquals("Your evening summary", p.title)
+        assertEquals(DeepLink.AskItem(FeedItemId("i9")), p.link)
     }
 
     @Test fun pushNowItemsUseTheAgentChannelAndOpenToday() {
@@ -228,6 +331,7 @@ class NotificationDecisionTest {
     @Test fun notifyValuesParse() {
         assertEquals(NotifyKind.PushNow, parseNotify("push_now"))
         assertEquals(NotifyKind.InApp, parseNotify("in_app"))
+        assertEquals(NotifyKind.Reply, parseNotify("reply"))
         assertEquals(NotifyKind.InApp, parseNotify(null))
         assertEquals(NotifyKind.InApp, parseNotify("something_new"))
         assertEquals(NotifyKind.Hold, parseNotify("hold_until:2026-10-26T12:00:00Z"))

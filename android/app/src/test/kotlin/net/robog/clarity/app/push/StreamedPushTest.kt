@@ -3,6 +3,10 @@ package net.robog.clarity.app.push
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertNull
+import kotlin.time.Duration.Companion.minutes
+import net.robog.clarity.shared.feed.Card
 import kotlin.test.assertTrue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,6 +113,44 @@ class StreamedPushTest {
         rig.sync.fillGap()
         live.cancel()
         assertTrue(rig.notifier.posted.isEmpty())
+    }
+
+    @Test fun aChoicesCardAnsweredElsewhereWhilePhoneWasAwayIsFetchedAgainAndNeverNotifies() = runTest {
+        val rig = Rig()
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Starting", "Starting"), net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
+        rig.sync.apply(FeedEvent.ItemFinal(asked))
+        rig.sync.apply(FeedEvent.ItemFinal(agentItem(8, "a later quiet note")))
+        // the person tapped on another device; this phone was offline and never heard of it
+        val answered = asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))
+        rig.backend.all = listOf(answered, agentItem(8, "a later quiet note"))
+        rig.sync.fillGap()
+        assertEquals("Later", (rig.store.itemAt(7)!!.cards.single() as Card.Choices).chosen)
+        assertEquals(6L, rig.backend.feedCalls.first(), "resumed from just before the unanswered card")
+        rig.backend.feedCalls.clear()
+        rig.sync.fillGap()
+        assertEquals(8L, rig.backend.feedCalls.first(), "answered, so no longer fetched again")
+    }
+
+    @Test fun anAnswerReachesTheNotifierWithNoPushHolderRunning() = runTest {
+        val rig = Rig()
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val asked = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options)))
+        // only the app-wide relay runs: no PushListener, as with the fallback job or the app open without the service
+        val relay = launch(Dispatchers.Unconfined) { AnswerRelay(rig.sync.signals, rig.notifier).run() }
+        rig.sync.apply(FeedEvent.ItemFinal(asked))
+        rig.sync.apply(FeedEvent.ItemFinal(asked.copy(cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))))
+        relay.cancel()
+        assertEquals(listOf(asked.id), rig.notifier.answered)
+        assertTrue(rig.notifier.posted.isEmpty())
+    }
+
+    @Test fun anAnsweredChoicesItemNeverNotifies() {
+        val options = listOf(net.robog.clarity.shared.feed.Choice("Later", "Later"))
+        val item = agentItem(7, "unused").copy(notify = "push_now", cards = listOf(Card.Choices("Ready?", options, chosen = "Later")))
+        assertNull(net.robog.clarity.app.push.decideNotification(net.robog.clarity.app.data.feed.Arrival.Item(item), net.robog.clarity.app.push.Front.Background, canPost = true, now = T0 + 1.minutes))
+        val open = item.copy(cards = listOf(Card.Choices("Ready?", options)))
+        assertNotNull(net.robog.clarity.app.push.decideNotification(net.robog.clarity.app.data.feed.Arrival.Item(open), net.robog.clarity.app.push.Front.Background, canPost = true, now = T0 + 1.minutes))
     }
 
     @Test fun theCatchUpNotifiesAReplyItFirstSeesFinal() = runTest {

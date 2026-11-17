@@ -45,6 +45,8 @@ import net.robog.clarity.app.voice.MicChipState
 import net.robog.clarity.app.voice.MicRationale
 import net.robog.clarity.app.voice.MicStateChip
 import net.robog.clarity.app.voice.rememberMicAccess
+import net.robog.clarity.shared.feed.Choice
+import net.robog.clarity.shared.feed.FeedItemId
 import net.robog.clarity.shared.governance.HeldActionId
 import net.robog.clarity.shared.governance.HeldDecision
 
@@ -54,6 +56,9 @@ fun AskScreen(
     onReview: (HeldActionId) -> Unit = {},
     onOpenReport: ((String) -> Unit)? = null,
     onOpenSource: ((String) -> Unit)? = null,
+    /** An item to scroll to (the evening summary a notification linked), reported through [onFocused] once it has. */
+    focus: FeedItemId? = null,
+    onFocused: () -> Unit = {},
     viewModel: AskViewModel = metroViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -68,9 +73,12 @@ fun AskScreen(
         onDecision = viewModel::decide,
         onReview = onReview,
         onAlways = viewModel::approveAlways,
+        onChoose = viewModel::choose,
         modifier = modifier,
         onOpenReport = onOpenReport,
         onOpenSource = onOpenSource,
+        focus = focus,
+        onFocused = onFocused,
     )
 }
 
@@ -89,8 +97,11 @@ fun AskContent(
     onAlways: (HeldActionId, String, String) -> Unit = { _, _, _ -> },
     onOpenReport: ((String) -> Unit)? = null,
     onOpenSource: ((String) -> Unit)? = null,
+    onChoose: ((FeedItemId, Choice) -> Unit)? = null,
+    focus: FeedItemId? = null,
+    onFocused: () -> Unit = {},
 ) {
-    val env = CardEnv(held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
+    val env = CardEnv(onChoose = onChoose, held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     ChatLayout(
         modifier = modifier,
@@ -136,6 +147,9 @@ fun AskContent(
             liveConfirmed = state.liveConfirmed,
             env = env,
             modifier = transcript,
+            focus = focus,
+            onFocused = onFocused,
+            newestRows = if (state.suggestions.isNotEmpty()) 1 else 0,
             newest = {
                 if (state.suggestions.isNotEmpty()) {
                     item(key = "suggestions") {

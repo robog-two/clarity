@@ -148,8 +148,17 @@ class SettingsViewModelTest {
         r.vm.toggleDay(1); assertFalse(1 in r.state.settings!!.morningCall.days)
         r.vm.toggleDay(7); assertTrue(7 in r.state.settings!!.morningCall.days)
         r.vm.setEveningAt(LocalTime(19, 0)); assertEquals(LocalTime(19, 0), r.state.settings!!.eveningSummaryAt)
+        r.vm.setPushesPerDay(3); assertEquals(3, r.state.settings!!.pushesPerDay)
         assertEquals(r.state.settings, r.repo.saved.last(), "the last save carries every change")
-        assertEquals(9, r.repo.saved.size)
+        assertEquals(10, r.repo.saved.size)
+    }
+
+    @Test fun notificationsADayStaysBetweenOneAndTen() = withMain {
+        val r = SettingsRig()
+        assertEquals(5, r.state.settings!!.pushesPerDay)
+        r.vm.setPushesPerDay(0); assertEquals(1, r.state.settings!!.pushesPerDay)
+        r.vm.setPushesPerDay(11); assertEquals(10, r.state.settings!!.pushesPerDay)
+        r.vm.setPushesPerDay(7); assertEquals(7, r.state.settings!!.pushesPerDay)
     }
 
     @Test fun theEveningSummaryReadsAndSavesOnTheHomeClockAcrossDaylightSaving() = withMain {
