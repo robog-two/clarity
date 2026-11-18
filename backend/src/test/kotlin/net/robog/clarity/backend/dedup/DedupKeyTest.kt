@@ -101,4 +101,12 @@ class DedupKeyTest : FunSpec({
         val keys = listOf(message().dedupKey(), ContactPayload("x", emptyList()).dedupKey(), CalendarEventPayload(null, "x", "x", t0, t1).dedupKey())
         keys.toSet().size shouldBe 3
     }
+
+    test("the same words sent at another time are another message") {
+        message(sentAt = t0).dedupKey() shouldNotBe message(sentAt = t1).dedupKey()
+    }
+
+    test("send time counts in whole seconds, so milliseconds and seconds sources agree") {
+        message(sentAt = t0).dedupKey() shouldBe message(sentAt = t0 + kotlin.time.Duration.parse("0.4s")).dedupKey()
+    }
 })

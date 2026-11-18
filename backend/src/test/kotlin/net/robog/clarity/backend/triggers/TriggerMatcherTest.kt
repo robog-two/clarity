@@ -2,6 +2,8 @@ package net.robog.clarity.backend.triggers
 
 import io.kotest.core.spec.style.FunSpec
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.time.Duration.Companion.hours
@@ -43,8 +45,10 @@ private class OneTrigger(spec: TriggerSpec) : TriggerStore {
 
 private class RecordingInbox : InboxStore {
     val enqueued = CopyOnWriteArrayList<String?>()
+    val items = CopyOnWriteArrayList<InboxItem>()
     override suspend fun enqueue(item: InboxItem, dedupKey: String?): Boolean {
         item.shouldBeInstanceOf<InboxItem.TriggerFired>()
+        items += item
         enqueued += dedupKey
         return true
     }
@@ -96,6 +100,44 @@ class TriggerMatcherTest : FunSpec({
             bus.publish(Ingested(ConnectorId("mail"), EntityId("in"), mail("an invoice"), created = true))
             testScheduler.advanceUntilIdle()
             inbox.enqueued shouldContainExactly listOf("trigger:t1:in")
+        }
+    }
+
+    // Guards against: a phone that was offline uploading many texts at once and the agent hearing of only a few.
+    test("matches past the hourly limit are held and wake the lead once together") {
+        runTest {
+            val inbox = RecordingInbox()
+            val config = AgentConfig(reviewInterval = 2.hours, triggerFiresPerHour = 2)
+            val matcher = TriggerMatcher(InMemoryIngestEventBus(), OneTrigger(TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")), inbox, config = config)
+            (1..5).forEach { matcher.handle(Ingested(ConnectorId("mail"), EntityId("n$it"), mail("invoice $it"), created = true)) }
+            inbox.enqueued shouldContainExactly listOf("trigger:t1:n1", "trigger:t1:n2")
+
+            matcher.flushHeld() // the hour is still full: nothing goes out
+            inbox.enqueued.size shouldBe 2
+
+            inbox.enqueued.clear() // the hour has room again
+            matcher.flushHeld()
+            inbox.enqueued.size shouldBe 1
+            val batch = inbox.items.last().shouldBeInstanceOf<InboxItem.TriggerFired>()
+            batch.recordSource shouldContain "3 message records"
+            listOf("invoice 3", "invoice 4", "invoice 5").forEach { batch.record shouldContain it }
+
+            matcher.flushHeld() // nothing is sent twice
+            inbox.enqueued.size shouldBe 1
+        }
+    }
+
+    test("a long burst lists the first matches and counts the rest") {
+        runTest {
+            val inbox = RecordingInbox()
+            val config = AgentConfig(reviewInterval = 2.hours, triggerFiresPerHour = 1)
+            val matcher = TriggerMatcher(InMemoryIngestEventBus(), OneTrigger(TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")), inbox, config = config)
+            (1..40).forEach { matcher.handle(Ingested(ConnectorId("mail"), EntityId("n$it"), mail("invoice $it"), created = true)) }
+            inbox.enqueued.clear()
+            matcher.flushHeld()
+            val batch = inbox.items.last().shouldBeInstanceOf<InboxItem.TriggerFired>()
+            batch.recordSource shouldContain "39 message records"
+            batch.record shouldContain "14 more matched"
         }
     }
 })
