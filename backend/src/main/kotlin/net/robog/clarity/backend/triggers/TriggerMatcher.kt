@@ -79,7 +79,7 @@ class TriggerMatcher(
                 val record = localizeTimes(json, settings.homeZone()).toString()
                 if (atLimit(trigger)) {
                     log.info { "trigger '${trigger.spec.name}' matched ${event.entityId} over its hourly limit; held for one later wake" }
-                    held.getOrPut(trigger.id) { HeldMatches(trigger) }.add(record)
+                    held.compute(trigger.id) { _, m -> (m ?: HeldMatches(trigger)).also { it.add(record) } }
                     return@forEach
                 }
                 log.info { "trigger '${trigger.spec.name}' matched ${event.entityId}" }
@@ -99,23 +99,47 @@ class TriggerMatcher(
     private suspend fun atLimit(trigger: StoredTrigger): Boolean =
         inbox.countKeyed(triggerKeyPrefix(trigger.id), clock.now() - 1.hours) >= config.triggerFiresPerHour
 
-    /** Wakes the lead once per trigger for what it held, as soon as that trigger's hour has room. */
+    /**
+     * Wakes the lead once per trigger for what it held, as soon as that trigger's hour has room. A
+     * trigger that is gone or off drops its held matches; a failing trigger keeps its batch for the
+     * next tick and does not stop the others.
+     */
     internal suspend fun flushHeld() {
-        for (matches in held.values.toList()) {
-            val trigger = matches.trigger
-            if (atLimit(trigger)) continue
-            val batch = matches.take() ?: continue
-            inbox.enqueue(
-                InboxItem.TriggerFired(
-                    triggerId = trigger.id,
-                    triggerName = trigger.spec.name,
-                    instruction = trigger.spec.instruction,
-                    record = batch.records.joinToString(",", "[", "]") +
-                        if (batch.omitted > 0) " (${batch.omitted} more matched, not shown)" else "",
-                    recordSource = "${batch.count} ${trigger.spec.noun.name.lowercase()} records that matched while the hourly limit was reached",
-                ),
-                dedupKey = triggerKeyPrefix(trigger.id) + "held:" + clock.now().toEpochMilliseconds(),
-            )
+        for ((id, matches) in held.entries.toList()) {
+            try {
+                val trigger = triggers.enabledFor(matches.trigger.spec.noun).firstOrNull { it.id == id }
+                if (trigger == null) {
+                    held.remove(id)
+                    continue
+                }
+                if (atLimit(trigger)) continue
+                val batch = matches.take()
+                if (batch == null) {
+                    // empty: drop the entry, unless a match slipped in meanwhile
+                    held.computeIfPresent(id) { _, m -> if (m.isEmpty()) null else m }
+                    continue
+                }
+                try {
+                    inbox.enqueue(
+                        InboxItem.TriggerFired(
+                            triggerId = trigger.id,
+                            triggerName = trigger.spec.name,
+                            instruction = trigger.spec.instruction,
+                            record = batch.records.joinToString(",", "[", "]") +
+                                if (batch.omitted > 0) " (${batch.omitted} more matched, not shown)" else "",
+                            recordSource = "${batch.count} ${trigger.spec.noun.name.lowercase()} records that matched while the hourly limit was reached",
+                        ),
+                        dedupKey = triggerKeyPrefix(trigger.id) + "held:" + clock.now().toEpochMilliseconds(),
+                    )
+                } catch (e: Throwable) {
+                    matches.putBack(batch)
+                    throw e
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log.error(e) { "flushing held matches of trigger $id failed; will retry" }
+            }
         }
     }
 
@@ -143,8 +167,17 @@ internal class HeldMatches(val trigger: StoredTrigger) {
     private val records = ArrayList<String>()
     private var omitted = 0
 
+    fun isEmpty(): Boolean = synchronized(lock) { records.isEmpty() }
+
     fun add(record: String) = synchronized(lock) {
         if (records.size < MAX_HELD) records += record else omitted++
+    }
+
+    /** Returns a [batch] whose wake failed, ahead of anything held since. */
+    fun putBack(batch: Batch) = synchronized(lock) {
+        records.addAll(0, batch.records)
+        omitted += batch.omitted
+        while (records.size > MAX_HELD) { records.removeAt(records.lastIndex); omitted++ }
     }
 
     /** Empties the buffer into one batch, or null when it holds nothing. */

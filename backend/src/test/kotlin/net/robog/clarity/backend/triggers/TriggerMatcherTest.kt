@@ -140,4 +140,56 @@ class TriggerMatcherTest : FunSpec({
             batch.record shouldContain "14 more matched"
         }
     }
+
+    class Flaky(private val spec: TriggerSpec, var present: Boolean = true) : TriggerStore {
+        override suspend fun list() = emptyList<StoredTrigger>()
+        override suspend fun enabledFor(noun: Noun) = if (present) listOf(StoredTrigger("t1", spec), StoredTrigger("t2", spec)) else emptyList()
+        override suspend fun create(spec: TriggerSpec) = error("not used")
+        override suspend fun delete(id: String) = false
+    }
+
+    test("a failed wake keeps the held batch, and one failing trigger does not stop the others") {
+        runTest {
+            val spec = TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")
+            var failFor: String? = null
+            var recent = 99 // the hour is full until the test says otherwise
+            val inbox = object : InboxStore by RecordingInbox() {
+                val ok = CopyOnWriteArrayList<String?>()
+                override suspend fun enqueue(item: InboxItem, dedupKey: String?): Boolean {
+                    if (dedupKey!!.startsWith("trigger:$failFor:")) error("boom")
+                    ok += dedupKey
+                    return true
+                }
+                override suspend fun countKeyed(keyPrefix: String, since: Instant): Int = recent
+            }
+            val config = AgentConfig(reviewInterval = 2.hours, triggerFiresPerHour = 1)
+            val matcher2 = TriggerMatcher(InMemoryIngestEventBus(), Flaky(spec), inbox, config = config)
+            (1..3).forEach { matcher2.handle(Ingested(ConnectorId("mail"), EntityId("n$it"), mail("invoice $it"), created = true)) }
+            recent = 0
+            failFor = "t1"
+            matcher2.flushHeld()
+            inbox.ok.filter { it!!.contains(":held:") }.map { it!!.substringAfter("trigger:").substringBefore(':') } shouldContainExactly listOf("t2")
+            failFor = null
+            matcher2.flushHeld() // t1 kept its batch
+            inbox.ok.count { it!!.startsWith("trigger:t1:held:") } shouldBe 1
+        }
+    }
+
+    test("held matches of a trigger that is gone are dropped") {
+        runTest {
+            val spec = TriggerSpec("invoices", Noun.MESSAGE, RecordQuery.Contains("body", "invoice"), "tell me")
+            val store = Flaky(spec)
+            val inbox = RecordingInbox()
+            val config = AgentConfig(reviewInterval = 2.hours, triggerFiresPerHour = 1)
+            val matcher = TriggerMatcher(InMemoryIngestEventBus(), store, inbox, config = config)
+            (1..3).forEach { matcher.handle(Ingested(ConnectorId("mail"), EntityId("n$it"), mail("invoice $it"), created = true)) }
+            inbox.enqueued.clear()
+            store.present = false
+            matcher.flushHeld()
+            inbox.enqueued.size shouldBe 0
+            store.present = true
+            matcher.flushHeld() // nothing left to send
+            inbox.enqueued.size shouldBe 0
+        }
+    }
 })

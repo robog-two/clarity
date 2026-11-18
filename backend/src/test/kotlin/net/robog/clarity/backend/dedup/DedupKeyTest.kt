@@ -102,11 +102,19 @@ class DedupKeyTest : FunSpec({
         keys.toSet().size shouldBe 3
     }
 
-    test("the same words sent at another time are another message") {
-        message(sentAt = t0).dedupKey() shouldNotBe message(sentAt = t1).dedupKey()
+    test("the same words texted at another time are another message") {
+        val sms = MessagePayload.Channel.SMS
+        message(channel = sms, sentAt = t0).dedupKey() shouldNotBe message(channel = sms, sentAt = t1).dedupKey()
     }
 
-    test("send time counts in whole seconds, so milliseconds and seconds sources agree") {
-        message(sentAt = t0).dedupKey() shouldBe message(sentAt = t0 + kotlin.time.Duration.parse("0.4s")).dedupKey()
+    test("send time counts in milliseconds for texts") {
+        val sms = MessagePayload.Channel.SMS
+        val later = t0 + kotlin.time.Duration.parse("0.4s")
+        message(channel = sms, sentAt = t0).dedupKey() shouldNotBe message(channel = sms, sentAt = later).dedupKey()
+        message(channel = sms, sentAt = later).dedupKey() shouldBe message(channel = sms, sentAt = later).dedupKey()
+    }
+
+    test("email ignores send time") {
+        message(sentAt = t0).dedupKey() shouldBe message(sentAt = t1).dedupKey()
     }
 })

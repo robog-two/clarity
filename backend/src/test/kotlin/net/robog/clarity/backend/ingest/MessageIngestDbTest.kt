@@ -40,6 +40,7 @@ import net.robog.clarity.shared.noun.Noun
 import net.robog.clarity.shared.query.RecordQuery
 import net.robog.clarity.shared.query.TriggerSpec
 import org.jetbrains.exposed.v1.jdbc.Database
+import org.jetbrains.exposed.v1.core.eq
 import org.jetbrains.exposed.v1.jdbc.selectAll
 import org.jetbrains.exposed.v1.jdbc.transactions.transaction
 import org.jetbrains.exposed.v1.jdbc.update
@@ -119,28 +120,35 @@ class MessageIngestDbTest : FunSpec({
         snapshot.messageCount shouldBe 2
     }
 
-    test("one text seen under a legacy and a v2 source id merges, also when one source counts milliseconds") {
+    test("one text seen under a legacy and a v2 source id merges; two identical texts a moment apart stay two") {
         val created = push("sms:17", text("ok", day1)).shouldBeInstanceOf<RecordOutcome.Created>()
-        val merged = push("sms:v2:${day1.toEpochMilliseconds()}:abc", text("ok", day1 + 400.milliseconds)).shouldBeInstanceOf<RecordOutcome.Merged>()
+        val merged = push("sms:v2:${day1.toEpochMilliseconds()}:abc", text("ok", day1)).shouldBeInstanceOf<RecordOutcome.Merged>()
         merged.entityId shouldBe created.entityId
         rows() shouldBe 1
         published.map { it.created } shouldBe listOf(true, false)
+        push("sms:v2:${day1.toEpochMilliseconds() + 400}:xyz", text("ok", day1 + 400.milliseconds)).shouldBeInstanceOf<RecordOutcome.Created>()
+        rows() shouldBe 2
     }
 
     test("rows stored with the old key get the new key, so an upgrade neither duplicates nor fires again") {
-        val payload = text("running late", day1)
+        val payload = text("running late", day1 + 123.milliseconds)
         val created = push("sms:5", payload).shouldBeInstanceOf<RecordOutcome.Created>()
-        // put the row back in its pre-upgrade state, then run the migration
+        val mail = payload.copy(channel = MessagePayload.Channel.EMAIL, body = "a mail", sentAt = day1 + 456.milliseconds)
+        push("mail:1", mail).shouldBeInstanceOf<RecordOutcome.Created>()
+        // put the rows back in their pre-upgrade state, then run the migration
         transaction(database) {
-            Messages.update { it[dedupKey] = messageContentKey(payload.normalized()).bytes() }
+            Messages.update({ Messages.channel eq "sms" }) { it[dedupKey] = messageContentKey(payload.normalized()).bytes() }
             exec(MessageIngestDbTest::class.java.getResource("/db/migration/V54__message_key_send_time.sql")!!.readText())
         }
-        val key = transaction(database) { Messages.selectAll().single()[Messages.dedupKey] }
-        key.toList() shouldBe payload.dedupKey().bytes().toList()
+        val keys = transaction(database) { Messages.selectAll().associate { it[Messages.channel] to it[Messages.dedupKey].toList() } }
+        keys["sms"] shouldBe payload.dedupKey().bytes().toList()
+        // email keeps its content-only key
+        keys["email"] shouldBe mail.dedupKey().bytes().toList()
+        keys["email"] shouldBe messageContentKey(mail.normalized()).bytes().toList()
 
         // the phone re-reads the same text under its other id: one row, no new arrival
         push("sms:v2:${day1.toEpochMilliseconds()}:def", payload).shouldBeInstanceOf<RecordOutcome.Merged>().entityId shouldBe created.entityId
-        rows() shouldBe 1
+        rows() shouldBe 2
         published.last().created shouldBe false
     }
 })

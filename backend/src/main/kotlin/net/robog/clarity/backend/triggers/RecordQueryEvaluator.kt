@@ -24,7 +24,7 @@ fun RecordQuery.matches(payload: JsonElement): Boolean = when (this) {
     is RecordQuery.All -> of.all { it.matches(payload) }
     is RecordQuery.AnyOf -> of.any { it.matches(payload) }
     is RecordQuery.Not -> !query.matches(payload)
-    is RecordQuery.Equals -> payload.valuesAt(field).any { it.equals(value, ignoreCase) || samePhone(it, value) }
+    is RecordQuery.Equals -> payload.valuesAt(field).any { it.equals(value, ignoreCase) || (isHandleField(field) && samePhone(it, value)) }
     is RecordQuery.Contains -> payload.valuesAt(field).any { it.contains(value, ignoreCase) }
     is RecordQuery.Matches -> {
         val compiled = runCatching { Regex(regex) }.getOrNull()
@@ -33,6 +33,11 @@ fun RecordQuery.matches(payload: JsonElement): Boolean = when (this) {
 }
 
 fun RecordQuery.matches(payload: Payload): Boolean = matches(payload.toJsonElement())
+
+private val handleFields = setOf("sender", "recipients", "account", "handles", "attendees")
+
+/** Pure: whether [field] reads a handle (a person's address or number), the only place phone spellings matter. */
+internal fun isHandleField(field: String): Boolean = field.substringBefore('.') in handleFields
 
 /** Pure: whether two values are one phone number spelled differently ("5551234567" and "+1 555 123 4567"). */
 internal fun samePhone(a: String, b: String): Boolean {
