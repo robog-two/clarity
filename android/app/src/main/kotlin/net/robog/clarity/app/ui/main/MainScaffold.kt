@@ -93,6 +93,8 @@ fun MainScaffold(
     // What the morning call needs and the phone does not allow yet (notifications, full screen, exact
     // alarms): explained, then the system prompt or settings page; "not now" holds until the next open.
     CallPermissionGate()
+    // Existing installs get the receive permissions quietly, once per version.
+    ReceiveSmsGate()
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.surface,

@@ -34,6 +34,8 @@ fun smsRowText(granted: Boolean, status: SmsSyncStatus, now: Instant): SmsRowTex
         SmsSyncProblem.UNREACHABLE -> SmsRowText("server unreachable. $synced", relativeTime(status.lastSyncAt, now))
         SmsSyncProblem.NOT_ACCEPTED -> SmsRowText("server rejected this phone", "failed")
         SmsSyncProblem.READ_FAILED -> SmsRowText("can’t read texts on this phone", "failed")
+        // The permission check above comes first; this only covers a status stored just before it.
+        SmsSyncProblem.PERMISSION_LOST -> SmsRowText("allow reading texts", "allow", needsAllow = true)
         SmsSyncProblem.SERVER_ERROR -> SmsRowText("server error. $synced", "failed")
         null -> if (status.lastSyncAt == null) SmsRowText("waiting for the first sync", "never")
         else SmsRowText("$synced with your server", relativeTime(status.lastSyncAt, now), ok = true)

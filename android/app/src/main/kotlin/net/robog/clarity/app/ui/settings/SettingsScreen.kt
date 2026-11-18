@@ -218,7 +218,7 @@ fun SettingsTab(
             onAllowFullScreen = {
                 if (Build.VERSION.SDK_INT >= 34) context.openSystem(AndroidSettings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, withPackage = true)
             },
-            onAllowSms = { sms.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CONTACTS)) },
+            onAllowSms = { sms.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.READ_CONTACTS, Manifest.permission.RECEIVE_SMS, Manifest.permission.RECEIVE_MMS)) },
             onAllowSmsOnServer = viewModel::onSmsGranted,
             onAllowDnd = { context.openSystem(AndroidSettings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS) },
             onRedoOnboarding = viewModel::redoOnboarding,

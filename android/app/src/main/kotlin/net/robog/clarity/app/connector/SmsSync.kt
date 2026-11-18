@@ -8,6 +8,8 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import java.security.MessageDigest
+import kotlin.time.Duration.Companion.days
+import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +39,26 @@ data class SmsRow(
 
 const val SMS_INBOX = 1
 const val SMS_SENT = 2
+
+/** Outgoing rows keep their `_id` while they go outbox, queued or failed, then sent: not final yet. */
+const val SMS_OUTBOX = 4
+const val SMS_FAILED = 5
+const val SMS_QUEUED = 6
+
+/** The row types the sync reads: the two it uploads and the three that may still turn into sent. */
+val SMS_READ_TYPES = listOf(SMS_INBOX, SMS_SENT, SMS_OUTBOX, SMS_FAILED, SMS_QUEUED)
+
+fun smsIsPending(type: Int): Boolean = type == SMS_OUTBOX || type == SMS_FAILED || type == SMS_QUEUED
+
+/** A pending row older than this is given up on: it no longer holds the cursor back. */
+val PENDING_ABANDONED_AFTER = 24.hours
+
+/** The sync reads this far back again every [OVERLAP_EVERY], to catch late flips and low-id inserts. */
+val OVERLAP_WINDOW = 3.days
+val OVERLAP_EVERY = 3.hours
+
+/** Standing in for a number the phone has no address for. */
+val UNKNOWN_SENDER = Handle(Handle.Kind.OTHER, "unknown", "Unknown sender")
 
 /** The person's own side of every message: this phone. */
 fun phoneAccount(deviceId: String): Handle = Handle(Handle.Kind.OTHER, phoneConnectorId(deviceId), "This phone")
@@ -104,8 +126,9 @@ fun checkCursor(lastId: Long, anchor: SmsAnchor?, atCursor: SmsRow?, maxId: Long
 
 
 /**
- * The other party: a phone number, or for alphanumeric senders ("AMAZON", "Google") a handle of
- * kind `OTHER`, since a number normalized from no digits would be the same "+" for all of them.
+ * The other party: a phone number as the phone has it, or for alphanumeric senders
+ * ("AMAZON", "Google") a handle of kind `OTHER`, since a number normalized from no digits would be
+ * the same "+" for all of them. Null for a blank address.
  */
 fun smsParty(address: String): Handle? {
     val trimmed = address.trim().ifEmpty { return null }
@@ -113,8 +136,13 @@ fun smsParty(address: String): Handle? {
 }
 
 /** Maps one SMS to an ingest record; null for rows that are neither received nor sent (drafts, outbox). */
-fun smsToRecord(row: SmsRow, account: Handle, observedAt: Instant): IngestRecord.Upsert? {
-    val other = smsParty(row.address) ?: return null
+fun smsToRecord(
+    row: SmsRow,
+    account: Handle,
+    observedAt: Instant,
+): IngestRecord.Upsert? {
+    // A blank address is still a text: it goes up from an unknown sender, never dropped.
+    val other = smsParty(row.address) ?: UNKNOWN_SENDER
     val (sender, recipients) = when (row.type) {
         SMS_INBOX -> other to listOf(account)
         SMS_SENT -> account to listOf(other)
@@ -136,16 +164,57 @@ fun smsToRecord(row: SmsRow, account: Handle, observedAt: Instant): IngestRecord
     )
 }
 
+/** A row ready to send, and what the cursor needs to stand on it. SMS and MMS share this. */
+data class Outgoing(val id: Long, val dateMillis: Long, val record: IngestRecord.Upsert, val anchor: SmsAnchor? = null)
+
+/** A row that is not final yet (still sending); it holds the cursor back while it is young. */
+data class PendingRow(val id: Long, val dateMillis: Long)
+
+/** One read from the phone: what can be sent, the cursor ceiling its pending rows set, and how far it read. */
+data class Page(val items: List<Outgoing>, val ceiling: Long?, val lastId: Long, val rowCount: Int)
+
+private fun isYoung(dateMillis: Long, now: Instant): Boolean =
+    now.toEpochMilliseconds() - dateMillis < PENDING_ABANDONED_AFTER.inWholeMilliseconds
+
+/** The lowest id the cursor must stay below: the first pending row that is still young. Null when none holds it. */
+fun cursorCeiling(pending: List<PendingRow>, now: Instant): Long? =
+    pending.filter { isYoung(it.dateMillis, now) }.minOfOrNull { it.id }
+
+/** Turns what the SMS store returned into a [Page] (rows in id order). */
+fun smsPage(rows: List<SmsRow>, account: Handle, now: Instant): Page {
+    val sorted = rows.sortedBy { it.id }
+    return Page(
+        items = sorted
+            .mapNotNull { row -> smsToRecord(row, account, now)?.let { Outgoing(row.id, row.dateMillis, it, anchorOf(row)) } }
+            .distinctBy { it.record.sourceId },
+        ceiling = cursorCeiling(sorted.filter { smsIsPending(it.type) }.map { PendingRow(it.id, it.dateMillis) }, now),
+        lastId = sorted.lastOrNull()?.id ?: 0,
+        rowCount = sorted.size,
+    )
+}
+
+/** Splits [items] (id order) into batches the backend accepts. */
+fun outgoingChunks(items: List<Outgoing>, size: Int = IngestBatch.MAX_RECORDS): List<List<Outgoing>> =
+    items.sortedBy { it.id }.chunked(size)
+
+/** Where the cursor may go after a batch, and the ceiling it must keep below from now on. */
+data class CursorStep(val target: Outgoing?, val ceiling: Long?)
+
 /**
- * Splits [rows] into batches the backend accepts, each with its newest row (where the cursor goes
- * next). The same text held twice (a restore on top of what was there) goes once.
+ * The cursor stands on the newest row of [chunk] that the server took and that lies below every
+ * row still unsettled: a young pending row ([ceiling]) or a young row the server refused. A row
+ * refused for more than a day is given up on and no longer blocks.
  */
-fun smsBatches(rows: List<SmsRow>, account: Handle, observedAt: Instant, size: Int = IngestBatch.MAX_RECORDS): List<Pair<IngestBatch, SmsRow>> =
-    rows.sortedBy { it.id }
-        .chunked(size)
-        .map { chunk ->
-            IngestBatch(chunk.mapNotNull { smsToRecord(it, account, observedAt) }.distinctBy { it.sourceId }) to chunk.maxBy { it.id }
-        }
+fun cursorStep(chunk: List<Outgoing>, ceiling: Long?, rejected: Set<SourceId>, now: Instant): CursorStep {
+    val blocker = chunk.firstOrNull { it.record.sourceId in rejected && isYoung(it.dateMillis, now) }?.id
+    val limit = listOfNotNull(ceiling, blocker).minOrNull()
+    val target = chunk.lastOrNull { (limit == null || it.id < limit) && it.record.sourceId !in rejected }
+    return CursorStep(target, limit)
+}
+
+/** The source ids the server refused. */
+fun rejectedIds(results: List<RecordResult>): Set<SourceId> =
+    results.filter { it.outcome is RecordOutcome.Rejected }.map { it.sourceId }.toSet()
 
 /**
  * The cursor may move past a batch unless the server refused every record (typically because the
@@ -158,8 +227,11 @@ fun cursorMayAdvance(results: List<RecordResult>): Boolean =
 fun acceptedCount(results: List<RecordResult>): Int = results.count { it.outcome !is RecordOutcome.Rejected }
 
 interface SmsSource {
-    /** Received and sent rows with `_id > afterId`, oldest first, at most [limit]. */
+    /** Rows of the types in [SMS_READ_TYPES] with `_id > afterId`, oldest first, at most [limit]. */
     suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow>
+
+    /** Rows from [sinceMillis] on, whatever their id (the newest [limit] of them). */
+    suspend fun readSince(sinceMillis: Long, limit: Int): List<SmsRow>
 
     /** The received or sent row with this `_id`, if there is one. */
     suspend fun rowAt(id: Long): SmsRow?
@@ -176,10 +248,15 @@ interface SmsSource {
 class AndroidSmsSource(private val context: Context) : SmsSource {
     // Provider reads block on I/O: keep them off the caller's thread (the app-open sync runs from the UI).
     override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> =
-        withContext(Dispatchers.IO) { query("${Telephony.Sms._ID} > ?", afterId, limit) }
+        withContext(Dispatchers.IO) { query("${Telephony.Sms._ID} > ?", afterId, SMS_READ_TYPES, "${Telephony.Sms._ID} ASC", limit) }
 
-    override suspend fun rowAt(id: Long): SmsRow? =
-        withContext(Dispatchers.IO) { query("${Telephony.Sms._ID} = ?", id, 1).firstOrNull() }
+    override suspend fun readSince(sinceMillis: Long, limit: Int): List<SmsRow> = withContext(Dispatchers.IO) {
+        query("${Telephony.Sms.DATE} >= ?", sinceMillis, SMS_READ_TYPES, "${Telephony.Sms.DATE} DESC", limit)
+    }
+
+    override suspend fun rowAt(id: Long): SmsRow? = withContext(Dispatchers.IO) {
+        query("${Telephony.Sms._ID} = ?", id, listOf(SMS_INBOX, SMS_SENT), "${Telephony.Sms._ID} ASC", 1).firstOrNull()
+    }
 
     override suspend fun maxId(): Long? = withContext(Dispatchers.IO) {
         // The first row of a descending sort, again without a LIMIT in the sort order.
@@ -188,7 +265,7 @@ class AndroidSmsSource(private val context: Context) : SmsSource {
         )?.use { if (it.moveToFirst()) it.getLong(0) else null }
     }
 
-    private fun query(idClause: String, id: Long, limit: Int): List<SmsRow> {
+    private fun query(clause: String, arg: Long, types: List<Int>, order: String, limit: Int): List<SmsRow> {
         val rows = mutableListOf<SmsRow>()
         val projection = arrayOf(
             Telephony.Sms._ID, Telephony.Sms.ADDRESS, Telephony.Sms.BODY,
@@ -197,9 +274,9 @@ class AndroidSmsSource(private val context: Context) : SmsSource {
         val cursor = context.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             projection,
-            "$idClause AND ${Telephony.Sms.TYPE} IN (?, ?)",
-            arrayOf(id.toString(), SMS_INBOX.toString(), SMS_SENT.toString()),
-            "${Telephony.Sms._ID} ASC",
+            "$clause AND ${Telephony.Sms.TYPE} IN (${types.joinToString(",") { "?" }})",
+            arrayOf(arg.toString()) + types.map { it.toString() },
+            order,
         ) ?: return emptyList()
         cursor.use {
             while (rows.size < limit && it.moveToNext()) {
@@ -227,6 +304,8 @@ enum class SmsSyncProblem {
     NOT_ALLOWED,
     /** Reading the phone's messages failed. */
     READ_FAILED,
+    /** The person took the permission to read texts back; nothing can sync until it is allowed again. */
+    PERMISSION_LOST,
     /** Any other error answer. */
     SERVER_ERROR,
 }
@@ -269,6 +348,20 @@ interface SmsCursorStore {
     suspend fun advance(to: Long, sent: Int, anchor: SmsAnchor? = null)
     /** The end of a sync attempt: [problem] null means it got through. */
     suspend fun finish(at: Instant, problem: SmsSyncProblem?)
+
+    /** MMS has its own `_id` space and so its own cursor. */
+    suspend fun mmsLastId(): Long
+    suspend fun advanceMms(to: Long, sent: Int)
+    suspend fun restartMms()
+
+    /** When the recent window was last read again (epoch millis, 0 for never). */
+    suspend fun overlapAt(): Long
+    suspend fun markOverlap(at: Long)
+
+    /** Source ids sent lately (newest last): the overlap window does not send these again. */
+    suspend fun recentIds(): Set<String>
+    suspend fun remember(ids: Collection<String>)
+
     val status: Flow<SmsSyncStatus>
 }
 
@@ -315,6 +408,36 @@ class DataStoreSmsCursorStore(private val store: DataStore<Preferences>) : SmsCu
         store.edit { p -> ALL.forEach { p.remove(it) } }
     }
 
+    override suspend fun mmsLastId(): Long = store.data.first()[MMS_LAST_ID] ?: 0L
+
+    override suspend fun advanceMms(to: Long, sent: Int) {
+        store.edit {
+            it[MMS_LAST_ID] = to
+            it[SENT] = (it[SENT] ?: 0L) + sent
+        }
+    }
+
+    override suspend fun restartMms() {
+        store.edit { it.remove(MMS_LAST_ID) }
+    }
+
+    override suspend fun overlapAt(): Long = store.data.first()[OVERLAP_AT] ?: 0L
+
+    override suspend fun markOverlap(at: Long) {
+        store.edit { it[OVERLAP_AT] = at }
+    }
+
+    override suspend fun recentIds(): Set<String> =
+        store.data.first()[RECENT]?.split('\n')?.filter { it.isNotEmpty() }?.toSet().orEmpty()
+
+    override suspend fun remember(ids: Collection<String>) {
+        if (ids.isEmpty()) return
+        store.edit {
+            val kept = (it[RECENT]?.split('\n').orEmpty() + ids).filter { id -> id.isNotEmpty() }.distinct().takeLast(RECENT_LIMIT)
+            it[RECENT] = kept.joinToString("\n")
+        }
+    }
+
     override suspend fun finish(at: Instant, problem: SmsSyncProblem?) {
         store.edit {
             it[LAST_ATTEMPT] = at.toEpochMilliseconds()
@@ -344,6 +467,10 @@ class DataStoreSmsCursorStore(private val store: DataStore<Preferences>) : SmsCu
         val PROBLEM = stringPreferencesKey("sms_problem")
         val ANCHOR_DATE = longPreferencesKey("sms_anchor_date")
         val ANCHOR_PRINT = stringPreferencesKey("sms_anchor_print")
-        val ALL = listOf(LAST_ID, LAST_SYNC, LAST_ATTEMPT, SENT, PROBLEM, ANCHOR_DATE, ANCHOR_PRINT)
+        val MMS_LAST_ID = longPreferencesKey("mms_last_id")
+        val OVERLAP_AT = longPreferencesKey("sms_overlap_at")
+        val RECENT = stringPreferencesKey("sms_recent_ids")
+        const val RECENT_LIMIT = 2000
+        val ALL = listOf(LAST_ID, LAST_SYNC, LAST_ATTEMPT, SENT, PROBLEM, ANCHOR_DATE, ANCHOR_PRINT, MMS_LAST_ID, OVERLAP_AT, RECENT)
     }
 }
