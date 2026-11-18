@@ -86,6 +86,8 @@ data class CardEnv(
     val onOpenSource: ((String) -> Unit)? = null,
     /** A tap on a button of a choices card (the item holding it, the option); null where there is nobody to answer (the call), so the buttons stay off. */
     val onChoose: ((FeedItemId, Choice) -> Unit)? = null,
+    /** Items whose choices buttons are hidden because the person has written since ([supersededChoices]). */
+    val supersededChoices: Set<FeedItemId> = emptySet(),
 )
 
 /** The block drawn after a reply that is still being written. Screen readers never hear it. */

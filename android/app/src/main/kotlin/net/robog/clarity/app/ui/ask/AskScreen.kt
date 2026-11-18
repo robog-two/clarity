@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -27,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.zacsweers.metrox.viewmodel.metroViewModel
 import net.robog.clarity.app.data.feed.SyncState
+import net.robog.clarity.app.data.feed.supersededChoices
 import net.robog.clarity.app.ui.cards.CardEnv
 import net.robog.clarity.app.ui.components.ChatComposer
 import net.robog.clarity.app.ui.components.ChatLayout
@@ -101,7 +103,8 @@ fun AskContent(
     focus: FeedItemId? = null,
     onFocused: () -> Unit = {},
 ) {
-    val env = CardEnv(onChoose = onChoose, held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
+    val superseded = remember(state.items, state.sending) { supersededChoices(state.items, state.sending > 0) }
+    val env = CardEnv(onChoose = onChoose, supersededChoices = superseded, held = state.held, tasks = state.tasks, onDecision = onDecision, onReview = onReview, onAlways = onAlways, resetKey = state.message, onOpenReport = onOpenReport, onOpenSource = onOpenSource)
     val listening = state.mic == MicChipState.Listening || state.mic == MicChipState.MicOn
     ChatLayout(
         modifier = modifier,
