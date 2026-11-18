@@ -17,6 +17,7 @@ import kotlinx.datetime.LocalTime
 import net.robog.clarity.app.call.AlarmSlot
 import net.robog.clarity.app.call.CallScheduler
 import net.robog.clarity.app.connector.PhoneConnector
+import net.robog.clarity.app.connector.SmsSyncProblem
 import net.robog.clarity.app.data.ApiError
 import net.robog.clarity.app.data.ApiResult
 import net.robog.clarity.app.data.ConnectorsRepository
@@ -75,7 +76,7 @@ private class FakePhoneConnector : PhoneConnector {
     override suspend fun syncOnce(): Int { synced++; return 0 }
     override suspend fun enableMessages(): Int { enabled++; return 0 }
     override suspend fun actionPass(waitSeconds: Int) = 0
-    override suspend fun runPass() = Unit
+    override suspend fun runPass(): SmsSyncProblem? = null
     override suspend fun runActionLoop() = Unit
     override fun schedule() = Unit
     override val status: Flow<net.robog.clarity.app.connector.SmsSyncStatus> = last

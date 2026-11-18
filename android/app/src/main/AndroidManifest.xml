@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- The "messages" connector (read only); the phone connector itself is a later workstream. -->
     <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- Only to hear that a text or an MMS arrived, so it syncs at once; the texts are read with READ_SMS. -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- The heads-up and the call (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -111,6 +114,24 @@
             android:stopWithTask="false"
             android:foregroundServiceType="phoneCall" />
 
+        <!-- A text or an MMS notification came in: only a nudge to sync soon. Only the system may send these. -->
+        <receiver
+            android:name=".app.connector.SmsArrivedReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_SMS">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".app.connector.MmsArrivedReceiver"
+            android:exported="true"
+            android:permission="android.permission.BROADCAST_WAP_PUSH">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_RECEIVED" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
         <receiver android:name=".app.call.CallAlarmReceiver" android:exported="false" />
         <receiver android:name=".app.call.CallActionReceiver" android:exported="false" />
         <receiver android:name=".app.push.NotificationReplyReceiver" android:exported="false" />

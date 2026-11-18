@@ -6,6 +6,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
+import kotlin.time.Duration.Companion.days
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 import kotlinx.coroutines.flow.Flow
@@ -102,16 +103,35 @@ class SmsMappingTest {
         assertEquals("device-abc-1", phoneConnectorId("ABC-1"))
     }
 
-    @Test fun draftsOutboxAndBlankAddressesAreSkipped() {
+    @Test fun draftsAndPendingRowsAreNotUploadedYet() {
         assertNull(smsToRecord(sms(1, type = 3), account, T0))
-        assertNull(smsToRecord(sms(2, address = "  "), account, T0))
+        assertNull(smsToRecord(sms(2, type = SMS_OUTBOX), account, T0))
+    }
+
+    @Test fun aBlankAddressIsUploadedFromAnUnknownSender() {
+        val received = smsToRecord(sms(2, address = "  "), account, T0)!!.payload as MessagePayload
+        assertEquals(UNKNOWN_SENDER, received.sender)
+        val sent = smsToRecord(sms(3, type = SMS_SENT, address = ""), account, T0)!!.payload as MessagePayload
+        assertEquals(listOf(UNKNOWN_SENDER), sent.recipients)
     }
 
     @Test fun batchesRespectTheServerLimitAndReportTheirNewestId() {
         val rows = (1L..1203L).map { sms(it) }.shuffled()
-        val batches = smsBatches(rows, account, T0)
-        assertEquals(listOf(500, 500, 203), batches.map { it.first.records.size })
-        assertEquals(listOf(500L, 1000L, 1203L), batches.map { it.second.id })
+        val chunks = outgoingChunks(smsPage(rows, account, T0).items)
+        assertEquals(listOf(500, 500, 203), chunks.map { it.size })
+        assertEquals(listOf(500L, 1000L, 1203L), chunks.map { it.last().id })
+    }
+
+    @Test fun numbersGoUpInE164WhenThePhoneCanAndRawWhenItCannot() {
+        val format = PhoneNumberFormatter { raw -> if (raw == "5551234567") "+15551234567" else null }
+        assertEquals(Handle.phone("+15551234567"), smsParty("5551234567", format))
+        assertEquals(Handle.phone("+4455"), smsParty("+4455", format), "no answer: the raw number")
+        assertEquals(Handle(Handle.Kind.OTHER, "AMAZON", "AMAZON"), smsParty("AMAZON", format), "names are not numbers")
+        val payload = smsToRecord(sms(1, address = "5551234567"), account, T0, format)!!.payload as MessagePayload
+        assertEquals(Handle.phone("+15551234567"), payload.sender)
+        // The id is made from the raw address, so ids already on the server stay the same.
+        assertEquals(smsSourceId(sms(1, address = "5551234567")), smsToRecord(sms(1, address = "5551234567"), account, T0, format)!!.sourceId)
+        assertEquals("sms:v2:${sms(1).dateMillis}:${smsFingerprint(sms(1))}", smsSourceId(sms(1)).value)
     }
 
     @Test fun cursorStaysPutOnlyWhenEverythingWasRefused() {
@@ -130,6 +150,7 @@ private class FakeIngest : IngestApi {
     var pending = ArrayDeque<ConnectorAction>()
     var pushFailure: ApiError? = null
     var rejectAll = false
+    var rejectIds = emptySet<SourceId>()
     var pollFailure: ApiError? = null
     var manifestFailure: ApiError? = null
     /** The server grants messages when it gets the manifest (as the backend does for a device's own connector). */
@@ -154,7 +175,7 @@ private class FakeIngest : IngestApi {
         pushFailure?.let { return ApiResult.Failure(it) }
         batches += batch
         return ApiResult.Success(
-            IngestResponse(batch.records.map { RecordResult(it.sourceId, if (rejectAll || !granted) RecordOutcome.Rejected("not granted") else RecordOutcome.Removed) }),
+            IngestResponse(batch.records.map { RecordResult(it.sourceId, if (rejectAll || !granted || it.sourceId in rejectIds) RecordOutcome.Rejected("not granted") else RecordOutcome.Removed) }),
         )
     }
 
@@ -174,13 +195,38 @@ private class FakeSmsSource(var rows: List<SmsRow>) : SmsSource {
     override suspend fun readAfter(afterId: Long, limit: Int): List<SmsRow> {
         failure?.let { throw it }
         reads++
-        return rows.filter { it.id > afterId && it.type in setOf(SMS_INBOX, SMS_SENT) }.sortedBy { it.id }.take(limit)
+        return rows.filter { it.id > afterId && it.type in SMS_READ_TYPES }.sortedBy { it.id }.take(limit)
+    }
+    override suspend fun readSince(sinceMillis: Long, limit: Int): List<SmsRow> {
+        failure?.let { throw it }
+        return rows.filter { it.dateMillis >= sinceMillis && it.type in SMS_READ_TYPES }.sortedByDescending { it.dateMillis }.take(limit)
     }
     override suspend fun rowAt(id: Long) = rows.firstOrNull { it.id == id && it.type in setOf(SMS_INBOX, SMS_SENT) }
     override suspend fun maxId() = rows.maxOfOrNull { it.id }
 }
 
+private class FakeMms(var rows: List<MmsRow> = emptyList()) : MmsSource {
+    var failure: Exception? = null
+    override suspend fun readAfter(afterId: Long, limit: Int): List<MmsRow> {
+        failure?.let { throw it }
+        return rows.filter { it.id > afterId }.sortedBy { it.id }.take(limit)
+    }
+    override suspend fun readSince(sinceMillis: Long, limit: Int): List<MmsRow> =
+        rows.filter { it.dateMillis >= sinceMillis }.sortedByDescending { it.dateMillis }.take(limit)
+    override suspend fun maxId() = rows.maxOfOrNull { it.id }
+}
+
 private class MemoryCursor(var id: Long = 0, var anchor: SmsAnchor? = null) : SmsCursorStore {
+    var mmsId = 0L
+    var overlap = 0L
+    val recent = linkedSetOf<String>()
+    override suspend fun mmsLastId() = mmsId
+    override suspend fun advanceMms(to: Long, sent: Int) { mmsId = to; state.value = state.value.copy(sent = state.value.sent + sent) }
+    override suspend fun restartMms() { mmsId = 0 }
+    override suspend fun overlapAt() = overlap
+    override suspend fun markOverlap(at: Long) { overlap = at }
+    override suspend fun recentIds(): Set<String> = recent.toSet()
+    override suspend fun remember(ids: Collection<String>) { recent += ids }
     val state = MutableStateFlow(SmsSyncStatus())
     var restarts = 0
     override suspend fun lastId() = id
@@ -302,11 +348,14 @@ class DndTest {
 
 private class NoWork : ConnectorWork {
     var scheduled = 0
+    val soon = mutableListOf<Long>()
     override fun schedule() { scheduled++ }
+    override fun syncSoon(delaySeconds: Long) { soon += delaySeconds }
 }
 
-private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean = true, signedInUser: Boolean = true) {
+private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean = true, signedInUser: Boolean = true, mmsRows: List<MmsRow> = emptyList()) {
     val source = FakeSmsSource(rows)
+    val mms = FakeMms(mmsRows)
     val ingest = FakeIngest()
     val cursor = MemoryCursor()
     val clock = FixedClock(T0)
@@ -316,7 +365,7 @@ private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean
     val work = NoWork()
     val connector = DefaultPhoneConnector(
         ingest, source, cursor, FakeCapabilities(sms = smsGranted),
-        FakeSessionStore(if (signedInUser) signedIn() else null), dnd, clock, work,
+        FakeSessionStore(if (signedInUser) signedIn() else null), dnd, clock, work, mms,
     )
 }
 
@@ -342,6 +391,7 @@ class PhoneConnectorTest {
     @Test fun onlyMessagesAfterTheCursorAreSent() = runBlocking {
         val r = ConnectorRig((1L..5L).map { sms(it) })
         r.cursor.id = 3
+        r.cursor.overlap = T0.toEpochMilliseconds() // the recent window was read just now
         r.connector.syncOnce()
         val sent = r.ingest.batches.single().records.map { (it as IngestRecord.Upsert).sourceId }
         assertEquals(listOf(smsSourceId(sms(4)), smsSourceId(sms(5))), sent)
@@ -423,12 +473,15 @@ class PhoneConnectorTest {
 
     @Test fun aHugeInboxIsReadInPagesAndContinuesOnTheNextPass() = runBlocking {
         val r = ConnectorRig((1L..10_250L).map { sms(it) })
-        assertEquals(10_000, r.connector.syncOnce()) // 20 reads of 500 per pass
+        r.connector.syncOnce() // 20 reads of 500 per pass
         assertEquals(10_000L, r.cursor.id)
         assertEquals(20, r.source.reads)
-        assertEquals(250, r.connector.syncOnce())
+        r.connector.syncOnce()
         assertEquals(10_250L, r.cursor.id)
-        assertEquals(10_250L, r.cursor.state.value.sent)
+        // Whatever the recent window caught on the first pass is not sent twice.
+        val sent = r.ingest.batches.flatMap { b -> b.records.map { it.sourceId } }
+        assertEquals(10_250, sent.size)
+        assertEquals(10_250, sent.toSet().size)
     }
 
     @Test fun onlyAcceptedRecordsAreCounted() {
@@ -583,8 +636,8 @@ class SmsRenumberingTest {
 
         r.connector.syncOnce()
         val sent = r.ingest.batches.flatMap { b -> b.records.map { it.sourceId } }
-        assertEquals(602, sent.size, "everything is read again from the start")
-        assertEquals(600, sent.count { it in uploaded }, "restored texts keep their ids: replays on the server, not duplicates")
+        assertEquals(2, sent.size, "everything is read again from the start; what was sent is not sent twice")
+        assertEquals(0, sent.count { it in uploaded })
         assertTrue(fresh.all { smsSourceId(it) in sent })
         assertEquals(602L, r.cursor.id)
         assertEquals(1, r.cursor.restarts)
@@ -609,6 +662,7 @@ class SmsRenumberingTest {
     @Test fun anUpgradedCursorIsAdoptedWithoutResendingEverything() = runBlocking {
         val r = ConnectorRig((1L..6L).map { sms(it) })
         r.cursor.id = 4 // stored by the first version, without an anchor
+        r.cursor.overlap = T0.toEpochMilliseconds()
         r.connector.syncOnce()
         assertEquals(listOf(smsSourceId(sms(5)), smsSourceId(sms(6))), r.ingest.batches.single().records.map { it.sourceId })
         assertEquals(0, r.cursor.restarts)
@@ -617,7 +671,7 @@ class SmsRenumberingTest {
 
     @Test fun theSameTextTwiceInOneBatchIsSentOnce() {
         val twice = listOf(sms(1), sms(1).copy(id = 2))
-        assertEquals(1, smsBatches(twice, account, T0).single().first.records.size)
+        assertEquals(1, smsPage(twice, account, T0).items.size)
     }
 
     @Test fun aForgottenServerHearsTheManifestAgainFromTheNextOne() = runBlocking {
@@ -629,5 +683,245 @@ class SmsRenumberingTest {
         r.connector.forgetServer()
         r.connector.syncOnce()
         assertEquals(announced + 1, r.ingest.manifests.size)
+    }
+}
+
+private fun mms(
+    id: Long,
+    box: Int = MMS_BOX_INBOX,
+    mType: Int = if (box == MMS_BOX_SENT) MMS_SEND_REQ else MMS_RETRIEVE_CONF,
+    text: String = "hi $id",
+    media: List<String> = emptyList(),
+    addresses: List<MmsAddress> = listOf(MmsAddress(MMS_ADDR_FROM, "+15550101"), MmsAddress(MMS_ADDR_TO, "+15559999")),
+    seconds: Long = T0.epochSeconds + id,
+) = MmsRow(id, 9, seconds, box, mType, text, media, addresses)
+
+private val me = Handle.phone("+15559999")
+
+class MmsMappingTest {
+    @Test fun aReceivedMmsIsFromTheSenderToThePhoneWithDateInMillis() {
+        val row = mms(4)
+        val record = mmsToRecord(row, account, T0)!!
+        val payload = record.payload as MessagePayload
+        assertEquals(MessagePayload.Channel.SMS, payload.channel)
+        assertEquals(Handle.phone("+15550101"), payload.sender)
+        assertEquals(listOf(account), payload.recipients, "the one other address is this phone's own number")
+        assertEquals("hi 4", payload.body)
+        assertEquals("sms-thread:9", payload.threadRef)
+        assertEquals(Instant.fromEpochMilliseconds((T0.epochSeconds + 4) * 1000), payload.sentAt)
+        assertEquals((T0.epochSeconds + 4) * 1000, row.dateMillis)
+        assertEquals(SourceId("mms:v1:${row.dateMillis}:${mmsFingerprint(row)}"), record.sourceId)
+        assertEquals(16, mmsFingerprint(row).length)
+    }
+
+    @Test fun aSentMmsIsFromThePhoneToToAndCcAndTheTokenIsDropped() {
+        val row = mms(
+            5, box = MMS_BOX_SENT,
+            addresses = listOf(
+                MmsAddress(MMS_ADDR_FROM, MMS_ADDRESS_TOKEN),
+                MmsAddress(MMS_ADDR_TO, "+15550101"),
+                MmsAddress(MMS_ADDR_CC, "+15550202"),
+                MmsAddress(MMS_ADDR_BCC, "+15550303"),
+            ),
+        )
+        val payload = mmsToRecord(row, account, T0)!!.payload as MessagePayload
+        assertEquals(account, payload.sender)
+        assertEquals(listOf(Handle.phone("+15550101"), Handle.phone("+15550202")), payload.recipients)
+    }
+
+    @Test fun aGroupTextKeepsItsMembers() {
+        val row = mms(
+            6,
+            addresses = listOf(
+                MmsAddress(MMS_ADDR_FROM, "+15550101"), MmsAddress(MMS_ADDR_TO, "+15559999"),
+                MmsAddress(MMS_ADDR_TO, "+15550202"), MmsAddress(MMS_ADDR_CC, "+15550303"),
+            ),
+        )
+        val payload = mmsToRecord(row, account, T0)!!.payload as MessagePayload
+        assertEquals(Handle.phone("+15550101"), payload.sender)
+        assertEquals(listOf(account, me, Handle.phone("+15550202"), Handle.phone("+15550303")), payload.recipients)
+    }
+
+    @Test fun aPhotoWithoutWordsGetsAShortBody() {
+        assertEquals("[photo]", mmsBody(mms(7, text = "", media = listOf("image/jpeg"))))
+        assertEquals("[attachment]", mmsBody(mms(7, text = " ", media = listOf("audio/amr"))))
+        assertEquals("look", mmsBody(mms(7, text = "look", media = listOf("image/jpeg"))))
+        assertEquals("[photo]", (mmsToRecord(mms(7, text = "", media = listOf("image/png")), account, T0)!!.payload as MessagePayload).body)
+    }
+
+    @Test fun stubsAndReceiptsAreNotMessages() {
+        assertNull(mmsToRecord(mms(1, mType = MMS_NOTIFICATION_IND), account, T0))
+        assertNull(mmsToRecord(mms(1, mType = 134), account, T0))
+        assertNull(mmsToRecord(mms(1, box = MMS_BOX_OUTBOX, mType = MMS_SEND_REQ), account, T0))
+        assertTrue(mmsIsPending(mms(1, box = MMS_BOX_OUTBOX, mType = MMS_SEND_REQ)))
+        assertTrue(mmsIsPending(mms(1, mType = MMS_NOTIFICATION_IND)))
+    }
+
+    @Test fun noSenderAddressMeansAnUnknownSender() {
+        val row = mms(8, addresses = listOf(MmsAddress(MMS_ADDR_FROM, MMS_ADDRESS_TOKEN)))
+        assertEquals(UNKNOWN_SENDER, (mmsToRecord(row, account, T0)!!.payload as MessagePayload).sender)
+    }
+}
+
+class SmsRobustnessTest {
+    private fun ConnectorRig.sentIds() = ingest.batches.flatMap { b -> b.records.map { (it as IngestRecord.Upsert).sourceId } }
+
+    @Test fun theFingerprintOfAnExistingTextIsUnchanged() {
+        assertEquals("80158a2f3ad4454f", smsFingerprint(SmsRow(1, "+15550101", "hello", 1000, SMS_INBOX, 7)))
+    }
+
+    @Test fun aSentTextStillInTheOutboxIsUploadedWhenItFlipsEvenAfterALaterInboxRow() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1), sms(2, type = SMS_OUTBOX), sms(3)))
+        assertEquals(2, r.connector.syncOnce())
+        assertEquals(1L, r.cursor.id, "the cursor waits below the outbox row")
+        // It goes out: same _id, new type.
+        r.source.rows = listOf(sms(1), sms(2, type = SMS_SENT), sms(3))
+        r.ingest.batches.clear()
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(listOf(smsSourceId(sms(2, type = SMS_SENT))), r.sentIds())
+        assertEquals(3L, r.cursor.id)
+    }
+
+    @Test fun aPendingRowOlderThanADayIsGivenUpOn() = runBlocking {
+        val old = sms(2, type = SMS_FAILED).copy(dateMillis = T0.toEpochMilliseconds() - 2.days.inWholeMilliseconds)
+        val r = ConnectorRig(listOf(sms(1), old, sms(3)))
+        assertEquals(2, r.connector.syncOnce())
+        assertEquals(3L, r.cursor.id)
+    }
+
+    @Test fun aRejectedRecordHoldsTheCursorJustBeforeIt() = runBlocking {
+        val r = ConnectorRig((1L..4L).map { sms(it) })
+        r.ingest.rejectIds = setOf(smsSourceId(sms(3)))
+        assertEquals(3, r.connector.syncOnce())
+        assertEquals(2L, r.cursor.id)
+        r.ingest.rejectIds = emptySet()
+        r.ingest.batches.clear()
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(listOf(smsSourceId(sms(3))), r.sentIds(), "only the refused one goes again")
+        assertEquals(4L, r.cursor.id)
+    }
+
+    @Test fun aBlankAddressIsUploadedNotDropped() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1, address = "")))
+        assertEquals(1, r.connector.syncOnce())
+        val payload = (r.ingest.batches.single().records.single() as IngestRecord.Upsert).payload as MessagePayload
+        assertEquals(UNKNOWN_SENDER, payload.sender)
+    }
+
+    @Test fun theRecentWindowCatchesALowIdInsertAndDoesNotResendWhatWentOut() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1), sms(2), sms(5)))
+        r.connector.syncOnce()
+        // A backup tool inserts an older text under an id below the cursor.
+        r.source.rows = r.source.rows + sms(3)
+        r.ingest.batches.clear()
+        assertEquals(0, r.connector.syncOnce(), "the window is read every few hours, not every time")
+        r.clock.now = T0 + 4.hours
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(listOf(smsSourceId(sms(3))), r.sentIds())
+        assertEquals(5L, r.cursor.id)
+        r.ingest.batches.clear()
+        r.clock.now = T0 + 8.hours
+        assertEquals(0, r.connector.syncOnce())
+        assertTrue(r.ingest.batches.isEmpty())
+    }
+
+    @Test fun mmsHasItsOwnCursor() = runBlocking {
+        val r = ConnectorRig((1L..3L).map { sms(it) }, mmsRows = listOf(mms(1), mms(2, box = MMS_BOX_SENT)))
+        assertEquals(5, r.connector.syncOnce())
+        assertEquals(3L, r.cursor.id)
+        assertEquals(2L, r.cursor.mmsId)
+        val ids = r.sentIds().map { it.value }
+        assertEquals(2, ids.count { it.startsWith("mms:v1:") })
+        r.ingest.batches.clear()
+        r.mms.rows = r.mms.rows + mms(3)
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(3L, r.cursor.id)
+        assertEquals(3L, r.cursor.mmsId)
+    }
+
+    @Test fun anMmsStillSendingHoldsOnlyTheMmsCursor() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)), mmsRows = listOf(mms(1), mms(2, box = MMS_BOX_OUTBOX, mType = MMS_SEND_REQ), mms(3)))
+        assertEquals(3, r.connector.syncOnce())
+        assertEquals(1L, r.cursor.id)
+        assertEquals(1L, r.cursor.mmsId)
+        r.mms.rows = listOf(mms(1), mms(2, box = MMS_BOX_SENT), mms(3))
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(3L, r.cursor.mmsId)
+    }
+
+    @Test fun aReplacedMmsStoreIsReadFromTheStart() = runBlocking {
+        val r = ConnectorRig(mmsRows = listOf(mms(1), mms(2), mms(3)))
+        r.connector.syncOnce()
+        r.mms.rows = listOf(mms(1, text = "other"))
+        assertEquals(1, r.connector.syncOnce())
+        assertEquals(1L, r.cursor.mmsId)
+    }
+
+    @Test fun broadcastsOnlyQueueASyncLater() {
+        val r = ConnectorRig()
+        r.connector.messageArrived(ACTION_SMS_RECEIVED, null)
+        assertEquals(listOf(ARRIVAL_DELAY_SECONDS), r.work.soon)
+        r.work.soon.clear()
+        r.connector.messageArrived(ACTION_WAP_PUSH_RECEIVED, MMS_PUSH_MIME)
+        assertEquals(listOf(ARRIVAL_DELAY_SECONDS, MMS_DOWNLOAD_DELAY_SECONDS), r.work.soon)
+        r.work.soon.clear()
+        r.connector.messageArrived(ACTION_WAP_PUSH_RECEIVED, "application/vnd.wap.sia")
+        r.connector.messageArrived("android.intent.action.BOOT_COMPLETED", null)
+        r.connector.messageArrived(null, null)
+        assertTrue(r.work.soon.isEmpty())
+        assertEquals(0, r.source.reads, "nothing is read from the broadcast itself")
+    }
+
+    @Test fun onlyTransientFailuresAreRetried() = runBlocking {
+        assertTrue(shouldRetry(SmsSyncProblem.UNREACHABLE))
+        assertTrue(shouldRetry(SmsSyncProblem.SERVER_ERROR))
+        assertFalse(shouldRetry(null))
+        assertFalse(shouldRetry(SmsSyncProblem.NOT_ACCEPTED))
+        assertFalse(shouldRetry(SmsSyncProblem.NOT_ALLOWED))
+        assertFalse(shouldRetry(SmsSyncProblem.READ_FAILED))
+        assertFalse(shouldRetry(SmsSyncProblem.PERMISSION_LOST))
+        val r = ConnectorRig(listOf(sms(1)))
+        r.ingest.pushFailure = ApiError.Unreachable("down")
+        assertEquals(SmsSyncProblem.UNREACHABLE, r.connector.runPass())
+        r.ingest.pushFailure = null
+        assertNull(r.connector.runPass())
+    }
+
+    @Test fun aTakenBackPermissionShowsInTheStatus() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)), smsGranted = false)
+        assertEquals(0, r.connector.syncOnce())
+        assertEquals(SmsSyncProblem.PERMISSION_LOST, r.cursor.state.value.problem)
+        assertEquals(0, r.source.reads)
+        assertTrue(net.robog.clarity.app.ui.settings.smsRowText(false, r.cursor.state.value, T0).needsAllow)
+    }
+}
+
+class SyncMemoryStoreTest {
+    @Test fun keepsTheMmsCursorTheWindowAndTheRecentIdsAndForgetsThemOnClear() = runBlocking {
+        val dir = java.io.File(System.getProperty("java.io.tmpdir"), "sms-extra-${System.nanoTime()}").apply { mkdirs() }
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        try {
+            val store = DataStoreSmsCursorStore(
+                PreferenceDataStoreFactory.create(scope = scope) { java.io.File(dir, "c.preferences_pb") },
+            )
+            store.advance(5, 5)
+            store.advanceMms(2, 2)
+            assertEquals(5L, store.lastId())
+            assertEquals(2L, store.mmsLastId())
+            assertEquals(7L, store.status.first().sent)
+            store.markOverlap(123)
+            store.remember(listOf("a", "b"))
+            store.remember(listOf("b", "c"))
+            assertEquals(setOf("a", "b", "c"), store.recentIds())
+            assertEquals(123L, store.overlapAt())
+            store.restartMms()
+            assertEquals(0L, store.mmsLastId())
+            store.clear()
+            assertEquals(0L, store.overlapAt())
+            assertTrue(store.recentIds().isEmpty())
+        } finally {
+            scope.cancel()
+            dir.deleteRecursively()
+        }
     }
 }

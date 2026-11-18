@@ -112,7 +112,7 @@ fun VoiceModelsSection(viewModel: VoiceModelsViewModel = metroViewModel()) {
     val actions = viewModel.actions.copy(
         onUseContactNames = { on ->
             if (on && !RecentContactNames.permitted(context)) {
-                ask.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS))
+                ask.launch(arrayOf(Manifest.permission.READ_CONTACTS, Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS, Manifest.permission.RECEIVE_MMS))
             } else {
                 viewModel.actions.onUseContactNames(on)
             }
