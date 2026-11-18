@@ -134,15 +134,16 @@ fun ConnectorSetupScreen(
     val leaveChooser = if (state.direct) onBack else viewModel::closeChooser
     BackHandler(enabled = state.editor != null) { leaveItem() }
     BackHandler(enabled = state.choosing != null) { leaveChooser() }
-    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        viewModel.onPermissionResult(it)
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
+        // The first one asked is the one that counts; the rest only make the sync prompt.
+        viewModel.onPermissionResult(state.phone?.let { granted[it.permission] == true } ?: false)
     }
     ConnectorSetupContent(
         state = state,
         actions = SetupActions(
             onValueChanged = viewModel::onValueChanged,
             onListChanged = viewModel::onListChanged,
-            onAllow = { state.phone?.let { permission.launch(it.permission) } },
+            onAllow = { state.phone?.let { permission.launch((listOf(it.permission) + it.alsoAsk).toTypedArray()) } },
             onSave = viewModel::save,
             onBack = onBack,
             onRecheck = viewModel::recheck,
