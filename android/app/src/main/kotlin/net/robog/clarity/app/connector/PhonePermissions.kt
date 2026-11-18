@@ -31,3 +31,14 @@ class AndroidPhonePermissions(private val context: Context) : PhonePermissions {
     override fun isGranted(kind: PhoneConnectorKind): Boolean =
         ContextCompat.checkSelfPermission(context, kind.permission) == PackageManager.PERMISSION_GRANTED
 }
+
+/**
+ * The receive permissions to ask for quietly: when texts can already be read but receiving is not
+ * allowed, and this app version has not asked yet. Same permission group as reading, so Android
+ * grants them without a dialog. Empty when there is nothing to ask.
+ */
+fun receivePermissionsToAsk(granted: (String) -> Boolean, askedVersion: Long?, currentVersion: Long): List<String> {
+    if (!granted(Manifest.permission.READ_SMS)) return emptyList()
+    if (askedVersion == currentVersion) return emptyList()
+    return PhoneConnectorKind.Messages.alsoAsk.filterNot(granted)
+}

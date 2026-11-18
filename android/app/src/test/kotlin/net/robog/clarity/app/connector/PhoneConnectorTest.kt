@@ -122,15 +122,11 @@ class SmsMappingTest {
         assertEquals(listOf(500L, 1000L, 1203L), chunks.map { it.last().id })
     }
 
-    @Test fun numbersGoUpInE164WhenThePhoneCanAndRawWhenItCannot() {
-        val format = PhoneNumberFormatter { raw -> if (raw == "5551234567") "+15551234567" else null }
-        assertEquals(Handle.phone("+15551234567"), smsParty("5551234567", format))
-        assertEquals(Handle.phone("+4455"), smsParty("+4455", format), "no answer: the raw number")
-        assertEquals(Handle(Handle.Kind.OTHER, "AMAZON", "AMAZON"), smsParty("AMAZON", format), "names are not numbers")
-        val payload = smsToRecord(sms(1, address = "5551234567"), account, T0, format)!!.payload as MessagePayload
-        assertEquals(Handle.phone("+15551234567"), payload.sender)
-        // The id is made from the raw address, so ids already on the server stay the same.
-        assertEquals(smsSourceId(sms(1, address = "5551234567")), smsToRecord(sms(1, address = "5551234567"), account, T0, format)!!.sourceId)
+    @Test fun numbersGoUpAsTheNumberStoreHasThemAndTheIdIsMadeFromTheRawAddress() {
+        assertEquals(Handle.phone("5551234567"), smsParty("5551234567"))
+        assertEquals(Handle(Handle.Kind.OTHER, "AMAZON", "AMAZON"), smsParty("AMAZON"), "names are not numbers")
+        val payload = smsToRecord(sms(1, address = "5551234567"), account, T0)!!.payload as MessagePayload
+        assertEquals(smsParty("5551234567"), payload.sender)
         assertEquals("sms:v2:${sms(1).dateMillis}:${smsFingerprint(sms(1))}", smsSourceId(sms(1)).value)
     }
 
@@ -353,7 +349,7 @@ private class NoWork : ConnectorWork {
     override fun syncSoon(delaySeconds: Long) { soon += delaySeconds }
 }
 
-private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean = true, signedInUser: Boolean = true, mmsRows: List<MmsRow> = emptyList()) {
+private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean = true, signedInUser: Boolean = true, mmsRows: List<MmsRow> = emptyList(), readSize: Int = 500, maxReads: Int = 20) {
     val source = FakeSmsSource(rows)
     val mms = FakeMms(mmsRows)
     val ingest = FakeIngest()
@@ -366,6 +362,7 @@ private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean
     val connector = DefaultPhoneConnector(
         ingest, source, cursor, FakeCapabilities(sms = smsGranted),
         FakeSessionStore(if (signedInUser) signedIn() else null), dnd, clock, work, mms,
+        readSize = readSize, maxReads = maxReads,
     )
 }
 
@@ -887,8 +884,25 @@ class SmsRobustnessTest {
         assertNull(r.connector.runPass())
     }
 
+    @Test fun aPermissionNeverGivenIsNotReportedAsLostAndWritesNothing() = runBlocking {
+        val r = ConnectorRig(listOf(sms(1)), smsGranted = false)
+        assertEquals(0, r.connector.syncOnce())
+        assertNull(r.connector.runPass())
+        assertEquals(SmsSyncStatus(), r.cursor.state.value)
+    }
+
+    @Test fun aBacklogBehindAPendingRowIsUploadedAcrossPasses() = runBlocking {
+        // 2 reads of 5 per pass; row 1 is still sending, rows 2..40 follow.
+        val r = ConnectorRig(listOf(sms(1, type = SMS_OUTBOX)) + (2L..40L).map { sms(it) }, readSize = 5, maxReads = 2)
+        repeat(6) { r.connector.syncOnce() }
+        val sent = r.ingest.batches.flatMap { b -> b.records.map { (it as IngestRecord.Upsert).sourceId } }.toSet()
+        assertEquals((2L..40L).map { smsSourceId(sms(it)) }.toSet(), sent)
+        assertEquals(0L, r.cursor.id, "the saved cursor stays behind the pending row")
+    }
+
     @Test fun aTakenBackPermissionShowsInTheStatus() = runBlocking {
         val r = ConnectorRig(listOf(sms(1)), smsGranted = false)
+        r.cursor.id = 1 // messages were on before
         assertEquals(0, r.connector.syncOnce())
         assertEquals(SmsSyncProblem.PERMISSION_LOST, r.cursor.state.value.problem)
         assertEquals(0, r.source.reads)
@@ -923,5 +937,21 @@ class SyncMemoryStoreTest {
             scope.cancel()
             dir.deleteRecursively()
         }
+    }
+}
+
+class ReceivePermissionsTest {
+    private val read = android.Manifest.permission.READ_SMS
+    private val receive = listOf(android.Manifest.permission.RECEIVE_SMS, android.Manifest.permission.RECEIVE_MMS)
+
+    @Test fun asksForJustTheMissingReceivePermissionsOncePerVersion() {
+        assertEquals(receive, receivePermissionsToAsk({ it == read }, askedVersion = null, currentVersion = 5))
+        assertEquals(receive.drop(1), receivePermissionsToAsk({ it == read || it == receive[0] }, askedVersion = 4, currentVersion = 5))
+        assertEquals(emptyList(), receivePermissionsToAsk({ it == read }, askedVersion = 5, currentVersion = 5), "already asked this version")
+    }
+
+    @Test fun staysQuietWithoutReadAccessOrWhenAllIsGranted() {
+        assertEquals(emptyList(), receivePermissionsToAsk({ false }, askedVersion = null, currentVersion = 5))
+        assertEquals(emptyList(), receivePermissionsToAsk({ true }, askedVersion = null, currentVersion = 5))
     }
 }

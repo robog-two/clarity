@@ -2,9 +2,6 @@ package net.robog.clarity.app.connector
 
 import android.content.Context
 import android.provider.Telephony
-import android.telephony.PhoneNumberUtils
-import android.telephony.TelephonyManager
-import java.util.Locale
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
@@ -62,26 +59,6 @@ val OVERLAP_EVERY = 3.hours
 
 /** Standing in for a number the phone has no address for. */
 val UNKNOWN_SENDER = Handle(Handle.Kind.OTHER, "unknown", "Unknown sender")
-
-/** Turns a number into E.164 where it can; null when it cannot (then the raw number goes). */
-fun interface PhoneNumberFormatter {
-    fun toE164(raw: String): String?
-
-    companion object {
-        val None = PhoneNumberFormatter { null }
-    }
-}
-
-class AndroidPhoneNumberFormatter(private val context: Context) : PhoneNumberFormatter {
-    override fun toE164(raw: String): String? = try {
-        val telephony = context.getSystemService(TelephonyManager::class.java)
-        val country = listOf(telephony?.simCountryIso, telephony?.networkCountryIso, Locale.getDefault().country)
-            .firstOrNull { !it.isNullOrBlank() }
-        country?.let { PhoneNumberUtils.formatNumberToE164(raw, it.uppercase(Locale.ROOT)) }
-    } catch (_: RuntimeException) {
-        null
-    }
-}
 
 /** The person's own side of every message: this phone. */
 fun phoneAccount(deviceId: String): Handle = Handle(Handle.Kind.OTHER, phoneConnectorId(deviceId), "This phone")
@@ -149,13 +126,13 @@ fun checkCursor(lastId: Long, anchor: SmsAnchor?, atCursor: SmsRow?, maxId: Long
 
 
 /**
- * The other party: a phone number (in E.164 where [format] can), or for alphanumeric senders
+ * The other party: a phone number as the phone has it, or for alphanumeric senders
  * ("AMAZON", "Google") a handle of kind `OTHER`, since a number normalized from no digits would be
  * the same "+" for all of them. Null for a blank address.
  */
-fun smsParty(address: String, format: PhoneNumberFormatter = PhoneNumberFormatter.None): Handle? {
+fun smsParty(address: String): Handle? {
     val trimmed = address.trim().ifEmpty { return null }
-    return if (trimmed.any(Char::isDigit)) Handle.phone(format.toE164(trimmed) ?: trimmed) else Handle(Handle.Kind.OTHER, trimmed, trimmed)
+    return if (trimmed.any(Char::isDigit)) Handle.phone(trimmed) else Handle(Handle.Kind.OTHER, trimmed, trimmed)
 }
 
 /** Maps one SMS to an ingest record; null for rows that are neither received nor sent (drafts, outbox). */
@@ -163,10 +140,9 @@ fun smsToRecord(
     row: SmsRow,
     account: Handle,
     observedAt: Instant,
-    format: PhoneNumberFormatter = PhoneNumberFormatter.None,
 ): IngestRecord.Upsert? {
     // A blank address is still a text: it goes up from an unknown sender, never dropped.
-    val other = smsParty(row.address, format) ?: UNKNOWN_SENDER
+    val other = smsParty(row.address) ?: UNKNOWN_SENDER
     val (sender, recipients) = when (row.type) {
         SMS_INBOX -> other to listOf(account)
         SMS_SENT -> account to listOf(other)
@@ -205,11 +181,11 @@ fun cursorCeiling(pending: List<PendingRow>, now: Instant): Long? =
     pending.filter { isYoung(it.dateMillis, now) }.minOfOrNull { it.id }
 
 /** Turns what the SMS store returned into a [Page] (rows in id order). */
-fun smsPage(rows: List<SmsRow>, account: Handle, now: Instant, format: PhoneNumberFormatter = PhoneNumberFormatter.None): Page {
+fun smsPage(rows: List<SmsRow>, account: Handle, now: Instant): Page {
     val sorted = rows.sortedBy { it.id }
     return Page(
         items = sorted
-            .mapNotNull { row -> smsToRecord(row, account, now, format)?.let { Outgoing(row.id, row.dateMillis, it, anchorOf(row)) } }
+            .mapNotNull { row -> smsToRecord(row, account, now)?.let { Outgoing(row.id, row.dateMillis, it, anchorOf(row)) } }
             .distinctBy { it.record.sourceId },
         ceiling = cursorCeiling(sorted.filter { smsIsPending(it.type) }.map { PendingRow(it.id, it.dateMillis) }, now),
         lastId = sorted.lastOrNull()?.id ?: 0,

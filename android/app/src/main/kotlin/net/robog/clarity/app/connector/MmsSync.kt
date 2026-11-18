@@ -97,13 +97,12 @@ fun mmsToRecord(
     row: MmsRow,
     account: Handle,
     observedAt: Instant,
-    format: PhoneNumberFormatter = PhoneNumberFormatter.None,
 ): IngestRecord.Upsert? {
     val direction = mmsDirection(row) ?: return null
     val addrs = row.cleanAddresses()
-    val from = addrs.firstOrNull { it.type == MMS_ADDR_FROM }?.address?.let { smsParty(it, format) }
+    val from = addrs.firstOrNull { it.type == MMS_ADDR_FROM }?.address?.let { smsParty(it) }
     val others = addrs.filter { it.type == MMS_ADDR_TO || it.type == MMS_ADDR_CC }
-        .mapNotNull { smsParty(it.address, format) }
+        .mapNotNull { smsParty(it.address) }
         .distinct()
     val (sender, recipients) = if (direction == MMS_BOX_INBOX) {
         (from ?: UNKNOWN_SENDER) to (listOf(account) + if (others.size > 1) others else emptyList())
@@ -127,11 +126,11 @@ fun mmsToRecord(
 }
 
 /** Turns what the MMS store returned into a [Page] (rows in id order). */
-fun mmsPage(rows: List<MmsRow>, account: Handle, now: Instant, format: PhoneNumberFormatter = PhoneNumberFormatter.None): Page {
+fun mmsPage(rows: List<MmsRow>, account: Handle, now: Instant): Page {
     val sorted = rows.sortedBy { it.id }
     return Page(
         items = sorted
-            .mapNotNull { row -> mmsToRecord(row, account, now, format)?.let { Outgoing(row.id, row.dateMillis, it) } }
+            .mapNotNull { row -> mmsToRecord(row, account, now)?.let { Outgoing(row.id, row.dateMillis, it) } }
             .distinctBy { it.record.sourceId },
         ceiling = cursorCeiling(sorted.filter(::mmsIsPending).map { PendingRow(it.id, it.dateMillis) }, now),
         lastId = sorted.lastOrNull()?.id ?: 0,

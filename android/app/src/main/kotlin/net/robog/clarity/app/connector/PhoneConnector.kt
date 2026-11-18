@@ -12,6 +12,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CancellationException
@@ -104,13 +105,17 @@ class DefaultPhoneConnector(
     private val clock: AppClock,
     private val work: ConnectorWork,
     private val mms: MmsSource = NoMmsSource,
-    private val phoneFormat: PhoneNumberFormatter = PhoneNumberFormatter.None,
     private val version: String = "1",
+    private val readSize: Int = READ_SIZE,
+    private val maxReads: Int = MAX_READS,
 ) : PhoneConnector {
     override val status: Flow<SmsSyncStatus> = cursor.status
 
     /** The worker and the app in front may both sync: one at a time, so nothing is sent twice. */
     private val syncLock = Mutex()
+
+    /** Where each lane's last pass stopped reading, while it had more to read. In memory only. */
+    private val readPosition = ConcurrentHashMap<String, Long>()
 
     /** The server has this run's manifest (and with it, the grant for messages). */
     @Volatile private var announced = false
@@ -121,7 +126,9 @@ class DefaultPhoneConnector(
 
     private suspend fun syncWithProblem(): SyncOutcome = syncLock.withLock {
         if (!capabilities.smsGranted()) {
-            // The system took the permission back: say so rather than look as if all is well.
+            // Never enabled: nothing to report, and nothing written. Enabled before: the system took
+            // the permission back, so say so rather than look as if all is well.
+            if (!messagesWereEnabled()) return@withLock SyncOutcome(0, null)
             cursor.finish(clock.now(), SmsSyncProblem.PERMISSION_LOST)
             return@withLock SyncOutcome(0, SmsSyncProblem.PERMISSION_LOST)
         }
@@ -129,6 +136,11 @@ class DefaultPhoneConnector(
         val outcome = sync(deviceId)
         cursor.finish(clock.now(), outcome.problem)
         outcome
+    }
+
+    private suspend fun messagesWereEnabled(): Boolean {
+        val status = cursor.status.first()
+        return status.lastSyncAt != null || status.sent > 0 || cursor.lastId() > 0 || cursor.mmsLastId() > 0
     }
 
     override fun messageArrived(action: String?, mimeType: String?) {
@@ -152,6 +164,7 @@ class DefaultPhoneConnector(
 
     /** What one stream of rows (SMS or MMS) needs from the phone and the cursor. */
     private class Lane(
+        val key: String,
         val readAfter: suspend (afterId: Long) -> Page,
         val readSince: suspend (sinceMillis: Long) -> Page,
         val cursorId: suspend () -> Long,
@@ -203,16 +216,18 @@ class DefaultPhoneConnector(
     }
 
     private fun smsLane(account: Handle) = Lane(
-        readAfter = { after -> smsPage(sms.readAfter(after, READ_SIZE), account, clock.now(), phoneFormat) },
-        readSince = { since -> smsPage(sms.readSince(since, OVERLAP_LIMIT), account, clock.now(), phoneFormat) },
+        key = "sms",
+        readAfter = { after -> smsPage(sms.readAfter(after, readSize), account, clock.now()) },
+        readSince = { since -> smsPage(sms.readSince(since, OVERLAP_LIMIT), account, clock.now()) },
         cursorId = cursor::lastId,
         advance = cursor::advance,
         anchor = cursor::anchor,
     )
 
     private fun mmsLane(account: Handle) = Lane(
-        readAfter = { after -> mmsPage(mms.readAfter(after, READ_SIZE), account, clock.now(), phoneFormat) },
-        readSince = { since -> mmsPage(mms.readSince(since, OVERLAP_LIMIT), account, clock.now(), phoneFormat) },
+        key = "mms",
+        readAfter = { after -> mmsPage(mms.readAfter(after, readSize), account, clock.now()) },
+        readSince = { since -> mmsPage(mms.readSince(since, OVERLAP_LIMIT), account, clock.now()) },
         cursorId = cursor::mmsLastId,
         advance = { to, n, _ -> cursor.advanceMms(to, n) },
     )
@@ -224,10 +239,13 @@ class DefaultPhoneConnector(
      */
     private suspend fun push(lane: Lane, moveCursor: Boolean = true, read: suspend (afterId: Long) -> Page): SyncOutcome {
         var sent = 0
-        var from = if (moveCursor) lane.cursorId() else 0L
+        // While a pending row holds the cursor, a pass that ran out of reads carries on from where it
+        // stopped next time, so a big backlog behind that row is still uploaded.
+        var from = if (moveCursor) maxOf(lane.cursorId(), readPosition[lane.key] ?: 0L) else 0L
+        if (moveCursor) readPosition.remove(lane.key)
         var ceiling: Long? = null
         val recent = cursor.recentIds().toMutableSet()
-        repeat(MAX_READS) {
+        repeat(maxReads) {
             val page = try {
                 read(from)
             } catch (e: CancellationException) {
@@ -268,9 +286,11 @@ class DefaultPhoneConnector(
                     lane.advance(lane.cursorId(), accepted, lane.anchor())
                 }
             }
-            if (page.rowCount < READ_SIZE || !moveCursor) return SyncOutcome(sent, null)
+            if (page.rowCount < readSize || !moveCursor) return SyncOutcome(sent, null)
         }
-        // More is left (a very large inbox): the next pass carries on from the cursor.
+        // More is left (a very large inbox): the next pass carries on from here. The saved cursor
+        // stays where it is, behind any pending row.
+        if (moveCursor) readPosition[lane.key] = from
         return SyncOutcome(sent, null)
     }
 
@@ -281,10 +301,10 @@ class DefaultPhoneConnector(
             when (val check = checkCursor(last, cursor.anchor(), sms.rowAt(last), sms.maxId())) {
                 CursorCheck.Keep -> Unit
                 is CursorCheck.Adopt -> cursor.adopt(check.anchor)
-                CursorCheck.Rescan -> cursor.restart()
+                CursorCheck.Rescan -> { cursor.restart(); readPosition.remove("sms") }
             }
         }
-        if (mmsCursorLost(cursor.mmsLastId(), mms.maxId())) cursor.restartMms()
+        if (mmsCursorLost(cursor.mmsLastId(), mms.maxId())) { cursor.restartMms(); readPosition.remove("mms") }
     }
 
     override fun forgetServer() {
@@ -376,8 +396,8 @@ class WorkManagerConnectorWork(private val context: Context) : ConnectorWork {
             .setConstraints(network)
             .setInitialDelay(delaySeconds, TimeUnit.SECONDS)
             .build()
-        // The short wait never restarts for a burst of texts; the long one is the last word.
-        val policy = if (delaySeconds < MMS_DOWNLOAD_DELAY_SECONDS) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE
+        // A text that arrives while a pass runs gets another pass after it; the long wait is the last word.
+        val policy = if (delaySeconds < MMS_DOWNLOAD_DELAY_SECONDS) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE
         WorkManager.getInstance(context).enqueueUniqueWork("$UNIQUE_NAME-soon-$delaySeconds", policy, request)
     }
 
