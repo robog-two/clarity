@@ -114,8 +114,9 @@ class DefaultPhoneConnector(
     /** The worker and the app in front may both sync: one at a time, so nothing is sent twice. */
     private val syncLock = Mutex()
 
-    /** Where each lane's last pass stopped reading, while it had more to read. In memory only. */
-    private val readPosition = ConcurrentHashMap<String, Long>()
+    /** Where each lane's last pass stopped reading while it had more to read, and the ceiling it had met. In memory only. */
+    private data class Resume(val from: Long, val ceiling: Long?)
+    private val resume = ConcurrentHashMap<String, Resume>()
 
     /** The server has this run's manifest (and with it, the grant for messages). */
     @Volatile private var announced = false
@@ -241,9 +242,9 @@ class DefaultPhoneConnector(
         var sent = 0
         // While a pending row holds the cursor, a pass that ran out of reads carries on from where it
         // stopped next time, so a big backlog behind that row is still uploaded.
-        var from = if (moveCursor) maxOf(lane.cursorId(), readPosition[lane.key] ?: 0L) else 0L
-        if (moveCursor) readPosition.remove(lane.key)
-        var ceiling: Long? = null
+        val resumed = if (moveCursor) resume.remove(lane.key) else null
+        var from = if (moveCursor) maxOf(lane.cursorId(), resumed?.from ?: 0L) else 0L
+        var ceiling: Long? = resumed?.ceiling
         val recent = cursor.recentIds().toMutableSet()
         repeat(maxReads) {
             val page = try {
@@ -290,7 +291,7 @@ class DefaultPhoneConnector(
         }
         // More is left (a very large inbox): the next pass carries on from here. The saved cursor
         // stays where it is, behind any pending row.
-        if (moveCursor) readPosition[lane.key] = from
+        if (moveCursor) resume[lane.key] = Resume(from, ceiling)
         return SyncOutcome(sent, null)
     }
 
@@ -301,10 +302,10 @@ class DefaultPhoneConnector(
             when (val check = checkCursor(last, cursor.anchor(), sms.rowAt(last), sms.maxId())) {
                 CursorCheck.Keep -> Unit
                 is CursorCheck.Adopt -> cursor.adopt(check.anchor)
-                CursorCheck.Rescan -> { cursor.restart(); readPosition.remove("sms") }
+                CursorCheck.Rescan -> { cursor.restart(); resume.remove("sms") }
             }
         }
-        if (mmsCursorLost(cursor.mmsLastId(), mms.maxId())) { cursor.restartMms(); readPosition.remove("mms") }
+        if (mmsCursorLost(cursor.mmsLastId(), mms.maxId())) { cursor.restartMms(); resume.remove("mms") }
     }
 
     override fun forgetServer() {
