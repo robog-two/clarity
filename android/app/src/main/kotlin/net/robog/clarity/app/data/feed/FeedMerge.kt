@@ -2,6 +2,7 @@ package net.robog.clarity.app.data.feed
 
 import net.robog.clarity.shared.feed.Card
 import net.robog.clarity.shared.feed.FeedItem
+import net.robog.clarity.shared.feed.FeedItemId
 
 /** Appends streamed [text] to the item's last text card (or starts one) and marks it streaming. */
 fun FeedItem.withDelta(text: String): FeedItem {
@@ -31,6 +32,15 @@ fun mergeItem(existing: FeedItem?, incoming: FeedItem, final: Boolean): FeedItem
 
 /** The item holds a choices card nobody has answered yet, as far as this phone knows: the answer may have come from elsewhere. */
 fun hasOpenChoices(item: FeedItem): Boolean = item.cards.any { it is Card.Choices && it.chosen == null }
+
+/**
+ * The items whose choices buttons are no longer offered: a person's message came after them, so the
+ * question has moved on. [sending] is a message on its way (not stored yet), which counts as one after all.
+ */
+fun supersededChoices(items: List<FeedItem>, sending: Boolean = false): Set<FeedItemId> {
+    val lastPerson = if (sending) Long.MAX_VALUE else items.filter { it.author == FeedItem.Author.USER }.maxOfOrNull { it.seq } ?: return emptySet()
+    return items.filter { it.seq < lastPerson && it.cards.any { c -> c is Card.Choices } }.mapTo(mutableSetOf()) { it.id }
+}
 
 /** The item holds a choices card that has been answered. */
 fun hasAnsweredChoices(item: FeedItem): Boolean = item.cards.any { it is Card.Choices && it.chosen != null }

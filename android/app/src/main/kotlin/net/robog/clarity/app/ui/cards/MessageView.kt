@@ -104,7 +104,7 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
                 is Card.Note -> NoteBubble(card.text)
                 is Card.Report -> net.robog.clarity.app.ui.goods.ReportCardView(card, env.onOpenReport)
                 is Card.Sources -> net.robog.clarity.app.ui.sources.SourcesCardView(card, env.onOpenSource)
-                is Card.Choices -> ChoicesView(card, onChoose = env.onChoose?.let { choose -> { choice -> choose(item.id, choice) } })
+                is Card.Choices -> ChoicesView(card, onChoose = env.onChoose?.let { choose -> { choice -> choose(item.id, choice) } }, open = item.id !in env.supersededChoices)
                 // A newer server's card: its own words when it sent some, else nothing.
                 is Card.Unknown -> card.fallbackText?.let { NoteBubble(it) }
                 else -> Unit

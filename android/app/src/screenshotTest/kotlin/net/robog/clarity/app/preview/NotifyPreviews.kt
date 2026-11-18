@@ -10,6 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.android.tools.screenshot.PreviewTest
 import kotlin.time.Instant
+import net.robog.clarity.app.data.feed.supersededChoices
 import net.robog.clarity.app.ui.cards.CardEnv
 import net.robog.clarity.app.ui.cards.FeedItemView
 import net.robog.clarity.app.ui.settings.SettingsActions
@@ -81,3 +82,17 @@ fun ChoicesCardAnswered() = ChoicesInThread(answered = true)
 
 @PreviewTest @Part @Composable
 fun ChoicesCardOff() = ChoicesInThread(answered = false, enabled = false)
+
+@Composable
+private fun ChoicesThenReply() = Frame {
+    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val asked = asked(Card.Choices("Ready to start it?", options))
+        val typed = said.copy(cards = listOf(Card.Said("Give me ten minutes", InputSource.TYPED)))
+        val env = CardEnv(onChoose = { _, _ -> }, supersededChoices = supersededChoices(listOf(asked, typed)))
+        FeedItemView(asked, env = env)
+        FeedItemView(typed, env = env)
+    }
+}
+
+@PreviewTest @Part @Composable
+fun ChoicesCardTypedReply() = ChoicesThenReply()
