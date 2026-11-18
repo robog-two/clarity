@@ -71,4 +71,19 @@ class RecordQueryEvaluatorTest : FunSpec({
     test("non-string scalars compare by their JSON text") {
         RecordQuery.Equals("allDay", "false").matches(event) shouldBe true
     }
+
+    test("equals treats one phone number in different spellings as the same sender") {
+        val text = message.copy(channel = MessagePayload.Channel.SMS, sender = Handle.phone("+15551234567"))
+        RecordQuery.Equals("sender.value", "5551234567").matches(text) shouldBe true
+        RecordQuery.Equals("sender.value", "+1 (555) 123-4567").matches(text) shouldBe true
+        RecordQuery.Equals("sender.value", "+15559999999").matches(text) shouldBe false
+        samePhone("12345", "+12345") shouldBe false // too short to tell from a code
+    }
+
+    test("phone spellings are not matched in body or subject") {
+        val text = message.copy(channel = MessagePayload.Channel.SMS, body = "+15551234567", subject = "+15551234567")
+        RecordQuery.Equals("body", "5551234567").matches(text) shouldBe false
+        RecordQuery.Equals("subject", "5551234567").matches(text) shouldBe false
+        RecordQuery.Equals("body", "+15551234567").matches(text) shouldBe true
+    }
 })
