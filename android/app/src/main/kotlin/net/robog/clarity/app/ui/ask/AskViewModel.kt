@@ -266,8 +266,11 @@ class AskViewModel(
 
     private suspend fun deliver(text: String, source: InputSource, inReplyTo: FeedItemId? = null) {
         _state.update { it.copy(sending = it.sending + 1) }
-        val result = feed.send(text, source, null, inReplyTo = inReplyTo)
-        _state.update { it.copy(sending = it.sending - 1) }
+        val result = try {
+            feed.send(text, source, null, inReplyTo = inReplyTo)
+        } finally {
+            _state.update { it.copy(sending = it.sending - 1) }
+        }
         when (val r = result) {
             is ApiResult.Success -> _state.update { it.copy(message = null) }
             is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence(), draft = if (source == InputSource.TYPED && it.draft.isEmpty()) text else it.draft) }
