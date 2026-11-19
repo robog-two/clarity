@@ -139,6 +139,8 @@ data class AskUiState(
     val busy: Boolean = false,
     val sync: SyncState = SyncState.Connecting,
     val message: String? = null,
+    /** Messages sent and not yet stored, so their effect shows before the round trip ends. */
+    val sending: Int = 0,
 ) {
     val canSend: Boolean get() = draft.isNotBlank()
     val suggestions: List<String> get() = if (showSuggestions(items, busy, live)) AskSuggestions else emptyList()
@@ -263,7 +265,13 @@ class AskViewModel(
     fun dismissMessage() = _state.update { it.copy(message = null) }
 
     private suspend fun deliver(text: String, source: InputSource, inReplyTo: FeedItemId? = null) {
-        when (val r = feed.send(text, source, null, inReplyTo = inReplyTo)) {
+        _state.update { it.copy(sending = it.sending + 1) }
+        val result = try {
+            feed.send(text, source, null, inReplyTo = inReplyTo)
+        } finally {
+            _state.update { it.copy(sending = it.sending - 1) }
+        }
+        when (val r = result) {
             is ApiResult.Success -> _state.update { it.copy(message = null) }
             is ApiResult.Failure -> _state.update { it.copy(message = r.error.sentence(), draft = if (source == InputSource.TYPED && it.draft.isEmpty()) text else it.draft) }
         }
