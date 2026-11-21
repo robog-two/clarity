@@ -6,6 +6,7 @@ import android.content.ContentResolver
 import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.util.Log
 import android.provider.ContactsContract
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -125,7 +126,8 @@ class ContactActionHandler(private val book: AddressBook, private val clock: App
             } catch (e: SecurityException) {
                 ContactResult(ActionOutcome.Failed("Contacts access was turned off. Allow it in Settings, under Sources.", retryable = false))
             } catch (e: Exception) {
-                ContactResult(ActionOutcome.Failed("The address book would not save it: ${e.message ?: e::class.simpleName}", retryable = true))
+                Log.w("AddContact", "address book insert failed", e)
+                ContactResult(ActionOutcome.Failed("The address book would not save it.", retryable = true))
             }
         }
     }

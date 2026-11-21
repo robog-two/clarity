@@ -122,7 +122,7 @@ class ProposedActionsTest : FunSpec({
         a.name shouldBe "Dana"
         a.handles shouldBe listOf(Handle.phone("555 0100"), Handle.email("dana@example.com"))
         a.organization shouldBe null
-        a.summary shouldBe "Add contact Dana, 555 0100, dana@example.com"
+        a.summary shouldBe "Add Dana to contacts"
         shouldThrow<IllegalArgumentException> { ProposedActions.contact("k", ExternalTools.ContactInput("Dana", reason = "r")) }
             .message shouldContain "phone number or email"
         shouldThrow<IllegalArgumentException> { ProposedActions.contact("k", ExternalTools.ContactInput(" ", phones = listOf("1"), reason = "r")) }
