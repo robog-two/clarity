@@ -309,7 +309,7 @@ private val moveHeld = HeldAction(
 private val contactHeld = HeldAction(
     id = HeldActionId("h6"),
     createdAt = t0,
-    action = ProposedAction.AddContact("k6", "Add contact Dana Whitfield", "Dana Whitfield", listOf(Handle.phone("(555) 010-0142"), Handle.email("dana.whitfield@hartleyandco.com")), "Hartley & Co"),
+    action = ProposedAction.AddContact("k6", "Add contact Dana Whitfield, (555) 010-0142, dana.whitfield@hartleyandco.com", "Dana Whitfield", listOf(Handle.phone("(555) 010-0142"), Handle.email("dana.whitfield@hartleyandco.com")), "Hartley & Co"),
     verdict = GuardVerdict(Decision.ASK, rationale = "It writes to your phone."),
     agentView = "You asked for Dana’s number to be saved. It came from her text this morning.",
     urgency = Urgency.NORMAL,

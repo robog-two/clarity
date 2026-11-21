@@ -318,7 +318,8 @@ object ProposedActions {
         val phones = input.phones.map(String::trim).filter(String::isNotEmpty).map { Handle.phone(it) }
         val emails = input.emails.map(String::trim).filter(String::isNotEmpty).map { Handle.email(it.lowercase()) }
         require(phones.isNotEmpty() || emails.isNotEmpty()) { "Give at least one phone number or email address." }
-        return ProposedAction.AddContact(key, "Add contact $name", name, phones + emails, input.organization?.trim()?.takeIf(String::isNotEmpty))
+        val handles = phones + emails
+        return ProposedAction.AddContact(key, "Add contact $name, ${handles.joinToString(", ") { it.value }}", name, handles, input.organization?.trim()?.takeIf(String::isNotEmpty))
     }
 }
 
