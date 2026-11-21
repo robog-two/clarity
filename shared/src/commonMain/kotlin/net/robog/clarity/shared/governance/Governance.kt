@@ -113,6 +113,7 @@ enum class ActionKind {
     @SerialName("respond_to_invite") RESPOND_TO_INVITE,
     @SerialName("create_reminder") CREATE_REMINDER,
     @SerialName("set_do_not_disturb") SET_DO_NOT_DISTURB,
+    @SerialName("add_contact") ADD_CONTACT,
     @SerialName("read_document") READ_DOCUMENT,
     @SerialName("payment") PAYMENT,
     /** Anything through a generic MCP tool (browser form submit, third-party server). */
@@ -240,6 +241,17 @@ sealed interface ProposedAction {
         /** People/apps still allowed through (from "who gets through"). */
         val allow: List<Handle> = emptyList(),
     ) : ProposedAction { override val kind: ActionKind get() = ActionKind.SET_DO_NOT_DISTURB }
+
+    /** Saved to the address book of the person's phone, which is what executes it. */
+    @Serializable @SerialName("add_contact")
+    data class AddContact(
+        override val idempotencyKey: String,
+        override val summary: String,
+        val name: String,
+        /** Phone numbers as the person wrote them, and email addresses. */
+        val handles: List<Handle>,
+        val organization: String? = null,
+    ) : ProposedAction { override val kind: ActionKind get() = ActionKind.ADD_CONTACT }
 
     @Serializable @SerialName("read_document")
     data class ReadDocument(

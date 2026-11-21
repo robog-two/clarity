@@ -53,5 +53,6 @@ fun actionFingerprint(action: ProposedAction): String? = when (action) {
     is ProposedAction.RespondToInvite -> "respond_to_invite|${action.event.value}|${action.response}|${action.comment?.squashed().orEmpty()}"
     is ProposedAction.CreateReminder -> "create_reminder|${action.text.squashed().lowercase()}|${action.at}"
     is ProposedAction.SetDoNotDisturb -> "set_do_not_disturb|${action.until}|${action.allow.normalized()}"
+    is ProposedAction.AddContact -> "add_contact|${action.name.squashed().lowercase()}|${action.handles.normalized()}"
     is ProposedAction.ReadDocument, is ProposedAction.ExternalTool, is ProposedAction.UseCredential, is ProposedAction.AskCode -> null
 }

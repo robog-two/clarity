@@ -82,7 +82,7 @@ fun referencedEntity(action: ProposedAction): EntityId? = when (action) {
     is ProposedAction.RespondToInvite -> action.event
     is ProposedAction.ReadDocument -> action.document
     is ProposedAction.CreateEvent, is ProposedAction.CreateReminder,
-    is ProposedAction.SetDoNotDisturb, is ProposedAction.ExternalTool,
+    is ProposedAction.SetDoNotDisturb, is ProposedAction.AddContact, is ProposedAction.ExternalTool,
     is ProposedAction.UseCredential, is ProposedAction.AskCode -> null
 }
 

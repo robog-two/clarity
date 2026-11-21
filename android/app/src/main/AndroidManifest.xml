@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_MMS" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Only to save a contact the person approved. -->
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <!-- The heads-up and the call (Android 13+ asks at runtime). -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- The call rings at the minute set, not "around" it. The person allows it in settings. -->

@@ -358,19 +358,21 @@ private class ConnectorRig(rows: List<SmsRow> = emptyList(), smsGranted: Boolean
     val controller = FakeDnd()
     val dndState = MemoryDndState()
     val dnd = DndActionHandler(controller, dndState, FakeDndAlarms(), clock)
+    val book = FakeBook()
+    val contactHandler = ContactActionHandler(book, clock)
     val work = NoWork()
     val connector = DefaultPhoneConnector(
         ingest, source, cursor, FakeCapabilities(sms = smsGranted),
-        FakeSessionStore(if (signedInUser) signedIn() else null), dnd, clock, work, mms,
+        FakeSessionStore(if (signedInUser) signedIn() else null), dnd, contactHandler, clock, work, mms,
         readSize = readSize, maxReads = maxReads,
     )
 }
 
 class PhoneConnectorTest {
-    @Test fun manifestAnnouncesMessagesAndDoNotDisturbOnly() {
+    @Test fun manifestAnnouncesMessagesContactsAndTheTwoPhoneActions() {
         val m = phoneManifest("1")
-        assertEquals(setOf(Noun.MESSAGE), m.produces)
-        assertEquals(setOf(ActionKind.SET_DO_NOT_DISTURB), m.handles)
+        assertEquals(setOf(Noun.MESSAGE, Noun.CONTACT), m.produces)
+        assertEquals(setOf(ActionKind.SET_DO_NOT_DISTURB, ActionKind.ADD_CONTACT), m.handles)
         assertEquals("phone", m.kind)
     }
 
@@ -497,6 +499,28 @@ class PhoneConnectorTest {
     @Test fun noSmsPermissionOrNoServerMeansNoSync() = runBlocking {
         assertEquals(0, ConnectorRig(listOf(sms(1)), smsGranted = false).connector.syncOnce())
         assertEquals(0, ConnectorRig(listOf(sms(1)), signedInUser = false).connector.syncOnce())
+    }
+
+    @Test fun anAddContactActionSavesItTellsTheServerAndReports() = runBlocking {
+        val r = ConnectorRig()
+        r.ingest.pending.add(ConnectorAction(ActionId("c1"), ProposedAction.AddContact("k-c", "Add contact Dana", "Dana", listOf(Handle.phone("555 0100"))), createdAt = T0))
+        assertEquals(1, r.connector.actionPass(0))
+        assertEquals(listOf("Dana"), r.book.saved.map { it.name })
+        val record = r.ingest.batches.single().records.single() as IngestRecord.Upsert
+        assertEquals("Dana", (record.payload as net.robog.clarity.shared.noun.ContactPayload).displayName)
+        assertEquals(true, record.history)
+        assertIs<ActionOutcome.Done>(r.ingest.results.single().second.outcome)
+        Unit
+    }
+
+    @Test fun aContactTheBookRefusesIsReportedAndNothingIsPushed() = runBlocking {
+        val r = ConnectorRig()
+        r.book.writable = false
+        r.ingest.pending.add(ConnectorAction(ActionId("c2"), ProposedAction.AddContact("k-c", "Add contact Dana", "Dana", listOf(Handle.phone("555 0100"))), createdAt = T0))
+        r.connector.actionPass(0)
+        assertIs<ActionOutcome.Failed>(r.ingest.results.single().second.outcome)
+        assertTrue(r.ingest.batches.isEmpty())
+        Unit
     }
 
     @Test fun actionLoopRunsDoNotDisturbAndReportsTheResult() = runBlocking {

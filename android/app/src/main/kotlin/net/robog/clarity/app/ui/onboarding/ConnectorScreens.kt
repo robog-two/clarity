@@ -271,7 +271,7 @@ private fun ConnectorFormContent(state: ConnectorSetupState, actions: SetupActio
         if (state.phone != null) {
             InfoBox {
                 Text(if (state.allowed) "Access allowed" else "Allow access to ${state.title}?", style = MaterialTheme.typography.titleMedium)
-                Hint("Read only. Change it in Settings.")
+                Hint(state.phone.access)
                 if (state.allowed) StatusLine("Allowed")
             }
         }

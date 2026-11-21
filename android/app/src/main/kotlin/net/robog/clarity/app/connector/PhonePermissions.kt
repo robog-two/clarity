@@ -13,6 +13,10 @@ enum class PhoneConnectorKind(
     val blurb: String,
     /** Asked for together with [permission]; the connector works without them, just later (on the next pass). */
     val alsoAsk: List<String> = emptyList(),
+    /** What the access means, shown on its screen. */
+    val access: String = "Read only. Change it in Settings.",
+    /** Needed only when the person asks for something that uses it, so setup does not wait for it. */
+    val optional: Boolean = false,
 ) {
     Messages(
         key = "phone-messages",
@@ -20,6 +24,15 @@ enum class PhoneConnectorKind(
         permission = Manifest.permission.READ_SMS,
         alsoAsk = listOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.RECEIVE_MMS),
         blurb = "Syncs texts to your server.",
+    ),
+    Contacts(
+        key = "phone-contacts",
+        title = "Contacts",
+        permission = Manifest.permission.WRITE_CONTACTS,
+        alsoAsk = listOf(Manifest.permission.READ_CONTACTS),
+        blurb = "Saves contacts you approve.",
+        access = "Adds only what you approve. Change it in Settings.",
+        optional = true,
     ),
 }
 

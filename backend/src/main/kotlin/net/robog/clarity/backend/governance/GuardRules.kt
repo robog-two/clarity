@@ -91,7 +91,7 @@ fun isExternal(action: ProposedAction): Boolean = when (action) {
     is ProposedAction.CancelEvent -> true
     is ProposedAction.CreateEvent -> action.attendees.isNotEmpty() || !action.hold
     is ProposedAction.SaveDraft, is ProposedAction.CreateReminder,
-    is ProposedAction.SetDoNotDisturb, is ProposedAction.ReadDocument -> false
+    is ProposedAction.SetDoNotDisturb, is ProposedAction.AddContact, is ProposedAction.ReadDocument -> false
 }
 
 /** Distinct people an email or invitation goes out to (0 for other kinds). */
@@ -110,6 +110,7 @@ fun textOf(action: ProposedAction): String = buildString {
         is ProposedAction.CreateEvent -> append(action.title).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
         is ProposedAction.UpdateEvent -> append(action.title.orEmpty()).append('\n').append(action.description.orEmpty()).append('\n').append(action.location.orEmpty()).append('\n').append(action.url.orEmpty())
         is ProposedAction.CreateReminder -> append(action.text)
+        is ProposedAction.AddContact -> append(action.name).append('\n').append(action.organization.orEmpty())
         is ProposedAction.RespondToInvite -> append(action.comment.orEmpty())
         is ProposedAction.ExternalTool -> append(action.server).append(' ').append(action.tool).append(' ').append(action.input.toString())
         is ProposedAction.UseCredential -> append(action.site)

@@ -536,13 +536,13 @@ class ConnectorsStepViewModelTest {
         val vm = vm(repo)
         vm.refresh()
         val items = vm.state.value.items
-        assertEquals(listOf("mail", "cal", "phone-messages"), items.map { it.row.key })
-        assertEquals(listOf(true, false, true), items.map { it.saved })
-        assertEquals(listOf("ready", "Set up", "ready"), items.map { it.status })
+        assertEquals(listOf("mail", "cal", "phone-messages", "phone-contacts"), items.map { it.row.key })
+        assertEquals(listOf(true, false, true, true), items.map { it.saved })
+        assertEquals(listOf("ready", "Set up", "ready", "ready"), items.map { it.status })
         assertEquals("On your server", items[0].row.proto)
         assertEquals("Allowed on this phone", items[2].caption)
         assertFalse(vm.state.value.canSync, "every connector must be set up first")
-        assertEquals("2 of 3 set up.", vm.state.value.summaryLine)
+        assertEquals("3 of 4 set up.", vm.state.value.summaryLine)
     }
 
     @Test fun aServerWithoutTheRouteStillOffersThePhoneConnectors() = withMain {
@@ -550,7 +550,7 @@ class ConnectorsStepViewModelTest {
         vm.refresh()
         assertTrue(vm.state.value.unavailable)
         assertNull(vm.state.value.error)
-        assertEquals(listOf("phone-messages"), vm.state.value.items.map { it.row.key })
+        assertEquals(listOf("phone-messages", "phone-contacts"), vm.state.value.items.map { it.row.key })
     }
 
     @Test fun otherFailuresAreReported() = withMain {
@@ -574,7 +574,7 @@ class ConnectorsStepViewModelTest {
         assertEquals("Fix it", s.items[1].status)
         assertEquals("Password rejected", s.items[1].caption)
         assertTrue(s.anyFailed && !s.syncing && !s.allSynced && !s.canSync)
-        assertEquals("2 of 3 synced. Fix the failed one.", s.summaryLine)
+        assertEquals("3 of 4 synced. Fix the failed one.", s.summaryLine)
     }
 
     @Test fun fixingAFailedConnectorRetestsItAndEnablesContinue() = withMain {
@@ -588,7 +588,7 @@ class ConnectorsStepViewModelTest {
         assertEquals(TestState.Ok("1,940 files"), vm.state.value.items.first { it.row.key == "files" }.test)
         assertFalse(vm.state.value.anyFailed)
         assertTrue(vm.state.value.allSynced)
-        assertEquals("All 2 synced.", vm.state.value.summaryLine)
+        assertEquals("All 3 synced.", vm.state.value.summaryLine)
     }
 
     @Test fun missingTestRouteIsAFailureNotACrash() = withMain {
