@@ -136,6 +136,7 @@ dependencies {
 
 
     testImplementation(libs.junit4)
+    testImplementation(libs.robolectric) // the address book test runs ContactsContract against a stand-in provider
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.ktor.client.mock)

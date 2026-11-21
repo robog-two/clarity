@@ -157,6 +157,20 @@ fun SetupConnectorsList() = Frame {
 }
 
 @PreviewTest @Screen @Composable
+fun SetupConnectorsListWithContacts() = Frame {
+    ConnectorsContent(
+        ConnectorsState(
+            loading = false,
+            items = listOf(
+                ConnectorItem(ConnectorRow.Phone(PhoneConnectorKind.Messages), saved = true, test = TestState.Ok("86 threads")),
+                ConnectorItem(ConnectorRow.Phone(PhoneConnectorKind.Contacts), saved = false, test = null),
+            ),
+        ),
+        {}, {}, {}, {},
+    )
+}
+
+@PreviewTest @Screen @Composable
 fun SetupConnectorsEmptyError() = Frame {
     ConnectorsContent(ConnectorsState(loading = false, error = ApiError.Unreachable("timeout")), {}, {}, {}, {})
 }
@@ -248,6 +262,14 @@ fun SetupConnectorNotRunning() = Frame {
 fun SetupConnectorPhone() = Frame {
     ConnectorSetupContent(
         ConnectorSetupState(key = "phone-messages", title = "Messages", proto = "on this phone", blurb = PhoneConnectorKind.Messages.blurb, phone = PhoneConnectorKind.Messages),
+        SetupActions(),
+    )
+}
+
+@PreviewTest @Screen @Composable
+fun SetupConnectorPhoneContacts() = Frame {
+    ConnectorSetupContent(
+        ConnectorSetupState(key = "phone-contacts", title = "Contacts", proto = "on this phone", blurb = PhoneConnectorKind.Contacts.blurb, phone = PhoneConnectorKind.Contacts),
         SetupActions(),
     )
 }

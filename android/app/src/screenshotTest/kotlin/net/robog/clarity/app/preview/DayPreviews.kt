@@ -306,6 +306,20 @@ private val moveHeld = HeldAction(
     status = HeldAction.Status.EXECUTED,
 )
 
+private val contactHeld = HeldAction(
+    id = HeldActionId("h6"),
+    createdAt = t0,
+    action = ProposedAction.AddContact("k6", "Add contact Dana Whitfield", "Dana Whitfield", listOf(Handle.phone("(555) 010-0142"), Handle.email("dana.whitfield@hartleyandco.com")), "Hartley & Co"),
+    verdict = GuardVerdict(Decision.ASK, rationale = "It writes to your phone."),
+    agentView = "You asked for Dana’s number to be saved. It came from her text this morning.",
+    urgency = Urgency.NORMAL,
+    status = HeldAction.Status.HELD,
+)
+
+@Composable private fun ReviewContact(dark: Boolean) = Screen(dark) {
+    DraftReviewContent(DraftReviewState(loading = false, held = contactHeld), {}, {}, {}, {})
+}
+
 @Composable private fun ReviewEmail(dark: Boolean) = Screen(dark) {
     DraftReviewContent(DraftReviewState(loading = false, held = emailHeld, body = danaBody), {}, {}, {}, {})
 }
@@ -329,6 +343,8 @@ private val moveHeld = HeldAction(
 @PreviewTest @PhonePreview @Composable fun ReviewEmailDark() = ReviewEmail(true)
 @PreviewTest @PhonePreview @Composable fun ReviewNewEmailLight() = ReviewNewEmail(false)
 @PreviewTest @PhonePreview @Composable fun ReviewNewEmailDark() = ReviewNewEmail(true)
+@PreviewTest @PhonePreview @Composable fun ReviewContactLight() = ReviewContact(false)
+@PreviewTest @PhonePreview @Composable fun ReviewContactDark() = ReviewContact(true)
 @PreviewTest @PhonePreview @Composable fun ReviewCodeLight() = ReviewCode(false)
 @PreviewTest @PhonePreview @Composable fun ReviewCodeDark() = ReviewCode(true)
 @PreviewTest @PhonePreview @Composable fun ReviewCredentialLight() = ReviewCredential(false)

@@ -81,6 +81,7 @@ private fun ActionKind.phrase(): String = when (this) {
     ActionKind.RESPOND_TO_INVITE -> "Answer invites"
     ActionKind.CREATE_REMINDER -> "Set reminders"
     ActionKind.SET_DO_NOT_DISTURB -> "Mute your phone"
+    ActionKind.ADD_CONTACT -> "Save contacts"
     ActionKind.READ_DOCUMENT -> "Read your files"
     ActionKind.PAYMENT -> "Anything with money"
     ActionKind.EXTERNAL_TOOL -> "Use other tools"

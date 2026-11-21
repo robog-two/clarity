@@ -304,7 +304,7 @@ private val REPORT_CREATED = Regex("Report ([0-9a-f]{8}-[0-9a-f-]{27}) created")
 
 /** The tools whose calls reach the outside world through the guard. */
 private val GUARDED_TOOLS = setOf(
-    "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb",
+    "save_draft", "send_email", "create_event", "move_event", "respond_to_invite", "create_reminder", "set_do_not_disturb", "add_contact",
 )
 
 /** One tool as the helper used it: how often, how many failed, and the arguments of its first and last call. */
