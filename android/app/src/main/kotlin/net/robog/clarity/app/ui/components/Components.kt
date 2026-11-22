@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.components
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import net.robog.clarity.app.ui.theme.Space
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -160,7 +161,8 @@ fun Hint(
 /** `.rd`: reading text. */
 @Composable
 fun ReadingText(text: String, modifier: Modifier = Modifier, color: Color = Color.Unspecified) {
-    Text(text, modifier, color = color, style = MaterialTheme.clarityText.reading)
+    // Reading text is for reading and copying: long-press selects. Never put this in a tappable row.
+    SelectionContainer { Text(text, modifier, color = color, style = MaterialTheme.clarityText.reading) }
 }
 
 /**
@@ -309,16 +311,23 @@ fun ErrorBox(title: String, detail: String? = null, modifier: Modifier = Modifie
             .padding(horizontal = Space.Medium, vertical = Space.Medium),
         verticalArrangement = Arrangement.spacedBy(Space.Small),
     ) {
-        Text(title, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
-        if (detail != null) Hint(detail, color = MaterialTheme.colorScheme.onErrorContainer)
+        // Selectable, so an error can be pasted into a bug report.
+        SelectionContainer {
+            Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+                Text(title, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.labelLarge)
+                if (detail != null) Hint(detail, color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
         // The server's own words, small, for whoever has to debug it.
         if (raw != null) {
-            Text(
-                raw,
-                Modifier.padding(top = Space.Small),
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                style = MaterialTheme.typography.labelSmall,
-            )
+            SelectionContainer {
+                Text(
+                    raw,
+                    Modifier.padding(top = Space.Small),
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
     }
 }
