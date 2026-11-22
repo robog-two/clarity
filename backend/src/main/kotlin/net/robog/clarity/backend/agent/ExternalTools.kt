@@ -310,6 +310,17 @@ object ProposedActions {
         val until = instant("until", input.until, zone)
         return ProposedAction.SetDoNotDisturb(key, "Do not disturb until ${LocalTimes.format(until, zone)}", until, input.allow.map(::parseHandle))
     }
+
+    /** Numbers stay as written (the person's own spelling, no country code added); a contact needs a name and a way to reach it. */
+    fun contact(key: String, input: ExternalTools.ContactInput): ProposedAction {
+        val name = input.name.trim()
+        require(name.isNotEmpty()) { "`name` is empty." }
+        val phones = input.phones.map(String::trim).filter(String::isNotEmpty).map { Handle.phone(it) }
+        val emails = input.emails.map(String::trim).filter(String::isNotEmpty).map { Handle.email(it.lowercase()) }
+        require(phones.isNotEmpty() || emails.isNotEmpty()) { "Give at least one phone number or email address." }
+        val handles = phones + emails
+        return ProposedAction.AddContact(key, "Add $name to contacts", name, handles, input.organization?.trim()?.takeIf(String::isNotEmpty))
+    }
 }
 
 /**
@@ -432,6 +443,17 @@ class ExternalTools(
         val urgency: Urgency = Urgency.NORMAL,
     )
 
+    @Serializable
+    class ContactInput(
+        val name: String,
+        @Description("Phone numbers, written as the person gave them.") val phones: List<String> = emptyList(),
+        val emails: List<String> = emptyList(),
+        val organization: String? = null,
+        @Description(WHY) val reason: String,
+        @Description(CONTEXT) val context: List<ContextItem> = emptyList(),
+        val urgency: Urgency = Urgency.NORMAL,
+    )
+
     private suspend inline fun <reified I : Any> propose(
         scope: RunScope,
         name: String,
@@ -531,8 +553,16 @@ class ExternalTools(
         json = ClarityJson,
     ) { i -> propose(scope, "set_do_not_disturb", i, i.reason, i.context, i.urgency) { k, zone -> ProposedActions.doNotDisturb(k, i, zone) } }
 
+    fun addContact(scope: RunScope): Tool = tool<ContactInput>(
+        name = "add_contact",
+        description = "Save a new contact in the address book on the person's phone: a name with phone numbers or emails. " +
+            "Only for someone the person asked to save or clearly wants kept. It adds, never changes; search_contacts first so nobody is saved twice.",
+        effect = ToolEffect.EXTERNAL,
+        json = ClarityJson,
+    ) { i -> propose(scope, "add_contact", i, i.reason, i.context, i.urgency) { k, _ -> ProposedActions.contact(k, i) } }
+
     fun all(scope: RunScope): List<Tool> = listOf(
         saveDraft(scope), sendEmail(scope), createEvent(scope), updateEvent(scope), cancelEvent(scope), respondToInvite(scope),
-        createReminder(scope), setDoNotDisturb(scope),
+        createReminder(scope), setDoNotDisturb(scope), addContact(scope),
     )
 }

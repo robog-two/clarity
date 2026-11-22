@@ -638,7 +638,7 @@ class McpServerEditorTest {
     @Test fun theHostIsNotAnOnboardingStep() = withMain {
         val vm = ConnectorsStepViewModel(StoredConnectors(listOf(hostSummary())), Granted())
         vm.refresh()
-        assertEquals(listOf("phone-messages"), vm.state.value.items.map { it.row.key })
+        assertEquals(listOf("phone-messages", "phone-contacts"), vm.state.value.items.map { it.row.key })
     }
 
     // --- the short form of a preset ---

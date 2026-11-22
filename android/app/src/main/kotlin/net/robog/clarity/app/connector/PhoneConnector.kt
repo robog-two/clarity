@@ -31,16 +31,18 @@ import net.robog.clarity.shared.ConnectorId
 import net.robog.clarity.shared.action.ActionResult
 import net.robog.clarity.shared.SourceId
 import net.robog.clarity.shared.connector.ConnectorManifest
+import net.robog.clarity.shared.action.ActionOutcome
 import net.robog.clarity.shared.connector.GrantState
 import net.robog.clarity.shared.connector.GrantsUpdate
 import net.robog.clarity.shared.governance.ActionKind
+import net.robog.clarity.shared.governance.ProposedAction
 import net.robog.clarity.shared.ingest.IngestBatch
 import net.robog.clarity.shared.noun.Handle
 import net.robog.clarity.shared.noun.Noun
 
 /**
  * The phone as a connector (`device-<deviceId>`, authenticated by the device JWT): it pushes SMS as
- * `MessagePayload(channel = SMS)` with a cursor, and executes `SET_DO_NOT_DISTURB` from the action
+ * `MessagePayload(channel = SMS)` with a cursor, and executes `SET_DO_NOT_DISTURB` and `ADD_CONTACT` from the action
  * channel. The app keeps no reminders: those are calendar events on the server.
  */
 interface PhoneConnector {
@@ -91,8 +93,8 @@ fun phoneManifest(version: String) = ConnectorManifest(
     kind = "phone",
     displayName = "This phone",
     version = version,
-    produces = setOf(Noun.MESSAGE),
-    handles = setOf(ActionKind.SET_DO_NOT_DISTURB),
+    produces = setOf(Noun.MESSAGE, Noun.CONTACT),
+    handles = setOf(ActionKind.SET_DO_NOT_DISTURB, ActionKind.ADD_CONTACT),
 )
 
 class DefaultPhoneConnector(
@@ -102,6 +104,7 @@ class DefaultPhoneConnector(
     private val capabilities: DeviceCapabilities,
     private val sessions: SessionStore,
     private val dnd: DndActionHandler,
+    private val contacts: ContactActionHandler,
     private val clock: AppClock,
     private val work: ConnectorWork,
     private val mms: MmsSource = NoMmsSource,
@@ -315,10 +318,20 @@ class DefaultPhoneConnector(
     override suspend fun actionPass(waitSeconds: Int): Int {
         val poll = (ingest.pollActions(waitSeconds) as? ApiResult.Success)?.value ?: return -1
         for (action in poll.actions) {
-            val outcome = dnd.handle(action.action)
+            val outcome = when (val a = action.action) {
+                is ProposedAction.AddContact -> addContact(a)
+                else -> dnd.handle(a)
+            }
             ingest.reportResult(action.id, ActionResult(outcome))
         }
         return poll.actions.size
+    }
+
+    /** Saves the contact, then tells the server about it so the agent knows it at once. A failed push only delays that. */
+    private suspend fun addContact(action: ProposedAction.AddContact): ActionOutcome {
+        val result = contacts.handle(action)
+        result.record?.let { ingest.pushBatch(IngestBatch(listOf(it))) }
+        return result.outcome
     }
 
     override suspend fun runPass(): SmsSyncProblem? {

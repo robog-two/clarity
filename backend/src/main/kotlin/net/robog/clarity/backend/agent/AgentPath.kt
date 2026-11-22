@@ -326,6 +326,7 @@ fun describeCall(tool: String, input: JsonObject, result: String?): Pair<String,
         "respond_to_invite" -> "Answered an invite" to arg("response")
         "create_reminder" -> "Set a reminder" to listOfNotNull(arg("title"), arg("due", "at", "time")).joinToString(", ").ifEmpty { null }
         "set_do_not_disturb" -> "Changed Do Not Disturb" to null
+        "add_contact" -> "Added a contact" to arg("name")
         "remember_fact" -> "Remembered something about you" to null
         "write_journal" -> "Wrote in the journal" to null
         "set_scratch" -> "Made a short note" to null

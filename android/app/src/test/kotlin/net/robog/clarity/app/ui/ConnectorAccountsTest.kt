@@ -572,14 +572,14 @@ class NotRunningTest {
         vm.syncAll()
         assertEquals(listOf("files"), repo.tested, "it is not tested")
         assertTrue(vm.state.value.allSynced, "continue is offered")
-        assertEquals("All 2 synced. 1 not running.", vm.state.value.summaryLine)
+        assertEquals("All 3 synced. 1 not running.", vm.state.value.summaryLine)
     }
 
     @Test fun deviceConnectorsAreHiddenInOnboarding() = withMain {
         val device = mailSummary(id = "device-abc", schema = null)
         val vm = ConnectorsStepViewModel(Repo(listOf(device, ready)), Phone(true))
         vm.refresh()
-        assertEquals(listOf("files", "phone-messages"), vm.state.value.items.map { it.row.key })
+        assertEquals(listOf("files", "phone-messages", "phone-contacts"), vm.state.value.items.map { it.row.key })
     }
 
     @Test fun itsScreenExplainsInsteadOfShowingAnEmptyForm() = withMain {

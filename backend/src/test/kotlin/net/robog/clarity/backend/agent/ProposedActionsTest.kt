@@ -116,6 +116,18 @@ class ProposedActionsTest : FunSpec({
             .shouldBeInstanceOf<ProposedAction.SetDoNotDisturb>().allow shouldBe listOf(Handle.phone("+4912345"))
     }
 
+    test("a contact keeps numbers as written and needs a name and a way to reach it") {
+        val a = ProposedActions.contact("k", ExternalTools.ContactInput(" Dana ", phones = listOf("555 0100"), emails = listOf("Dana@Example.com "), organization = " ", reason = "r"))
+            .shouldBeInstanceOf<ProposedAction.AddContact>()
+        a.name shouldBe "Dana"
+        a.handles shouldBe listOf(Handle.phone("555 0100"), Handle.email("dana@example.com"))
+        a.organization shouldBe null
+        a.summary shouldBe "Add Dana to contacts"
+        shouldThrow<IllegalArgumentException> { ProposedActions.contact("k", ExternalTools.ContactInput("Dana", reason = "r")) }
+            .message shouldContain "phone number or email"
+        shouldThrow<IllegalArgumentException> { ProposedActions.contact("k", ExternalTools.ContactInput(" ", phones = listOf("1"), reason = "r")) }
+    }
+
     test("times without an offset are the person's local time, and the summary shows them there") {
         val hold = ProposedActions.createEvent(
             "k", ExternalTools.CreateEventInput("Focus", "2026-10-26T19:00", "2026-10-26T20:30", reason = "r"), newYork,

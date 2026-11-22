@@ -56,6 +56,7 @@ fun sample(kind: ActionKind, key: String = "k-${kind.name}"): ProposedAction = w
     ActionKind.RESPOND_TO_INVITE -> ProposedAction.RespondToInvite(key, "accept", EntityId("e1"), InviteResponse.ACCEPT)
     ActionKind.CREATE_REMINDER -> ProposedAction.CreateReminder(key, "remind me", "call mum", T0)
     ActionKind.SET_DO_NOT_DISTURB -> ProposedAction.SetDoNotDisturb(key, "dnd", T0 + kotlin.time.Duration.parse("1h"))
+    ActionKind.ADD_CONTACT -> ProposedAction.AddContact(key, "add Dana", "Dana", listOf(Handle.phone("555 0100")))
     ActionKind.READ_DOCUMENT -> ProposedAction.ReadDocument(key, "read it", EntityId("d1"))
     ActionKind.PAYMENT -> ProposedAction.ExternalTool(key, "pay the invoice", "bank", "pay", JsonObject(emptyMap()))
     ActionKind.EXTERNAL_TOOL -> ProposedAction.ExternalTool(key, "submit form", "browser", "click", JsonObject(emptyMap()))

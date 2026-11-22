@@ -36,6 +36,8 @@ import net.robog.clarity.app.connector.ConnectorWork
 import net.robog.clarity.app.connector.DataStoreDndStateStore
 import net.robog.clarity.app.connector.DataStoreSmsCursorStore
 import net.robog.clarity.app.connector.DefaultPhoneConnector
+import net.robog.clarity.app.connector.ContactActionHandler
+import net.robog.clarity.app.connector.AndroidAddressBook
 import net.robog.clarity.app.connector.DndActionHandler
 import net.robog.clarity.app.connector.SmsCursorStore
 import net.robog.clarity.app.connector.SmsSource
@@ -397,6 +399,9 @@ interface AppGraph : ViewModelGraph {
     fun dndActions(context: Context, store: DataStore<Preferences>, clock: AppClock): DndActionHandler =
         DndActionHandler(AndroidDndController(context), DataStoreDndStateStore(store), AndroidDndAlarms(context), clock)
 
+    @Provides fun contactActions(context: Context, clock: AppClock): ContactActionHandler =
+        ContactActionHandler(AndroidAddressBook(context), clock)
+
     @Provides fun connectorWork(context: Context): ConnectorWork = WorkManagerConnectorWork(context)
 
     @Provides @SingleIn(AppScope::class)
@@ -407,10 +412,11 @@ interface AppGraph : ViewModelGraph {
         capabilities: DeviceCapabilities,
         sessions: SessionStore,
         dnd: DndActionHandler,
+        contacts: ContactActionHandler,
         clock: AppClock,
         work: ConnectorWork,
         mms: MmsSource,
-    ): PhoneConnector = DefaultPhoneConnector(ingest, sms, cursor, capabilities, sessions, dnd, clock, work, mms)
+    ): PhoneConnector = DefaultPhoneConnector(ingest, sms, cursor, capabilities, sessions, dnd, contacts, clock, work, mms)
 
     // --- push: the foreground service that keeps the feed open ---
 

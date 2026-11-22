@@ -54,6 +54,8 @@ import net.robog.clarity.app.ui.components.SlideToConfirm
 import net.robog.clarity.app.ui.cards.slideLabel
 import net.robog.clarity.app.ui.theme.clarityText
 import net.robog.clarity.shared.governance.HeldActionId
+import net.robog.clarity.shared.governance.ProposedAction
+import net.robog.clarity.shared.noun.Handle
 
 @Composable
 fun DraftReviewScreen(
@@ -153,6 +155,7 @@ fun DraftReviewContent(
                     minLines = 5,
                 )
             }
+            (held.action as? ProposedAction.AddContact)?.let { ContactLines(it) }
             Column(verticalArrangement = Arrangement.spacedBy(Space.Medium)) { extras(held) }
             if (email == null && held.needsCode) CodeField(state.code, onCode, enabled = !state.decided && !state.busy)
 
@@ -186,6 +189,20 @@ private fun RecipientLine(label: String, value: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
         Text(label, Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
         Text(value, style = MaterialTheme.clarityText.chatSmall)
+    }
+}
+
+/** Each number and email of a contact on its own line, in full: the person checks them before saving. */
+@Composable
+private fun ContactLines(action: ProposedAction.AddContact) {
+    Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
+        action.handles.forEach { handle ->
+            Column {
+                Text(if (handle.kind == Handle.Kind.EMAIL) "Email" else "Phone", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
+                Text(handle.value, style = MaterialTheme.clarityText.chatSmall)
+            }
+        }
+        action.organization?.let { RecipientLine("Work", it) }
     }
 }
 
