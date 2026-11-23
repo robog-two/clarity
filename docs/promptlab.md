@@ -83,11 +83,21 @@ The path of `report.md` is printed at the end. Cost is about a tenth of a cent p
 The OpenRouter key is read at runtime from `OPENROUTER_API_KEY`, else the file in `OPENROUTER_API_KEY_FILE`, else
 `~/podman-compose/clarity-main/deploy/secrets/openrouter_api_key`. It is never printed or written.
 
+## Fixed text refresh
+
+Server-injected fixed text is frozen inside stored journal messages: session playbooks, the nudge, helper, held and action
+notices, job instructions, the inbox and clock headers, the notes index headers, and the `send_to_user` result sentences.
+Before building a request, replay swaps each known frozen string for what the current code renders for it
+(`FixedTextSwaps.kt`, old text frozen in `FixedTextOld.kt`), so edits to `Playbooks`, `InboxItem`, the review and outing job
+text and the like show up on the next replay. Only exact matches are replaced, and the person's words and the data inside
+notices are never touched. Each scenario logs `refresh: N matched, M changed`; a replay of unedited code changes only text
+that was written by an older version than the code. `--no-refresh` replays the frozen text.
+
 ## Limits
 
-- Prompt text that lives in the old journal (session playbooks, the nudge wording and other operator updates written
-  into earlier messages, the compaction summary) is replayed as it was written. Only the system prompt, the constitution
-  block, tool definitions and request conversion follow the code.
+- Fixed text that is not in `FixedTextSwaps.kt` is replayed as written: tool results made inside tool bodies (journal saved,
+  helper started, plan saved, nudge set, note saved and similar), the compaction summary, and any notice a new scenario holds
+  that has no swap yet. The system prompt, the constitution block, tool definitions and request conversion follow the code.
 - The replay is one step. A scenario where the original made tool calls before sending keeps those calls and results in
   its context, but a replay that wants more tools first ends without a message.
 - Tests: `flock /tmp/clarity-gradle.lock ./gradlew :backend:test --tests '*PromptLabCoreTest'` (pure core, no database).
