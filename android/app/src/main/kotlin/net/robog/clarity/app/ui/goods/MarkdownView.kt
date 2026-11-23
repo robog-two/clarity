@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.goods
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import net.robog.clarity.app.ui.theme.Space
 
 import androidx.compose.foundation.background
@@ -85,7 +86,12 @@ private fun InlineText(inlines: List<MdInline>, style: TextStyle, modifier: Modi
 fun LazyListScope.markdownItems(blocks: List<MdBlock>, modifier: Modifier = Modifier, imagesBase: String? = null) {
     blocks.forEachIndexed { i, block ->
         item(key = "md-$i", contentType = block::class) {
-            MarkdownBlock(block, modifier.padding(top = spaceBefore(block, i == 0)), imagesBase)
+            // One container per block, so selection never fights the list's scrolling. Links stay tappable.
+            if (block is MdBlock.Image) {
+                MarkdownBlock(block, modifier.padding(top = spaceBefore(block, i == 0)), imagesBase)
+            } else {
+                SelectionContainer { MarkdownBlock(block, modifier.padding(top = spaceBefore(block, i == 0)), imagesBase) }
+            }
         }
     }
 }
