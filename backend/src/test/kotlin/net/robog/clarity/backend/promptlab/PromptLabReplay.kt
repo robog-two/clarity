@@ -5,6 +5,7 @@ import kotlin.io.path.readText
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.runBlocking
@@ -81,7 +82,7 @@ class LeadRequests(role: RoleConfig) {
  * `:backend:promptlabReplay`: replays the extracted scenarios against the current prompts and calls the real model.
  *
  *     --only 3,7,12   a subset
- *     --runs N        model calls per scenario (default 3)
+ *     --runs N        answers that sent per scenario (default 3); samples again until reached, at most 3 x N calls
  *     --model ID      another model than the live lead's
  *     --dry           build the requests and print their sizes, call nothing
  */
@@ -115,12 +116,24 @@ object PromptLabReplay {
 
         val gateway = OpenRouterModelGateway(openRouterKey(), routing = OpenRouterRouting())
         val gate = Semaphore(4)
-        val results: List<Pair<ScenarioInput, Call>> = runBlocking {
+        val perScenario: List<Pair<ScenarioInput, List<Call>>> = runBlocking {
             coroutineScope {
-                scenarios.flatMap { s -> (1..runs).map { run -> s to async { gate.withPermit { call(gateway, built.getValue(s.n), run) } } } }
-                    .map { (s, deferred) -> s to deferred.await() }
+                scenarios.map { s ->
+                    s to async {
+                        val calls = ArrayList<Call>()
+                        // Keep sampling until `runs` answers sent, at most 3 x runs samples.
+                        while (true) {
+                            val more = moreSamplesNeeded(calls.map { it.output }, runs)
+                            if (more == 0) break
+                            val start = calls.size
+                            calls += (1..more).map { i -> async { gate.withPermit { call(gateway, built.getValue(s.n), start + i) } } }.awaitAll()
+                        }
+                        calls.toList()
+                    }
+                }.map { (s, deferred) -> s to deferred.await() }
             }
         }
+        val results = perScenario.flatMap { (s, calls) -> calls.map { s to it } }
         val byScenario = results.groupBy({ it.first.n }, { it.second })
         val zone = { s: ScenarioInput -> TimeZone.of(s.homeZone) }
         val entries = scenarios.map { s ->
@@ -153,6 +166,7 @@ object PromptLabReplay {
         val ok = results.count { it.second.output.error == null }
         val usd = results.sumOf { it.second.usage?.reportedCostMicros ?: 0L } / 1e6
         println("$ok/${results.size} calls ok, about \$${"%.4f".format(usd)}")
+        println("send rate per scenario: " + entries.joinToString(" ") { e -> "${id2(e.n)}=${e.replays.count { it.sent }}/${e.replays.size}" })
         println("report: ${dir.resolve("report.md")}")
     }
 

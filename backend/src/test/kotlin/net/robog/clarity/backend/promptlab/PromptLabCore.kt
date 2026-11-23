@@ -357,7 +357,30 @@ fun parseAnswers(markdown: String): Map<Int, String> =
 
 /** One model answer of a replay: readable text, or what went wrong, and which tools it called instead of `send_to_user`. */
 @Serializable
-data class ReplayOutput(val text: String, val words: Int, val otherTools: List<String> = emptyList(), val error: String? = null)
+data class ReplayOutput(val text: String, val words: Int, val otherTools: List<String> = emptyList(), val error: String? = null) {
+    /** The model called `send_to_user` (an answer the person would see). */
+    val sent: Boolean get() = error == null && text.isNotBlank()
+}
+
+/** Pure: how many more samples to take so [runs] of them sent, never past [cap] samples in all (default 3 x [runs]). */
+fun moreSamplesNeeded(samples: List<ReplayOutput>, runs: Int, cap: Int = runs * 3): Int =
+    minOf(runs - samples.count { it.sent }, cap - samples.size).coerceAtLeast(0)
+
+/** Pure: "3 sent, 2 looked up first: list_calendar_events (5 samples)". */
+fun samplingSummary(samples: List<ReplayOutput>): String {
+    val tools = samples.filter { !it.sent && it.error == null }.flatMap { it.otherTools }.groupingBy { it }.eachCount()
+    val unsent = samples.count { !it.sent && it.error == null }
+    val failed = samples.count { it.error != null }
+    return buildString {
+        append(samples.count { it.sent }).append(" sent")
+        if (unsent > 0) {
+            append(", ").append(unsent).append(if (tools.isEmpty()) " sent nothing" else " looked up first")
+            if (tools.isNotEmpty()) append(": ").append(tools.entries.joinToString { (t, n) -> if (n > 1) "$t x$n" else t })
+        }
+        if (failed > 0) append(", ").append(failed).append(" failed")
+        append(" (").append(samples.size).append(" samples)")
+    }
+}
 
 data class ReportEntry(
     val n: Int,
@@ -391,17 +414,13 @@ fun reportMarkdown(title: String, entries: List<ReportEntry>): String = buildStr
         appendLine("**Original** (${e.originalWords} words)")
         appendLine()
         appendLine(quote(e.original))
-        e.replays.forEachIndexed { i, r ->
+        appendLine()
+        appendLine("**Sampling** ${samplingSummary(e.replays)}")
+        e.replays.filter { it.sent }.forEachIndexed { i, r ->
             appendLine()
-            if (r.error != null) {
-                appendLine("**Replay ${i + 1}** failed")
-                appendLine()
-                appendLine(quote(r.error))
-            } else {
-                appendLine("**Replay ${i + 1}** (${r.words} words)" + if (r.otherTools.isNotEmpty()) " also called: ${r.otherTools.joinToString()}" else "")
-                appendLine()
-                appendLine(quote(r.text.ifBlank { "(no send_to_user)" }))
-            }
+            appendLine("**Replay ${i + 1}** (${r.words} words)" + if (r.otherTools.isNotEmpty()) " also called: ${r.otherTools.joinToString()}" else "")
+            appendLine()
+            appendLine(quote(r.text))
         }
     }
 }

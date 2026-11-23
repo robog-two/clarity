@@ -69,15 +69,15 @@ flock /tmp/clarity-gradle.lock ./gradlew :backend:promptlabReplay --args="--only
 For each scenario it rebuilds the lead's request from the code as it is now: `AgentPrompts.LEAD_SYSTEM` plus the
 constitution block and the mail accounts line (`leadSystemBlocks`), all of the lead's tools (`AgentToolbox.leadTools`),
 the journal context through the harness' own request conversion, and the live lead role settings (model
-`deepseek/deepseek-v4.1-flash-1017`, effort and max tokens from `AgentRoles`). It makes one model call per run and
-runs no tools. So an edit to a prompt or a tool description shows up on the next replay.
+`deepseek/deepseek-v4.1-flash-1017`, effort and max tokens from `AgentRoles`). It samples until `--runs` answers called
+`send_to_user` (at most 3 x `--runs` calls) and runs no tools. So an edit to a prompt or a tool description shows up on the next replay.
 
-Options: `--only 3,7,12` a subset, `--runs N` calls per scenario (default 3), `--model ID` another model, `--dry` build the
+Options: `--only 3,7,12` a subset, `--runs N` answers that sent per scenario (default 3; the report's Sampling line says how many samples it took and which tools the others called instead), `--model ID` another model, `--dry` build the
 requests and print system chars, tool count, message count and request size without calling anything.
 
 The report shows, for each scenario, yours (from `scenarios.md`), the original, and each replay, with word counts. A
-replay is the text of its `send_to_user` cards (text, the choices prompt and options, kind and urgency). When the model
-calls another tool first it is listed as "also called" (a real turn would run it and go on; the replay stops after one step).
+replay is the text of its `send_to_user` cards (text, the choices prompt and options, kind and urgency). A "Sampling" line per scenario counts the samples, e.g. "3 sent, 2 looked up first: list_calendar_events (5 samples)".
+The replay stops after one step, so a model that wants a lookup first counts as not sent.
 The path of `report.md` is printed at the end. Cost is about a tenth of a cent per call.
 
 The OpenRouter key is read at runtime from `OPENROUTER_API_KEY`, else the file in `OPENROUTER_API_KEY_FILE`, else

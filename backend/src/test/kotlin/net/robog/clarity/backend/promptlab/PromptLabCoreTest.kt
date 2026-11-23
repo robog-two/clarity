@@ -168,9 +168,19 @@ class PromptLabCoreTest : FunSpec({
         md shouldContain "**Yours** (2 words)"
         md shouldContain "**Original** (2 words)"
         md shouldContain "**Replay 1** (3 words)"
-        md shouldContain "**Replay 2** failed"
-        md shouldContain "also called: recall"
-        md shouldContain "(no send_to_user)"
+        md shouldContain "**Sampling** 1 sent, 1 looked up first: recall, 1 failed (3 samples)"
+        md shouldNotContain "**Replay 2**"
+    }
+
+    test("sampling continues until enough sent, capped at three times the runs") {
+        val sent = ReplayOutput("hi", 1)
+        val lookup = ReplayOutput("", 0, otherTools = listOf("list_calendar_events"))
+        moreSamplesNeeded(emptyList(), 3) shouldBe 3
+        moreSamplesNeeded(listOf(sent, lookup, lookup), 3) shouldBe 2
+        moreSamplesNeeded(listOf(sent, sent, sent), 3) shouldBe 0
+        moreSamplesNeeded(List(8) { lookup } + sent, 3) shouldBe 0
+        moreSamplesNeeded(List(7) { lookup } + sent, 3) shouldBe 1
+        samplingSummary(listOf(sent, sent, sent, lookup, lookup)) shouldBe "3 sent, 2 looked up first: list_calendar_events x2 (5 samples)"
     }
 
     test("only read-only SQL reaches psql") {
