@@ -84,6 +84,7 @@ class LeadRequests(role: RoleConfig) {
  *     --only 3,7,12   a subset
  *     --runs N        answers that sent per scenario (default 3); samples again until reached, at most 3 x N calls
  *     --model ID      another model than the live lead's
+ *     --no-refresh    replay the fixed server text as frozen in the journal (default: refresh it from the current code, see FixedTextSwaps)
  *     --dry           build the requests and print their sizes, call nothing
  */
 object PromptLabReplay {
@@ -101,7 +102,16 @@ object PromptLabReplay {
         val requests = LeadRequests(AgentRoles().lead.copy(model = model))
         println("model $model, effort ${requests.role.effort}, ${requests.tools.size} tools, ${scenarios.size} scenarios x $runs")
 
-        val built = runBlocking { scenarios.associate { it.n to requests.build(it) } }
+        val refresh = "--no-refresh" !in args
+        val swaps = if (refresh) productionSwaps(TimeZone.of(scenarios.first().homeZone)) else emptyList()
+        println(if (refresh) "fixed text refresh on: ${swaps.size} swaps (--no-refresh to replay the frozen journal text)" else "fixed text refresh off")
+        val built = runBlocking {
+            scenarios.associate { s ->
+                val r = if (refresh) refreshMessages(s.messages, swaps) else null
+                if (r != null) println("  ${id2(s.n)} refresh: ${r.totalMatched} matched, ${r.totalChanged} changed, ${r.changedChars} chars differ" + if (r.changed.isEmpty()) "" else " (${r.changed.entries.joinToString { (k, v) -> "$k x$v" }})")
+                s.n to requests.build(if (r == null) s else s.copy(messages = r.messages))
+            }
+        }
         val stats = scenarios.map { s ->
             val r = built.getValue(s.n)
             val wire = OpenRouterModelGateway.buildBody(r)
