@@ -181,7 +181,7 @@ private class Lookup(
 
     /**
      * OpenRouter provider routing: `OPENROUTER_ZDR` (default true), `OPENROUTER_QUANTIZATIONS` (comma
-     * list, default fp8,bf16,fp16; blank: any), `OPENROUTER_SORT` (price | throughput | latency,
+     * list, default and blank: any), `OPENROUTER_SORT` (price | throughput | latency,
      * default price; blank: OpenRouter's own balancing), `OPENROUTER_PROVIDER_ORDER` (comma list of
      * providers to try first, e.g. DeepInfra,Novita), `OPENROUTER_ALLOW_FALLBACKS` (default: OpenRouter's,
      * true). Yaml `agent.openRouter.zdr|quantizations|sort|order|allowFallbacks`.

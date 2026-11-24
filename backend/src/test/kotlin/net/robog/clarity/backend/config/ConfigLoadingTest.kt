@@ -195,8 +195,8 @@ class ConfigLoadingTest : FunSpec({
         ).create() shouldBe null
     }
 
-    test("OpenRouter routing: zdr, fp8 or better and cheapest first by default; blank turns a filter off") {
-        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, listOf("fp8", "bf16", "fp16"), "price")
+    test("OpenRouter routing: zdr, any precision and cheapest first by default; blank turns a filter off") {
+        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, emptyList(), "price")
         load(mapOf("OPENROUTER_ZDR" to "false", "OPENROUTER_QUANTIZATIONS" to " BF16, fp16 ,", "OPENROUTER_SORT" to "Latency"))
             .getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(false, listOf("bf16", "fp16"), "latency")
         load(mapOf("OPENROUTER_QUANTIZATIONS" to "", "OPENROUTER_SORT" to " ")).getOrNull()!!.agent.openRouterRouting shouldBe
