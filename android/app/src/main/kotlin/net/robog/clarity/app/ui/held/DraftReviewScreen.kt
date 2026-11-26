@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.held
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import net.robog.clarity.app.ui.theme.Space
 import androidx.compose.foundation.layout.ColumnScope
 import net.robog.clarity.app.ui.components.ClarityScreen
@@ -161,7 +162,7 @@ fun DraftReviewContent(
 
             Kicker("why it asked", Modifier.padding(top = Space.Small))
             ReadingText(held.agentView)
-            Hint(held.verdict.rationale)
+            SelectionContainer { Hint(held.verdict.rationale) }
             checkedLine(held)?.let { Kicker(it) }
 
             if (held.context.isNotEmpty()) {
@@ -172,7 +173,7 @@ fun DraftReviewContent(
                         verticalArrangement = Arrangement.spacedBy(Space.Small),
                     ) {
                         Kicker(item.tag)
-                        Hint(item.title)
+                        SelectionContainer { Hint(item.title) }
                     }
                 }
             }
@@ -188,7 +189,7 @@ private enum class ReviewPhase { Loading, Missing, Ready }
 private fun RecipientLine(label: String, value: String) {
     Row(horizontalArrangement = Arrangement.spacedBy(Space.Small)) {
         Text(label, Modifier.width(40.dp), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
-        Text(value, style = MaterialTheme.clarityText.chatSmall)
+        SelectionContainer { Text(value, style = MaterialTheme.clarityText.chatSmall) }
     }
 }
 
@@ -199,7 +200,7 @@ private fun ContactLines(action: ProposedAction.AddContact) {
         action.handles.forEach { handle ->
             Column {
                 Text(if (handle.kind == Handle.Kind.EMAIL) "Email" else "Phone", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelLarge)
-                Text(handle.value, style = MaterialTheme.clarityText.chatSmall)
+                SelectionContainer { Text(handle.value, style = MaterialTheme.clarityText.chatSmall) }
             }
         }
         action.organization?.let { RecipientLine("Work", it) }

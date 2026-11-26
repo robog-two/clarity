@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.cards
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import net.robog.clarity.app.ui.theme.Space
 
 import net.robog.clarity.app.ui.components.PhaseSwap
@@ -126,16 +127,20 @@ fun FeedItemView(item: FeedItem, modifier: Modifier = Modifier, env: CardEnv = C
 @Composable
 fun AgentBubble(text: String, modifier: Modifier = Modifier, streaming: Boolean = false) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-        Text(
-            if (streaming) text + STREAM_CURSOR else text,
+        // Long-press selects and copies; the container is inside the bubble so each message selects alone.
+        SelectionContainer(
             Modifier
                 .streamingSemantics(text, streaming)
                 .widthIn(max = MaxBubble)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh, AgentShape)
-                .padding(horizontal = Space.Medium, vertical = Space.Medium),
-            color = MaterialTheme.colorScheme.onSurface,
-            style = MaterialTheme.clarityText.chat,
-        )
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh, AgentShape),
+        ) {
+            Text(
+                if (streaming) text + STREAM_CURSOR else text,
+                Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium),
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.clarityText.chat,
+            )
+        }
     }
 }
 
@@ -147,17 +152,20 @@ fun AgentBubble(text: String, modifier: Modifier = Modifier, streaming: Boolean 
 fun SaidBubble(text: String, modifier: Modifier = Modifier, reaction: Reaction? = null) {
     Box(modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Box(Modifier.widthIn(max = MaxBubble + ReactionOverhang)) {
-            Text(
-                text,
+            SelectionContainer(
                 Modifier
                     .semantics { contentDescription = "You said, $text" }
                     .padding(start = if (reaction != null) ReactionOverhang else 0.dp, bottom = if (reaction != null) ReactionDrop else 0.dp)
                     .widthIn(max = MaxBubble)
-                    .background(MaterialTheme.colorScheme.primaryContainer, YouShape)
-                    .padding(horizontal = Space.Medium, vertical = Space.Medium),
-                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                style = MaterialTheme.clarityText.chat,
-            )
+                    .background(MaterialTheme.colorScheme.primaryContainer, YouShape),
+            ) {
+                Text(
+                    text,
+                    Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    style = MaterialTheme.clarityText.chat,
+                )
+            }
             if (reaction != null) ReactionBadge(reaction, Modifier.align(Alignment.BottomStart))
         }
     }
@@ -239,12 +247,14 @@ fun NoteBubble(text: String, modifier: Modifier = Modifier) {
             shape = AgentShape,
             color = MaterialTheme.colorScheme.surfaceContainer,
         ) {
-            Text(
-                text,
-                Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.clarityText.chatSmall,
-            )
+            SelectionContainer {
+                Text(
+                    text,
+                    Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.clarityText.chatSmall,
+                )
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package net.robog.clarity.app.ui.path
 
+import androidx.compose.foundation.text.selection.SelectionContainer
 import net.robog.clarity.app.ui.theme.Space
 import net.robog.clarity.app.ui.components.ClarityListScreen
 
@@ -390,12 +391,12 @@ private fun ItemContent(
                     PathItem.Heard.Source.EVENT -> "Came in at $time"
                 },
             )
-            Text(item.text, style = MaterialTheme.clarityText.chat)
+            SelectionContainer { Text(item.text, style = MaterialTheme.clarityText.chat) }
         }
         is PathItem.Said -> Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Kicker("${if (item.depth > 0 || helperRun) "helper" else "clarity"}, $time")
             Surface(color = colors.surfaceContainerLow, shape = RoundedCornerShape(topStart = 6.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp)) {
-                Text(item.text, Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), style = MaterialTheme.clarityText.chatSmall)
+                SelectionContainer { Text(item.text, Modifier.padding(horizontal = Space.Medium, vertical = Space.Medium), style = MaterialTheme.clarityText.chatSmall) }
             }
         }
         is PathItem.Action -> Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
@@ -413,7 +414,7 @@ private fun ItemContent(
         is PathItem.Helper -> HelperCard(item, time, onOpenRun)
         is PathItem.Finished -> Column(verticalArrangement = Arrangement.spacedBy(Space.Small)) {
             Kicker(if (item.ok) "Helper finished at $time" else "Helper stopped at $time")
-            Text(item.text, style = MaterialTheme.clarityText.chatSmall)
+            SelectionContainer { Text(item.text, style = MaterialTheme.clarityText.chatSmall) }
         }
         is PathItem.Browser -> BrowserStep(item.step, time, frameBase, onOpenFrame, initialFramePage)
     }
