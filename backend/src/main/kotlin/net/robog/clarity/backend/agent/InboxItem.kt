@@ -107,7 +107,7 @@ sealed interface InboxItem {
                     "Make it smaller, split the step into something doable in two minutes, say it in one line, and call plan_item(id, smaller, firstStep). " +
                     "If it no longer applies, send nothing."
             } else {
-                " If it still helps, ask the person one short, specific question with send_to_user (kind check_in; a check-in is never counted against their daily notifications, " +
+                " If it still helps, ask the person how it is going in one short, open question with send_to_user (kind check_in; a check-in is never counted against their daily notifications, " +
                     "and protected time still holds it). If it no longer applies, send nothing."
             }
     }

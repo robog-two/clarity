@@ -50,7 +50,7 @@ class SessionPureTest : FunSpec({
             Playbooks.morningCall(CallStage.CHOOSE) shouldContain "regret"
             Playbooks.morningCall(CallStage.COMMIT) shouldContain "set_plan"
             Playbooks.morningCall(CallStage.HAND_OFF) shouldContain "hand_off"
-            Playbooks.morningCall(CallStage.HAND_OFF) shouldContain "Nothing goes out as you without your review"
+            Playbooks.morningCall(CallStage.HAND_OFF) shouldContain "take off their plate"
             CallStage.entries.map { Playbooks.morningCall(it) }.toSet() shouldHaveSize 4
         }
 

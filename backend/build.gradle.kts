@@ -40,3 +40,16 @@ tasks.test {
     providers.gradleProperty("clarity.replayOut").orNull?.let { systemProperty("clarity.replayOut", it) }
     if (providers.gradleProperty("clarity.replayDry").isPresent) systemProperty("clarity.replayDry", "true")
 }
+
+// The prompt lab (docs/promptlab.md): extract real lead scenarios from the live database, replay them against the current prompts.
+// It runs from the test source set because it reuses the test rig that builds the real lead toolbox. Data lives in ~/clarity-promptlab, never here.
+//   flock /tmp/clarity-gradle.lock ./gradlew :backend:promptlabExtract --args="--list"
+//   flock /tmp/clarity-gradle.lock ./gradlew :backend:promptlabReplay --args="--only 3,7 --runs 3"
+listOf("Extract" to "PromptLabExtract", "Replay" to "PromptLabReplay").forEach { (name, main) ->
+    tasks.register<JavaExec>("promptlab$name") {
+        group = "promptlab"
+        description = "Prompt lab: ${name.lowercase()} (see docs/promptlab.md)"
+        classpath = sourceSets["test"].runtimeClasspath
+        mainClass.set("net.robog.clarity.backend.promptlab.$main")
+    }
+}

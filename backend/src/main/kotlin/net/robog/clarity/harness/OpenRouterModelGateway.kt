@@ -62,8 +62,8 @@ class OpenRouterException(val status: Int?, message: String) : RuntimeException(
 
 /**
  * OpenRouter's provider routing (`provider` in the request). `data_collection: deny` is always sent.
- * [zdr] keeps the request on zero-data-retention endpoints only; [quantizations] (empty: any) keeps
- * it off low-precision endpoints (fp4/int4 hurt tool calling); [sort] (null: OpenRouter's own
+ * [zdr] keeps the request on zero-data-retention endpoints only; [quantizations] (empty, the default:
+ * any precision) limits it to the listed ones; [sort] (null: OpenRouter's own
  * balancing) orders the endpoints left, `price` cheapest first. [order] (empty: none) pins the
  * providers to try first, in order (one provider keeps its prompt cache warm); [allowFallbacks]
  * false allows no other provider (null: OpenRouter's default, true).
@@ -76,7 +76,7 @@ data class OpenRouterRouting(
     val allowFallbacks: Boolean? = null,
 ) {
     companion object {
-        val DEFAULT_QUANTIZATIONS = listOf("fp8", "bf16", "fp16")
+        val DEFAULT_QUANTIZATIONS = emptyList<String>()
     }
 }
 

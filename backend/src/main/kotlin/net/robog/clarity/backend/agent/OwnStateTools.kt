@@ -143,7 +143,9 @@ class OwnStateTools(
     fun sendToUser(scope: RunScope? = null): Tool = tool<SendToUserInput>(
         name = "send_to_user",
         description = "The only way to reach the person. Shows typed cards in their feed; urgency decides whether it also notifies them. " +
-            "Always answer when the person wrote to you; otherwise silence is fine. Short.",
+            "Always answer when the person wrote to you; otherwise silence is fine. " +
+            "Write like a friendly text (see Voice): the answer first, each text card under 40 words, several short cards rather than one long one. " +
+            "12-hour times with am and pm, periods and commas.",
         effect = ToolEffect.WRITE,
         // Strict: a card without a known `type` is an error the model fixes, never a blank card in the feed.
         json = ClarityStrictJson,

@@ -233,7 +233,6 @@ class OpenRouterModelGatewayTest : FunSpec({
         body["provider"] shouldBe buildJsonObject {
             put("data_collection", "deny")
             put("zdr", true)
-            put("quantizations", JsonArray(listOf("fp8", "bf16", "fp16").map(::JsonPrimitive)))
             put("sort", "price")
             put("order", JsonArray(listOf(JsonPrimitive("DeepInfra"))))
         }
@@ -272,9 +271,9 @@ class OpenRouterModelGatewayTest : FunSpec({
         }
     }
 
-    test("provider routing: zero data retention, fp8 or better, cheapest first by default; each can be turned off") {
+    test("provider routing: zero data retention, any precision, cheapest first by default; each can be set") {
         OpenRouterModelGateway.buildBody(simple())["provider"] shouldBe DEFAULT_PROVIDER
-        OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(zdr = false, quantizations = emptyList(), sort = null))["provider"] shouldBe
+        OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(zdr = false, sort = null))["provider"] shouldBe
             buildJsonObject { put("data_collection", "deny") }
         OpenRouterModelGateway.buildBody(simple(), OpenRouterRouting(quantizations = listOf("bf16"), sort = "throughput"))["provider"] shouldBe
             buildJsonObject {
@@ -629,6 +628,5 @@ class OpenRouterModelGatewayTest : FunSpec({
 private val DEFAULT_PROVIDER = buildJsonObject {
     put("data_collection", "deny")
     put("zdr", true)
-    put("quantizations", JsonArray(listOf("fp8", "bf16", "fp16").map(::JsonPrimitive)))
     put("sort", "price")
 }
