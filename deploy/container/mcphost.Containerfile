@@ -35,10 +35,10 @@ FROM docker.io/library/eclipse-temurin:25-jre-alpine
 
 ARG VERSION=dev
 ARG REVISION=unknown
-ARG NODEJS_VERSION=24.22.1-r1
+ARG NODEJS_VERSION=24.22.3-r0
 ARG NPM_VERSION=11.12.1-r0
-ARG PYTHON_VERSION=3.14.10-r1
-ARG UV_VERSION=0.11.19-r1
+ARG PYTHON_VERSION=3.14.10-r2
+ARG UV_VERSION=0.11.19-r2
 ARG SETPRIV_VERSION=2.42.3-r1
 LABEL org.opencontainers.image.source="https://github.com/robog-two/clarity" \
       org.opencontainers.image.description="Clarity MCP host (third-party MCP servers, one uid each)" \
