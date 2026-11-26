@@ -181,7 +181,7 @@ private class Lookup(
 
     /**
      * OpenRouter provider routing: `OPENROUTER_ZDR` (default true), `OPENROUTER_QUANTIZATIONS` (comma
-     * list, default fp8,bf16,fp16; blank: any), `OPENROUTER_SORT` (price | throughput | latency,
+     * list, default and blank: any), `OPENROUTER_SORT` (price | throughput | latency,
      * default price; blank: OpenRouter's own balancing), `OPENROUTER_PROVIDER_ORDER` (comma list of
      * providers to try first, e.g. DeepInfra,Novita), `OPENROUTER_ALLOW_FALLBACKS` (default: OpenRouter's,
      * true). Yaml `agent.openRouter.zdr|quantizations|sort|order|allowFallbacks`.
@@ -329,8 +329,8 @@ private class Lookup(
             agent = AgentConfig(
                 roles = roles,
                 maxTurns = int("CLARITY_AGENT_MAX_TURNS", "agent.maxTurns", 30),
-                helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 60),
-                helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.15),
+                helperMaxTurns = int("CLARITY_AGENT_HELPER_MAX_TURNS", "agent.helperMaxTurns", 120),
+                helperMaxCostUsd = dollars("CLARITY_HELPER_MAX_COST", "agent.helperMaxCost", 0.20),
                 leadTurnMaxCostUsd = dollars("CLARITY_LEAD_TURN_MAX_COST", "agent.leadTurnMaxCost", 0.50),
                 spend = SpendLimits(
                     weeklyUsd = dollarsOrNull("CLARITY_SPEND_WEEKLY_MAX", "agent.spend.weeklyMax"),
@@ -343,7 +343,7 @@ private class Lookup(
                 helperMaxResumes = int("CLARITY_HELPER_MAX_RESUMES", "agent.helperMaxResumes", 3, min = 0),
                 helperMaxQuestions = int("CLARITY_HELPER_MAX_QUESTIONS", "agent.helperMaxQuestions", 3),
                 helperMaxRevisions = int("CLARITY_HELPER_MAX_REVISIONS", "agent.helperMaxRevisions", 2, min = 0),
-                helperReviseSteps = int("CLARITY_HELPER_REVISE_STEPS", "agent.helperReviseSteps", 15),
+                helperReviseSteps = int("CLARITY_HELPER_REVISE_STEPS", "agent.helperReviseSteps", 30),
                 helperAskTimeout = duration("CLARITY_HELPER_ASK_TIMEOUT", "agent.helperAskTimeout", Duration.parse("4h")),
                 maxConcurrentRuns = int("CLARITY_AGENT_MAX_CONCURRENT_RUNS", "agent.maxConcurrentRuns", 2),
                 triggerFiresPerHour = int("CLARITY_TRIGGER_FIRES_PER_HOUR", "agent.triggerFiresPerHour", 6, min = 1),

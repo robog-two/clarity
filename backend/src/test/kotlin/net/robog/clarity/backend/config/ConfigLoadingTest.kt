@@ -41,7 +41,7 @@ class ConfigLoadingTest : FunSpec({
     test("helpers have their own step limit, 60 by default") {
         val c = load().getOrNull()!!.agent
         c.maxTurns shouldBe 30
-        c.helperMaxTurns shouldBe 60
+        c.helperMaxTurns shouldBe 120
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "80")).getOrNull()!!.agent.helperMaxTurns shouldBe 80
         load(mapOf("CLARITY_AGENT_HELPER_MAX_TURNS" to "0")).shouldBeInstanceOf<Either.Left<ConfigError.Invalid>>()
     }
@@ -81,7 +81,7 @@ class ConfigLoadingTest : FunSpec({
     }
 
     test("a helper run may spend $0.15 by default; the cap is a dollar amount above 0") {
-        load().getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.15
+        load().getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.20
         load(mapOf("CLARITY_HELPER_MAX_COST" to "0.5")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 0.5
         load(mapOf("CLARITY_HELPER_MAX_COST" to "$1")).getOrNull()!!.agent.helperMaxCostUsd shouldBe 1.0
         for (bad in listOf("0", "-1", "lots")) {
@@ -195,8 +195,8 @@ class ConfigLoadingTest : FunSpec({
         ).create() shouldBe null
     }
 
-    test("OpenRouter routing: zdr, fp8 or better and cheapest first by default; blank turns a filter off") {
-        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, listOf("fp8", "bf16", "fp16"), "price")
+    test("OpenRouter routing: zdr, any precision and cheapest first by default; blank turns a filter off") {
+        load().getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(true, emptyList(), "price")
         load(mapOf("OPENROUTER_ZDR" to "false", "OPENROUTER_QUANTIZATIONS" to " BF16, fp16 ,", "OPENROUTER_SORT" to "Latency"))
             .getOrNull()!!.agent.openRouterRouting shouldBe OpenRouterRouting(false, listOf("bf16", "fp16"), "latency")
         load(mapOf("OPENROUTER_QUANTIZATIONS" to "", "OPENROUTER_SORT" to " ")).getOrNull()!!.agent.openRouterRouting shouldBe

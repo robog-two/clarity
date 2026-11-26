@@ -11,9 +11,9 @@ data class AgentConfig(
     val openRouterApiKey: String? = null,
     val maxTurns: Int = 30,
     /** A helper's step limit (`CLARITY_AGENT_HELPER_MAX_TURNS`): browsing takes many small steps. */
-    val helperMaxTurns: Int = 60,
+    val helperMaxTurns: Int = 120,
     /** What one helper run may spend, in dollars (`CLARITY_HELPER_MAX_COST`); then it wraps up and stops. */
-    val helperMaxCostUsd: Double = 0.15,
+    val helperMaxCostUsd: Double = 0.20,
     /** What one lead turn may spend, in dollars (`CLARITY_LEAD_TURN_MAX_COST`); then the turn stops. */
     val leadTurnMaxCostUsd: Double = 0.50,
     /** Hard stops on all model calls ([SpendLimits]): per role per day and in all per week. */
@@ -29,7 +29,9 @@ data class AgentConfig(
     /** Times the lead may send a finished helper's work back with feedback (`CLARITY_HELPER_MAX_REVISIONS`). */
     val helperMaxRevisions: Int = 2,
     /** Steps a revision gets (`CLARITY_HELPER_REVISE_STEPS`); the run's spend cap stays and what it already spent counts. */
-    val helperReviseSteps: Int = 15,
+    val helperReviseSteps: Int = 30,
+    /** The note sent after the last message on every lead call, never journaled ([net.robog.clarity.harness.RunRequest.tailNote]); null sends none. */
+    val leadTailNote: String? = net.robog.clarity.backend.agent.AgentPrompts.LEAD_VOICE_REMINDER,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),
