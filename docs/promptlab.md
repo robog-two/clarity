@@ -93,6 +93,8 @@ text and the like show up on the next replay. Only exact matches are replaced, a
 notices are never touched. Each scenario logs `refresh: N matched, M changed`; a replay of unedited code changes only text
 that was written by an older version than the code. `--no-refresh` replays the frozen text.
 
+Every replay ends with the lead's voice reminder (`AgentPrompts.LEAD_VOICE_REMINDER`), the note the harness sends after the last message on each lead call. `--tail-note FILE` tries another text in its place; `--no-tail` sends none.
+
 ## Limits
 
 - Fixed text that is not in `FixedTextSwaps.kt` is replayed as written: tool results made inside tool bodies (journal saved,

@@ -53,6 +53,21 @@ class HarnessTest : FunSpec({
         events.last().shouldBeInstanceOf<HarnessEvent.Finished>().usage shouldBe Usage(20, 10)
     }
 
+    test("a tail note goes after the last message of every call and never into the transcript") {
+        val gateway = ScriptedGateway(
+            listOf(
+                response(StopReason.TOOL_USE, toolUse("1", "a")),
+                response(StopReason.END_TURN, Block.Text("done")),
+            ),
+        )
+        val events = Harness(gateway).run(request(fakeTool("a")).copy(tailNote = "[note] be brief")).toList()
+
+        gateway.requests.size shouldBe 2
+        gateway.requests.forEach { it.messages.last() shouldBe Message(Role.SYSTEM, listOf(Block.Text("[note] be brief"))) }
+        val transcript = events.last().shouldBeInstanceOf<HarnessEvent.Finished>().transcript
+        transcript.none { m -> m.content.any { it == Block.Text("[note] be brief") } } shouldBe true
+    }
+
     test("tools are offered to the model sorted by name") {
         val gateway = ScriptedGateway(listOf(response(StopReason.END_TURN, Block.Text("x"))))
         Harness(gateway).run(request(fakeTool("zeta"), fakeTool("alpha"))).toList()

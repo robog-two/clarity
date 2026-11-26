@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import net.robog.clarity.backend.agent.AgentPrompts
 import net.robog.clarity.backend.agent.HomeClock
 import net.robog.clarity.backend.agent.LeadRig
 import net.robog.clarity.backend.agent.RunScope
@@ -27,6 +28,7 @@ import net.robog.clarity.backend.agent.roleRequest
 import net.robog.clarity.backend.config.AgentRoles
 import net.robog.clarity.backend.config.RoleConfig
 import net.robog.clarity.harness.Block
+import net.robog.clarity.harness.Message
 import net.robog.clarity.harness.Harness
 import net.robog.clarity.harness.HarnessJson
 import net.robog.clarity.harness.InMemoryRunJournal
@@ -102,6 +104,8 @@ object PromptLabReplay {
         val requests = LeadRequests(AgentRoles().lead.copy(model = model))
         println("model $model, effort ${requests.role.effort}, ${requests.tools.size} tools, ${scenarios.size} scenarios x $runs")
 
+        // The production reminder by default; --tail-note FILE tries another, --no-tail sends none.
+        val tailNote = if ("--no-tail" in args) null else value("--tail-note")?.let { java.io.File(it).readText().trim() } ?: AgentPrompts.LEAD_VOICE_REMINDER
         val refresh = "--no-refresh" !in args
         val swaps = if (refresh) productionSwaps(TimeZone.of(scenarios.first().homeZone)) else emptyList()
         println(if (refresh) "fixed text refresh on: ${swaps.size} swaps (--no-refresh to replay the frozen journal text)" else "fixed text refresh off")
@@ -109,7 +113,9 @@ object PromptLabReplay {
             scenarios.associate { s ->
                 val r = if (refresh) refreshMessages(s.messages, swaps) else null
                 if (r != null) println("  ${id2(s.n)} refresh: ${r.totalMatched} matched, ${r.totalChanged} changed, ${r.changedChars} chars differ" + if (r.changed.isEmpty()) "" else " (${r.changed.entries.joinToString { (k, v) -> "$k x$v" }})")
-                s.n to requests.build(if (r == null) s else s.copy(messages = r.messages))
+                val req = requests.build(if (r == null) s else s.copy(messages = r.messages))
+                // The lead's tail note, after the last message where the model writes (as the harness sends it).
+                s.n to if (tailNote == null) req else req.copy(messages = req.messages + Message(net.robog.clarity.harness.Role.SYSTEM, listOf(Block.Text(tailNote))))
             }
         }
         val stats = scenarios.map { s ->

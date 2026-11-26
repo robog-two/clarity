@@ -427,6 +427,7 @@ class LeadAgent(
         ).copy(
             // Out of steps: the open calls are closed (never left to run at the next boot) and the turn ends.
             outOfSteps = LEAD_OUT_OF_STEPS,
+            tailNote = AgentPrompts.LEAD_VOICE_REMINDER,
             spendCap = SpendCap(dollarsToMicros(config.leadTurnMaxCostUsd), finalCall = false),
             // A turn resumed at boot continues its step budget.
             countStepsSince = ::beginsLeadTurn,

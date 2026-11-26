@@ -63,6 +63,11 @@ data class RunRequest(
      * matches ([turnsUsed] of the history; `{ false }` counts the whole run): they come off [maxTurns].
      */
     val countStepsSince: ((Message) -> Boolean)? = null,
+    /**
+     * A system note sent after the last message on every model call and never journaled, so it always
+     * sits where the model writes and never piles up in the history; null sends none.
+     */
+    val tailNote: String? = null,
 ) {
     constructor(
         model: String,
@@ -367,7 +372,7 @@ class Harness(
     private fun modelRequest(request: RunRequest, plan: ToolPlan, history: List<Message>, search: WebSearchTool?) = ModelRequest(
         model = request.model,
         system = request.system,
-        messages = wireOrder(sinceSummary(history)),
+        messages = wireOrder(sinceSummary(history)) + listOfNotNull(request.tailNote?.let { Message(Role.SYSTEM, listOf(Block.Text(it))) }),
         tools = plan.tools.map { it.definition },
         maxTokens = request.maxTokens,
         effort = request.effort,
