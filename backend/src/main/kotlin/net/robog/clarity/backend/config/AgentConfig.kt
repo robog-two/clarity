@@ -30,6 +30,8 @@ data class AgentConfig(
     val helperMaxRevisions: Int = 2,
     /** Steps a revision gets (`CLARITY_HELPER_REVISE_STEPS`); the run's spend cap stays and what it already spent counts. */
     val helperReviseSteps: Int = 30,
+    /** The note sent after the last message on every lead call, never journaled ([net.robog.clarity.harness.RunRequest.tailNote]); null sends none. */
+    val leadTailNote: String? = net.robog.clarity.backend.agent.AgentPrompts.LEAD_VOICE_REMINDER,
     val maxConcurrentRuns: Int = 2,
     val reviewInterval: Duration,
     val mcpServers: List<McpServerConfig> = emptyList(),

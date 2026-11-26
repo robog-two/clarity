@@ -18,6 +18,7 @@ class HarnessNoteGuardTest : FunSpec({
     // file -> a fragment of each line that may build a bare text block, and why
     val allowed: Map<String, List<String>> = mapOf(
         "harness/Interrupts.kt" to listOf("Block.Text(HARNESS_NOTE_MARK + text)"), // the marker itself
+        "harness/Harness.kt" to listOf("request.tailNote?.let { Message(Role.SYSTEM, listOf(Block.Text(it))) }"), // the tail note: a system message on the wire, never journaled
         "backend/agent/LeadAgent.kt" to listOf("Message(Role.SYSTEM, listOf(Block.Text(it)))"), // memory context: a system message, never a person's
     )
 

@@ -384,6 +384,25 @@ class LeadScenarioTest : FunSpec({
         r.inbox.pending().shouldBeEmpty()
     }
 
+    test("the lead's tail note goes after the last message of every call and never into the journal") {
+        val r = LeadRig(database, configure = { it.copy(leadTailNote = "[voice reminder] short") }).also { it.reset() }
+        val note = net.robog.clarity.harness.Message(Role.SYSTEM, listOf(Block.Text("[voice reminder] short")))
+        r.model.handler = { request ->
+            if (lastResultFor(request.copy(messages = request.messages.dropLast(1)), "toolu_reply")) end("done") else reply("toolu_reply", "Moved.")
+        }
+        r.inbox.enqueue(user("move my 3pm to 4pm"))
+        r.lead.start()
+        r.lead.step() shouldBe true
+        r.model.requests shouldHaveSize 2
+        r.model.requests.forEach { it.messages.last() shouldBe note }
+        // The second call carries the first call's history, without the first call's note.
+        r.model.requests[1].messages.count { it == note } shouldBe 1
+    }
+
+    test("AgentConfig sends the voice reminder by default") {
+        net.robog.clarity.backend.config.AgentConfig(reviewInterval = kotlin.time.Duration.parse("2h")).leadTailNote shouldBe AgentPrompts.LEAD_VOICE_REMINDER
+    }
+
     test("reply guard: the model answers in the same turn; no nudge") {
         val r = rig()
         r.model.handler = { request ->

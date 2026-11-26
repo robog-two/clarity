@@ -152,7 +152,7 @@ class LeadRig(
 ) {
     /** Answers for every role (tell them apart by the model name). */
     val model = FakeModel()
-    val config = configure(AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, helperMaxCostUsd = helperMaxCostUsd))
+    val config = configure(AgentConfig(openRouterApiKey = apiKey, reviewInterval = 2.hours, maxConcurrentRuns = 2, roles = roles, helperMaxCostUsd = helperMaxCostUsd, leadTailNote = null))
     val modelSettings = ModelSettings(config, InMemoryRoleOverrideStore(clock))
     val runtime = AgentRuntime(config, modelSettings, ModelGatewayFactory { model }, usageRecorder, spendGuard, ledger)
 
